@@ -1,0 +1,694 @@
+--[[
+    SimpleMail & Chat Server (Gem Standard v7.2 - Full Economy Implementation)
+    by Gemini Gem
+
+    Purpose:
+    This version fully implements the dynamic economy features. It includes the
+    admin commands `addcurrency`, `delcurrency`, `listrates`, and `settarget`,
+    the logic to process secure stock reports from the Auditor Turtle, and the
+    automatic price adjustment engine.
+
+    New Admin Commands:
+    - addcurrency <item_name> <base_rate>
+    - delcurrency <item_name>
+    - listrates
+    - settarget <item_name> <target_amount>
+]]
+
+--==============================================================================
+-- API & Library Initialization
+--==============================================================================
+
+local AuthClient = require("HyperAuthClient/api/auth_client")
+
+if not AuthClient then
+    term.setBackgroundColor(colors.red)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("================ FATAL ERROR ================")
+    print("The HyperAuthClient API could not be found.")
+    print("Please ensure the file exists at:")
+    print(" > /HyperAuthClient/api/auth_client.lua")
+    print("=============================================")
+    print("Server shutting down.")
+    error("HyperAuthClient API not found.", 0)
+end
+
+--==============================================================================
+-- Embedded SHA1 & HMAC Library
+--==============================================================================
+
+local sha1 = {}
+do
+    local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
+    local function rol(n, c) return bor(lshift(n, c), rshift(n, 32 - c)) end
+    local function str_to_bin(str) local t = {}; for i = 1, #str do t[i] = string.byte(str, i) end; return t end
+    local function bin_to_hex(bin) local hex = ""; for i = 1, #bin do hex = hex .. string.format("%02x", bin[i]) end; return hex end
+    local function bin_to_str(bin) return string.char(table.unpack(bin)) end
+    function sha1.hex(s) return bin_to_hex(sha1.bin(s)) end
+    function sha1.bin(s)
+      local H0, H1, H2, H3, H4 = 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0
+      local str = str_to_bin(s); local len = #str; str[len + 1] = 0x80
+      for i = len + 2, (len + 64) - ((len + 8) % 64) do str[i] = 0 end
+      local bit_len = len * 8
+      for i = 0, 7 do str[#str + 1] = band(rshift(bit_len, (7 - i) * 8), 0xff) end
+      for i = 1, #str, 64 do
+        local W = {}; for j = 0, 15 do W[j] = bor(lshift(str[i+j*4], 24), lshift(str[i+j*4+1], 16), lshift(str[i+j*4+2], 8), str[i+j*4+3]) end
+        for j = 16, 79 do W[j] = rol(bxor(W[j-3], W[j-8], W[j-14], W[j-16]), 1) end
+        local a,b,c,d,e = H0,H1,H2,H3,H4
+        for j = 0, 79 do
+          local f, k
+          if j < 20 then f = bxor(d, band(b, bxor(c, d))); k = 0x5A827999
+          elseif j < 40 then f = bxor(b, c, d); k = 0x6ED9EBA1
+          elseif j < 60 then f = bor(band(b, c), band(b, d), band(c, d)); k = 0x8F1BBCDC
+          else f = bxor(b, c, d); k = 0xCA62C1D6 end
+          local temp = rol(a, 5) + f + e + W[j] + k; e=d; d=c; c=rol(b, 30); b=a; a=temp
+        end
+        H0=(H0+a); H1=(H1+b); H2=(H2+c); H3=(H3+d); H4=(H4+e)
+      end
+      local result = {}; for i=0,3 do result[i+1]=band(rshift(H0,(3-i)*8),0xff) end; for i=0,3 do result[i+5]=band(rshift(H1,(3-i)*8),0xff) end; for i=0,3 do result[i+9]=band(rshift(H2,(3-i)*8),0xff) end; for i=0,3 do result[i+13]=band(rshift(H3,(3-i)*8),0xff) end; for i=0,3 do result[i+17]=band(rshift(H4,(3-i)*8),0xff) end
+      return result
+    end
+    function sha1.hmac_hex(key, message)
+        local blocksize = 64
+        if #key > blocksize then key = bin_to_str(sha1.bin(key)) end
+        local key_padding = {}; for i = 1, blocksize do key_padding[i] = string.byte(key, i) or 0 end
+        local o_key_pad = ""; local i_key_pad = ""
+        for i = 1, blocksize do
+            o_key_pad = o_key_pad .. string.char(bxor(key_padding[i], 0x5c))
+            i_key_pad = i_key_pad .. string.char(bxor(key_padding[i], 0x36))
+        end
+        local inner_hash = bin_to_str(sha1.bin(i_key_pad .. message))
+        local final_hash = sha1.bin(o_key_pad .. inner_hash)
+        return bin_to_hex(final_hash)
+    end
+end
+
+--==============================================================================
+-- Configuration & State
+--==============================================================================
+
+local users, lists, games, chatHistory, gameList, accounts, pendingAuths, currencyRates, currentStock = {}, {}, {}, {}, {}, {}, {}, {}, {}
+local programVersions, programCode, gameCode = {}, {}, {}
+local logHistory, adminInput, motd = {}, "", ""
+
+local USERS_DB = "users.db"
+local LISTS_DB = "lists.db"
+local GAMES_DB = "games.db"
+local CHAT_DB = "chat.db"
+local UPDATER_DB = "updater.db"
+local GAMELIST_DB = "gamelist.db"
+local ACCOUNTS_DB = "accounts.db"
+local MOTD_FILE = "motd.txt"
+local LOG_FILE = "server.log"
+local GAMES_CODE_DB = "games_code.db"
+local RATES_DB = "rates.db"
+local STOCK_DB = "stock.db"
+
+-- HyperAuth Server Configuration
+local AUTH_SERVER_PROTOCOL = "auth.secure.v1"
+
+-- Auditor Turtle Configuration
+local AUDIT_PROTOCOL = "DB_Audit"
+local AUDIT_SECRET_KEY = "YourSecretAuditKeyHere" -- IMPORTANT: Must match turtle's key
+
+--==============================================================================
+-- UI & Theme Configuration
+--==============================================================================
+
+local hasColor = term.isColor and term.isColor()
+local function safeColor(colorName, fallbackColor)
+    if hasColor and colors[colorName] ~= nil then return colors[colorName] end
+    return fallbackColor
+end
+
+local theme = {
+    bg = safeColor("black", colors.black),
+    text = safeColor("white", colors.white),
+    windowBg = safeColor("darkGray", colors.gray),
+    title = safeColor("red", colors.red),
+    prompt = safeColor("cyan", colors.cyan),
+    statusBarBg = safeColor("gray", colors.lightGray),
+    statusBarText = safeColor("white", colors.white),
+}
+
+local function wordWrap(text, width)
+    local finalLines = {}
+    for line in string.gmatch(text, "[^\n]+") do
+        if #line <= width then
+            table.insert(finalLines, line)
+        else
+            local currentWrappedLine = ""
+            for word in string.gmatch(line, "[^%s]+") do
+                if #currentWrappedLine + #word + 1 > width then
+                    table.insert(finalLines, currentWrappedLine)
+                    currentWrappedLine = word
+                else
+                    currentWrappedLine = currentWrappedLine == "" and word or (currentWrappedLine .. " " .. word)
+                end
+            end
+            table.insert(finalLines, currentWrappedLine)
+        end
+    end
+    return finalLines
+end
+
+local function redrawAdminUI()
+    local w, h = term.getSize()
+    term.setBackgroundColor(theme.windowBg); term.clear()
+    term.setBackgroundColor(theme.title); term.setCursorPos(1, 1); term.write(string.rep(" ", w)); term.setTextColor(colors.white)
+    local titleText = " Server Admin Console "; term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); term.write(titleText)
+    term.setBackgroundColor(theme.statusBarBg); term.setTextColor(theme.statusBarText); term.setCursorPos(1, h); term.write(string.rep(" ", w))
+    local statusText = "RUNNING | Type 'help' for commands"; term.setCursorPos(2, h); term.write(statusText)
+    term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.text)
+    local logAreaHeight = h - 4
+    local displayLines = {}
+    for i = #logHistory, 1, -1 do
+        local wrapped = wordWrap(logHistory[i], w - 2)
+        for j = #wrapped, 1, -1 do
+            table.insert(displayLines, 1, " " .. wrapped[j])
+            if #displayLines >= logAreaHeight then break end
+        end
+        if #displayLines >= logAreaHeight then break end
+    end
+    for i = 1, math.min(#displayLines, logAreaHeight) do term.setCursorPos(1, 1 + i); term.write(displayLines[i]) end
+    term.setCursorPos(1, h - 2); term.write(string.rep("-", w))
+    term.setCursorPos(1, h - 1); term.setTextColor(theme.prompt); term.write("> "); term.setTextColor(theme.text); term.write(adminInput)
+end
+
+local function logActivity(message, isError)
+    local prefix = isError and "[ERROR] " or "[INFO] "
+    local logEntry = os.date("[%H:%M:%S] ") .. prefix .. message
+    table.insert(logHistory, logEntry)
+    if #logHistory > 200 then table.remove(logHistory, 1) end
+    local file = fs.open(LOG_FILE, "a")
+    if file then file.writeLine(os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message); file.close() end
+    redrawAdminUI()
+end
+
+--==============================================================================
+-- Data Persistence Functions
+--==============================================================================
+
+local function saveTableToFile(path, data)
+    local file = fs.open(path, "w")
+    if not file then logActivity("Could not open " .. path .. " for writing.", true); return false end
+    local success, err = pcall(function() file.write(textutils.serialize(data)); file.close() end)
+    if not success then logActivity("Failed to write to " .. path .. ": " .. tostring(err), true); return false end
+    return true
+end
+
+local function loadTableFromFile(path)
+    if fs.exists(path) then
+        local file = fs.open(path, "r")
+        if file then
+            local data = file.readAll(); file.close()
+            local success, result = pcall(textutils.unserialize, data)
+            if success and type(result) == "table" then return result
+            else logActivity("Corrupted data in " .. path .. ". A new file will be created.", true) end
+        end
+    end
+    return {}
+end
+
+local function loadAllData()
+    users = loadTableFromFile(USERS_DB)
+    lists = loadTableFromFile(LISTS_DB)
+    games = loadTableFromFile(GAMES_DB)
+    chatHistory = loadTableFromFile(CHAT_DB)
+    gameList = loadTableFromFile(GAMELIST_DB)
+    accounts = loadTableFromFile(ACCOUNTS_DB)
+    local updaterData = loadTableFromFile(UPDATER_DB)
+    programVersions = updaterData.v or {}
+    programCode = updaterData.c or {}
+    gameCode = loadTableFromFile(GAMES_CODE_DB)
+    currencyRates = loadTableFromFile(RATES_DB)
+    currentStock = loadTableFromFile(STOCK_DB)
+    if fs.exists(MOTD_FILE) then local file = fs.open(MOTD_FILE, "r"); motd = file.readAll(); file.close() end
+    logActivity("All data loaded successfully.")
+end
+
+--==============================================================================
+-- Mail & List Management Functions
+--==============================================================================
+
+local function saveItem(user, item, itemType)
+    local dir = itemType .. "/" .. user
+    if not fs.exists(dir) then fs.makeDir(dir) end
+    local id = os.time() .. "-" .. math.random(100, 999)
+    saveTableToFile(dir .. "/" .. id, item)
+end
+
+local function loadMail(user)
+    local path = "mail/" .. user
+    local userMail = {}
+    if fs.exists(path) and fs.isDir(path) then
+        for _, fileName in ipairs(fs.list(path)) do
+            local mailPath = path .. "/" .. fileName
+            local mailFile = fs.open(mailPath, "r")
+            if mailFile then
+                local data = mailFile.readAll(); mailFile.close()
+                local success, item = pcall(textutils.unserialize, data)
+                if success and item then item.id = fileName; table.insert(userMail, item)
+                else logActivity("Could not read corrupted mail file: " .. mailPath, true) end
+            end
+        end
+    end
+    return userMail
+end
+
+local function deleteItem(user, id, itemType)
+    local path = itemType .. "/" .. user .. "/" .. id
+    if fs.exists(path) then fs.delete(path); return true end
+    return false
+end
+
+--==============================================================================
+-- Authentication Helper Functions
+--==============================================================================
+local function requestAuthCode(username, password, nickname, senderId, purpose)
+    logActivity("Requesting auth code for '" .. username .. "' via HyperAuth API...")
+    
+    local request_reply, request_err = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
+        username   = username,
+        password   = password, -- This is the hashed password
+        vendorID   = "SimpleMail_Server",
+        computerID = os.getComputerID(),
+        extra      = { purpose = purpose or "unknown" },
+    })
+
+    if not request_reply then
+        logActivity("HyperAuth requestCode error: " .. tostring(request_err), true)
+        rednet.send(senderId, { success = false, reason = "Authentication service error." }, "SimpleMail")
+        return nil
+    end
+
+    logActivity("HyperAuth API success. Request ID: " .. request_reply.request_id)
+    
+    pendingAuths[username] = {
+        request_id = request_reply.request_id,
+        password = password,
+        nickname = nickname, -- Store nickname for registration
+        senderId = senderId,
+        timestamp = os.time()
+    }
+    
+    return request_reply.request_id
+end
+
+
+--==============================================================================
+-- Network Request Handlers
+--==============================================================================
+
+local mailHandlers = {}
+function mailHandlers.get_version(senderId, message) rednet.send(senderId, { version = programVersions[message.program] or 0 }, "SimpleMail") end
+function mailHandlers.get_update(senderId, message) rednet.send(senderId, { code = programCode[message.program] }, "SimpleMail") end
+
+function mailHandlers.register(senderId, message)
+    if users[message.user] then
+        rednet.send(senderId, { success = false, reason = "Username taken." }, "SimpleMail")
+        return
+    end
+    local requestId = requestAuthCode(message.user, sha1.hex(message.pass), message.nickname, senderId, "register")
+    if requestId then
+        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
+    end
+end
+
+function mailHandlers.login(senderId, message)
+    local storedHash = users[message.user] and users[message.user].password
+    if not storedHash or storedHash ~= sha1.hex(message.pass) then
+        rednet.send(senderId, { success = false, reason = "Invalid username or password." }, "SimpleMail")
+        return
+    end
+
+    if message.session_token and users[message.user].session_token == message.session_token then
+        logActivity("User '" .. message.user .. "' logged in with session token.")
+        rednet.send(senderId, {
+            success = true,
+            needs_auth = false,
+            nickname = users[message.user].nickname,
+            unreadCount = #loadMail(message.user)
+        }, "SimpleMail")
+        return
+    end
+
+    local requestId = requestAuthCode(message.user, sha1.hex(message.pass), nil, senderId, "login")
+    if requestId then
+        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
+    end
+end
+
+function mailHandlers.submit_auth_token(senderId, message)
+    local user, code = message.user, message.token
+    logActivity("Received auth code from user '" .. user .. "'")
+
+    local authData = pendingAuths[user]
+    if not authData then
+        rednet.send(senderId, { success = false, reason = "No pending authentication for this user." }, "SimpleMail")
+        return
+    end
+
+    logActivity("Verifying code with HyperAuth server for request ID: " .. authData.request_id)
+    local verify_reply, verify_err = AuthClient.verifyCode(AUTH_SERVER_PROTOCOL, {
+        request_id = authData.request_id,
+        code       = code,
+    })
+
+    if not verify_reply then
+        logActivity("HyperAuth verifyCode error: " .. tostring(verify_err), true)
+        rednet.send(senderId, { success = false, reason = "Authentication service error." }, "SimpleMail")
+        return
+    end
+
+    if verify_reply.ok then
+        local response_payload = {}
+        local new_session_token = sha1.hex(os.time() .. math.random())
+        
+        if not users[user] then -- This is a registration
+            users[user] = { password = authData.password, nickname = authData.nickname, session_token = new_session_token }
+            accounts[user] = 0
+            if saveTableToFile(USERS_DB, users) and saveTableToFile(ACCOUNTS_DB, accounts) then
+                response_payload = { success = true, unreadCount = 0, nickname = authData.nickname, session_token = new_session_token }
+                logActivity("New user '" .. user .. "' successfully verified and registered.")
+            else
+                response_payload = { success = false, reason = "Server database error." }
+            end
+        else -- This is a login
+            users[user].session_token = new_session_token
+            saveTableToFile(USERS_DB, users)
+            response_payload = { success = true, unreadCount = #loadMail(user), nickname = users[user].nickname, session_token = new_session_token }
+            logActivity("User '" .. user .. "' successfully verified and logged in.")
+        end
+        rednet.send(senderId, response_payload, "SimpleMail")
+        pendingAuths[user] = nil -- Clean up successful auth
+    else
+        rednet.send(senderId, { success = false, reason = verify_reply.reason or "Invalid authentication code." }, "SimpleMail")
+        logActivity("Auth failed for "..user..": " .. (verify_reply.reason or "Unknown reason"), true)
+    end
+end
+
+function mailHandlers.set_nickname(senderId, message)
+    local user, new_nickname = message.user, message.new_nickname
+    if users[user] and new_nickname and new_nickname ~= "" then
+        users[user].nickname = new_nickname
+        if saveTableToFile(USERS_DB, users) then
+            rednet.send(senderId, { success = true, new_nickname = new_nickname }, "SimpleMail")
+            logActivity("User '" .. user .. "' changed nickname to '" .. new_nickname .. "'.")
+        else
+            rednet.send(senderId, { success = false, reason = "Database error." }, "SimpleMail")
+        end
+    else
+        rednet.send(senderId, { success = false, reason = "Invalid request." }, "SimpleMail")
+    end
+end
+
+function mailHandlers.user_exists(senderId, message)
+    local recipient = message.user; local exists = false
+    if recipient and recipient ~= "" then
+        if recipient == "@all" then exists = true
+        elseif string.sub(recipient, 1, 1) == "@" then exists = lists[string.sub(recipient, 2)] ~= nil
+        else exists = users[recipient] ~= nil end
+    end
+    rednet.send(senderId, { exists = exists }, "SimpleMail")
+end
+function mailHandlers.send(senderId, message)
+    local mail = message.mail
+    if mail.to == "@all" then
+        for user, _ in pairs(users) do saveItem(user, mail, "mail") end
+        logActivity(string.format("Mail from '%s' sent to @all", mail.from_nickname))
+    elseif string.sub(mail.to, 1, 1) == "@" then
+        local listName = string.sub(mail.to, 2)
+        if lists[listName] then
+            for _, member in ipairs(lists[listName]) do saveItem(member, mail, "mail") end
+            logActivity(string.format("Mail from '%s' sent to list '%s'", mail.from_nickname, listName))
+        end
+    else
+        saveItem(mail.to, mail, "mail")
+        logActivity(string.format("Mail sent from '%s' to '%s'", mail.from_nickname, mail.to))
+    end
+    rednet.send(senderId, { status = "Mail sent successfully!" }, "SimpleMail")
+end
+function mailHandlers.fetch(senderId, message) rednet.send(senderId, { mail = loadMail(message.user) }, "SimpleMail") end
+function mailHandlers.delete(senderId, message) if deleteItem(message.user, message.id, "mail") then logActivity(string.format("User '%s' deleted mail item '%s'", message.user, message.id)) end end
+function mailHandlers.create_list(senderId, message)
+    if lists[message.name] then rednet.send(senderId, { success = false, status = "A list with that name already exists." }, "SimpleMail")
+    else
+        lists[message.name] = { message.creator }
+        if saveTableToFile(LISTS_DB, lists) then
+            rednet.send(senderId, { success = true, status = "List '"..message.name.."' created." }, "SimpleMail")
+            logActivity(string.format("User '%s' created list '%s'", message.creator, message.name))
+        end
+    end
+end
+function mailHandlers.join_list(senderId, message)
+    if not lists[message.name] then rednet.send(senderId, { success = false, status = "That list does not exist." }, "SimpleMail"); return end
+    for _, member in ipairs(lists[message.name]) do if member == message.user then rednet.send(senderId, { success = false, status = "You are already a member of that list." }, "SimpleMail"); return end end
+    table.insert(lists[message.name], message.user)
+    if saveTableToFile(LISTS_DB, lists) then
+        rednet.send(senderId, { success = true, status = "Successfully joined list '"..message.name.."'." }, "SimpleMail")
+        logActivity(string.format("User '%s' joined list '%s'", message.user, message.name))
+    end
+end
+function mailHandlers.get_lists(senderId, message) rednet.send(senderId, { lists = lists }, "SimpleMail") end
+function mailHandlers.get_motd(senderId, message) rednet.send(senderId, { motd = motd }, "SimpleMail") end
+function mailHandlers.get_chat_history(senderId, message) rednet.send(senderId, { history = chatHistory }, "SimpleMail") end
+function mailHandlers.get_unread_count(senderId, message) rednet.send(senderId, { type = "unread_count_response", count = #loadMail(message.user) }, "SimpleMail") end
+function mailHandlers.get_gamelist(senderId, message) rednet.send(senderId, { type = "gamelist_response", games = gameList }, "SimpleMail") end
+
+-- Game Updater Handlers
+function mailHandlers.get_all_game_versions(senderId, message)
+    local versions = {}
+    for filename, data in pairs(gameCode) do
+        versions[filename] = data.version
+    end
+    rednet.send(senderId, { type = "game_versions_response", versions = versions }, "SimpleMail")
+end
+
+function mailHandlers.get_game_update(senderId, message)
+    local filename = message.filename
+    if gameCode[filename] then
+        rednet.send(senderId, { type = "game_update_response", filename = filename, code = gameCode[filename].code }, "SimpleMail")
+    end
+end
+
+local gameHandlers = {}
+function gameHandlers.submit_score(senderId, message)
+    local game, user, score = message.game, message.user, message.score
+    if not games[game] then games[game] = {} end
+    if not games[game][user] or score > games[game][user] then
+        games[game][user] = score
+        if saveTableToFile(GAMES_DB, games) then
+            logActivity(string.format("New high score for '%s' in '%s': %d", user, game, score))
+        end
+    end
+end
+function gameHandlers.get_leaderboard(senderId, message)
+    local game = message.game
+    local leaderboard = (games[game]) or {}
+    rednet.send(senderId, { leaderboard = leaderboard }, "ArcadeGames")
+end
+
+local bankHandlers = {}
+function bankHandlers.login(senderId, message)
+    local storedHash = users[message.user] and users[message.user].password
+    if storedHash and storedHash == sha1.hex(message.pass) then
+        if not accounts[message.user] then accounts[message.user] = 0 end
+        rednet.send(senderId, { success = true, balance = accounts[message.user] }, "DB_Bank")
+    else
+        rednet.send(senderId, { success = false, reason = "Invalid username or password." }, "DB_Bank")
+    end
+end
+function bankHandlers.get_balance(senderId, message)
+    rednet.send(senderId, { balance = accounts[message.user] or 0 }, "DB_Bank")
+end
+function bankHandlers.deposit(senderId, message)
+    local user, amount = message.user, message.amount
+    accounts[user] = (accounts[user] or 0) + amount
+    if saveTableToFile(ACCOUNTS_DB, accounts) then
+        rednet.send(senderId, { success = true, newBalance = accounts[user] }, "DB_Bank")
+        logActivity(string.format("User '%s' deposited %d.", user, amount))
+    end
+end
+function bankHandlers.withdraw(senderId, message)
+    local user, amount = message.user, message.amount
+    if (accounts[user] or 0) >= amount then
+        accounts[user] = accounts[user] - amount
+        if saveTableToFile(ACCOUNTS_DB, accounts) then
+            rednet.send(senderId, { success = true, newBalance = accounts[user] }, "DB_Bank")
+            logActivity(string.format("User '%s' withdrew %d.", user, amount))
+        end
+    else
+        rednet.send(senderId, { success = false, reason = "Insufficient funds." }, "DB_Bank")
+    end
+end
+
+--==============================================================================
+-- Admin Command Handlers & Main Loops
+--==============================================================================
+
+local adminCommands = {}
+function adminCommands.help() logActivity("--- Admin Commands ---"); logActivity("users, deluser, lists, dellist, board, delscore, motd, broadcast, publish, addgame, delgame, games, publishgame, makecard, balance, setbalance, give") end
+function adminCommands.users() logActivity("Registered Users:"); for user, data in pairs(users) do logActivity("- " .. user .. " (Nick: " .. (data.nickname or "N/A") .. ")") end end
+function adminCommands.deluser(args) local user = args[2]; if not user then logActivity("Usage: deluser <name>"); return end; if users[user] then users[user] = nil; saveTableToFile(USERS_DB, users); logActivity("Deleted user: " .. user) else logActivity("User not found: " .. user) end end
+function adminCommands.lists() logActivity("Mailing Lists:"); for name, members in pairs(lists) do logActivity(string.format("- %s (%d members)", name, #members)) end end
+function adminCommands.dellist(args) local listName = args[2]; if not listName then logActivity("Usage: dellist <name>"); return end; if lists[listName] then lists[listName] = nil; saveTableToFile(LISTS_DB, lists); logActivity("Deleted list: " .. listName) else logActivity("List not found: " .. listName) end end
+function adminCommands.board(args)
+    local gameName = args[2]; if not gameName then logActivity("Usage: board <game_name>"); return end
+    if games[gameName] then
+        logActivity("Leaderboard for " .. gameName .. ":")
+        for user, score in pairs(games[gameName]) do logActivity(string.format("- %s: %d", user, score)) end
+    else logActivity("No leaderboard found for game: " .. gameName) end
+end
+function adminCommands.delscore(args)
+    local gameName, user = args[2], args[3]; if not gameName or not user then logActivity("Usage: delscore <game_name> <user_name>"); return end
+    if games[gameName] and games[gameName][user] then
+        games[gameName][user] = nil; saveTableToFile(GAMES_DB, games)
+        logActivity(string.format("Deleted score for '%s' in '%s'", user, gameName))
+    else logActivity(string.format("No score for user '%s' in game '%s'", user, gameName)) end
+end
+function adminCommands.motd(args) table.remove(args, 1); motd = table.concat(args, " "); local file = fs.open(MOTD_FILE, "w"); if file then file.write(motd); file.close() end; logActivity("New MOTD set.") end
+function adminCommands.broadcast(args) table.remove(args, 1); local text = table.concat(args, " "); rednet.broadcast({ type = "broadcast", text = text }, "SimpleMail"); logActivity("Broadcast sent: " .. text) end
+function adminCommands.publish(args)
+    local progName, newVersionStr = args[2], args[3]; if not progName or not newVersionStr then logActivity("Usage: publish <prog> <ver>"); return end
+    local newVersion = tonumber(newVersionStr); if not newVersion then logActivity("Error: Version must be a number."); return end
+    logActivity("Waiting for publication of '"..progName.."' v"..newVersion.."..."); local _, message = rednet.receive("Publication", 15)
+    if message and message.code then programCode[progName] = message.code; programVersions[progName] = newVersion; saveTableToFile(UPDATER_DB, {v=programVersions, c=programCode}); logActivity("Published "..progName.." version "..programVersions[progName])
+    else logActivity("Publication timed out or failed.") end
+end
+function adminCommands.addgame(args)
+    local name, file = args[2], args[3]; if not name or not file then logActivity("Usage: addgame <DisplayName> <filename>"); return end
+    table.insert(gameList, {name = name, file = file}); saveTableToFile(GAMELIST_DB, gameList)
+    logActivity("Added game '"..name.."' to the list.")
+end
+function adminCommands.delgame(args)
+    local name = args[2]; if not name then logActivity("Usage: delgame <DisplayName>"); return end
+    for i, game in ipairs(gameList) do
+        if game.name == name then
+            table.remove(gameList, i); saveTableToFile(GAMELIST_DB, gameList)
+            logActivity("Removed game '"..name.."' from the list."); return
+        end
+    end
+    logActivity("Game '"..name.."' not found in the list.")
+end
+function adminCommands.games()
+    logActivity("Available Games:")
+    for _, game in ipairs(gameList) do logActivity("- "..game.name.." (file: "..game.file..")") end
+end
+function adminCommands.publishgame(args)
+    local filename = args[2]
+    if not filename then logActivity("Usage: publishgame <filename>", true); return end
+    if not fs.exists(filename) then logActivity("Error: File '"..filename.."' not found.", true); return end
+    
+    local file = fs.open(filename, "r")
+    if not file then logActivity("Error: Could not open file.", true); return end
+    local content = file.readAll()
+    file.close()
+
+    local version = string.match(content, "%-%-%s*Version:%s*([%d%.]+)")
+    if not version then
+        logActivity("Error: Game file must contain a version comment, e.g. '-- Version: 1.0'", true)
+        return
+    end
+    
+    gameCode[filename] = { code = content, version = tonumber(version) }
+    if saveTableToFile(GAMES_CODE_DB, gameCode) then
+        logActivity("Published game '"..filename.."' version " .. version)
+    else
+        logActivity("Error: Failed to save game code to database.", true)
+    end
+end
+function adminCommands.makecard(args)
+    local user = args[2]
+    if not user then logActivity("Usage: makecard <username>", true); return end
+    if not users[user] then logActivity("Error: User '"..user.."' does not exist.", true); return end
+    
+    local disk = peripheral.find("drive")
+    if not disk then logActivity("Error: No disk drive attached to the server.", true); return end
+    
+    if not disk.isDiskPresent() then logActivity("Error: No disk in the drive.", true); return end
+
+    local mount_path = disk.getMountPath()
+    if not mount_path then
+        logActivity("Error: Could not get disk mount path.", true)
+        return
+    end
+
+    disk.setDiskLabel("Drunken Beard Bank Card")
+    local file = fs.open(mount_path .. "/.bankcard", "w")
+    if file then
+        file.write(user)
+        file.close()
+        logActivity("Successfully created bank card for " .. user)
+    else
+        logActivity("Error: Could not write to disk.", true)
+    end
+end
+function adminCommands.balance(args)
+    local user = args[2]; if not user then logActivity("Usage: balance <user>"); return end
+    logActivity("Balance for "..user..": "..(accounts[user] or 0))
+end
+function adminCommands.setbalance(args)
+    local user, amount = args[2], tonumber(args[3])
+    if not user or not amount then logActivity("Usage: setbalance <user> <amount>"); return end
+    accounts[user] = amount; saveTableToFile(ACCOUNTS_DB, accounts)
+    logActivity("Set balance for "..user.." to "..amount)
+end
+function adminCommands.give(args)
+    local user, amount = args[2], tonumber(args[3])
+    if not user or not amount then logActivity("Usage: give <user> <amount>"); return end
+    accounts[user] = (accounts[user] or 0) + amount; saveTableToFile(ACCOUNTS_DB, accounts)
+    logActivity("Gave "..amount.." to "..user..". New balance: "..accounts[user])
+end
+
+local function handleAdminCommand(command)
+    local args = {}; for arg in string.gmatch(command, "[^%s]+") do table.insert(args, arg) end
+    local cmd = args[1]; if adminCommands[cmd] then adminCommands[cmd](args) else logActivity("Unknown command. Type 'help'.") end
+end
+
+local function networkListener()
+    while true do
+        local senderId, message, protocol = rednet.receive()
+        if protocol == "SimpleMail" and message and message.type and mailHandlers[message.type] then
+            mailHandlers[message.type](senderId, message)
+        elseif protocol == "SimpleChat" and message and message.from then
+            local nickname = (users[message.from] and users[message.from].nickname) or message.from
+            local entry = string.format("[%s]: %s", nickname, message.text)
+            table.insert(chatHistory, entry)
+            if #chatHistory > 100 then table.remove(chatHistory, 1) end
+            saveTableToFile(CHAT_DB, chatHistory)
+            rednet.broadcast({ from = nickname, text = message.text }, "SimpleChat")
+        elseif protocol == "ArcadeGames" and message and message.type and gameHandlers[message.type] then
+            gameHandlers[message.type](senderId, message)
+        elseif protocol == "DB_Bank" and message and message.type and bankHandlers[message.type] then
+            bankHandlers[message.type](senderId, message)
+        end
+    end
+end
+
+local function adminTerminal()
+    while true do
+        local event, p1 = os.pullEvent()
+        if event == "key" then
+            if p1 == keys.enter then
+                if adminInput ~= "" then handleAdminCommand(adminInput); adminInput = "" end
+            elseif p1 == keys.backspace then adminInput = string.sub(adminInput, 1, -2) end
+        elseif event == "char" then adminInput = adminInput .. p1 end
+        redrawAdminUI()
+    end
+end
+
+local function main()
+    loadAllData()
+    rednet.open("back")
+    rednet.host("SimpleMail", "mail.server")
+    rednet.host("SimpleChat", "chat.server")
+    rednet.host("ArcadeGames", "arcade.server")
+    rednet.host("DB_Bank", "bank.server")
+    logActivity("Server started. Type 'help' for commands.")
+    parallel.waitForAny(networkListener, adminTerminal)
+end
+
+main()
