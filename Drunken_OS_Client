@@ -1,0 +1,744 @@
+--[[
+    SimpleMail & Chat Client (v9.3 - Arcade Auto-Updater)
+    by Gemini Gem
+
+    Purpose:
+    This version adds a full-featured game auto-updater. When the user
+    enters the Arcade menu, the client now automatically checks for new
+    or updated games from the server and installs them before displaying
+    the game list, using the existing OS publish infrastructure.
+]]
+
+--==============================================================================
+-- Embedded SHA1 Library
+--==============================================================================
+
+local sha1 = {}
+local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
+local function rol(n, c) return bor(lshift(n, c), rshift(n, 32 - c)) end
+local function str_to_bin(str) local t = {}; for i = 1, #str do t[i] = string.byte(str, i) end; return t end
+local function bin_to_hex(bin) local hex = ""; for i = 1, #bin do hex = hex .. string.format("%02x", bin[i]) end; return hex end
+function sha1.hex(s) return bin_to_hex(sha1.bin(s)) end
+function sha1.bin(s)
+  local H0, H1, H2, H3, H4 = 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0
+  local str = str_to_bin(s); local len = #str; str[len + 1] = 0x80
+  for i = len + 2, (len + 64) - ((len + 8) % 64) do str[i] = 0 end
+  local bit_len = len * 8
+  for i = 0, 7 do str[#str + 1] = band(rshift(bit_len, (7 - i) * 8), 0xff) end
+  for i = 1, #str, 64 do
+    local W = {}; for j = 0, 15 do W[j] = bor(lshift(str[i+j*4], 24), lshift(str[i+j*4+1], 16), lshift(str[i+j*4+2], 8), str[i+j*4+3]) end
+    for j = 16, 79 do W[j] = rol(bxor(W[j-3], W[j-8], W[j-14], W[j-16]), 1) end
+    local a,b,c,d,e = H0,H1,H2,H3,H4
+    for j = 0, 79 do
+      local f, k
+      if j < 20 then f = bxor(d, band(b, bxor(c, d))); k = 0x5A827999
+      elseif j < 40 then f = bxor(b, c, d); k = 0x6ED9EBA1
+      elseif j < 60 then f = bor(band(b, c), band(b, d), band(c, d)); k = 0x8F1BBCDC
+      else f = bxor(b, c, d); k = 0xCA62C1D6 end
+      local temp = rol(a, 5) + f + e + W[j] + k; e=d; d=c; c=rol(b, 30); b=a; a=temp
+    end
+    H0=(H0+a); H1=(H1+b); H2=(H2+c); H3=(H3+d); H4=(H4+e)
+  end
+  local result = {}; for i=0,3 do result[i+1]=band(rshift(H0,(3-i)*8),0xff) end; for i=0,3 do result[i+5]=band(rshift(H1,(3-i)*8),0xff) end; for i=0,3 do result[i+9]=band(rshift(H2,(3-i)*8),0xff) end; for i=0,3 do result[i+13]=band(rshift(H3,(3-i)*8),0xff) end; for i=0,3 do result[i+17]=band(rshift(H4,(3-i)*8),0xff) end
+  return result
+end
+
+--==============================================================================
+-- Configuration & State
+--==============================================================================
+
+local currentVersion = 9.3
+local programName = "mail"
+local SESSION_FILE = ".session"
+
+local mailServerId, chatServerId, arcadeServerId = nil, nil, nil
+local username = nil
+local nickname = nil
+local unreadCount = 0
+
+local hasColor = term.isColor and term.isColor()
+local function safeColor(colorName, fallbackColor)
+    if hasColor and colors[colorName] ~= nil then return colors[colorName] end
+    return fallbackColor
+end
+
+local theme = {
+    bg = safeColor("black", colors.black),
+    text = safeColor("white", colors.white),
+    windowBg = safeColor("darkGray", colors.gray),
+    border = safeColor("lightGray", colors.white),
+    title = safeColor("green", colors.lime),
+    prompt = safeColor("cyan", colors.cyan),
+    highlightBg = safeColor("blue", colors.blue),
+    highlightText = safeColor("white", colors.white),
+    statusBarBg = safeColor("gray", colors.lightGray),
+    statusBarText = safeColor("white", colors.white),
+}
+
+--==============================================================================
+-- Core Utility & UI Functions
+--==============================================================================
+
+local function getSafeSize() local w, h = term.getSize(); while not w or not h do sleep(0.05); w, h = term.getSize() end; return w, h end
+local function wordWrap(text, width)
+    local finalLines = {}
+    for line in string.gmatch(text, "[^\n]+") do
+        if #line <= width then
+            table.insert(finalLines, line)
+        else
+            local currentWrappedLine = ""
+            for word in string.gmatch(line, "[^%s]+") do
+                if #currentWrappedLine + #word + 1 > width then
+                    table.insert(finalLines, currentWrappedLine)
+                    currentWrappedLine = word
+                else
+                    currentWrappedLine = currentWrappedLine == "" and word or (currentWrappedLine .. " " .. word)
+                end
+            end
+            table.insert(finalLines, currentWrappedLine)
+        end
+    end
+    return finalLines
+end
+local function clear() term.setBackgroundColor(theme.bg); term.clear(); term.setCursorPos(1, 1) end
+
+local function drawWindow(title)
+    clear()
+    local w, h = getSafeSize()
+    term.setBackgroundColor(theme.windowBg); for y = 1, h - 1 do term.setCursorPos(1, y); term.write(string.rep(" ", w)) end
+    term.setBackgroundColor(theme.title); term.setCursorPos(1, 1); term.write(string.rep(" ", w)); term.setTextColor(colors.white)
+    local titleText = " " .. title .. " "; term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); term.write(titleText)
+    
+    term.setBackgroundColor(theme.statusBarBg); term.setTextColor(theme.statusBarText); term.setCursorPos(1, h); term.write(string.rep(" ", w))
+    local userText = "User: " .. (nickname or "Guest")
+    local versionText = "v" .. currentVersion
+    
+    if w < 35 then
+        local statusText = userText .. " | " .. versionText
+        term.setCursorPos(math.floor((w - #statusText) / 2) + 1, h)
+        term.write(statusText)
+    else
+        local helpText = "See 'Help' Menu for Controls"
+        term.setCursorPos(2, h); term.write(userText)
+        term.setCursorPos(w - #versionText, h); term.write(versionText)
+        term.setCursorPos(math.floor((w - #helpText) / 2) + 1, h); term.write(helpText)
+    end
+
+    term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.text)
+end
+
+local function drawMenu(options, selectedIndex, startX, startY)
+    for i, option in ipairs(options) do
+        local text = option
+        if option == "View Inbox" and unreadCount > 0 then text = text .. " [" .. unreadCount .. "]" end
+        term.setCursorPos(startX, startY + i - 1)
+        if i == selectedIndex then
+            term.setBackgroundColor(theme.highlightBg); term.setTextColor(theme.highlightText)
+            term.write("> " .. text .. string.rep(" ", 25 - #text))
+        else
+            term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.text)
+            term.write("  " .. text .. string.rep(" ", 25 - #text))
+        end
+    end
+    term.setBackgroundColor(theme.windowBg)
+end
+local function showMessage(title, message) drawWindow(title); local w, h = getSafeSize(); local lines = wordWrap(message, w - 4); for i, line in ipairs(lines) do term.setCursorPos(3, 4 + i - 1); term.write(line) end; term.setCursorPos(3, 4 + #lines + 1); term.setTextColor(theme.prompt); term.write("Press any key to continue..."); os.pullEvent("key"); term.setTextColor(theme.text) end
+local function readInput(prompt, y, hideText)
+    local x = 2; term.setTextColor(theme.prompt); term.setCursorPos(x, y); term.write(prompt); term.setTextColor(theme.text)
+    term.setCursorPos(x + #prompt, y); term.setCursorBlink(true)
+    local input = hideText and read("*") or read()
+    term.setCursorBlink(false); return input
+end
+
+--==============================================================================
+-- Network & Helper Functions
+--==============================================================================
+
+local function findServers()
+    drawWindow("Connecting"); term.setCursorPos(2, 4); term.write("Searching for servers...")
+    mailServerId = rednet.lookup("SimpleMail", "mail.server")
+    chatServerId = rednet.lookup("SimpleChat", "chat.server")
+    arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
+    if not mailServerId or not chatServerId or not arcadeServerId then
+        return false
+    end
+    return true
+end
+
+local function getLocalVersion(fileName)
+    if not fs.exists(fileName) then return 0 end
+    local file = fs.open(fileName, "r")
+    if not file then return 0 end
+    local content = file.readAll()
+    file.close()
+    
+    local versionStr = string.match(content, "%-%-%s*Version:%s*([%d%.]+)")
+    if versionStr then
+        return tonumber(versionStr) or 0
+    end
+    return 0
+end
+
+local function autoUpdateCheck()
+    drawWindow("Updater"); term.setCursorPos(2, 4); term.write("Checking for client updates...")
+    rednet.send(mailServerId, {type = "get_version", program = programName}, "SimpleMail")
+    local _, response = rednet.receive("SimpleMail", 3)
+    
+    if response and response.version and response.version > currentVersion then
+        term.setCursorPos(2, 6); term.write("Update found! v"..response.version.." is available."); term.setCursorPos(2, 7); term.write("Downloading...")
+        rednet.send(mailServerId, {type = "get_update", program = programName}, "SimpleMail")
+        local _, update = rednet.receive("SimpleMail", 10)
+        
+        if update and update.code then
+            local savePath = shell.getRunningProgram()
+            local file = fs.open(savePath, "w")
+            if not file then
+                showMessage("Update Error", "Could not open file for writing.")
+                return
+            end
+            file.write(update.code)
+            file.close()
+            
+            term.setCursorPos(2, 9); term.write("Update complete! Restarting...")
+            sleep(2)
+            shell.run(savePath)
+            return true
+        else
+            showMessage("Error", "Update download failed.")
+        end
+    end
+    return false
+end
+
+--==============================================================================
+-- Application Screens
+--==============================================================================
+
+local function readMail(mail)
+    local w, h = getSafeSize(); local bodyLines = wordWrap(mail.body, w - 3); local scroll = 1
+    while true do
+        drawWindow("Read Mail"); local y = 3
+        term.setCursorPos(2, y); term.write("From:    " .. mail.from_nickname); term.setCursorPos(2, y+1); term.write("To:      " .. mail.to); term.setCursorPos(2, y+2); term.write("Subject: " .. mail.subject)
+        term.setCursorPos(2, y+4); term.write(string.rep("-", w - 2)); y = y + 5
+        local bodyDisplayHeight = h - y - (mail.attachment and 6 or 2)
+        for i = 1, bodyDisplayHeight do
+            local lineIndex = scroll + i - 1
+            if lineIndex <= #bodyLines then term.setCursorPos(2, y + i - 1); term.write(bodyLines[lineIndex]) end
+        end
+        y = y + bodyDisplayHeight + 1
+        if mail.attachment then
+            term.setCursorPos(2, y); term.write(string.rep("-", w - 2)); y = y + 1
+            term.setCursorPos(2, y); term.write("Attachment: " .. mail.attachment.name); y = y + 2
+            term.setTextColor(theme.prompt); term.setCursorPos(2, y); term.write("Save this file? (Y/N)")
+        else
+            term.setTextColor(theme.prompt); term.setCursorPos(2, h - 2); term.write("Press TAB to return...")
+        end
+        local event, key = os.pullEvent("key")
+        if key == keys.up then scroll = math.max(1, scroll - 1)
+        elseif key == keys.down then scroll = math.min(math.max(1, #bodyLines - bodyDisplayHeight + 1), scroll + 1)
+        elseif key == keys.tab or key == keys.q then break
+        elseif mail.attachment and key == keys.y then
+            local saveName = mail.attachment.name
+            if fs.exists(saveName) then
+                drawWindow("Confirm Overwrite")
+                local message = "File '"..saveName.."' already exists."; local lines = wordWrap(message, w - 4)
+                for i, line in ipairs(lines) do term.setCursorPos(3, 4 + i - 1); term.write(line) end
+                local overwrite = readInput("Overwrite? (y/n): ", 4 + #lines + 1)
+                if not overwrite or string.lower(overwrite) ~= "y" then showMessage("Cancelled", "Save operation cancelled."); break end
+            end
+            local file = fs.open(saveName, "w")
+            if file then file.write(mail.attachment.content); file.close(); showMessage("Success", "File saved as '"..saveName.."'")
+            else showMessage("Error", "Could not open file for writing.") end
+            break
+        elseif mail.attachment and key == keys.n then showMessage("Cancelled", "Save operation cancelled."); break end
+    end
+end
+local function viewInbox()
+    unreadCount = 0
+    drawWindow("Inbox"); term.setCursorPos(2, 4); term.write("Fetching mail..."); rednet.send(mailServerId, { type = "fetch", user = username }, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 10)
+    if not response or not response.mail then showMessage("Error", "Could not retrieve mail."); return end
+    local inbox = response.mail; if #inbox == 0 then showMessage("Inbox", "Your inbox is empty."); return end
+    table.sort(inbox, function(a, b) return a.timestamp > b.timestamp end); local selected = 1; local scroll = 1
+    while true do
+        drawWindow("Inbox"); local w, h = getSafeSize(); local listHeight = h - 5
+        for i = scroll, math.min(scroll + listHeight - 1, #inbox) do local mail = inbox[i]; local line = string.format("From: %-15s Subject: %s", mail.from_nickname, mail.subject); if mail.attachment then line = line .. " [FILE]" end; term.setCursorPos(2, 2 + (i - scroll) + 1); if i == selected then term.setBackgroundColor(theme.highlightBg); term.setTextColor(theme.highlightText) else term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.text) end; term.write(string.sub(line, 1, w - 2)) end
+        term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.prompt); local helpText = "ENTER: Read | D/DEL: Delete | Q/TAB: Back"; term.setCursorPos(w - #helpText, h - 2); term.write(helpText)
+        local event, key = os.pullEvent("key"); if key == keys.up then selected = math.max(1, selected - 1); if selected < scroll then scroll = selected end elseif key == keys.down then selected = math.min(#inbox, selected + 1); if selected >= scroll + listHeight then scroll = selected - listHeight + 1 end elseif key == keys.enter then readMail(inbox[selected]) elseif key == keys.delete or key == keys.d then rednet.send(mailServerId, {type = "delete", user = username, id = inbox[selected].id}, "SimpleMail"); table.remove(inbox, selected); if #inbox == 0 then break end; selected = math.max(1, math.min(selected, #inbox)) elseif key == keys.tab or key == keys.q then break end
+    end
+end
+local function composeAndSend(to, subject, attachment)
+    drawWindow("Compose Mail Body")
+    local w, h = getSafeSize(); local helpText = "ENTER on empty line to send"
+    term.setBackgroundColor(theme.statusBarBg); term.setTextColor(theme.statusBarText); term.setCursorPos(w - #helpText, h); term.write(helpText)
+    term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.prompt); term.setCursorPos(2, 4); term.write("Enter message body (optional for files)."); term.setTextColor(theme.text)
+    local bodyLines = {}; local y = 6
+    while y < h - 2 do
+        term.setCursorPos(2, y); term.setCursorBlink(true)
+        local line = read(); term.setCursorBlink(false)
+        if line == "" then break end
+        table.insert(bodyLines, line); y = y + 1
+    end
+    local body = table.concat(bodyLines, "\n")
+    local mail = { from = username, from_nickname = nickname, to = to, subject = subject, body = body, timestamp = os.time(), attachment = attachment }
+    rednet.send(mailServerId, { type = "send", mail = mail }, "SimpleMail"); drawWindow("Sending..."); term.setCursorPos(2, 4); term.write("Sending mail...")
+    local _, confirm = rednet.receive("SimpleMail", 10)
+    if confirm and confirm.status then showMessage("Success", confirm.status) else showMessage("Error", "No response from server.") end
+end
+local function sendMail()
+    drawWindow("Compose Mail"); local to = readInput("To: ", 4)
+    if not to or to == "" then return end
+    rednet.send(mailServerId, { type = "user_exists", user = to }, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 3)
+    if not response or not response.exists then showMessage("Error", "Recipient '"..to.."' not found."); return end
+    local subject = readInput("Subject: ", 6); if not subject then subject = "(No Subject)" end
+    composeAndSend(to, subject, nil)
+end
+local function sendFile()
+    drawWindow("Send File"); local fileName = readInput("File to send: ", 4)
+    if not fileName or fileName == "" then return end
+    if not fs.exists(fileName) then showMessage("Error", "File not found."); return end
+    local to = readInput("To: ", 6)
+    if not to or to == "" then return end
+    rednet.send(mailServerId, { type = "user_exists", user = to }, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 3)
+    if not response or not response.exists then showMessage("Error", "Recipient '"..to.."' not found."); return end
+    local subject = readInput("Subject: ", 8); if not subject then subject = "(No Subject)" end
+    local file = fs.open(fileName, "r"); if not file then showMessage("Error", "Could not open file."); return end
+    local content = file.readAll(); file.close()
+    local attachment = { name = fs.getName(fileName), content = content }
+    composeAndSend(to, subject, attachment)
+end
+local function manageLists()
+    local options = {"View All Lists", "Create a List", "Join a List", "Back"}; local selected = 1
+    while true do
+        drawWindow("Mailing Lists"); drawMenu(options, selected, 2, 4)
+        local event, key = os.pullEvent("key"); if key == keys.up then selected = (selected == 1) and #options or selected - 1 elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+        elseif key == keys.enter then
+            if selected == 1 then
+                drawWindow("All Lists"); term.setCursorPos(2, 4); term.write("Fetching lists..."); rednet.send(mailServerId, { type = "get_lists" }, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 5)
+                if response and response.lists then
+                    drawWindow("All Lists"); local listTable = {}; for name, members in pairs(response.lists) do table.insert(listTable, {name = name, members = #members}) end
+                    if #listTable == 0 then showMessage("All Lists", "There are no mailing lists.")
+                    else local y = 4; for _, listData in ipairs(listTable) do term.setCursorPos(2, y); term.write(string.format("@%s (%d members)", listData.name, listData.members)); y = y + 1 end; term.setCursorPos(2, y + 1); term.setTextColor(theme.prompt); term.write("Press any key to continue..."); os.pullEvent("key") end
+                else showMessage("Error", "Could not fetch lists.") end
+            elseif selected == 2 then
+                drawWindow("Create List"); local name = readInput("New list name: @", 4)
+                if name and name ~= "" then rednet.send(mailServerId, { type = "create_list", name = name, creator = username }, "SimpleMail"); local _, r = rednet.receive("SimpleMail", 5); if r and r.status then showMessage("Server Response", r.status) else showMessage("Error", "No response.") end end
+            elseif selected == 3 then
+                drawWindow("Join List"); local name = readInput("List to join: @", 4)
+                if name and name ~= "" then rednet.send(mailServerId, { type = "join_list", name = name, user = username }, "SimpleMail"); local _, r = rednet.receive("SimpleMail", 5); if r and r.status then showMessage("Server Response", r.status) else showMessage("Error", "No response.") end end
+            elseif selected == 4 then break end
+        elseif key == keys.tab then break end
+    end
+end
+local function startChat()
+    drawWindow("General Chat"); term.setCursorPos(2, 4); term.write("Fetching history..."); rednet.send(mailServerId, {type = "get_chat_history"}, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 5)
+    local history = (response and response.history) or {}; local input = ""; local lastMessage = ""
+    local function redrawAll()
+        drawWindow("General Chat"); local w, h = getSafeSize(); local line_y = h - 3
+        for i = #history, 1, -1 do
+            local wrapped = wordWrap(history[i], w - 2)
+            for j = #wrapped, 1, -1 do if line_y < 2 then break end; term.setCursorPos(2, line_y); term.write(wrapped[j]); line_y = line_y - 1 end
+            if line_y < 2 then break end
+        end
+        local inputWidth = w - 4; term.setBackgroundColor(theme.windowBg); term.setCursorPos(1, h - 2); term.write(string.rep(" ", w)); term.setCursorPos(2, h - 2); term.setTextColor(theme.prompt); term.write("> "); term.setTextColor(theme.text)
+        local textToDraw = #input > inputWidth and string.sub(input, -inputWidth) or input; term.write(textToDraw)
+    end
+    local function redrawInputLineOnly()
+        local w, h = getSafeSize(); local inputWidth = w - 4; term.setBackgroundColor(theme.windowBg); term.setCursorPos(1, h - 2); term.write(string.rep(" ", w)); term.setCursorPos(2, h - 2); term.setTextColor(theme.prompt); term.write("> "); term.setTextColor(theme.text)
+        local textToDraw = #input > inputWidth and string.sub(input, -inputWidth) or input; term.write(textToDraw)
+    end
+    local function networkListener()
+        while true do
+            local _, message = rednet.receive("SimpleChat")
+            local formattedMessage = string.format("[%s]: %s", message.from, message.text)
+            if formattedMessage ~= lastMessage then table.insert(history, formattedMessage); if #history > 100 then table.remove(history, 1) end; redrawAll() end
+        end
+    end
+    local function keyboardListener()
+        while true do
+            local event, p1 = os.pullEvent()
+            if event == "key" then
+                if p1 == keys.tab then break
+                elseif p1 == keys.backspace then if #input > 0 then input = string.sub(input, 1, -2); redrawInputLineOnly() end
+                elseif p1 == keys.enter then
+                    if input ~= "" then
+                        local messageToSend = { from = username, text = input }; rednet.send(chatServerId, messageToSend, "SimpleChat")
+                        lastMessage = string.format("[%s]: %s", nickname, messageToSend.text)
+                        table.insert(history, lastMessage); if #history > 100 then table.remove(history, 1) end
+                        input = ""; redrawAll()
+                    end
+                end
+            elseif event == "char" then input = input .. p1; redrawInputLineOnly()
+            elseif event == "terminate" then break end
+        end
+    end
+    redrawAll(); parallel.waitForAny(keyboardListener, networkListener)
+end
+
+local function completeAuthentication(user)
+    drawWindow("Authentication Required")
+    local w, h = getSafeSize()
+    local message = "A token has been sent to the Auth Server admin. Please ask them for your token and enter it below."
+    local lines = wordWrap(message, w - 4)
+    for i, line in ipairs(lines) do
+        term.setCursorPos(3, 4 + i - 1)
+        term.write(line)
+    end
+    
+    local token_raw = readInput("Auth Token: ", 4 + #lines + 2, false)
+    if not token_raw or token_raw == "" then
+        showMessage("Cancelled", "Authentication cancelled.")
+        return false
+    end
+
+    -- Clean the token of any whitespace and send the RAW token
+    local token_clean = token_raw:gsub("%s+", "")
+
+    drawWindow("Verifying Token...")
+    rednet.send(mailServerId, { type = "submit_auth_token", user = user, token = token_clean }, "SimpleMail")
+    local _, response = rednet.receive("SimpleMail", 10)
+
+    if response and response.success then
+        username = user
+        nickname = response.nickname
+        unreadCount = response.unreadCount or 0
+        if response.session_token then
+            local file = fs.open(SESSION_FILE, "w")
+            if file then file.write(response.session_token); file.close() end
+        end
+        showMessage("Success", "Authentication successful!")
+        return true
+    else
+        showMessage("Authentication Failed", response.reason or "No response from server.")
+        return false
+    end
+end
+
+local function loginOrRegister()
+    local options = {"Login", "Register", "Exit"}; local selected = 1
+    while not username do
+        drawWindow("Welcome"); drawMenu(options, selected, 2, 5)
+        local event, key = os.pullEvent("key")
+        if key == keys.up then selected = (selected == 1) and #options or selected - 1
+        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+        elseif key == keys.enter then
+            if selected == 1 then -- Login
+                drawWindow("Login")
+                local user = readInput("Username: ", 5, false)
+                if user and user ~= "" then
+                    local pass = readInput("Password: ", 7, true)
+                    if pass and pass ~= "" then
+                        local session_token = nil
+                        if fs.exists(SESSION_FILE) then
+                            local file = fs.open(SESSION_FILE, "r")
+                            if file then session_token = file.readAll(); file.close() end
+                        end
+                        
+                        rednet.send(mailServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "SimpleMail")
+                        local _, response = rednet.receive("SimpleMail", 10)
+
+                        if response and response.success then
+                            if response.needs_auth then
+                                if not completeAuthentication(user) then username = nil end
+                            else -- Direct login with session was successful
+                                username = user
+                                nickname = response.nickname
+                                unreadCount = response.unreadCount or 0
+                            end
+                        else
+                            showMessage("Login Failed", response.reason or "No response.")
+                        end
+                    end
+                end
+            elseif selected == 2 then -- Register
+                drawWindow("Register")
+                local user = readInput("Choose Username: ", 5, false)
+                if user and user ~= "" then
+                    local nick = readInput("Choose Nickname: ", 7, false)
+                    if nick and nick ~= "" then
+                        local pass = readInput("Choose Password: ", 9, true)
+                        if pass and pass ~= "" then
+                            rednet.send(mailServerId, { type = "register", user = user, pass = pass, nickname = nick }, "SimpleMail")
+                            local _, response = rednet.receive("SimpleMail", 5)
+                            if response and response.success and response.needs_auth then
+                                if not completeAuthentication(user) then username = nil end
+                            else
+                                showMessage("Registration Failed", response.reason or "No response.")
+                            end
+                        end
+                    end
+                end
+            elseif selected == 3 then return false
+            end
+        elseif key == keys.tab then return false
+        end
+    end
+    return true
+end
+
+local function changeNickname()
+    drawWindow("Change Nickname")
+    local new_nick = readInput("Enter new nickname: ", 4)
+    if new_nick and new_nick ~= "" then
+        rednet.send(mailServerId, { type = "set_nickname", user = username, new_nickname = new_nick }, "SimpleMail")
+        local _, response = rednet.receive("SimpleMail", 5)
+        if response and response.success then
+            nickname = response.new_nickname
+            showMessage("Success", "Nickname changed to '" .. nickname .. "'.")
+        else
+            showMessage("Error", response.reason or "Failed to change nickname.")
+        end
+    else
+        showMessage("Cancelled", "Nickname change cancelled.")
+    end
+end
+
+local function logout()
+    if fs.exists(SESSION_FILE) then
+        fs.delete(SESSION_FILE)
+    end
+    username = nil
+    nickname = nil
+    showMessage("Logout", "You have been logged out. The next login will require authentication.")
+end
+
+local function settingsMenu()
+    local options = {"Change Nickname", "Logout", "Back"}
+    local selected = 1
+    while true do
+        drawWindow("Settings"); drawMenu(options, selected, 2, 4)
+        local event, key = os.pullEvent("key")
+        if key == keys.up then selected = (selected == 1) and #options or selected - 1
+        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+        elseif key == keys.enter then
+            if selected == 1 then changeNickname()
+            elseif selected == 2 then
+                logout()
+                return true -- Signal to exit the main menu
+            elseif selected == 3 then break
+            end
+        elseif key == keys.tab or key == keys.q then break
+        end
+    end
+    return false
+end
+
+local function gameMenu(games)
+    local options = {}
+    for _, game in ipairs(games) do table.insert(options, "Play " .. game.name) end
+    table.insert(options, "Back")
+
+    local selected = 1
+    while true do
+        drawWindow("Arcade"); drawMenu(options, selected, 2, 4)
+        local event, key = os.pullEvent("key")
+        if key == keys.up then selected = (selected == 1) and #options or selected - 1
+        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+        elseif key == keys.enter then
+            if selected <= #games then
+                local game = games[selected]
+                local gameFile = fs.exists(game.file) and game.file or (fs.exists(game.file .. ".lua") and game.file .. ".lua")
+                if gameFile then clear(); shell.run(gameFile, username)
+                else showMessage("Error", "Game file '"..game.file.."' not found!") end
+            else
+                break
+            end
+        elseif key == keys.tab or key == keys.q then break end
+    end
+end
+
+local function showHelpScreen()
+    local w, h = getSafeSize()
+    local helpText = [[
+This is the SimpleMail & Chat Client, your all-in-one communication and entertainment hub!
+
+- Inbox: Use UP/DOWN arrows to navigate your mail list. Press ENTER to read a mail, and D or DELETE to delete one. While reading a long message, you can scroll the body text with the UP and DOWN arrows.
+
+- Chat: Simply type your message and press ENTER to send. Press TAB to exit the chat screen and return to the main menu.
+
+- Games: Select a game from the arcade menu to play. Each game has its own controls. The client will automatically check for game updates when you enter the arcade menu.
+
+- General: In most menus, you can use TAB or Q to go back to the previous screen.
+]]
+    local lines = wordWrap(helpText, w - 4); local scroll = 1
+    while true do
+        drawWindow("Help")
+        local displayHeight = h - 5
+        for i = 1, displayHeight do
+            local lineIndex = scroll + i - 1
+            if lineIndex <= #lines then
+                term.setCursorPos(3, 3 + i)
+                term.write(lines[lineIndex])
+            end
+        end
+        
+        term.setCursorPos(3, h - 2); term.setTextColor(theme.prompt)
+        term.write("Use UP/DOWN to scroll. TAB to return...")
+
+        local event, key = os.pullEvent("key")
+        if key == keys.up then
+            scroll = math.max(1, scroll - 1)
+        elseif key == keys.down then
+            scroll = math.min(math.max(1, #lines - displayHeight + 1), scroll + 1)
+        elseif key == keys.tab or key == keys.q then
+            break
+        end
+    end
+end
+
+local function updateGames(games)
+    drawWindow("Updating Arcade")
+    local y = 4
+    for i, game in ipairs(games) do
+        local filename = game.file
+        term.setCursorPos(2, y); term.write("Checking " .. game.name .. "...")
+        local localVersion = getLocalVersion(filename)
+        
+        rednet.send(mailServerId, {type = "get_version", program = filename}, "SimpleMail")
+        local _, response = rednet.receive("SimpleMail", 3)
+        
+        if response and response.version and response.version > localVersion then
+            term.setCursorPos(2, y+1); term.write("  -> New version found! Downloading...")
+            rednet.send(mailServerId, {type = "get_update", program = filename}, "SimpleMail")
+            local _, update = rednet.receive("SimpleMail", 10)
+            
+            if update and update.code then
+                local file = fs.open(filename, "w")
+                if file then
+                    file.write(update.code)
+                    file.close()
+                    term.setCursorPos(2, y+2); term.write("  -> Update successful!")
+                else
+                    term.setCursorPos(2, y+2); term.write("  -> Error: Could not save file.")
+                end
+            else
+                term.setCursorPos(2, y+2); term.write("  -> Error: Download failed.")
+            end
+            y = y + 3
+        else
+            y = y + 1
+        end
+    end
+    term.setCursorPos(2, y+1); term.write("Update check complete.")
+    sleep(1.5)
+end
+
+local function enterArcade()
+    drawWindow("Arcade"); term.setCursorPos(2, 4); term.write("Fetching game list...")
+    rednet.send(mailServerId, {type = "get_gamelist"}, "SimpleMail")
+    local _, response = rednet.receive("SimpleMail", 5)
+    if response and response.games then
+        updateGames(response.games)
+        gameMenu(response.games)
+    else
+        showMessage("Error", "Could not fetch game list.")
+    end
+end
+
+local function mainMenu()
+    local options = {"View Inbox", "Send Mail", "Send File", "Manage Lists", "General Chat", "Play Games", "Settings", "Help", "Exit"}
+    local selected = 1; local pollTimer = os.startTimer(10); local needsRedraw = true
+    
+    local ok, err = pcall(function()
+        rednet.unhost("SimpleMail"); rednet.host("SimpleMail", "client." .. username)
+    end)
+    if not ok then
+        showMessage("Login Error", "This user is already logged in on another device.")
+        username = nil; return
+    end
+
+    while true do
+        if needsRedraw then drawWindow("Main Menu"); drawMenu(options, selected, 2, 3); needsRedraw = false end
+        local event, p1, p2, p3 = os.pullEvent("key", "timer", "rednet_message", "terminate")
+        if event == "key" then
+            if p1 == keys.up then selected = (selected == 1) and #options or selected - 1
+            elseif p1 == keys.down then selected = (selected == #options) and 1 or selected + 1
+            elseif p1 == keys.enter then
+                if selected == 1 then viewInbox()
+                elseif selected == 2 then sendMail()
+                elseif selected == 3 then sendFile()
+                elseif selected == 4 then manageLists()
+                elseif selected == 5 then startChat()
+                elseif selected == 6 then enterArcade()
+                elseif selected == 7 then
+                    if settingsMenu() then return end -- If logout was selected, exit main menu
+                elseif selected == 8 then showHelpScreen()
+                elseif selected == 9 then return end
+                needsRedraw = true
+            elseif p1 == keys.tab then return end
+            needsRedraw = true
+        elseif event == "timer" and p1 == pollTimer then
+            rednet.send(mailServerId, {type = "get_unread_count", user = username}, "SimpleMail")
+            pollTimer = os.startTimer(10)
+        elseif event == "rednet_message" then
+            if p3 == "SimpleMail" then
+                if p2.type == "broadcast" then showMessage("Admin Broadcast", p2.text); needsRedraw = true
+                elseif p2.type == "unread_count_response" and p2.count and p2.count ~= unreadCount then
+                    unreadCount = p2.count; needsRedraw = true
+                end
+            end
+        elseif event == "terminate" then return end
+    end
+end
+
+--==============================================================================
+-- Program Entry Point
+--==============================================================================
+
+local function showSplashScreen()
+    clear()
+    local w, h = getSafeSize()
+    term.setTextColor(colors.orange)
+    
+    local art = {
+    "         . .        ",
+    "       .. . *.      ",
+    "- -_ _-__-0oOo      ",
+    " _-_ -__ -||||)     ",
+    "    ______||||______",
+    "~~~~~~~~~~`\"\"'~   "
+    }
+    local title = "Drunken Beard OS"
+
+    local startY = math.floor(h/2) - math.floor(#art/2) - 2
+    for i, line in ipairs(art) do
+        term.setCursorPos(math.floor(w/2 - #line/2), startY + i)
+        term.write(line)
+    end
+    
+    term.setCursorPos(math.floor(w/2 - #title/2), startY + #art + 2)
+    term.write(title)
+    sleep(1.5)
+end
+
+local function main()
+    showSplashScreen()
+    while true do
+        rednet.open("back")
+        if not findServers() then
+            showMessage("Connection Error", "Could not find servers. Retrying in 5 seconds...")
+            sleep(5)
+        else
+            if autoUpdateCheck() then
+                return
+            end
+
+            username = nil
+            if not loginOrRegister() then
+                clear(); print("Goodbye!"); break
+            end
+            
+            rednet.send(mailServerId, {type = "get_motd"}, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 3)
+            if response and response.motd and response.motd ~= "" then showMessage("Message of the Day", response.motd) end
+            
+            mainMenu()
+            
+            if not username then
+                rednet.close("back")
+            else
+                rednet.close("back"); clear(); print("Goodbye!"); break
+            end
+        end
+    end
+end
+
+main()
