@@ -1,0 +1,239 @@
+--[[
+    Drunken Beard Bank - Vault Clerk Turtle (v2.4 - Physical Withdrawal)
+    by Gemini Gem
+
+    Purpose:
+    This version re-engineers the withdrawal logic for maximum compatibility.
+    Instead of using peripheral.pullItems, which is incompatible with the
+    Create Vault, the turtle now uses physical turn and suck actions to
+    retrieve items before dispensing them.
+
+    Setup:
+    - Place this turtle adjacent to a "deposit" inventory (e.g., a barrel)
+      and a "main vault" inventory (a Copper Chest).
+    - It must have a wireless modem attached to any side.
+    - Run this script on startup.
+]]
+
+--==============================================================================
+-- Configuration
+--==============================================================================
+
+-- The rednet protocol for communication between the ATM and this turtle.
+local protocol = "DB_ATM_Turtle"
+
+-- The item the bank accepts as currency.
+local currencyItem = "minecraft:diamond"
+
+-- The names of the inventory peripherals.
+local depositBlockName = "minecraft:barrel"
+local vaultBlockName = "reinfchest:copper_chest"
+
+--==============================================================================
+-- Core Functions
+--==============================================================================
+
+local function findInventories()
+    print("Scanning for inventories...")
+    
+    local deposit_peripherals = { peripheral.find(depositBlockName) }
+    local vault_peripherals = { peripheral.find(vaultBlockName) }
+
+    local deposit_side = nil
+    local vault_side = nil
+
+    if #deposit_peripherals > 0 then
+        deposit_side = peripheral.getName(deposit_peripherals[1])
+        print("Found Deposit Barrel on side: " .. deposit_side)
+    end
+
+    if #vault_peripherals > 0 then
+        vault_side = peripheral.getName(vault_peripherals[1])
+        print("Found Main Vault on side: " .. vault_side)
+    end
+
+    if not deposit_side or not vault_side then
+        return nil, nil
+    end
+    
+    return deposit_side, vault_side
+end
+
+local function findModem()
+    print("Scanning for modem...")
+    local modem_side = peripheral.find("modem")
+    if modem_side then
+        print("Found modem on side: " .. peripheral.getName(modem_side))
+        return peripheral.getName(modem_side)
+    end
+    return nil
+end
+
+local function countCurrency()
+    local count = 0
+    for i = 1, 16 do
+        local item = turtle.getItemDetail(i)
+        if item and item.name == currencyItem then
+            count = count + item.count
+        end
+    end
+    return count
+end
+
+-- Helper function to make the turtle turn to a specific side
+local function turnTo(targetSide)
+    if targetSide == "left" then
+        turtle.turnLeft()
+    elseif targetSide == "right" then
+        turtle.turnRight()
+    elseif targetSide == "back" then
+        turtle.turnRight()
+        turtle.turnRight()
+    end
+end
+
+-- Helper function to make the turtle turn back to its original forward-facing direction
+local function turnToFront(originalSide)
+    if originalSide == "left" then
+        turtle.turnRight()
+    elseif originalSide == "right" then
+        turtle.turnLeft()
+    elseif originalSide == "back" then
+        turtle.turnLeft()
+        turtle.turnLeft()
+    end
+end
+
+local function handleDeposit(atmId, deposit_side, vault_side)
+    turnTo(deposit_side)
+    for i=1, 64 do
+        if deposit_side == "top" then turtle.suckUp()
+        elseif deposit_side == "bottom" then turtle.suckDown()
+        else turtle.suck() end
+    end
+    turnToFront(deposit_side)
+    
+    local depositAmount = countCurrency()
+    rednet.send(atmId, { type = "deposit_count", amount = depositAmount }, protocol)
+    local _, message = rednet.receive(protocol, 15)
+
+    if message and message.type == "confirm_deposit" and message.amount == depositAmount then
+        turnTo(vault_side)
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 then
+                if vault_side == "top" then turtle.dropUp()
+                elseif vault_side == "bottom" then turtle.dropDown()
+                else turtle.drop() end
+            end
+        end
+        turnToFront(vault_side)
+        rednet.send(atmId, { type = "deposit_complete", success = true, amount = depositAmount }, protocol)
+        print("Successfully processed deposit of " .. depositAmount)
+    else
+        turnTo(deposit_side)
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 then
+                if deposit_side == "top" then turtle.dropUp()
+                elseif deposit_side == "bottom" then turtle.dropDown()
+                else turtle.drop() end
+            end
+        end
+        turnToFront(deposit_side)
+        rednet.send(atmId, { type = "deposit_complete", success = false }, protocol)
+        print("Deposit failed. Returned items.")
+    end
+end
+
+local function handleDispense(atmId, amount, vault, deposit_side, vault_side)
+    -- 1. Check if the vault has enough currency
+    local totalInVault = 0
+    local vaultSlots = vault.list()
+    for _, item in pairs(vaultSlots) do
+        if item.name == currencyItem then
+            totalInVault = totalInVault + item.count
+        end
+    end
+
+    if totalInVault < amount then
+        rednet.send(atmId, { type = "dispense_complete", success = false, reason = "Insufficient funds in ATM." }, protocol)
+        print("Withdrawal failed: Not enough currency in vault.")
+        return
+    end
+
+    -- 2. Turn to face the vault and suck the requested amount
+    turnTo(vault_side)
+    local remaining = amount
+    for i=1, 64 do -- Iterate through all possible slots in the vault
+        if remaining <= 0 then break end
+        local item = vault.getItemDetail(i)
+        if item and item.name == currencyItem then
+            local toSuck = math.min(remaining, item.count)
+            if vault_side == "top" then turtle.suckUp(toSuck)
+            elseif vault_side == "bottom" then turtle.suckDown(toSuck)
+            else turtle.suck(toSuck) end
+            remaining = remaining - toSuck
+        end
+    end
+    turnToFront(vault_side)
+
+    -- 3. Turn and drop the items into the deposit barrel
+    turnTo(deposit_side)
+    for i = 1, 16 do
+        if turtle.getItemCount(i) > 0 then
+            turtle.select(i)
+            if deposit_side == "top" then turtle.dropUp()
+            elseif deposit_side == "bottom" then turtle.dropDown()
+            else turtle.drop() end
+        end
+    end
+    turnToFront(deposit_side)
+
+    -- 4. Confirm completion
+    rednet.send(atmId, { type = "dispense_complete", success = true, amount = amount }, protocol)
+    print("Successfully dispensed " .. amount .. " " .. currencyItem)
+end
+
+--==============================================================================
+-- Main Program Loop
+--==============================================================================
+
+local function main()
+    local deposit_side, vault_side = findInventories()
+    if not deposit_side or not vault_side then
+        print("Error: Could not find both a deposit barrel and a main vault.")
+        return
+    end
+
+    local vault = peripheral.wrap(vault_side)
+    if not vault then
+        print("Error: Could not wrap vault peripheral on side: " .. vault_side)
+        return
+    end
+
+    local modem_side = findModem()
+    if not modem_side then
+        print("Error: No wireless modem attached.")
+        return
+    end
+
+    rednet.open(modem_side)
+    rednet.host(protocol, "bank_turtle_" .. os.getComputerID())
+    print("Vault Clerk Turtle online. Waiting for ATM commands...")
+
+    while true do
+        local senderId, message, proto = rednet.receive(protocol)
+        if message and message.type then
+            if message.type == "request_deposit" then
+                print("Received deposit request from ATM " .. senderId)
+                handleDeposit(senderId, deposit_side, vault_side)
+            elseif message.type == "request_dispense" then
+                print("Received dispense request for " .. message.amount .. " from ATM " .. senderId)
+                handleDispense(senderId, message.amount, vault, deposit_side, vault_side)
+            end
+        end
+    end
+end
+
+main()
