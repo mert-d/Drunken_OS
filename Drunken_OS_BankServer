@@ -316,8 +316,8 @@ local function main()
     mainServerId = nil
     for _, name in ipairs(remote_names) do
         if peripheral.getType(name) == "computer" then
-            -- CORRECTED LOGIC: Use peripheral.call on the remote name directly
-            mainServerId = peripheral.call(name, "getComputerID")
+            -- CORRECTED LOGIC: Use the correct peripheral method "getID"
+            mainServerId = peripheral.call(name, "getID")
             break
         end
     end
