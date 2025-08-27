@@ -1,12 +1,13 @@
 --[[
-    SimpleMail & Chat Server (Gem Standard v7.2 - Full Economy Implementation)
+    Drunken OS - Main Server (v8.0 - Dynamic Economy Engine)
     by Gemini Gem
 
     Purpose:
     This version fully implements the dynamic economy features. It includes the
     admin commands `addcurrency`, `delcurrency`, `listrates`, and `settarget`,
     the logic to process secure stock reports from the Auditor Turtle, and the
-    automatic price adjustment engine.
+    automatic price adjustment engine. This script is the central hub for all
+    Drunken_OS operations.
 
     New Admin Commands:
     - addcurrency <item_name> <base_rate>
@@ -19,6 +20,8 @@
 -- API & Library Initialization
 --==============================================================================
 
+-- NOTE: This server requires the "HyperAuthClient" API for two-factor auth.
+-- It is expected to be located at "/HyperAuthClient/api/auth_client.lua"
 local AuthClient = require("HyperAuthClient/api/auth_client")
 
 if not AuthClient then
@@ -230,6 +233,56 @@ local function loadAllData()
 end
 
 --==============================================================================
+-- Dynamic Economy Engine
+--==============================================================================
+
+local function adjustCurrencyRates()
+    logActivity("Adjusting currency rates based on new stock report...")
+    local changed = false
+    for item, data in pairs(currencyRates) do
+        if data.target and data.target > 0 then
+            local stock = currentStock[item] or 0
+            
+            -- Prevent division by zero
+            if stock == 0 then stock = 1 end
+
+            -- Calculate the ratio of target stock to actual stock
+            -- A ratio > 1 means we have less than the target (scarcity)
+            -- A ratio < 1 means we have more than the target (surplus)
+            local ratio = data.target / stock
+            
+            -- Apply a dampening factor (e.g., square root) to prevent extreme price swings
+            local price_multiplier = ratio ^ 0.5
+            
+            -- Calculate the new price and round it to the nearest integer
+            local new_price = math.floor(data.base * price_multiplier + 0.5)
+            
+            -- Cap the price to prevent hyperinflation or total collapse
+            -- For example, cap it at 5x the base price and a minimum of 1
+            local max_price = data.base * 5
+            local min_price = 1
+            new_price = math.max(min_price, math.min(max_price, new_price))
+
+            if new_price ~= data.current then
+                logActivity(string.format("'%s' price changed from $%d to $%d (Stock: %d/%d)", item, data.current, new_price, currentStock[item] or 0, data.target))
+                currencyRates[item].current = new_price
+                changed = true
+            end
+        end
+    end
+
+    if changed then
+        if saveTableToFile(RATES_DB, currencyRates) then
+            logActivity("Successfully saved updated currency rates.")
+        else
+            logActivity("Failed to save updated currency rates.", true)
+        end
+    else
+        logActivity("No significant price changes required.")
+    end
+end
+
+--==============================================================================
 -- Mail & List Management Functions
 --==============================================================================
 
@@ -267,6 +320,7 @@ end
 --==============================================================================
 -- Authentication Helper Functions
 --==============================================================================
+
 local function requestAuthCode(username, password, nickname, senderId, purpose)
     logActivity("Requesting auth code for '" .. username .. "' via HyperAuth API...")
     
@@ -296,7 +350,6 @@ local function requestAuthCode(username, password, nickname, senderId, purpose)
     
     return request_reply.request_id
 end
-
 
 --==============================================================================
 -- Network Request Handlers
@@ -501,24 +554,81 @@ function bankHandlers.login(senderId, message)
         rednet.send(senderId, { success = false, reason = "Invalid username or password." }, "DB_Bank")
     end
 end
-function bankHandlers.get_balance(senderId, message)
-    rednet.send(senderId, { balance = accounts[message.user] or 0 }, "DB_Bank")
+
+function bankHandlers.get_balance_and_rates(senderId, message)
+    rednet.send(senderId, {
+        balance = accounts[message.user] or 0,
+        rates = currencyRates
+    }, "DB_Bank")
 end
+
 function bankHandlers.deposit(senderId, message)
-    local user, amount = message.user, message.amount
-    accounts[user] = (accounts[user] or 0) + amount
-    if saveTableToFile(ACCOUNTS_DB, accounts) then
-        rednet.send(senderId, { success = true, newBalance = accounts[user] }, "DB_Bank")
-        logActivity(string.format("User '%s' deposited %d.", user, amount))
+    local user, items = message.user, message.items
+    local total_value = 0
+    for _, item in ipairs(items) do
+        if currencyRates[item.name] then
+            total_value = total_value + (item.count * currencyRates[item.name].current)
+        end
+    end
+
+    if total_value > 0 then
+        accounts[user] = (accounts[user] or 0) + total_value
+        if saveTableToFile(ACCOUNTS_DB, accounts) then
+            rednet.send(senderId, { success = true, newBalance = accounts[user], deposited_value = total_value }, "DB_Bank")
+            logActivity(string.format("User '%s' deposited items for $%d.", user, total_value))
+        else
+            rednet.send(senderId, { success = false, reason = "Server database error." }, "DB_Bank")
+        end
+    else
+        rednet.send(senderId, { success = false, reason = "No valid currency detected." }, "DB_Bank")
     end
 end
+
 function bankHandlers.withdraw(senderId, message)
     local user, amount = message.user, message.amount
     if (accounts[user] or 0) >= amount then
+        -- For simplicity, we'll dispense the cheapest available currency first.
+        -- A more complex system could allow users to choose or provide an optimal mix.
+        local items_to_dispense = {}
+        local remaining = amount
+        
+        -- Create a sorted list of currencies by price (cheapest first)
+        local sorted_currencies = {}
+        for name, data in pairs(currencyRates) do
+            if (currentStock[name] or 0) > 0 then
+                table.insert(sorted_currencies, { name = name, rate = data.current })
+            end
+        end
+        table.sort(sorted_currencies, function(a, b) return a.rate < b.rate end)
+
+        for _, currency in ipairs(sorted_currencies) do
+            if remaining <= 0 then break end
+            local num_needed = math.floor(remaining / currency.rate)
+            local num_available = currentStock[currency.name]
+            local num_to_give = math.min(num_needed, num_available)
+            
+            if num_to_give > 0 then
+                table.insert(items_to_dispense, { name = currency.name, count = num_to_give })
+                remaining = remaining - (num_to_give * currency.rate)
+            end
+        end
+
+        if remaining > 0 then
+             -- This can happen if we can't make exact change with available denominations.
+             -- In a real system, you might refund the small remaining amount.
+             -- For now, we fail the transaction to prevent exploits.
+            rednet.send(senderId, { success = false, reason = "Cannot make exact change with available stock." }, "DB_Bank")
+            return
+        end
+
         accounts[user] = accounts[user] - amount
         if saveTableToFile(ACCOUNTS_DB, accounts) then
-            rednet.send(senderId, { success = true, newBalance = accounts[user] }, "DB_Bank")
-            logActivity(string.format("User '%s' withdrew %d.", user, amount))
+            rednet.send(senderId, { success = true, newBalance = accounts[user], items_to_dispense = items_to_dispense }, "DB_Bank")
+            logActivity(string.format("User '%s' initiated withdrawal of $%d.", user, amount))
+        else
+            -- Refund the user if the DB save fails
+            accounts[user] = accounts[user] + amount
+            rednet.send(senderId, { success = false, reason = "Server database error." }, "DB_Bank")
         end
     else
         rednet.send(senderId, { success = false, reason = "Insufficient funds." }, "DB_Bank")
@@ -526,64 +636,207 @@ function bankHandlers.withdraw(senderId, message)
 end
 
 --==============================================================================
--- Admin Command Handlers & Main Loops
+-- Admin Command Handlers
 --==============================================================================
 
 local adminCommands = {}
-function adminCommands.help() logActivity("--- Admin Commands ---"); logActivity("users, deluser, lists, dellist, board, delscore, motd, broadcast, publish, addgame, delgame, games, publishgame, makecard, balance, setbalance, give") end
-function adminCommands.users() logActivity("Registered Users:"); for user, data in pairs(users) do logActivity("- " .. user .. " (Nick: " .. (data.nickname or "N/A") .. ")") end end
-function adminCommands.deluser(args) local user = args[2]; if not user then logActivity("Usage: deluser <name>"); return end; if users[user] then users[user] = nil; saveTableToFile(USERS_DB, users); logActivity("Deleted user: " .. user) else logActivity("User not found: " .. user) end end
-function adminCommands.lists() logActivity("Mailing Lists:"); for name, members in pairs(lists) do logActivity(string.format("- %s (%d members)", name, #members)) end end
-function adminCommands.dellist(args) local listName = args[2]; if not listName then logActivity("Usage: dellist <name>"); return end; if lists[listName] then lists[listName] = nil; saveTableToFile(LISTS_DB, lists); logActivity("Deleted list: " .. listName) else logActivity("List not found: " .. listName) end end
+
+-- Helper function for parsing item names and numbers from admin input
+local function parseAdminArgs(args)
+    local command = table.remove(args, 1)
+    if not args or #args == 0 then
+        return command, nil, nil
+    end
+
+    local itemName = args[1]
+    local numberValue = tonumber(args[2])
+
+    -- Handle item names with spaces (e.g., "minecraft:light_gray_dye")
+    if #args > 2 and not tonumber(args[2]) then
+        itemName = table.concat(args, " ", 1, 2)
+        numberValue = tonumber(args[3])
+    end
+
+    return command, itemName, numberValue
+end
+
+
+function adminCommands.help()
+    logActivity("--- Admin Commands ---")
+    logActivity("users, deluser, lists, dellist, board, delscore, motd, broadcast")
+    logActivity("publish, addgame, delgame, games, publishgame, makecard")
+    logActivity("balance, setbalance, give")
+    logActivity("--- Economy Commands ---")
+    logActivity("addcurrency <item_name> <base_rate>")
+    logActivity("delcurrency <item_name>")
+    logActivity("listrates")
+    logActivity("settarget <item_name> <target_amount>")
+end
+
+function adminCommands.users()
+    logActivity("Registered Users:")
+    for user, data in pairs(users) do
+        logActivity("- " .. user .. " (Nick: " .. (data.nickname or "N/A") .. ")")
+    end
+end
+
+function adminCommands.deluser(args)
+    local _, user = parseAdminArgs(args)
+    if not user then
+        logActivity("Usage: deluser <name>", true)
+        return
+    end
+    if users[user] then
+        users[user] = nil
+        accounts[user] = nil
+        saveTableToFile(USERS_DB, users)
+        saveTableToFile(ACCOUNTS_DB, accounts)
+        logActivity("Deleted user: " .. user)
+    else
+        logActivity("User not found: " .. user, true)
+    end
+end
+
+function adminCommands.lists()
+    logActivity("Mailing Lists:")
+    for name, members in pairs(lists) do
+        logActivity(string.format("- %s (%d members)", name, #members))
+    end
+end
+
+function adminCommands.dellist(args)
+    local _, listName = parseAdminArgs(args)
+    if not listName then
+        logActivity("Usage: dellist <name>", true)
+        return
+    end
+    if lists[listName] then
+        lists[listName] = nil
+        saveTableToFile(LISTS_DB, lists)
+        logActivity("Deleted list: " .. listName)
+    else
+        logActivity("List not found: " .. listName, true)
+    end
+end
+
 function adminCommands.board(args)
-    local gameName = args[2]; if not gameName then logActivity("Usage: board <game_name>"); return end
+    local _, gameName = parseAdminArgs(args)
+    if not gameName then
+        logActivity("Usage: board <game_name>", true)
+        return
+    end
     if games[gameName] then
         logActivity("Leaderboard for " .. gameName .. ":")
-        for user, score in pairs(games[gameName]) do logActivity(string.format("- %s: %d", user, score)) end
-    else logActivity("No leaderboard found for game: " .. gameName) end
+        for user, score in pairs(games[gameName]) do
+            logActivity(string.format("- %s: %d", user, score))
+        end
+    else
+        logActivity("No leaderboard found for game: " .. gameName, true)
+    end
 end
+
 function adminCommands.delscore(args)
-    local gameName, user = args[2], args[3]; if not gameName or not user then logActivity("Usage: delscore <game_name> <user_name>"); return end
+    local _, gameName, user = parseAdminArgs(args)
+    if not gameName or not user then
+        logActivity("Usage: delscore <game_name> <user_name>", true)
+        return
+    end
     if games[gameName] and games[gameName][user] then
-        games[gameName][user] = nil; saveTableToFile(GAMES_DB, games)
+        games[gameName][user] = nil
+        saveTableToFile(GAMES_DB, games)
         logActivity(string.format("Deleted score for '%s' in '%s'", user, gameName))
-    else logActivity(string.format("No score for user '%s' in game '%s'", user, gameName)) end
+    else
+        logActivity(string.format("No score for user '%s' in game '%s'", user, gameName), true)
+    end
 end
-function adminCommands.motd(args) table.remove(args, 1); motd = table.concat(args, " "); local file = fs.open(MOTD_FILE, "w"); if file then file.write(motd); file.close() end; logActivity("New MOTD set.") end
-function adminCommands.broadcast(args) table.remove(args, 1); local text = table.concat(args, " "); rednet.broadcast({ type = "broadcast", text = text }, "SimpleMail"); logActivity("Broadcast sent: " .. text) end
+
+function adminCommands.motd(args)
+    table.remove(args, 1)
+    motd = table.concat(args, " ")
+    local file = fs.open(MOTD_FILE, "w")
+    if file then
+        file.write(motd)
+        file.close()
+    end
+    logActivity("New MOTD set.")
+end
+
+function adminCommands.broadcast(args)
+    table.remove(args, 1)
+    local text = table.concat(args, " ")
+    rednet.broadcast({ type = "broadcast", text = text }, "SimpleMail")
+    logActivity("Broadcast sent: " .. text)
+end
+
 function adminCommands.publish(args)
-    local progName, newVersionStr = args[2], args[3]; if not progName or not newVersionStr then logActivity("Usage: publish <prog> <ver>"); return end
-    local newVersion = tonumber(newVersionStr); if not newVersion then logActivity("Error: Version must be a number."); return end
-    logActivity("Waiting for publication of '"..progName.."' v"..newVersion.."..."); local _, message = rednet.receive("Publication", 15)
-    if message and message.code then programCode[progName] = message.code; programVersions[progName] = newVersion; saveTableToFile(UPDATER_DB, {v=programVersions, c=programCode}); logActivity("Published "..progName.." version "..programVersions[progName])
-    else logActivity("Publication timed out or failed.") end
+    local _, progName, newVersion = parseAdminArgs(args)
+    if not progName or not newVersion then
+        logActivity("Usage: publish <prog> <ver>", true)
+        return
+    end
+    logActivity("Waiting for publication of '" .. progName .. "' v" .. newVersion .. "...")
+    local _, message = rednet.receive("Publication", 15)
+    if message and message.code then
+        programCode[progName] = message.code
+        programVersions[progName] = newVersion
+        saveTableToFile(UPDATER_DB, { v = programVersions, c = programCode })
+        logActivity("Published " .. progName .. " version " .. programVersions[progName])
+    else
+        logActivity("Publication timed out or failed.", true)
+    end
 end
+
 function adminCommands.addgame(args)
-    local name, file = args[2], args[3]; if not name or not file then logActivity("Usage: addgame <DisplayName> <filename>"); return end
-    table.insert(gameList, {name = name, file = file}); saveTableToFile(GAMELIST_DB, gameList)
-    logActivity("Added game '"..name.."' to the list.")
+    local _, name, file = parseAdminArgs(args)
+    if not name or not file then
+        logActivity("Usage: addgame <DisplayName> <filename>", true)
+        return
+    end
+    table.insert(gameList, { name = name, file = file })
+    saveTableToFile(GAMELIST_DB, gameList)
+    logActivity("Added game '" .. name .. "' to the list.")
 end
+
 function adminCommands.delgame(args)
-    local name = args[2]; if not name then logActivity("Usage: delgame <DisplayName>"); return end
+    local _, name = parseAdminArgs(args)
+    if not name then
+        logActivity("Usage: delgame <DisplayName>", true)
+        return
+    end
     for i, game in ipairs(gameList) do
         if game.name == name then
-            table.remove(gameList, i); saveTableToFile(GAMELIST_DB, gameList)
-            logActivity("Removed game '"..name.."' from the list."); return
+            table.remove(gameList, i)
+            saveTableToFile(GAMELIST_DB, gameList)
+            logActivity("Removed game '" .. name .. "' from the list.")
+            return
         end
     end
-    logActivity("Game '"..name.."' not found in the list.")
+    logActivity("Game '" .. name .. "' not found in the list.", true)
 end
+
 function adminCommands.games()
     logActivity("Available Games:")
-    for _, game in ipairs(gameList) do logActivity("- "..game.name.." (file: "..game.file..")") end
+    for _, game in ipairs(gameList) do
+        logActivity("- " .. game.name .. " (file: " .. game.file .. ")")
+    end
 end
+
 function adminCommands.publishgame(args)
-    local filename = args[2]
-    if not filename then logActivity("Usage: publishgame <filename>", true); return end
-    if not fs.exists(filename) then logActivity("Error: File '"..filename.."' not found.", true); return end
-    
+    local _, filename = parseAdminArgs(args)
+    if not filename then
+        logActivity("Usage: publishgame <filename>", true)
+        return
+    end
+    if not fs.exists(filename) then
+        logActivity("Error: File '" .. filename .. "' not found.", true)
+        return
+    end
+
     local file = fs.open(filename, "r")
-    if not file then logActivity("Error: Could not open file.", true); return end
+    if not file then
+        logActivity("Error: Could not open file.", true)
+        return
+    end
     local content = file.readAll()
     file.close()
 
@@ -592,23 +845,36 @@ function adminCommands.publishgame(args)
         logActivity("Error: Game file must contain a version comment, e.g. '-- Version: 1.0'", true)
         return
     end
-    
+
     gameCode[filename] = { code = content, version = tonumber(version) }
     if saveTableToFile(GAMES_CODE_DB, gameCode) then
-        logActivity("Published game '"..filename.."' version " .. version)
+        logActivity("Published game '" .. filename .. "' version " .. version)
     else
         logActivity("Error: Failed to save game code to database.", true)
     end
 end
+
 function adminCommands.makecard(args)
-    local user = args[2]
-    if not user then logActivity("Usage: makecard <username>", true); return end
-    if not users[user] then logActivity("Error: User '"..user.."' does not exist.", true); return end
-    
+    local _, user = parseAdminArgs(args)
+    if not user then
+        logActivity("Usage: makecard <username>", true)
+        return
+    end
+    if not users[user] then
+        logActivity("Error: User '" .. user .. "' does not exist.", true)
+        return
+    end
+
     local disk = peripheral.find("drive")
-    if not disk then logActivity("Error: No disk drive attached to the server.", true); return end
-    
-    if not disk.isDiskPresent() then logActivity("Error: No disk in the drive.", true); return end
+    if not disk then
+        logActivity("Error: No disk drive attached to the server.", true)
+        return
+    end
+
+    if not disk.isDiskPresent() then
+        logActivity("Error: No disk in the drive.", true)
+        return
+    end
 
     local mount_path = disk.getMountPath()
     if not mount_path then
@@ -626,27 +892,132 @@ function adminCommands.makecard(args)
         logActivity("Error: Could not write to disk.", true)
     end
 end
+
 function adminCommands.balance(args)
-    local user = args[2]; if not user then logActivity("Usage: balance <user>"); return end
-    logActivity("Balance for "..user..": "..(accounts[user] or 0))
-end
-function adminCommands.setbalance(args)
-    local user, amount = args[2], tonumber(args[3])
-    if not user or not amount then logActivity("Usage: setbalance <user> <amount>"); return end
-    accounts[user] = amount; saveTableToFile(ACCOUNTS_DB, accounts)
-    logActivity("Set balance for "..user.." to "..amount)
-end
-function adminCommands.give(args)
-    local user, amount = args[2], tonumber(args[3])
-    if not user or not amount then logActivity("Usage: give <user> <amount>"); return end
-    accounts[user] = (accounts[user] or 0) + amount; saveTableToFile(ACCOUNTS_DB, accounts)
-    logActivity("Gave "..amount.." to "..user..". New balance: "..accounts[user])
+    local _, user = parseAdminArgs(args)
+    if not user then
+        logActivity("Usage: balance <user>", true)
+        return
+    end
+    logActivity("Balance for " .. user .. ": " .. (accounts[user] or 0))
 end
 
-local function handleAdminCommand(command)
-    local args = {}; for arg in string.gmatch(command, "[^%s]+") do table.insert(args, arg) end
-    local cmd = args[1]; if adminCommands[cmd] then adminCommands[cmd](args) else logActivity("Unknown command. Type 'help'.") end
+function adminCommands.setbalance(args)
+    local _, user, amount = parseAdminArgs(args)
+    if not user or not amount then
+        logActivity("Usage: setbalance <user> <amount>", true)
+        return
+    end
+    accounts[user] = amount
+    saveTableToFile(ACCOUNTS_DB, accounts)
+    logActivity("Set balance for " .. user .. " to " .. amount)
 end
+
+function adminCommands.give(args)
+    local _, user, amount = parseAdminArgs(args)
+    if not user or not amount then
+        logActivity("Usage: give <user> <amount>", true)
+        return
+    end
+    accounts[user] = (accounts[user] or 0) + amount
+    saveTableToFile(ACCOUNTS_DB, accounts)
+    logActivity("Gave " .. amount .. " to " .. user .. ". New balance: " .. accounts[user])
+end
+
+-- NEW ECONOMY COMMANDS START HERE --
+
+function adminCommands.addcurrency(args)
+    local _, itemName, baseRate = parseAdminArgs(args)
+    if not itemName or not baseRate then
+        logActivity("Usage: addcurrency <item_name> <base_rate>", true)
+        return
+    end
+
+    if currencyRates[itemName] then
+        logActivity("Currency '" .. itemName .. "' already exists. Use settarget to adjust it.", true)
+        return
+    end
+
+    currencyRates[itemName] = {
+        base = baseRate,
+        current = baseRate,
+        target = nil, -- No target by default
+    }
+
+    if saveTableToFile(RATES_DB, currencyRates) then
+        logActivity("Added new currency '" .. itemName .. "' with base rate $" .. baseRate)
+    else
+        logActivity("Failed to save new currency.", true)
+    end
+end
+
+function adminCommands.delcurrency(args)
+    local _, itemName = parseAdminArgs(args)
+    if not itemName then
+        logActivity("Usage: delcurrency <item_name>", true)
+        return
+    end
+
+    if not currencyRates[itemName] then
+        logActivity("Currency '" .. itemName .. "' does not exist.", true)
+        return
+    end
+
+    currencyRates[itemName] = nil
+    if saveTableToFile(RATES_DB, currencyRates) then
+        logActivity("Removed currency '" .. itemName .. "'.")
+    else
+        logActivity("Failed to remove currency.", true)
+    end
+end
+
+function adminCommands.listrates()
+    logActivity("--- Current Exchange Rates ---")
+    for name, data in pairs(currencyRates) do
+        local stock = currentStock[name] or 0
+        local target = data.target and ("/" .. data.target) or "/N/A"
+        logActivity(string.format("- %s: $%d (Base: $%d) | Stock: %d%s", name, data.current, data.base, stock, target))
+    end
+end
+
+function adminCommands.settarget(args)
+    local _, itemName, targetAmount = parseAdminArgs(args)
+    if not itemName or not targetAmount then
+        logActivity("Usage: settarget <item_name> <target_amount>", true)
+        return
+    end
+
+    if not currencyRates[itemName] then
+        logActivity("Currency '" .. itemName .. "' does not exist. Use addcurrency first.", true)
+        return
+    end
+
+    currencyRates[itemName].target = targetAmount
+    if saveTableToFile(RATES_DB, currencyRates) then
+        logActivity("Set target stock for '" .. itemName .. "' to " .. targetAmount)
+    else
+        logActivity("Failed to set target.", true)
+    end
+end
+
+-- NEW ECONOMY COMMANDS END HERE --
+
+local function handleAdminCommand(command)
+    local args = {}
+    for arg in string.gmatch(command, "[^%s]+") do
+        table.insert(args, arg)
+    end
+    local cmd = args[1]
+    if adminCommands[cmd] then
+        adminCommands[cmd](args)
+    else
+        logActivity("Unknown command. Type 'help'.")
+    end
+end
+
+--==============================================================================
+-- Main Event Loops
+--==============================================================================
 
 local function networkListener()
     while true do
@@ -664,6 +1035,17 @@ local function networkListener()
             gameHandlers[message.type](senderId, message)
         elseif protocol == "DB_Bank" and message and message.type and bankHandlers[message.type] then
             bankHandlers[message.type](senderId, message)
+        elseif protocol == AUDIT_PROTOCOL and message and message.type == "stock_report" then
+            local messageToVerify = textutils.serialize(message.report)
+            local signature = sha1.hmac_hex(AUDIT_SECRET_KEY, messageToVerify)
+            if signature == message.signature then
+                logActivity("Received valid, signed stock report from Auditor.")
+                currentStock = message.report
+                saveTableToFile(STOCK_DB, currentStock)
+                adjustCurrencyRates()
+            else
+                logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
+            end
         end
     end
 end
@@ -688,6 +1070,7 @@ local function main()
     rednet.host("ArcadeGames", "arcade.server")
     rednet.host("DB_Bank", "bank.server")
     logActivity("Server started. Type 'help' for commands.")
+    redrawAdminUI()
     parallel.waitForAny(networkListener, adminTerminal)
 end
 
