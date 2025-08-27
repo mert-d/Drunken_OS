@@ -312,14 +312,12 @@ local function main()
     -- Step 2: Use the peripheral API on the wired modem BEFORE opening rednet
     print("Identifying Mainframe via secure wired link...")
     local wired_periph = peripheral.wrap(wired_modem_name)
-    -- CORRECTED LINE: Removed the extra curly braces
     local remote_names = wired_periph.getNamesRemote()
     mainServerId = nil
     for _, name in ipairs(remote_names) do
         if peripheral.getType(name) == "computer" then
-            -- Temporarily wrap the remote computer to get its ID
-            local remote_computer = peripheral.wrap(name)
-            mainServerId = remote_computer.getComputerID()
+            -- CORRECTED LOGIC: Use peripheral.call on the remote name directly
+            mainServerId = peripheral.call(name, "getComputerID")
             break
         end
     end
