@@ -448,8 +448,8 @@ local function handleAdminCommand(command)
 end
 
 local function adminTerminal()
-    local oldTerm = term.current()
-    term.redirect(monitor)
+    -- The main terminal is already redirected to the monitor,
+    -- so we just need to take over the drawing and input loop.
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.white)
     term.clear()
@@ -464,7 +464,6 @@ local function adminTerminal()
         end
     end
     
-    term.redirect(oldTerm) -- Restore original terminal
     currentScreen = "main"
     needsRedraw = true
 end
@@ -505,7 +504,7 @@ local function guiHandler()
             end
         end
 
-        local event, p1, p2, p3 = os.pullEvent("monitor_touch", "key")
+        local event, p1, p2, p3 = os.pullEvent() -- Pull any event
         if event == "key" then
             if currentScreen == "main" then
                 local menuSize = 4
@@ -533,6 +532,8 @@ local function guiHandler()
                 selectedMenuItem = p2 - 8
                 os.queueEvent("key", keys.enter)
             end
+        elseif event == "terminate" then
+            return
         end
     end
 end
