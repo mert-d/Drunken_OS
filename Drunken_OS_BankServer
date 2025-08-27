@@ -1,0 +1,331 @@
+--[[
+    Drunken OS - Bank Server (v1.1 - Secure Wired Interlink)
+    by Gemini Gem
+
+    Purpose:
+    This version enhances security by using a wired modem for the critical
+    authentication link to the main Drunken_OS_Server. All other functions
+    remain on the wireless network.
+
+    Setup:
+    - This computer must have a WIRELESS modem attached for general communication.
+    - It must ALSO have a WIRED modem attached, connected via cable to the
+      main Drunken_OS_Server.
+    - An advanced monitor should be placed adjacent to the computer to display the GUI.
+]]
+
+--==============================================================================
+-- Embedded SHA1 & HMAC Library
+--==============================================================================
+
+local sha1 = {}
+do
+    local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
+    local function rol(n, c) return bor(lshift(n, c), rshift(n, 32 - c)) end
+    local function str_to_bin(str) local t = {}; for i = 1, #str do t[i] = string.byte(str, i) end; return t end
+    local function bin_to_hex(bin) local hex = ""; for i = 1, #bin do hex = hex .. string.format("%02x", bin[i]) end; return hex end
+    local function bin_to_str(bin) return string.char(table.unpack(bin)) end
+    function sha1.hex(s) return bin_to_hex(sha1.bin(s)) end
+    function sha1.bin(s)
+      local H0, H1, H2, H3, H4 = 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0
+      local str = str_to_bin(s); local len = #str; str[len + 1] = 0x80
+      for i = len + 2, (len + 64) - ((len + 8) % 64) do str[i] = 0 end
+      local bit_len = len * 8
+      for i = 0, 7 do str[#str + 1] = band(rshift(bit_len, (7 - i) * 8), 0xff) end
+      for i = 1, #str, 64 do
+        local W = {}; for j = 0, 15 do W[j] = bor(lshift(str[i+j*4], 24), lshift(str[i+j*4+1], 16), lshift(str[i+j*4+2], 8), str[i+j*4+3]) end
+        for j = 16, 79 do W[j] = rol(bxor(W[j-3], W[j-8], W[j-14], W[j-16]), 1) end
+        local a,b,c,d,e = H0,H1,H2,H3,H4
+        for j = 0, 79 do
+          local f, k
+          if j < 20 then f = bxor(d, band(b, bxor(c, d))); k = 0x5A827999
+          elseif j < 40 then f = bxor(b, c, d); k = 0x6ED9EBA1
+          elseif j < 60 then f = bor(band(b, c), band(b, d), band(c, d)); k = 0x8F1BBCDC
+          else f = bxor(b, c, d); k = 0xCA62C1D6 end
+          local temp = rol(a, 5) + f + e + W[j] + k; e=d; d=c; c=rol(b, 30); b=a; a=temp
+        end
+        H0=(H0+a); H1=(H1+b); H2=(H2+c); H3=(H3+d); H4=(H4+e)
+      end
+      local result = {}; for i=0,3 do result[i+1]=band(rshift(H0,(3-i)*8),0xff) end; for i=0,3 do result[i+5]=band(rshift(H1,(3-i)*8),0xff) end; for i=0,3 do result[i+9]=band(rshift(H2,(3-i)*8),0xff) end; for i=0,3 do result[i+13]=band(rshift(H3,(3-i)*8),0xff) end; for i=0,3 do result[i+17]=band(rshift(H4,(3-i)*8),0xff) end
+      return result
+    end
+    function sha1.hmac_hex(key, message)
+        local blocksize = 64
+        if #key > blocksize then key = bin_to_str(sha1.bin(key)) end
+        local key_padding = {}; for i = 1, blocksize do key_padding[i] = string.byte(key, i) or 0 end
+        local o_key_pad = ""; local i_key_pad = ""
+        for i = 1, blocksize do
+            o_key_pad = o_key_pad .. string.char(bxor(key_padding[i], 0x5c))
+            i_key_pad = i_key_pad .. string.char(bxor(key_padding[i], 0x36))
+        end
+        local inner_hash = bin_to_str(sha1.bin(i_key_pad .. message))
+        local final_hash = sha1.bin(o_key_pad .. inner_hash)
+        return bin_to_hex(final_hash)
+    end
+end
+
+--==============================================================================
+-- Configuration & State
+--==============================================================================
+
+local accounts, currencyRates, currentStock = {}, {}, {}
+local mainServerId = nil
+local wired_modem_side = nil -- NEW: To store the wired modem peripheral name
+
+-- Database file paths
+local ACCOUNTS_DB = "bank_accounts.db"
+local RATES_DB = "bank_rates.db"
+local STOCK_DB = "bank_stock.db"
+local LOG_FILE = "bank_server.log"
+
+-- Rednet Protocols
+local BANK_PROTOCOL = "DB_Bank"
+local AUDIT_PROTOCOL = "DB_Audit"
+local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
+
+-- Auditor Turtle Configuration
+local AUDIT_SECRET_KEY = "YourSecretAuditKeyHere" -- IMPORTANT: Must match turtle's key
+
+--==============================================================================
+-- UI & Logging (Terminal)
+--==============================================================================
+
+local logHistory = {}
+local function logActivity(message, isError)
+    local prefix = isError and "[ERROR] " or "[INFO] "
+    local logEntry = os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message
+    print(logEntry)
+    local file = fs.open(LOG_FILE, "a")
+    if file then
+        file.writeLine(logEntry)
+        file.close()
+    end
+end
+
+--==============================================================================
+-- Data Persistence Functions
+--==============================================================================
+
+local function saveTableToFile(path, data)
+    local file = fs.open(path, "w")
+    if not file then logActivity("Could not open " .. path .. " for writing.", true); return false end
+    local success, err = pcall(function() file.write(textutils.serialize(data)); file.close() end)
+    if not success then logActivity("Failed to write to " .. path .. ": " .. tostring(err), true); return false end
+    return true
+end
+
+local function loadTableFromFile(path)
+    if fs.exists(path) then
+        local file = fs.open(path, "r")
+        if file then
+            local data = file.readAll(); file.close()
+            local success, result = pcall(textutils.unserialize, data)
+            if success and type(result) == "table" then return result
+            else logActivity("Corrupted data in " .. path .. ". A new file will be created.", true) end
+        end
+    end
+    return {}
+end
+
+local function loadAllData()
+    accounts = loadTableFromFile(ACCOUNTS_DB)
+    currencyRates = loadTableFromFile(RATES_DB)
+    currentStock = loadTableFromFile(STOCK_DB)
+    logActivity("All banking data loaded successfully.")
+end
+
+--==============================================================================
+-- Dynamic Economy Engine
+--==============================================================================
+
+local function adjustCurrencyRates()
+    logActivity("Adjusting currency rates based on new stock report...")
+    local changed = false
+    for item, data in pairs(currencyRates) do
+        if data.target and data.target > 0 then
+            local stock = currentStock[item] or 0
+            if stock == 0 then stock = 1 end
+            local ratio = data.target / stock
+            local price_multiplier = ratio ^ 0.5
+            local new_price = math.floor(data.base * price_multiplier + 0.5)
+            local max_price = data.base * 5
+            local min_price = 1
+            new_price = math.max(min_price, math.min(max_price, new_price))
+
+            if new_price ~= data.current then
+                logActivity(string.format("'%s' price changed from $%d to $%d (Stock: %d/%d)", item, data.current, new_price, currentStock[item] or 0, data.target))
+                currencyRates[item].current = new_price
+                changed = true
+            end
+        end
+    end
+
+    if changed then
+        if not saveTableToFile(RATES_DB, currencyRates) then
+            logActivity("Failed to save updated currency rates.", true)
+        end
+    end
+end
+
+--==============================================================================
+-- Network Request Handlers
+--==============================================================================
+
+local bankHandlers = {}
+
+function bankHandlers.login(senderId, message)
+    logActivity("Forwarding login request for '" .. message.user .. "' to main server via wired modem.")
+    rednet.send(mainServerId, {
+        type = "auth_check",
+        user = message.user,
+        pass_hash = sha1.hex(message.pass)
+    }, AUTH_INTERLINK_PROTOCOL)
+
+    -- We expect the reply on the same wired modem
+    local _, response, proto = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
+
+    if response and response.user == message.user and response.success then
+        logActivity("Auth success for '" .. message.user .. "'.")
+        if not accounts[message.user] then accounts[message.user] = 0 end
+        rednet.send(senderId, { success = true, balance = accounts[message.user] }, BANK_PROTOCOL)
+    else
+        logActivity("Auth failed for '" .. message.user .. "'.", true)
+        rednet.send(senderId, { success = false, reason = "Invalid username or password." }, BANK_PROTOCOL)
+    end
+end
+
+function bankHandlers.get_balance_and_rates(senderId, message)
+    rednet.send(senderId, {
+        balance = accounts[message.user] or 0,
+        rates = currencyRates
+    }, BANK_PROTOCOL)
+end
+
+function bankHandlers.deposit(senderId, message)
+    local user, items = message.user, message.items
+    local total_value = 0
+    for _, item in ipairs(items) do
+        if currencyRates[item.name] then
+            total_value = total_value + (item.count * currencyRates[item.name].current)
+        end
+    end
+
+    if total_value > 0 then
+        accounts[user] = (accounts[user] or 0) + total_value
+        if saveTableToFile(ACCOUNTS_DB, accounts) then
+            rednet.send(senderId, { success = true, newBalance = accounts[user], deposited_value = total_value }, BANK_PROTOCOL)
+            logActivity(string.format("User '%s' deposited items for $%d.", user, total_value))
+        else
+            rednet.send(senderId, { success = false, reason = "Server database error." }, BANK_PROTOCOL)
+        end
+    else
+        rednet.send(senderId, { success = false, reason = "No valid currency detected." }, BANK_PROTOCOL)
+    end
+end
+
+function bankHandlers.withdraw_item(senderId, message)
+    local user, itemName, count = message.user, message.item_name, message.count
+    local rateInfo = currencyRates[itemName]
+
+    if not rateInfo then
+        rednet.send(senderId, { success = false, reason = "Invalid currency type." }, BANK_PROTOCOL)
+        return
+    end
+
+    local totalCost = rateInfo.current * count
+    if (accounts[user] or 0) >= totalCost then
+        if (currentStock[itemName] or 0) >= count then
+            accounts[user] = accounts[user] - totalCost
+            if saveTableToFile(ACCOUNTS_DB, accounts) then
+                rednet.send(senderId, { success = true, newBalance = accounts[user] }, BANK_PROTOCOL)
+                logActivity(string.format("User '%s' approved for withdrawal of %d %s for $%d.", user, count, itemName, totalCost))
+            else
+                accounts[user] = accounts[user] + totalCost -- Refund on DB error
+                rednet.send(senderId, { success = false, reason = "Server database error." }, BANK_PROTOCOL)
+            end
+        else
+            rednet.send(senderId, { success = false, reason = "Insufficient stock in vault." }, BANK_PROTOCOL)
+        end
+    else
+        rednet.send(senderId, { success = false, reason = "Insufficient funds." }, BANK_PROTOCOL)
+    end
+end
+
+--==============================================================================
+-- Main Event Loop
+--==============================================================================
+
+local function networkListener()
+    while true do
+        local senderId, message, protocolReceived = rednet.receive()
+        
+        if protocolReceived == BANK_PROTOCOL and message and message.type and bankHandlers[message.type] then
+            bankHandlers[message.type](senderId, message)
+        
+        elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "stock_report" then
+            local messageToVerify = textutils.serialize(message.report)
+            local signature = sha1.hmac_hex(AUDIT_SECRET_KEY, messageToVerify)
+            if signature == message.signature then
+                logActivity("Received valid, signed stock report from Auditor.")
+                currentStock = message.report
+                saveTableToFile(STOCK_DB, currentStock)
+                adjustCurrencyRates()
+            else
+                logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
+            end
+        end
+    end
+end
+
+local function main()
+    term.clear()
+    term.setCursorPos(1,1)
+    print("Drunken OS Bank Server Initializing...")
+
+    loadAllData()
+    
+    -- Open the wireless modem for general bank/audit traffic
+    print("Opening wireless modem...")
+    rednet.open("back") -- Assuming wireless is on the back
+    
+    -- Find and open the wired modem for the secure interlink
+    print("Finding wired modem for secure interlink...")
+    wired_modem_side = peripheral.find("wired_modem")
+    if not wired_modem_side then
+        print("FATAL: Could not find a wired modem for the secure interlink.")
+        rednet.close("back")
+        return
+    end
+    rednet.open(wired_modem_side)
+    print("Wired modem found on: " .. wired_modem_side)
+    
+    -- The main server is now the computer on the other end of the cable.
+    -- We get its ID by checking the peripherals connected to the modem.
+    local names = {peripheral.getNames()}
+    mainServerId = nil
+    for _, name in ipairs(names) do
+        if peripheral.getType(name) == "computer" then
+            mainServerId = peripheral.call(name, "getComputerID")
+            break
+        end
+    end
+
+    if not mainServerId then
+        print("FATAL: No computer found on the other side of the wired modem.")
+        rednet.close("back"); rednet.close(wired_modem_side)
+        return
+    end
+    print("Mainframe located via wired link at ID " .. mainServerId)
+
+    rednet.host(BANK_PROTOCOL, "bank.server")
+    
+    print("------------------------------------------")
+    logActivity("Bank Server started successfully.")
+    print("Listening for bank and audit messages.")
+    print("GUI will be implemented in a future version.")
+    print("------------------------------------------")
+    
+    networkListener()
+end
+
+main()
