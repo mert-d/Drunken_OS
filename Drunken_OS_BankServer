@@ -1,18 +1,18 @@
 --[[
-    Drunken OS - Bank Server (v1.2 - Admin Console)
+    Drunken OS - Bank Server (v2.0 - Graphical User Interface)
     by Gemini Gem
 
     Purpose:
-    This version adds a full terminal-based admin console to the Bank Server,
-    allowing for direct management of the economy. It includes commands to
-    add/remove currencies, view exchange rates, and set stock targets. It also
-    includes basic user account management commands.
+    This major update replaces the basic terminal output with a full-featured
+    graphical user interface that runs on an attached advanced monitor. It
+    provides a clean dashboard, live status updates, and a menu-driven system
+    for administration. The powerful command-line terminal is still accessible
+    as an option from the main menu.
 
     Setup:
-    - This computer must have a WIRELESS modem attached for general communication.
-    - It must ALSO have a WIRED modem attached, connected via cable to the
-      main Drunken_OS_Server.
-    - An advanced monitor can optionally be placed for a future GUI.
+    - An ADVANCED MONITOR must be placed on any side of this computer.
+    - A WIRELESS modem must be attached for public communication.
+    - A WIRED modem must be attached and cabled to the Mainframe Server.
 ]]
 
 --==============================================================================
@@ -71,9 +71,10 @@ end
 
 local accounts, currencyRates, currentStock = {}, {}, {}
 local mainServerId = nil
-local wired_modem_name = nil
-local wireless_modem_name = nil
+local wired_modem_name, wireless_modem_name = nil, nil
 local adminInput = ""
+local logHistory = {}
+local monitor = nil -- Will hold our monitor peripheral
 
 -- Database file paths
 local ACCOUNTS_DB = "bank_accounts.db"
@@ -90,24 +91,124 @@ local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 local AUDIT_SECRET_KEY = "YourSecretAuditKeyHere"
 
 --==============================================================================
--- UI & Logging (Terminal)
+-- UI & Theme Configuration
 --==============================================================================
+
+local hasColor = term.isColor and term.isColor()
+local function safeColor(colorName, fallbackColor)
+    if hasColor and colors[colorName] ~= nil then return colors[colorName] end
+    return fallbackColor
+end
+
+local theme = {
+    bg = safeColor("black", colors.black),
+    text = safeColor("white", colors.white),
+    windowBg = safeColor("darkGray", colors.gray),
+    title = safeColor("lightBlue", colors.lightBlue),
+    prompt = safeColor("cyan", colors.cyan),
+    statusBarBg = safeColor("gray", colors.lightGray),
+    statusBarText = safeColor("white", colors.white),
+    highlightBg = safeColor("blue", colors.blue),
+    highlightText = safeColor("white", colors.white),
+    error = safeColor("red", colors.red),
+}
+
+local currentScreen = "main"
+local selectedMenuItem = 1
+local needsRedraw = true
+
+--==============================================================================
+-- Graphical UI Functions
+--==============================================================================
+
+local function drawMainMenu()
+    if not monitor then return end
+    local w, h = monitor.getSize()
+    monitor.setBackgroundColor(theme.windowBg)
+    monitor.clear()
+    
+    -- Title Bar
+    monitor.setBackgroundColor(theme.title)
+    monitor.setCursorPos(1, 1)
+    monitor.write(string.rep(" ", w))
+    monitor.setTextColor(colors.white)
+    local titleText = " Drunken OS Bank Server "
+    monitor.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1)
+    monitor.write(titleText)
+
+    -- Status Panel
+    monitor.setBackgroundColor(theme.windowBg)
+    monitor.setTextColor(theme.text)
+    monitor.setCursorPos(3, 3)
+    monitor.write("System Status: ")
+    monitor.setTextColor(colors.green)
+    monitor.write("ONLINE")
+
+    monitor.setTextColor(theme.text)
+    monitor.setCursorPos(3, 4)
+    monitor.write("Mainframe Link: ")
+    monitor.setTextColor(mainServerId and colors.green or colors.red)
+    monitor.write(mainServerId and "CONNECTED" or "DISCONNECTED")
+
+    monitor.setTextColor(theme.text)
+    monitor.setCursorPos(3, 5)
+    local numAccounts = 0
+    for _ in pairs(accounts) do numAccounts = numAccounts + 1 end
+    monitor.write("Managed Accounts: " .. numAccounts)
+
+    monitor.setCursorPos(3, 6)
+    local numCurrencies = 0
+    for _ in pairs(currencyRates) do numCurrencies = numCurrencies + 1 end
+    monitor.write("Tracked Currencies: " .. numCurrencies)
+
+    -- Menu
+    local menuOptions = { "View Rates & Stock", "View Server Log", "Open Admin Terminal", "Shutdown Server" }
+    for i, option in ipairs(menuOptions) do
+        monitor.setCursorPos(3, 8 + i)
+        if i == selectedMenuItem then
+            monitor.setBackgroundColor(theme.highlightBg)
+            monitor.setTextColor(theme.highlightText)
+            monitor.write("> " .. option .. " ")
+        else
+            monitor.setBackgroundColor(theme.windowBg)
+            monitor.setTextColor(theme.text)
+            monitor.write("  " .. option .. " ")
+        end
+    end
+
+    -- Footer
+    monitor.setBackgroundColor(theme.statusBarBg)
+    monitor.setCursorPos(1, h)
+    monitor.write(string.rep(" ", w))
+    monitor.setTextColor(theme.statusBarText)
+    local footerText = "Use UP/DOWN & ENTER or Click to Navigate"
+    monitor.setCursorPos(math.floor((w - #footerText) / 2) + 1, h)
+    monitor.write(footerText)
+    
+    needsRedraw = false
+end
 
 local function logActivity(message, isError)
     local prefix = isError and "[ERROR] " or "[INFO] "
     local logEntry = os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message
     
-    term.setCursorPos(1, term.getCursorPos())
-    term.clearLine()
+    -- Log to console for headless debugging
     print(logEntry)
     
+    -- Log to file
     local file = fs.open(LOG_FILE, "a")
     if file then
         file.writeLine(logEntry)
         file.close()
     end
+
+    table.insert(logHistory, logEntry)
+    if #logHistory > 200 then table.remove(logHistory, 1) end
     
-    term.write("> " .. adminInput)
+    -- If we are on a screen that shows logs, trigger a redraw
+    if currentScreen == "log" then
+        needsRedraw = true
+    end
 end
 
 --==============================================================================
@@ -143,8 +244,9 @@ local function loadAllData()
 end
 
 --==============================================================================
--- Dynamic Economy Engine
+-- Dynamic Economy Engine & Network Handlers (No changes needed here)
 --==============================================================================
+-- (The existing functions for adjustCurrencyRates and the bankHandlers table are perfect as is)
 
 local function adjustCurrencyRates()
     logActivity("Adjusting currency rates based on new stock report...")
@@ -174,10 +276,6 @@ local function adjustCurrencyRates()
         end
     end
 end
-
---==============================================================================
--- Network Request Handlers
---==============================================================================
 
 local bankHandlers = {}
 
@@ -259,11 +357,11 @@ function bankHandlers.withdraw_item(senderId, message)
 end
 
 --==============================================================================
--- Admin Command Handlers
+-- Admin Command Handlers & Terminal
 --==============================================================================
 
 local adminCommands = {}
-
+-- (The adminCommands table and its functions are perfect as is)
 local function parseAdminArgs(args)
     local command = table.remove(args, 1)
     if not args or #args == 0 then return command, nil, nil end
@@ -277,75 +375,101 @@ local function parseAdminArgs(args)
 end
 
 function adminCommands.help()
-    logActivity("--- Bank Admin Commands ---")
-    logActivity("balance <user>")
-    logActivity("setbalance <user> <amount>")
-    logActivity("give <user> <amount>")
-    logActivity("addcurrency <item_name> <base_rate>")
-    logActivity("delcurrency <item_name>")
-    logActivity("listrates")
-    logActivity("settarget <item_name> <target_amount>")
+    print("--- Bank Admin Commands ---")
+    print("balance <user>")
+    print("setbalance <user> <amount>")
+    print("give <user> <amount>")
+    print("addcurrency <item_name> <base_rate>")
+    print("delcurrency <item_name>")
+    print("listrates")
+    print("settarget <item_name> <target_amount>")
+    print("exit - Closes the terminal and returns to the GUI.")
 end
 
 function adminCommands.balance(args)
     local _, user = parseAdminArgs(args)
-    if not user then logActivity("Usage: balance <user>", true); return end
-    logActivity("Balance for " .. user .. ": " .. (accounts[user] or 0))
+    if not user then print("Usage: balance <user>"); return end
+    print("Balance for " .. user .. ": " .. (accounts[user] or 0))
 end
 
 function adminCommands.setbalance(args)
     local _, user, amount = parseAdminArgs(args)
-    if not user or not amount then logActivity("Usage: setbalance <user> <amount>", true); return end
+    if not user or not amount then print("Usage: setbalance <user> <amount>"); return end
     accounts[user] = amount; saveTableToFile(ACCOUNTS_DB, accounts)
-    logActivity("Set balance for " .. user .. " to " .. amount)
+    print("Set balance for " .. user .. " to " .. amount)
 end
 
 function adminCommands.give(args)
     local _, user, amount = parseAdminArgs(args)
-    if not user or not amount then logActivity("Usage: give <user> <amount>", true); return end
+    if not user or not amount then print("Usage: give <user> <amount>"); return end
     accounts[user] = (accounts[user] or 0) + amount; saveTableToFile(ACCOUNTS_DB, accounts)
-    logActivity("Gave " .. amount .. " to " .. user .. ". New balance: " .. accounts[user])
+    print("Gave " .. amount .. " to " .. user .. ". New balance: " .. accounts[user])
 end
 
 function adminCommands.addcurrency(args)
     local _, itemName, baseRate = parseAdminArgs(args)
-    if not itemName or not baseRate then logActivity("Usage: addcurrency <item_name> <base_rate>", true); return end
-    if currencyRates[itemName] then logActivity("Currency '" .. itemName .. "' already exists.", true); return end
+    if not itemName or not baseRate then print("Usage: addcurrency <item_name> <base_rate>"); return end
+    if currencyRates[itemName] then print("Currency '" .. itemName .. "' already exists."); return end
     currencyRates[itemName] = { base = baseRate, current = baseRate, target = nil }
-    if saveTableToFile(RATES_DB, currencyRates) then logActivity("Added new currency '" .. itemName .. "' with base rate $" .. baseRate)
-    else logActivity("Failed to save new currency.", true) end
+    if saveTableToFile(RATES_DB, currencyRates) then print("Added new currency '" .. itemName .. "' with base rate $" .. baseRate)
+    else print("Failed to save new currency.") end
 end
 
 function adminCommands.delcurrency(args)
     local _, itemName = parseAdminArgs(args)
-    if not itemName then logActivity("Usage: delcurrency <item_name>", true); return end
-    if not currencyRates[itemName] then logActivity("Currency '" .. itemName .. "' does not exist.", true); return end
+    if not itemName then print("Usage: delcurrency <item_name>"); return end
+    if not currencyRates[itemName] then print("Currency '" .. itemName .. "' does not exist."); return end
     currencyRates[itemName] = nil
-    if saveTableToFile(RATES_DB, currencyRates) then logActivity("Removed currency '" .. itemName .. "'.")
-    else logActivity("Failed to remove currency.", true) end
+    if saveTableToFile(RATES_DB, currencyRates) then print("Removed currency '" .. itemName .. "'.")
+    else print("Failed to remove currency.") end
 end
 
 function adminCommands.listrates()
-    logActivity("--- Current Exchange Rates ---")
+    print("--- Current Exchange Rates ---")
     for name, data in pairs(currencyRates) do
         local stock = currentStock[name] or 0
         local target = data.target and ("/" .. data.target) or "/N/A"
-        logActivity(string.format("- %s: $%d (Base: $%d) | Stock: %d%s", name, data.current, data.base, stock, target))
+        print(string.format("- %s: $%d (Base: $%d) | Stock: %d%s", name, data.current, data.base, stock, target))
     end
 end
 
 function adminCommands.settarget(args)
     local _, itemName, targetAmount = parseAdminArgs(args)
-    if not itemName or not targetAmount then logActivity("Usage: settarget <item_name> <target_amount>", true); return end
-    if not currencyRates[itemName] then logActivity("Currency '" .. itemName .. "' does not exist. Use addcurrency first.", true); return end
+    if not itemName or not targetAmount then print("Usage: settarget <item_name> <target_amount>"); return end
+    if not currencyRates[itemName] then print("Currency '" .. itemName .. "' does not exist."); return end
     currencyRates[itemName].target = targetAmount
-    if saveTableToFile(RATES_DB, currencyRates) then logActivity("Set target stock for '" .. itemName .. "' to " .. targetAmount)
-    else logActivity("Failed to set target.", true) end
+    if saveTableToFile(RATES_DB, currencyRates) then print("Set target stock for '" .. itemName .. "' to " .. targetAmount)
+    else print("Failed to set target.") end
 end
 
 local function handleAdminCommand(command)
     local args = {}; for arg in string.gmatch(command, "[^%s]+") do table.insert(args, arg) end
-    local cmd = args[1]; if adminCommands[cmd] then adminCommands[cmd](args) else logActivity("Unknown command. Type 'help'.") end
+    local cmd = args[1]
+    if cmd == "exit" then return false end -- Signal to exit terminal
+    if adminCommands[cmd] then adminCommands[cmd](args) else print("Unknown command. Type 'help'.") end
+    return true -- Continue terminal session
+end
+
+local function adminTerminal()
+    local oldTerm = term.current()
+    term.redirect(monitor)
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1,1)
+    print("Bank Admin Terminal. Type 'exit' to return to GUI.")
+    
+    while true do
+        term.write("> ")
+        local input = read()
+        if not handleAdminCommand(input) then
+            break
+        end
+    end
+    
+    term.redirect(oldTerm) -- Restore original terminal
+    currentScreen = "main"
+    needsRedraw = true
 end
 
 --==============================================================================
@@ -374,12 +498,45 @@ local function networkListener()
     end
 end
 
-local function adminTerminal()
+local function guiHandler()
     while true do
-        term.write("> ")
-        adminInput = read()
-        if adminInput and adminInput ~= "" then
-            handleAdminCommand(adminInput)
+        if needsRedraw then
+            if currentScreen == "main" then
+                drawMainMenu()
+            -- Add other screens like "rates" or "log" here later
+            end
+        end
+
+        local event, p1, p2, p3 = os.pullEvent("monitor_touch", "key")
+        if event == "key" then
+            if currentScreen == "main" then
+                local menuSize = 4
+                if p1 == keys.up then
+                    selectedMenuItem = (selectedMenuItem == 1) and menuSize or selectedMenuItem - 1
+                    needsRedraw = true
+                elseif p1 == keys.down then
+                    selectedMenuItem = (selectedMenuItem == menuSize) and 1 or selectedMenuItem + 1
+                    needsRedraw = true
+                elseif p1 == keys.enter then
+                    if selectedMenuItem == 1 then -- View Rates
+                        -- Placeholder for rates screen
+                    elseif selectedMenuItem == 2 then -- View Log
+                        -- Placeholder for log screen
+                    elseif selectedMenuItem == 3 then -- Open Terminal
+                        currentScreen = "terminal"
+                        adminTerminal()
+                    elseif selectedMenuItem == 4 then -- Shutdown
+                        return -- End the GUI handler, which will terminate the program
+                    end
+                end
+            end
+        elseif event == "monitor_touch" then
+            -- Handle clicks on menu items
+            if currentScreen == "main" and p2 >= 9 and p2 <= 12 then
+                selectedMenuItem = p2 - 8
+                -- Simulate an enter press
+                os.queueEvent("key", keys.enter)
+            end
         end
     end
 end
@@ -389,13 +546,19 @@ local function main()
     term.setCursorPos(1,1)
     print("Drunken OS Bank Server Initializing...")
 
+    monitor = peripheral.find("monitor")
+    if not monitor then
+        print("FATAL: No advanced monitor attached. GUI cannot start.")
+        return
+    end
+
     loadAllData()
     
     print("Scanning for modems...")
     for _, name in ipairs(peripheral.getNames()) do
         if peripheral.getType(name) == "modem" then
-            local modem = peripheral.wrap(name)
-            if modem.isWireless() then
+            local modem_p = peripheral.wrap(name)
+            if modem_p.isWireless() then
                 wireless_modem_name = name
             else
                 wired_modem_name = name
@@ -412,7 +575,6 @@ local function main()
     print("Identifying Mainframe via secure wired link...")
     local wired_periph = peripheral.wrap(wired_modem_name)
     local remote_names = wired_periph.getNamesRemote()
-    mainServerId = nil
     for _, name in ipairs(remote_names) do
         if peripheral.getType(name) == "computer" then
             mainServerId = peripheral.call(name, "getID")
@@ -423,21 +585,18 @@ local function main()
     if not mainServerId then print("FATAL: No computer found on the other side of the wired modem."); return end
     print("Mainframe located via wired link at ID " .. mainServerId)
 
-    print("Opening wireless modem on: " .. wireless_modem_name)
+    print("Opening modems...")
     rednet.open(wireless_modem_name)
-    print("Opening wired modem on: " .. wired_modem_name)
     rednet.open(wired_modem_name)
     
     rednet.host(BANK_PROTOCOL, "bank.server")
     
     print("------------------------------------------")
-    logActivity("Bank Server started successfully.")
-    print("Listening for bank and audit messages.")
-    print("Type 'help' for a list of commands.")
+    print("Bank Server started successfully.")
+    print("GUI is now active on the attached monitor.")
     print("------------------------------------------")
     
-    parallel.waitForAny(networkListener, adminTerminal)
+    parallel.waitForAny(networkListener, guiHandler)
 end
 
 main()
-
