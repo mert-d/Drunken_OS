@@ -1,12 +1,12 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v4.0 - Dynamic Economy)
+    Drunken Beard Bank - ATM Terminal (v5.0 - Item-Specific Withdrawal)
     by Gemini Gem
 
     Purpose:
-    This is a major upgrade to the ATM client to support the new dynamic
-    multi-currency economy. It fetches live exchange rates from the server,
-    displays them to the user, and handles deposits and withdrawals in
-    Astral Dollars ($).
+    This version overhauls the withdrawal system. Instead of withdrawing an
+    abstract dollar amount, the user is now presented with a list of available
+    currencies and can choose a specific item and quantity to withdraw. This
+    provides a much more intuitive user experience.
 
     Setup:
     - A disk drive must be attached to this computer.
@@ -188,44 +188,97 @@ local function deposit()
 
         if server_response and server_response.success then
             balance = server_response.newBalance
-            rednet.send(turtleClerkId, { type = "confirm_deposit", items = depositItems }, TURTLE_CLERK_PROTOCOL)
+            rednet.send(turtleClerkId, { type = "confirm_deposit" }, TURTLE_CLERK_PROTOCOL)
             showMessage("Success", "Deposited items for a total of $" .. server_response.deposited_value)
         else
             rednet.send(turtleClerkId, { type = "cancel_deposit" }, TURTLE_CLERK_PROTOCOL)
             showMessage("Error", "Deposit failed on server. Items returned.", true)
         end
     else
-        showMessage("Deposit Cancelled", "No valid currency found in the deposit barrel.")
+        showMessage("Deposit Cancelled", "No items found in the deposit barrel.")
     end
 end
 
 local function withdraw()
     drawWindow("Withdraw")
-    local amountStr = readInput("Amount to withdraw ($): ", 4)
-    local amount = tonumber(amountStr)
-    if not amount or amount <= 0 then
-        showMessage("Error", "Invalid amount.", true)
+    
+    -- Fetch the latest rates to show the user what they can withdraw
+    rednet.send(bankServerId, { type = "get_balance_and_rates", user = username }, BANK_SERVER_PROTOCOL)
+    local _, response = rednet.receive(BANK_SERVER_PROTOCOL, 5)
+    if not response or not response.rates then
+        showMessage("Error", "Could not fetch currency list from server.", true)
+        return
+    end
+    currencyRates = response.rates
+    balance = response.balance
+
+    local availableCurrencies = {}
+    for name, data in pairs(currencyRates) do
+        table.insert(availableCurrencies, { name = name, rate = data.current })
+    end
+
+    if #availableCurrencies == 0 then
+        showMessage("Withdraw", "There are no currencies available for withdrawal.", true)
         return
     end
 
-    drawWindow("Processing..."); term.setCursorPos(2, 4); term.write("Contacting bank...")
-    rednet.send(bankServerId, { type = "withdraw", user = username, amount = amount }, BANK_SERVER_PROTOCOL)
-    local _, response = rednet.receive(BANK_SERVER_PROTOCOL, 10)
+    table.insert(availableCurrencies, { name = "Cancel", rate = 0 })
 
-    if response and response.success then
-        balance = response.newBalance
-        term.setCursorPos(2, 6); term.write("Transaction approved. Requesting dispense...")
-        rednet.send(turtleClerkId, { type = "request_dispense", items = response.items_to_dispense }, TURTLE_CLERK_PROTOCOL)
+    local selected = 1
+    while true do
+        drawWindow("Select Currency to Withdraw")
+        term.setCursorPos(2, 4); term.write("Your Balance: $" .. balance)
         
-        local _, turtle_response = rednet.receive(TURTLE_CLERK_PROTOCOL, 15)
-        if turtle_response and turtle_response.success then
-            showMessage("Success", "Withdrew $" .. amount .. ". Please collect items from the barrel.")
-        else
-            showMessage("Error", turtle_response and turtle_response.reason or "Dispense failed.", true)
-            -- Note: A real system would need a way to refund the user if this step fails.
+        local menuOptions = {}
+        for _, currency in ipairs(availableCurrencies) do
+            if currency.name == "Cancel" then
+                table.insert(menuOptions, "Cancel")
+            else
+                local cleanName = currency.name:gsub("minecraft:", ""):gsub("_", " ")
+                table.insert(menuOptions, string.format("%s ($%d each)", cleanName, currency.rate))
+            end
         end
-    else
-        showMessage("Error", response and response.reason or "Withdrawal failed.", true)
+        drawMenu(menuOptions, selected, 2, 6)
+
+        local event, key = os.pullEvent("key")
+        if key == keys.up then selected = (selected == 1) and #menuOptions or selected - 1
+        elseif key == keys.down then selected = (selected == #menuOptions) and 1 or selected + 1
+        elseif key == keys.enter then
+            local choice = availableCurrencies[selected]
+            if choice.name == "Cancel" then
+                return
+            end
+
+            local amountStr = readInput("How many " .. choice.name:gsub("minecraft:", "") .. " to withdraw? ", 6 + #menuOptions + 1)
+            local amount = tonumber(amountStr)
+
+            if amount and amount > 0 then
+                drawWindow("Processing..."); term.setCursorPos(2, 4); term.write("Contacting bank...")
+                rednet.send(bankServerId, { type = "withdraw_item", user = username, item_name = choice.name, count = amount }, BANK_SERVER_PROTOCOL)
+                local _, server_response = rednet.receive(BANK_SERVER_PROTOCOL, 10)
+
+                if server_response and server_response.success then
+                    balance = server_response.newBalance
+                    term.setCursorPos(2, 6); term.write("Transaction approved. Requesting dispense...")
+                    rednet.send(turtleClerkId, { type = "request_dispense", item_name = choice.name, count = amount }, TURTLE_CLERK_PROTOCOL)
+                    
+                    local _, turtle_response = rednet.receive(TURTLE_CLERK_PROTOCOL, 20)
+                    if turtle_response and turtle_response.success then
+                        showMessage("Success", "Withdrawal complete. Please collect your items.")
+                    else
+                        showMessage("FATAL ERROR", turtle_response and turtle_response.reason or "Dispense failed. Contact an admin!", true)
+                    end
+                    return
+                else
+                    showMessage("Error", server_response and server_response.reason or "Withdrawal failed.", true)
+                end
+            else
+                showMessage("Error", "Invalid amount.", true)
+            end
+            return -- Exit after an attempt
+        elseif key == keys.tab or key == keys.q then
+            return
+        end
     end
 end
 
@@ -279,7 +332,7 @@ local function main()
         clear(); print("Login failed. Goodbye!"); rednet.close("back"); return
     end
 
-    local options = {"View Balance & Rates", "Deposit", "Withdraw", "Exit"}
+    local options = {"View Balance & Rates", "Deposit Items", "Withdraw Items", "Exit"}
     local selected = 1
     while true do
         drawWindow("Drunken Beard Bank")
@@ -321,3 +374,4 @@ local function main()
 end
 
 main()
+
