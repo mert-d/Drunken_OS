@@ -591,12 +591,22 @@ local function main()
     
     rednet.host(BANK_PROTOCOL, "bank.server")
     
-    print("------------------------------------------")
+    term.clear()
+    term.setCursorPos(1,1)
     print("Bank Server started successfully.")
     print("GUI is now active on the attached monitor.")
-    print("------------------------------------------")
     
+    -- Redirect all terminal output to the monitor for the GUI
+    local oldTerm = term.redirect(monitor)
+    
+    -- Run the main loops
     parallel.waitForAny(networkListener, guiHandler)
+    
+    -- When the loops exit (on shutdown), restore the original terminal
+    term.redirect(oldTerm)
+    monitor.setBackgroundColor(colors.black)
+    monitor.clear()
+    print("Bank Server has shut down.")
 end
 
 main()
