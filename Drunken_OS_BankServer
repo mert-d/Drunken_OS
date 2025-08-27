@@ -284,7 +284,7 @@ local function main()
 
     loadAllData()
     
-    -- Find and differentiate between wired and wireless modems
+    -- Step 1: Find and differentiate between wired and wireless modems
     print("Scanning for modems...")
     for _, name in ipairs(peripheral.getNames()) do
         if peripheral.getType(name) == "modem" then
@@ -306,31 +306,37 @@ local function main()
         return
     end
     
-    print("Opening wireless modem on: " .. wireless_modem_name)
-    rednet.open(wireless_modem_name)
-    
-    print("Opening wired modem on: " .. wired_modem_name)
-    rednet.open(wired_modem_name)
-    
-    -- The main server is now the computer on the other end of the cable.
+    print("Found Wireless Modem on: " .. wireless_modem_name)
+    print("Found Wired Modem on: " .. wired_modem_name)
+
+    -- Step 2: Use the peripheral API on the wired modem BEFORE opening rednet
+    print("Identifying Mainframe via secure wired link...")
     local wired_periph = peripheral.wrap(wired_modem_name)
     local remote_names = {wired_periph.getNamesRemote()}
     mainServerId = nil
     for _, name in ipairs(remote_names) do
         if peripheral.getType(name) == "computer" then
-            mainServerId = peripheral.call(name, "getComputerID")
+            -- Temporarily wrap the remote computer to get its ID
+            local remote_computer = peripheral.wrap(name)
+            mainServerId = remote_computer.getComputerID()
             break
         end
     end
 
     if not mainServerId then
         print("FATAL: No computer found on the other side of the wired modem.")
-        rednet.close(wireless_modem_name)
-        rednet.close(wired_modem_name)
         return
     end
     print("Mainframe located via wired link at ID " .. mainServerId)
 
+    -- Step 3: NOW it's safe to open both modems for rednet communication
+    print("Opening wireless modem on: " .. wireless_modem_name)
+    rednet.open(wireless_modem_name)
+    
+    print("Opening wired modem on: " .. wired_modem_name)
+    rednet.open(wired_modem_name)
+    
+    -- Step 4: Host the protocols and start the main listener
     rednet.host(BANK_PROTOCOL, "bank.server")
     
     print("------------------------------------------")
