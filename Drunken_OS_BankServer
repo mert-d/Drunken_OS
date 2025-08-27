@@ -1,13 +1,12 @@
 --[[
-    Drunken OS - Bank Server (v2.0 - Graphical User Interface)
+    Drunken OS - Bank Server (v2.1 - Keyboard Focus Fix)
     by Gemini Gem
 
     Purpose:
-    This major update replaces the basic terminal output with a full-featured
-    graphical user interface that runs on an attached advanced monitor. It
-    provides a clean dashboard, live status updates, and a menu-driven system
-    for administration. The powerful command-line terminal is still accessible
-    as an option from the main menu.
+    This version fixes a bug where keyboard input from the computer's terminal
+    was not controlling the GUI on the monitor. By redirecting the terminal to
+    the monitor before starting the GUI, all keyboard events (like arrow keys)
+    are now correctly captured by the GUI handler.
 
     Setup:
     - An ADVANCED MONITOR must be placed on any side of this computer.
@@ -168,11 +167,11 @@ local function drawMainMenu()
         if i == selectedMenuItem then
             monitor.setBackgroundColor(theme.highlightBg)
             monitor.setTextColor(theme.highlightText)
-            monitor.write("> " .. option .. " ")
+            monitor.write("> " .. option .. string.rep(" ", w - 6 - #option))
         else
             monitor.setBackgroundColor(theme.windowBg)
             monitor.setTextColor(theme.text)
-            monitor.write("  " .. option .. " ")
+            monitor.write("  " .. option .. string.rep(" ", w - 6 - #option))
         end
     end
 
@@ -205,7 +204,6 @@ local function logActivity(message, isError)
     table.insert(logHistory, logEntry)
     if #logHistory > 200 then table.remove(logHistory, 1) end
     
-    -- If we are on a screen that shows logs, trigger a redraw
     if currentScreen == "log" then
         needsRedraw = true
     end
@@ -244,9 +242,8 @@ local function loadAllData()
 end
 
 --==============================================================================
--- Dynamic Economy Engine & Network Handlers (No changes needed here)
+-- Dynamic Economy Engine & Network Handlers
 --==============================================================================
--- (The existing functions for adjustCurrencyRates and the bankHandlers table are perfect as is)
 
 local function adjustCurrencyRates()
     logActivity("Adjusting currency rates based on new stock report...")
@@ -361,7 +358,7 @@ end
 --==============================================================================
 
 local adminCommands = {}
--- (The adminCommands table and its functions are perfect as is)
+
 local function parseAdminArgs(args)
     local command = table.remove(args, 1)
     if not args or #args == 0 then return command, nil, nil end
@@ -491,6 +488,7 @@ local function networkListener()
                 currentStock = message.report
                 saveTableToFile(STOCK_DB, currentStock)
                 adjustCurrencyRates()
+                needsRedraw = true
             else
                 logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
             end
@@ -531,10 +529,8 @@ local function guiHandler()
                 end
             end
         elseif event == "monitor_touch" then
-            -- Handle clicks on menu items
             if currentScreen == "main" and p2 >= 9 and p2 <= 12 then
                 selectedMenuItem = p2 - 8
-                -- Simulate an enter press
                 os.queueEvent("key", keys.enter)
             end
         end
@@ -596,7 +592,7 @@ local function main()
     print("Bank Server started successfully.")
     print("GUI is now active on the attached monitor.")
     
-    -- Redirect all terminal output to the monitor for the GUI
+    -- Redirect all terminal I/O to the monitor for the GUI
     local oldTerm = term.redirect(monitor)
     
     -- Run the main loops
@@ -606,6 +602,8 @@ local function main()
     term.redirect(oldTerm)
     monitor.setBackgroundColor(colors.black)
     monitor.clear()
+    term.clear()
+    term.setCursorPos(1,1)
     print("Bank Server has shut down.")
 end
 
