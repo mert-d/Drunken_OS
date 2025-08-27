@@ -70,7 +70,8 @@ end
 
 local accounts, currencyRates, currentStock = {}, {}, {}
 local mainServerId = nil
-local wired_modem_side = nil -- NEW: To store the wired modem peripheral name
+local wired_modem_name = nil -- Store the peripheral name of the wired modem
+local wireless_modem_name = nil -- Store the peripheral name of the wireless modem
 
 -- Database file paths
 local ACCOUNTS_DB = "bank_accounts.db"
@@ -181,7 +182,6 @@ function bankHandlers.login(senderId, message)
         pass_hash = sha1.hex(message.pass)
     }, AUTH_INTERLINK_PROTOCOL)
 
-    -- We expect the reply on the same wired modem
     local _, response, proto = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
 
     if response and response.user == message.user and response.success then
@@ -284,26 +284,39 @@ local function main()
 
     loadAllData()
     
-    -- Open the wireless modem for general bank/audit traffic
-    print("Opening wireless modem...")
-    rednet.open("back") -- Assuming wireless is on the back
-    
-    -- Find and open the wired modem for the secure interlink
-    print("Finding wired modem for secure interlink...")
-    wired_modem_side = peripheral.find("wired_modem")
-    if not wired_modem_side then
-        print("FATAL: Could not find a wired modem for the secure interlink.")
-        rednet.close("back")
+    -- Find and differentiate between wired and wireless modems
+    print("Scanning for modems...")
+    for _, name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name) == "modem" then
+            local modem = peripheral.wrap(name)
+            if modem.isWireless() then
+                wireless_modem_name = name
+            else
+                wired_modem_name = name
+            end
+        end
+    end
+
+    if not wireless_modem_name then
+        print("FATAL: No wireless modem attached for public communication.")
         return
     end
-    rednet.open(wired_modem_side)
-    print("Wired modem found on: " .. wired_modem_side)
+    if not wired_modem_name then
+        print("FATAL: Could not find a wired modem for the secure interlink.")
+        return
+    end
+    
+    print("Opening wireless modem on: " .. wireless_modem_name)
+    rednet.open(wireless_modem_name)
+    
+    print("Opening wired modem on: " .. wired_modem_name)
+    rednet.open(wired_modem_name)
     
     -- The main server is now the computer on the other end of the cable.
-    -- We get its ID by checking the peripherals connected to the modem.
-    local names = {peripheral.getNames()}
+    local wired_periph = peripheral.wrap(wired_modem_name)
+    local remote_names = {wired_periph.getNamesRemote()}
     mainServerId = nil
-    for _, name in ipairs(names) do
+    for _, name in ipairs(remote_names) do
         if peripheral.getType(name) == "computer" then
             mainServerId = peripheral.call(name, "getComputerID")
             break
@@ -312,7 +325,8 @@ local function main()
 
     if not mainServerId then
         print("FATAL: No computer found on the other side of the wired modem.")
-        rednet.close("back"); rednet.close(wired_modem_side)
+        rednet.close(wireless_modem_name)
+        rednet.close(wired_modem_name)
         return
     end
     print("Mainframe located via wired link at ID " .. mainServerId)
