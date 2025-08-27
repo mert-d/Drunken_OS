@@ -595,7 +595,7 @@ end
 local function main()
     loadAllData()
     
-    -- Open all available modems
+    -- Open all available modems to listen on both wired and wireless networks
     for _, name in ipairs(peripheral.getNames()) do
         if peripheral.getType(name) == "modem" then
             rednet.open(name)
@@ -603,6 +603,7 @@ local function main()
         end
     end
 
+    -- Host the non-banking protocols
     rednet.host("SimpleMail", "mail.server")
     rednet.host("SimpleChat", "chat.server")
     rednet.host("ArcadeGames", "arcade.server")
