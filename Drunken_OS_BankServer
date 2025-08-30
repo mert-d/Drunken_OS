@@ -146,6 +146,7 @@ local function logActivity(message, isError)
     table.insert(logHistory, logEntry)
     if #logHistory > 200 then table.remove(logHistory, 1) end
     
+    -- Only redraw the GUI if the log screen is currently active
     if currentScreen == "log" then
         needsRedraw = true
     end
