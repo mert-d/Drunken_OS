@@ -1,21 +1,16 @@
 --[[
-    Drunken OS - Bank Server (v2.2 - UI & Logging Overhaul)
+    Drunken OS - Bank Server (v2.3 - UI Polish & Card Creation)
     by Gemini Gem
 
     Purpose:
-    This version is a major UI and backend refactor. It fixes keyboard focus,
-    allowing the GUI to be controlled from the computer's terminal. It also
-    overhauls the logging system to be cleaner and more organized.
+    This version polishes the GUI and re-introduces the 'makecard' command
+    in a secure, multi-server context.
 
     Key Changes:
-    - GUI is now fully controllable with UP/DOWN/ENTER keys from the main computer.
-    - Log messages no longer clutter the main dashboard.
-    - New "View Server Log" screen to see live server activity.
-    - New structured logging system:
-        - /logs/bank_server.log for general activity.
-        - /logs/transactions/<username>.log for individual user transaction histories.
-    - New currency data structure:
-        - /currencies/<item_name>.json for each registered currency.
+    - Log messages are now properly silenced and no longer appear on the main GUI dashboard.
+    - Added the 'makecard <username>' command back to the Admin Terminal.
+    - The 'makecard' command now securely verifies with the Mainframe server
+      that a user exists before creating a card.
 
     Setup:
     - An ADVANCED MONITOR must be placed on any side of this computer.
@@ -26,10 +21,9 @@
 --==============================================================================
 -- Embedded SHA1 & HMAC Library
 --==============================================================================
-
+-- (SHA1 Library code remains unchanged)
 local sha1 = {}
 do
-    -- (SHA1 library code remains unchanged)
     local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
     local function rol(n, c) return bor(lshift(n, c), rshift(n, 32 - c)) end
     local function str_to_bin(str) local t = {}; for i = 1, #str do t[i] = string.byte(str, i) end; return t end
@@ -84,6 +78,7 @@ local wired_modem_name, wireless_modem_name = nil, nil
 local adminInput = ""
 local logHistory = {}
 local monitor = nil
+local startupComplete = false -- Flag to control logging to terminal
 
 -- Database file paths
 local LOGS_DIR = "logs"
@@ -136,10 +131,11 @@ local function logActivity(message, isError)
     local prefix = isError and "[ERROR] " or "[INFO] "
     local logEntry = os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message
     
-    -- Write to the physical computer's terminal for startup/debug.
-    term.write(logEntry .. "\n")
+    if not startupComplete then
+        -- Only print to the physical terminal during startup
+        term.write(logEntry .. "\n")
+    end
     
-    -- Log to file
     if not fs.exists(LOGS_DIR) then fs.makeDir(LOGS_DIR) end
     local file = fs.open(LOG_FILE, "a")
     if file then
@@ -150,7 +146,6 @@ local function logActivity(message, isError)
     table.insert(logHistory, logEntry)
     if #logHistory > 200 then table.remove(logHistory, 1) end
     
-    -- Only redraw the GUI if the log screen is currently active
     if currentScreen == "log" then
         needsRedraw = true
     end
@@ -271,7 +266,6 @@ local function loadAllData()
     currencyRates = {}
     if fs.exists(CURRENCIES_DIR) then
         for _, file in ipairs(fs.list(CURRENCIES_DIR)) do
-            -- The filename is the item name, remove the .json extension
             local itemName = file:match("(.+)%.json$")
             if itemName then
                 currencyRates[itemName] = loadTableFromFile(fs.combine(CURRENCIES_DIR, file))
@@ -423,6 +417,7 @@ function adminCommands.help()
     print("balance <user>")
     print("setbalance <user> <amount>")
     print("give <user> <amount>")
+    print("makecard <user>")
     print("addcurrency <item_name> <base_rate>")
     print("delcurrency <item_name>")
     print("listrates")
@@ -448,6 +443,51 @@ function adminCommands.give(args)
     if not user or not amount then print("Usage: give <user> <amount>"); return end
     accounts[user] = (accounts[user] or 0) + amount; saveTableToFile(ACCOUNTS_DB, accounts)
     print("Gave " .. amount .. " to " .. user .. ". New balance: " .. accounts[user])
+end
+
+function adminCommands.makecard(args)
+    local _, user = parseAdminArgs(args)
+    if not user then
+        print("Usage: makecard <username>")
+        return
+    end
+    
+    print("Verifying user with Mainframe...")
+    rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
+    local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
+
+    if not response or not response.exists then
+        print("Error: Mainframe reports user '" .. user .. "' does not exist.")
+        return
+    end
+
+    print("User verified. Please insert a blank disk.")
+    local disk = peripheral.find("drive")
+    if not disk then
+        print("Error: No disk drive attached to this server.")
+        return
+    end
+
+    if not disk.isDiskPresent() then
+        print("Error: No disk in the drive.")
+        return
+    end
+
+    local mount_path = disk.getMountPath()
+    if not mount_path then
+        print("Error: Could not get disk mount path.")
+        return
+    end
+
+    disk.setDiskLabel("Drunken Beard Bank Card")
+    local file = fs.open(mount_path .. "/.bankcard", "w")
+    if file then
+        file.write(user)
+        file.close()
+        print("Successfully created bank card for " .. user)
+    else
+        print("Error: Could not write to disk.")
+    end
 end
 
 function adminCommands.addcurrency(args)
@@ -538,7 +578,7 @@ local function networkListener()
             bankHandlers[message.type](senderId, message)
         
         elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "stock_report" then
-            local messageToVerify = textutils.serialize(message.report)
+            local messageToVerify = textutils.serializeJSON(message.report)
             local signature = sha1.hmac_hex(AUDIT_SECRET_KEY, messageToVerify)
             if signature == message.signature then
                 logActivity("Received valid, signed stock report from Auditor.")
@@ -605,6 +645,7 @@ local function main()
     local computerTerm = term.current()
     computerTerm.clear()
     computerTerm.setCursorPos(1,1)
+    
     print("Drunken OS Bank Server Initializing...")
 
     monitor = peripheral.find("monitor")
@@ -652,6 +693,7 @@ local function main()
     
     rednet.host(BANK_PROTOCOL, "bank.server")
     
+    startupComplete = true -- Stop logging to the physical terminal
     computerTerm.clear()
     computerTerm.setCursorPos(1,1)
     computerTerm.write("Bank Server started successfully.\nGUI is now active on the attached monitor.")
