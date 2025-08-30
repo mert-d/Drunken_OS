@@ -14,6 +14,8 @@
     - New structured logging system:
         - /logs/bank_server.log for general activity.
         - /logs/transactions/<username>.log for individual user transaction histories.
+    - New currency data structure:
+        - /currencies/<item_name>.json for each registered currency.
 
     Setup:
     - An ADVANCED MONITOR must be placed on any side of this computer.
@@ -27,6 +29,7 @@
 
 local sha1 = {}
 do
+    -- (SHA1 library code remains unchanged)
     local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
     local function rol(n, c) return bor(lshift(n, c), rshift(n, 32 - c)) end
     local function str_to_bin(str) local t = {}; for i = 1, #str do t[i] = string.byte(str, i) end; return t end
@@ -133,8 +136,7 @@ local function logActivity(message, isError)
     local prefix = isError and "[ERROR] " or "[INFO] "
     local logEntry = os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message
     
-    -- Log to the computer's own terminal for debugging during startup.
-    -- This is separate from the GUI monitor.
+    -- Write to the physical computer's terminal for startup/debug.
     term.write(logEntry .. "\n")
     
     -- Log to file
@@ -148,6 +150,7 @@ local function logActivity(message, isError)
     table.insert(logHistory, logEntry)
     if #logHistory > 200 then table.remove(logHistory, 1) end
     
+    -- Only redraw the GUI if the log screen is currently active
     if currentScreen == "log" then
         needsRedraw = true
     end
@@ -244,7 +247,7 @@ end
 local function saveTableToFile(path, data)
     local file = fs.open(path, "w")
     if not file then logActivity("Could not open " .. path .. " for writing.", true); return false end
-    local success, err = pcall(function() file.write(textutils.serialize(data)); file.close() end)
+    local success, err = pcall(function() file.write(textutils.serializeJSON(data)); file.close() end)
     if not success then logActivity("Failed to write to " .. path .. ": " .. tostring(err), true); return false end
     return true
 end
@@ -254,7 +257,7 @@ local function loadTableFromFile(path)
         local file = fs.open(path, "r")
         if file then
             local data = file.readAll(); file.close()
-            local success, result = pcall(textutils.unserialize, data)
+            local success, result = pcall(textutils.unserializeJSON, data)
             if success and type(result) == "table" then return result
             else logActivity("Corrupted data in " .. path .. ". A new file will be created.", true) end
         end
@@ -265,12 +268,14 @@ end
 local function loadAllData()
     accounts = loadTableFromFile(ACCOUNTS_DB)
     
-    -- Load currencies from the new folder structure
     currencyRates = {}
     if fs.exists(CURRENCIES_DIR) then
         for _, file in ipairs(fs.list(CURRENCIES_DIR)) do
-            local itemName = file:gsub("%.json$", "")
-            currencyRates[itemName] = loadTableFromFile(fs.combine(CURRENCIES_DIR, file))
+            -- The filename is the item name, remove the .json extension
+            local itemName = file:match("(.+)%.json$")
+            if itemName then
+                currencyRates[itemName] = loadTableFromFile(fs.combine(CURRENCIES_DIR, file))
+            end
         end
     end
 
@@ -301,7 +306,6 @@ local function adjustCurrencyRates()
     end
 
     if changed then
-        -- Save each currency back to its own file
         for itemName, data in pairs(currencyRates) do
             if not saveTableToFile(fs.combine(CURRENCIES_DIR, itemName .. ".json"), data) then
                  logActivity("Failed to save updated rate for " .. itemName, true)
@@ -541,7 +545,7 @@ local function networkListener()
                 currentStock = message.report
                 saveTableToFile(STOCK_DB, currentStock)
                 adjustCurrencyRates()
-                needsRedraw = true
+                needsRedraw = true -- Update dashboard stats
             else
                 logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
             end
@@ -599,8 +603,8 @@ end
 
 local function main()
     local computerTerm = term.current()
-    term.clear()
-    term.setCursorPos(1,1)
+    computerTerm.clear()
+    computerTerm.setCursorPos(1,1)
     print("Drunken OS Bank Server Initializing...")
 
     monitor = peripheral.find("monitor")
