@@ -11,6 +11,7 @@
     - Added the 'makecard <username>' command back to the Admin Terminal.
     - The 'makecard' command now securely verifies with the Mainframe server
       that a user exists before creating a card.
+    - Card labels now include the username, e.g., "DB_Bank Card (User)".
 
     Setup:
     - An ADVANCED MONITOR must be placed on any side of this computer.
@@ -146,7 +147,6 @@ local function logActivity(message, isError)
     table.insert(logHistory, logEntry)
     if #logHistory > 200 then table.remove(logHistory, 1) end
     
-    -- Only redraw the GUI if the log screen is currently active
     if currentScreen == "log" then
         needsRedraw = true
     end
@@ -480,8 +480,7 @@ function adminCommands.makecard(args)
         return
     end
 
-    -- Write the primary card file
-    disk.setDiskLabel("Drunken Beard Bank Card")
+    disk.setDiskLabel("Drunken Beard Bank Card (" .. user .. ")")
     local cardFile = fs.open(mount_path .. "/.bankcard", "w")
     if cardFile then
         cardFile.write(user)
@@ -491,7 +490,6 @@ function adminCommands.makecard(args)
         return
     end
 
-    -- NEW: Write the description file
     local descFile = fs.open(mount_path .. "/.description", "w")
     if descFile then
         local description = "Property of: " .. user .. "\n" ..
@@ -504,7 +502,6 @@ function adminCommands.makecard(args)
         print("Error: Could not write description file to disk.")
     end
 end
-
 
 function adminCommands.addcurrency(args)
     local _, itemName, baseRate = parseAdminArgs(args)
