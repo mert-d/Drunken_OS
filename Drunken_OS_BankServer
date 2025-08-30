@@ -480,16 +480,31 @@ function adminCommands.makecard(args)
         return
     end
 
+    -- Write the primary card file
     disk.setDiskLabel("Drunken Beard Bank Card")
-    local file = fs.open(mount_path .. "/.bankcard", "w")
-    if file then
-        file.write(user)
-        file.close()
-        print("Successfully created bank card for " .. user)
+    local cardFile = fs.open(mount_path .. "/.bankcard", "w")
+    if cardFile then
+        cardFile.write(user)
+        cardFile.close()
     else
-        print("Error: Could not write to disk.")
+        print("Error: Could not write main card file to disk.")
+        return
+    end
+
+    -- NEW: Write the description file
+    local descFile = fs.open(mount_path .. "/.description", "w")
+    if descFile then
+        local description = "Property of: " .. user .. "\n" ..
+                            "Account Type: Standard\n\n" ..
+                            "A proud member of the Drunken Beard banking system."
+        descFile.write(description)
+        descFile.close()
+        print("Successfully created bank card with description for " .. user)
+    else
+        print("Error: Could not write description file to disk.")
     end
 end
+
 
 function adminCommands.addcurrency(args)
     local _, itemName, baseRate = parseAdminArgs(args)
