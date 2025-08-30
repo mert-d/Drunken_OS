@@ -1,18 +1,16 @@
 --[[
-    Drunken OS - Mainframe Server (v9.0 - Bank Separation)
+    Drunken OS - Mainframe Server (v8.1 - Card Auth Support)
     by Gemini Gem
 
     Purpose:
-    This version completes the major refactor of the Drunken_OS system. All
-    banking, economy, and account management logic has been removed from this
-    script and migrated to the dedicated Drunken_OS_Bank_Server.
+    This version adds a new handler to the secure interlink protocol. It now
+    listens for 'user_exists_check' requests from the Bank Server, allowing
+    the Bank Admin to securely verify a user's existence before creating a
+    bank card for them.
 
-    This server's primary roles are now:
-    - User Authentication (via HyperAuthClient)
-    - Mail and Chat services
-    - Game and Program updates
-    - Responding to secure authentication checks from the Bank Server via a
-      wired modem interlink.
+    Key Changes:
+    - Added a new case in the networkListener for the AUTH_INTERLINK_PROTOCOL
+      to handle 'user_exists_check' messages.
 ]]
 
 --==============================================================================
@@ -38,7 +36,7 @@ end
 --==============================================================================
 -- Embedded SHA1 Library
 --==============================================================================
-
+-- (SHA1 Library code remains unchanged)
 local sha1 = {}
 do
     local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
@@ -71,6 +69,7 @@ do
     end
 end
 
+
 --==============================================================================
 -- Configuration & State
 --==============================================================================
@@ -79,6 +78,7 @@ local users, lists, games, chatHistory, gameList, pendingAuths = {}, {}, {}, {},
 local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
 
+-- Database file paths
 local USERS_DB = "users.db"
 local LISTS_DB = "lists.db"
 local GAMES_DB = "games.db"
@@ -91,11 +91,10 @@ local GAMES_CODE_DB = "games_code.db"
 
 -- HyperAuth Server Configuration
 local AUTH_SERVER_PROTOCOL = "auth.secure.v1"
--- Interlink protocol to communicate with the Bank Server
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 
 --==============================================================================
--- UI & Theme Configuration
+-- UI & Theme Configuration (for the admin terminal)
 --==============================================================================
 
 local hasColor = term.isColor and term.isColor()
@@ -204,7 +203,7 @@ local function loadAllData()
     programCode = updaterData.c or {}
     gameCode = loadTableFromFile(GAMES_CODE_DB)
     if fs.exists(MOTD_FILE) then local file = fs.open(MOTD_FILE, "r"); motd = file.readAll(); file.close() end
-    logActivity("All mainframe data loaded successfully.")
+    logActivity("All Mainframe data loaded successfully.")
 end
 
 --==============================================================================
@@ -245,13 +244,14 @@ end
 --==============================================================================
 -- Authentication Helper Functions
 --==============================================================================
+
 local function requestAuthCode(username, password, nickname, senderId, purpose)
     logActivity("Requesting auth code for '" .. username .. "' via HyperAuth API...")
     
     local request_reply, request_err = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
         username   = username,
         password   = password, -- This is the hashed password
-        vendorID   = "SimpleMail_Server",
+        vendorID   = "DrunkenOS_Mainframe",
         computerID = os.getComputerID(),
         extra      = { purpose = purpose or "unknown" },
     })
@@ -267,14 +267,13 @@ local function requestAuthCode(username, password, nickname, senderId, purpose)
     pendingAuths[username] = {
         request_id = request_reply.request_id,
         password = password,
-        nickname = nickname, -- Store nickname for registration
+        nickname = nickname,
         senderId = senderId,
         timestamp = os.time()
     }
     
     return request_reply.request_id
 end
-
 
 --==============================================================================
 -- Network Request Handlers
@@ -347,6 +346,7 @@ function mailHandlers.submit_auth_token(senderId, message)
         
         if not users[user] then -- This is a registration
             users[user] = { password = authData.password, nickname = authData.nickname, session_token = new_session_token }
+            -- Note: account creation is now handled by the bank server upon first login
             if saveTableToFile(USERS_DB, users) then
                 response_payload = { success = true, unreadCount = 0, nickname = authData.nickname, session_token = new_session_token }
                 logActivity("New user '" .. user .. "' successfully verified and registered.")
@@ -360,7 +360,7 @@ function mailHandlers.submit_auth_token(senderId, message)
             logActivity("User '" .. user .. "' successfully verified and logged in.")
         end
         rednet.send(senderId, response_payload, "SimpleMail")
-        pendingAuths[user] = nil -- Clean up successful auth
+        pendingAuths[user] = nil
     else
         rednet.send(senderId, { success = false, reason = verify_reply.reason or "Invalid authentication code." }, "SimpleMail")
         logActivity("Auth failed for "..user..": " .. (verify_reply.reason or "Unknown reason"), true)
@@ -391,6 +391,7 @@ function mailHandlers.user_exists(senderId, message)
     end
     rednet.send(senderId, { exists = exists }, "SimpleMail")
 end
+
 function mailHandlers.send(senderId, message)
     local mail = message.mail
     if mail.to == "@all" then
@@ -434,7 +435,6 @@ function mailHandlers.get_motd(senderId, message) rednet.send(senderId, { motd =
 function mailHandlers.get_chat_history(senderId, message) rednet.send(senderId, { history = chatHistory }, "SimpleMail") end
 function mailHandlers.get_unread_count(senderId, message) rednet.send(senderId, { type = "unread_count_response", count = #loadMail(message.user) }, "SimpleMail") end
 function mailHandlers.get_gamelist(senderId, message) rednet.send(senderId, { type = "gamelist_response", games = gameList }, "SimpleMail") end
-
 function mailHandlers.get_all_game_versions(senderId, message)
     local versions = {}
     for filename, data in pairs(gameCode) do
@@ -442,7 +442,6 @@ function mailHandlers.get_all_game_versions(senderId, message)
     end
     rednet.send(senderId, { type = "game_versions_response", versions = versions }, "SimpleMail")
 end
-
 function mailHandlers.get_game_update(senderId, message)
     local filename = message.filename
     if gameCode[filename] then
@@ -468,7 +467,7 @@ function gameHandlers.get_leaderboard(senderId, message)
 end
 
 --==============================================================================
--- Admin Command Handlers
+-- Admin Command Handlers & Main Loops
 --==============================================================================
 
 local adminCommands = {}
@@ -548,15 +547,12 @@ local function handleAdminCommand(command)
     local cmd = args[1]; if adminCommands[cmd] then adminCommands[cmd](args) else logActivity("Unknown command. Type 'help'.") end
 end
 
---==============================================================================
--- Main Event Loops
---==============================================================================
-
 local function networkListener()
     while true do
         local senderId, message, protocol = rednet.receive()
         if protocol == "SimpleMail" and message and message.type and mailHandlers[message.type] then
             mailHandlers[message.type](senderId, message)
+        
         elseif protocol == "SimpleChat" and message and message.from then
             local nickname = (users[message.from] and users[message.from].nickname) or message.from
             local entry = string.format("[%s]: %s", nickname, message.text)
@@ -564,18 +560,13 @@ local function networkListener()
             if #chatHistory > 100 then table.remove(chatHistory, 1) end
             saveTableToFile(CHAT_DB, chatHistory)
             rednet.broadcast({ from = nickname, text = message.text }, "SimpleChat")
+        
         elseif protocol == "ArcadeGames" and message and message.type and gameHandlers[message.type] then
             gameHandlers[message.type](senderId, message)
-        elseif protocol == AUTH_INTERLINK_PROTOCOL and message.type == "auth_check" then
-            logActivity("Received auth check from Bank Server for user '" .. message.user .. "'.")
-            local storedHash = users[message.user] and users[message.user].password
-            local success = storedHash and storedHash == message.pass_hash
-            rednet.send(senderId, { user = message.user, success = success }, AUTH_INTERLINK_PROTOCOL)
-            if success then
-                logActivity("Auth check for '" .. message.user .. "' SUCCEEDED.")
-            else
-                logActivity("Auth check for '" .. message.user .. "' FAILED.", true)
-            end
+        
+        elseif protocol == AUTH_INTERLINK_PROTOCOL and message and message.type == "user_exists_check" then
+            local user = message.user
+            rednet.send(senderId, { user = user, exists = (users[user] ~= nil) }, AUTH_INTERLINK_PROTOCOL)
         end
     end
 end
@@ -594,22 +585,19 @@ end
 
 local function main()
     loadAllData()
-    
-    -- Open all available modems to listen on both wired and wireless networks
-    for _, name in ipairs(peripheral.getNames()) do
-        if peripheral.getType(name) == "modem" then
-            rednet.open(name)
-            logActivity("Opened modem on side: " .. name)
+    -- Open all attached modems to listen on both wired and wireless networks
+    for _, side in ipairs(rs.getSides()) do
+        if peripheral.getType(side) == "modem" then
+            rednet.open(side)
         end
     end
 
-    -- Host the non-banking protocols
     rednet.host("SimpleMail", "mail.server")
     rednet.host("SimpleChat", "chat.server")
     rednet.host("ArcadeGames", "arcade.server")
-    logActivity("Server started. Type 'help' for commands.")
-    redrawAdminUI()
+    logActivity("Mainframe Server started. Type 'help' for commands.")
     parallel.waitForAny(networkListener, adminTerminal)
 end
 
 main()
+
