@@ -85,8 +85,8 @@ local monitor = nil
 -- Database file paths
 local LOGS_DIR = "logs"
 local TRANSACTIONS_DIR = LOGS_DIR .. "/transactions"
+local CURRENCIES_DIR = "currencies"
 local ACCOUNTS_DB = "bank_accounts.db"
-local RATES_DB = "bank_rates.db"
 local STOCK_DB = "bank_stock.db"
 local LOG_FILE = LOGS_DIR .. "/bank_server.log"
 
@@ -133,8 +133,9 @@ local function logActivity(message, isError)
     local prefix = isError and "[ERROR] " or "[INFO] "
     local logEntry = os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message
     
-    -- Log to console for headless debugging
-    print(logEntry)
+    -- Log to the computer's own terminal for debugging during startup.
+    -- This is separate from the GUI monitor.
+    term.write(logEntry .. "\n")
     
     -- Log to file
     if not fs.exists(LOGS_DIR) then fs.makeDir(LOGS_DIR) end
@@ -225,7 +226,8 @@ local function drawLogScreen()
     local y = h - 1
     for i = #logHistory, 1, -1 do
         if y < 2 then break end
-        monitor.setCursorPos(2, y); monitor.write(logHistory[i])
+        local line = logHistory[i]
+        monitor.setCursorPos(2, y); monitor.write(string.sub(line, 1, w-2))
         y = y - 1
     end
 
@@ -262,7 +264,16 @@ end
 
 local function loadAllData()
     accounts = loadTableFromFile(ACCOUNTS_DB)
-    currencyRates = loadTableFromFile(RATES_DB)
+    
+    -- Load currencies from the new folder structure
+    currencyRates = {}
+    if fs.exists(CURRENCIES_DIR) then
+        for _, file in ipairs(fs.list(CURRENCIES_DIR)) do
+            local itemName = file:gsub("%.json$", "")
+            currencyRates[itemName] = loadTableFromFile(fs.combine(CURRENCIES_DIR, file))
+        end
+    end
+
     currentStock = loadTableFromFile(STOCK_DB)
     logActivity("All banking data loaded successfully.")
 end
@@ -290,8 +301,11 @@ local function adjustCurrencyRates()
     end
 
     if changed then
-        if not saveTableToFile(RATES_DB, currencyRates) then
-            logActivity("Failed to save updated currency rates.", true)
+        -- Save each currency back to its own file
+        for itemName, data in pairs(currencyRates) do
+            if not saveTableToFile(fs.combine(CURRENCIES_DIR, itemName .. ".json"), data) then
+                 logActivity("Failed to save updated rate for " .. itemName, true)
+            end
         end
     end
 end
@@ -436,9 +450,15 @@ function adminCommands.addcurrency(args)
     local _, itemName, baseRate = parseAdminArgs(args)
     if not itemName or not baseRate then print("Usage: addcurrency <item_name> <base_rate>"); return end
     if currencyRates[itemName] then print("Currency '" .. itemName .. "' already exists."); return end
+    if not fs.isDir(CURRENCIES_DIR) then fs.makeDir(CURRENCIES_DIR) end
+
     currencyRates[itemName] = { base = baseRate, current = baseRate, target = nil }
-    if saveTableToFile(RATES_DB, currencyRates) then print("Added new currency '" .. itemName .. "' with base rate $" .. baseRate)
-    else print("Failed to save new currency.") end
+    if saveTableToFile(fs.combine(CURRENCIES_DIR, itemName .. ".json"), currencyRates[itemName]) then
+        print("Added new currency '" .. itemName .. "' with base rate $" .. baseRate)
+    else
+        currencyRates[itemName] = nil -- Revert change if save failed
+        print("Failed to save new currency.")
+    end
 end
 
 function adminCommands.delcurrency(args)
@@ -446,8 +466,11 @@ function adminCommands.delcurrency(args)
     if not itemName then print("Usage: delcurrency <item_name>"); return end
     if not currencyRates[itemName] then print("Currency '" .. itemName .. "' does not exist."); return end
     currencyRates[itemName] = nil
-    if saveTableToFile(RATES_DB, currencyRates) then print("Removed currency '" .. itemName .. "'.")
-    else print("Failed to remove currency.") end
+    
+    local path = fs.combine(CURRENCIES_DIR, itemName .. ".json")
+    if fs.exists(path) then fs.delete(path) end
+    
+    print("Removed currency '" .. itemName .. "'.")
 end
 
 function adminCommands.listrates()
@@ -463,9 +486,13 @@ function adminCommands.settarget(args)
     local _, itemName, targetAmount = parseAdminArgs(args)
     if not itemName or not targetAmount then print("Usage: settarget <item_name> <target_amount>"); return end
     if not currencyRates[itemName] then print("Currency '" .. itemName .. "' does not exist."); return end
+    
     currencyRates[itemName].target = targetAmount
-    if saveTableToFile(RATES_DB, currencyRates) then print("Set target stock for '" .. itemName .. "' to " .. targetAmount)
-    else print("Failed to set target.") end
+    if saveTableToFile(fs.combine(CURRENCIES_DIR, itemName .. ".json"), currencyRates[itemName]) then
+        print("Set target stock for '" .. itemName .. "' to " .. targetAmount)
+    else
+        print("Failed to set target.")
+    end
 end
 
 local function handleAdminCommand(command)
@@ -532,7 +559,7 @@ local function guiHandler()
             end
         end
 
-        local event, p1, p2, p3 = os.pullEvent() -- Pull any event
+        local event, p1, p2, p3 = os.pullEvent()
         if event == "key" then
             if currentScreen == "main" then
                 local menuSize = 4
@@ -552,7 +579,7 @@ local function guiHandler()
                         currentScreen = "terminal"
                         adminTerminal()
                     elseif selectedMenuItem == 4 then -- Shutdown
-                        return -- End the GUI handler, which will terminate the program
+                        return -- End the GUI handler
                     end
                 end
             elseif currentScreen == "log" then
@@ -571,6 +598,7 @@ local function guiHandler()
 end
 
 local function main()
+    local computerTerm = term.current()
     term.clear()
     term.setCursorPos(1,1)
     print("Drunken OS Bank Server Initializing...")
@@ -620,19 +648,18 @@ local function main()
     
     rednet.host(BANK_PROTOCOL, "bank.server")
     
-    term.clear()
-    term.setCursorPos(1,1)
-    print("Bank Server started successfully.")
-    print("GUI is now active on the attached monitor.")
+    computerTerm.clear()
+    computerTerm.setCursorPos(1,1)
+    computerTerm.write("Bank Server started successfully.\nGUI is now active on the attached monitor.")
     
     -- Redirect all terminal I/O to the monitor for the GUI
-    local oldTerm = term.redirect(monitor)
+    term.redirect(monitor)
     
     -- Run the main loops
     parallel.waitForAny(networkListener, guiHandler)
     
     -- When the loops exit (on shutdown), restore the original terminal
-    term.redirect(oldTerm)
+    term.redirect(computerTerm)
     monitor.setBackgroundColor(colors.black)
     monitor.clear()
     term.clear()
@@ -641,3 +668,4 @@ local function main()
 end
 
 main()
+
