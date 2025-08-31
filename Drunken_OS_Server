@@ -1,17 +1,27 @@
 --[[
-    Drunken OS - Mainframe Server (v8.1 - Card Auth Support)
+    Drunken OS - Mainframe Server (v8.2 - Remote Admin & Feedback)
     by Gemini Gem
 
     Purpose:
-    This version adds a new handler to the secure interlink protocol. It now
-    listens for 'user_exists_check' requests from the Bank Server, allowing
-    the Bank Admin to securely verify a user's existence before creating a
-    bank card for them.
+    This version adds a secure remote administration system and lays the
+    groundwork for a user feedback feature.
 
     Key Changes:
-    - Added a new case in the networkListener for the AUTH_INTERLINK_PROTOCOL
-      to handle 'user_exists_check' messages.
+    - Added an 'admins' table to designate users with special privileges.
+    - Added "MuhendizBey" as the first administrator.
+    - Now hosts a new, secure "Drunken_Admin" protocol.
+    - Listens for remote commands from authorized admins on the new protocol,
+      executes them, and returns the output.
+    - Login responses now include an 'isAdmin' flag for the client.
 ]]
+
+--==============================================================================
+-- Configuration
+--==============================================================================
+-- A list of users who are allowed to use the remote admin console.
+local admins = {
+    ["MuhendizBey"] = true,
+}
 
 --==============================================================================
 -- API & Library Initialization
@@ -36,9 +46,10 @@ end
 --==============================================================================
 -- Embedded SHA1 Library
 --==============================================================================
--- (SHA1 Library code remains unchanged)
+
 local sha1 = {}
 do
+    -- (SHA1 library code remains unchanged)
     local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
     local function rol(n, c) return bor(lshift(n, c), rshift(n, 32 - c)) end
     local function str_to_bin(str) local t = {}; for i = 1, #str do t[i] = string.byte(str, i) end; return t end
@@ -92,11 +103,12 @@ local GAMES_CODE_DB = "games_code.db"
 -- HyperAuth Server Configuration
 local AUTH_SERVER_PROTOCOL = "auth.secure.v1"
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
+local ADMIN_PROTOCOL = "Drunken_Admin"
 
 --==============================================================================
 -- UI & Theme Configuration (for the admin terminal)
 --==============================================================================
-
+-- (UI code remains unchanged)
 local hasColor = term.isColor and term.isColor()
 local function safeColor(colorName, fallbackColor)
     if hasColor and colors[colorName] ~= nil then return colors[colorName] end
@@ -170,7 +182,7 @@ end
 --==============================================================================
 -- Data Persistence Functions
 --==============================================================================
-
+-- (These functions remain unchanged)
 local function saveTableToFile(path, data)
     local file = fs.open(path, "w")
     if not file then logActivity("Could not open " .. path .. " for writing.", true); return false end
@@ -209,7 +221,7 @@ end
 --==============================================================================
 -- Mail & List Management Functions
 --==============================================================================
-
+-- (These functions remain unchanged)
 local function saveItem(user, item, itemType)
     local dir = itemType .. "/" .. user
     if not fs.exists(dir) then fs.makeDir(dir) end
@@ -244,7 +256,7 @@ end
 --==============================================================================
 -- Authentication Helper Functions
 --==============================================================================
-
+-- (This function remains unchanged)
 local function requestAuthCode(username, password, nickname, senderId, purpose)
     logActivity("Requesting auth code for '" .. username .. "' via HyperAuth API...")
     
@@ -307,7 +319,8 @@ function mailHandlers.login(senderId, message)
             success = true,
             needs_auth = false,
             nickname = users[message.user].nickname,
-            unreadCount = #loadMail(message.user)
+            unreadCount = #loadMail(message.user),
+            isAdmin = admins[message.user] or false -- NEW: Add isAdmin flag
         }, "SimpleMail")
         return
     end
@@ -346,9 +359,8 @@ function mailHandlers.submit_auth_token(senderId, message)
         
         if not users[user] then -- This is a registration
             users[user] = { password = authData.password, nickname = authData.nickname, session_token = new_session_token }
-            -- Note: account creation is now handled by the bank server upon first login
             if saveTableToFile(USERS_DB, users) then
-                response_payload = { success = true, unreadCount = 0, nickname = authData.nickname, session_token = new_session_token }
+                response_payload = { success = true, unreadCount = 0, nickname = authData.nickname, session_token = new_session_token, isAdmin = admins[user] or false }
                 logActivity("New user '" .. user .. "' successfully verified and registered.")
             else
                 response_payload = { success = false, reason = "Server database error." }
@@ -356,7 +368,7 @@ function mailHandlers.submit_auth_token(senderId, message)
         else -- This is a login
             users[user].session_token = new_session_token
             saveTableToFile(USERS_DB, users)
-            response_payload = { success = true, unreadCount = #loadMail(user), nickname = users[user].nickname, session_token = new_session_token }
+            response_payload = { success = true, unreadCount = #loadMail(user), nickname = users[user].nickname, session_token = new_session_token, isAdmin = admins[user] or false }
             logActivity("User '" .. user .. "' successfully verified and logged in.")
         end
         rednet.send(senderId, response_payload, "SimpleMail")
@@ -391,7 +403,7 @@ function mailHandlers.user_exists(senderId, message)
     end
     rednet.send(senderId, { exists = exists }, "SimpleMail")
 end
-
+-- (Other mail handlers like send, fetch, delete, etc. remain unchanged)
 function mailHandlers.send(senderId, message)
     local mail = message.mail
     if mail.to == "@all" then
@@ -542,9 +554,29 @@ function adminCommands.publishgame(args)
     end
 end
 
-local function handleAdminCommand(command)
+-- This function now captures output instead of logging it directly.
+local function executeAdminCommand(command)
+    local output = {}
+    local oldPrint = print
+    _G.print = function(...)
+        local args = {...}
+        local line = ""
+        for i = 1, #args do
+            line = line .. tostring(args[i]) .. "\t"
+        end
+        table.insert(output, line)
+    end
+
     local args = {}; for arg in string.gmatch(command, "[^%s]+") do table.insert(args, arg) end
-    local cmd = args[1]; if adminCommands[cmd] then adminCommands[cmd](args) else logActivity("Unknown command. Type 'help'.") end
+    local cmd = args[1]
+    if adminCommands[cmd] then
+        adminCommands[cmd](args)
+    else
+        print("Unknown command. Type 'help'.")
+    end
+
+    _G.print = oldPrint
+    return table.concat(output, "\n")
 end
 
 local function networkListener()
@@ -564,9 +596,19 @@ local function networkListener()
         elseif protocol == "ArcadeGames" and message and message.type and gameHandlers[message.type] then
             gameHandlers[message.type](senderId, message)
         
-        elseif protocol == AUTH_INTERLINK_PROTOCOL and message and message.type == "user_exists_check" then
+        elseif protocol == AUTH_INTERLINK_PROTOCOL and message.type == "user_exists_check" then
             local user = message.user
             rednet.send(senderId, { user = user, exists = (users[user] ~= nil) }, AUTH_INTERLINK_PROTOCOL)
+        
+        elseif protocol == ADMIN_PROTOCOL and message.type == "execute_command" then
+            if message.user and admins[message.user] then
+                logActivity("Executing remote command from admin: " .. message.user)
+                local output = executeAdminCommand(message.command)
+                rednet.send(senderId, { output = output }, ADMIN_PROTOCOL)
+            else
+                logActivity("Unauthorized admin command attempt from user: " .. (message.user or "unknown"), true)
+                rednet.send(senderId, { output = "Error: Access denied." }, ADMIN_PROTOCOL)
+            end
         end
     end
 end
@@ -576,7 +618,15 @@ local function adminTerminal()
         local event, p1 = os.pullEvent()
         if event == "key" then
             if p1 == keys.enter then
-                if adminInput ~= "" then handleAdminCommand(adminInput); adminInput = "" end
+                if adminInput ~= "" then 
+                    logActivity("Executing local command: " .. adminInput)
+                    local output = executeAdminCommand(adminInput)
+                    -- We print the output back to the log so it shows up in the admin UI
+                    for line in output:gmatch("[^\n]+") do
+                        logActivity(line)
+                    end
+                    adminInput = "" 
+                end
             elseif p1 == keys.backspace then adminInput = string.sub(adminInput, 1, -2) end
         elseif event == "char" then adminInput = adminInput .. p1 end
         redrawAdminUI()
@@ -595,6 +645,7 @@ local function main()
     rednet.host("SimpleMail", "mail.server")
     rednet.host("SimpleChat", "chat.server")
     rednet.host("ArcadeGames", "arcade.server")
+    rednet.host(ADMIN_PROTOCOL, "admin.server") -- Host the new admin protocol
     logActivity("Mainframe Server started. Type 'help' for commands.")
     parallel.waitForAny(networkListener, adminTerminal)
 end
