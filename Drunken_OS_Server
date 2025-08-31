@@ -1,17 +1,47 @@
 --[[
-    SimpleMail & Chat Client (v10.0 - Admin & Feedback Update)
+    Drunken OS - Mainframe Server (v8.2 - Remote Admin & Feedback)
     by Gemini Gem
 
     Purpose:
-    This version adds two major features: a direct feedback option for all
-    users and a secure remote admin console for designated administrators.
+    This version adds a secure remote administration system and lays the
+    groundwork for a user feedback feature.
 
     Key Changes:
-    - Main menu now includes a "Send Feedback" option.
-    - An "Admin Console" option now appears on the main menu, but ONLY
-      for users who are flagged as admins by the server.
-    - Implemented a new remote terminal for admins to execute server commands.
+    - Added an 'admins' table to designate users with special privileges.
+    - Added "MuhendizBey" as the first administrator.
+    - Now hosts a new, secure "Drunken_Admin" protocol.
+    - Listens for remote commands from authorized admins on the new protocol,
+      executes them, and returns the output.
+    - Login responses now include an 'isAdmin' flag for the client.
 ]]
+
+--==============================================================================
+-- Configuration
+--==============================================================================
+-- A list of users who are allowed to use the remote admin console.
+local admins = {
+    ["MuhendizBey"] = true,
+}
+
+--==============================================================================
+-- API & Library Initialization
+--==============================================================================
+
+local AuthClient = require("HyperAuthClient/api/auth_client")
+
+if not AuthClient then
+    term.setBackgroundColor(colors.red)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("================ FATAL ERROR ================")
+    print("The HyperAuthClient API could not be found.")
+    print("Please ensure the file exists at:")
+    print(" > /HyperAuthClient/api/auth_client.lua")
+    print("=============================================")
+    print("Server shutting down.")
+    error("HyperAuthClient API not found.", 0)
+end
 
 --==============================================================================
 -- Embedded SHA1 Library
@@ -50,20 +80,35 @@ do
     end
 end
 
+
 --==============================================================================
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 10.0
-local programName = "mail"
-local SESSION_FILE = ".session"
+local users, lists, games, chatHistory, gameList, pendingAuths = {}, {}, {}, {}, {}, {}
+local programVersions, programCode, gameCode = {}, {}, {}
+local logHistory, adminInput, motd = {}, "", ""
 
-local mailServerId, chatServerId, arcadeServerId, adminServerId = nil, nil, nil, nil
-local username = nil
-local nickname = nil
-local unreadCount = 0
-local isAdmin = false -- NEW: Flag to track admin status
+-- Database file paths
+local USERS_DB = "users.db"
+local LISTS_DB = "lists.db"
+local GAMES_DB = "games.db"
+local CHAT_DB = "chat.db"
+local UPDATER_DB = "updater.db"
+local GAMELIST_DB = "gamelist.db"
+local MOTD_FILE = "motd.txt"
+local LOG_FILE = "server.log"
+local GAMES_CODE_DB = "games_code.db"
 
+-- HyperAuth Server Configuration
+local AUTH_SERVER_PROTOCOL = "auth.secure.v1"
+local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
+local ADMIN_PROTOCOL = "Drunken_Admin"
+
+--==============================================================================
+-- UI & Theme Configuration (for the admin terminal)
+--==============================================================================
+-- (UI code remains unchanged)
 local hasColor = term.isColor and term.isColor()
 local function safeColor(colorName, fallbackColor)
     if hasColor and colors[colorName] ~= nil then return colors[colorName] end
@@ -74,20 +119,12 @@ local theme = {
     bg = safeColor("black", colors.black),
     text = safeColor("white", colors.white),
     windowBg = safeColor("darkGray", colors.gray),
-    border = safeColor("lightGray", colors.white),
-    title = safeColor("green", colors.lime),
+    title = safeColor("red", colors.red),
     prompt = safeColor("cyan", colors.cyan),
-    highlightBg = safeColor("blue", colors.blue),
-    highlightText = safeColor("white", colors.white),
     statusBarBg = safeColor("gray", colors.lightGray),
     statusBarText = safeColor("white", colors.white),
 }
 
---==============================================================================
--- Core Utility & UI Functions
---==============================================================================
--- (Most UI functions are unchanged)
-local function getSafeSize() local w, h = term.getSize(); while not w or not h do sleep(0.05); w, h = term.getSize() end; return w, h end
 local function wordWrap(text, width)
     local finalLines = {}
     for line in string.gmatch(text, "[^\n]+") do
@@ -108,521 +145,510 @@ local function wordWrap(text, width)
     end
     return finalLines
 end
-local function clear() term.setBackgroundColor(theme.bg); term.clear(); term.setCursorPos(1, 1) end
 
-local function drawWindow(title)
-    clear()
-    local w, h = getSafeSize()
-    term.setBackgroundColor(theme.windowBg); for y = 1, h - 1 do term.setCursorPos(1, y); term.write(string.rep(" ", w)) end
+local function redrawAdminUI()
+    local w, h = term.getSize()
+    term.setBackgroundColor(theme.windowBg); term.clear()
     term.setBackgroundColor(theme.title); term.setCursorPos(1, 1); term.write(string.rep(" ", w)); term.setTextColor(colors.white)
-    local titleText = " " .. title .. " "; term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); term.write(titleText)
-    
+    local titleText = " Mainframe Admin Console "; term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); term.write(titleText)
     term.setBackgroundColor(theme.statusBarBg); term.setTextColor(theme.statusBarText); term.setCursorPos(1, h); term.write(string.rep(" ", w))
-    local userText = "User: " .. (nickname or "Guest") .. (isAdmin and " (Admin)" or "")
-    local versionText = "v" .. currentVersion
-    
-    if w < 35 then
-        local statusText = userText .. " | " .. versionText
-        term.setCursorPos(math.floor((w - #statusText) / 2) + 1, h)
-        term.write(statusText)
-    else
-        local helpText = "See 'Help' Menu for Controls"
-        term.setCursorPos(2, h); term.write(userText)
-        term.setCursorPos(w - #versionText, h); term.write(versionText)
-        term.setCursorPos(math.floor((w - #helpText) / 2) + 1, h); term.write(helpText)
-    end
-
+    local statusText = "RUNNING | Type 'help' for commands"; term.setCursorPos(2, h); term.write(statusText)
     term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.text)
-end
-
-local function drawMenu(options, selectedIndex, startX, startY)
-    for i, option in ipairs(options) do
-        local text = option
-        if option == "View Inbox" and unreadCount > 0 then text = text .. " [" .. unreadCount .. "]" end
-        term.setCursorPos(startX, startY + i - 1)
-        if i == selectedIndex then
-            term.setBackgroundColor(theme.highlightBg); term.setTextColor(theme.highlightText)
-            term.write("> " .. text .. string.rep(" ", 25 - #text))
-        else
-            term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.text)
-            term.write("  " .. text .. string.rep(" ", 25 - #text))
+    local logAreaHeight = h - 4
+    local displayLines = {}
+    for i = #logHistory, 1, -1 do
+        local wrapped = wordWrap(logHistory[i], w - 2)
+        for j = #wrapped, 1, -1 do
+            table.insert(displayLines, 1, " " .. wrapped[j])
+            if #displayLines >= logAreaHeight then break end
         end
+        if #displayLines >= logAreaHeight then break end
     end
-    term.setBackgroundColor(theme.windowBg)
+    for i = 1, math.min(#displayLines, logAreaHeight) do term.setCursorPos(1, 1 + i); term.write(displayLines[i]) end
+    term.setCursorPos(1, h - 2); term.write(string.rep("-", w))
+    term.setCursorPos(1, h - 1); term.setTextColor(theme.prompt); term.write("> "); term.setTextColor(theme.text); term.write(adminInput)
 end
-local function showMessage(title, message) drawWindow(title); local w, h = getSafeSize(); local lines = wordWrap(message, w - 4); for i, line in ipairs(lines) do term.setCursorPos(3, 4 + i - 1); term.write(line) end; term.setCursorPos(3, 4 + #lines + 1); term.setTextColor(theme.prompt); term.write("Press any key to continue..."); os.pullEvent("key"); term.setTextColor(theme.text) end
-local function readInput(prompt, y, hideText)
-    local x = 2; term.setTextColor(theme.prompt); term.setCursorPos(x, y); term.write(prompt); term.setTextColor(theme.text)
-    term.setCursorPos(x + #prompt, y); term.setCursorBlink(true)
-    local input = hideText and read("*") or read()
-    term.setCursorBlink(false); return input
+
+local function logActivity(message, isError)
+    local prefix = isError and "[ERROR] " or "[INFO] "
+    local logEntry = os.date("[%H:%M:%S] ") .. prefix .. message
+    table.insert(logHistory, logEntry)
+    if #logHistory > 200 then table.remove(logHistory, 1) end
+    local file = fs.open(LOG_FILE, "a")
+    if file then file.writeLine(os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message); file.close() end
+    redrawAdminUI()
 end
 
 --==============================================================================
--- Network & Helper Functions
+-- Data Persistence Functions
 --==============================================================================
-
-local function findServers()
-    drawWindow("Connecting"); term.setCursorPos(2, 4); term.write("Searching for servers...")
-    mailServerId = rednet.lookup("SimpleMail", "mail.server")
-    chatServerId = rednet.lookup("SimpleChat", "chat.server")
-    arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
-    adminServerId = rednet.lookup("Drunken_Admin", "admin.server") -- NEW: Find admin server
-    if not mailServerId or not chatServerId or not arcadeServerId or not adminServerId then
-        return false
-    end
+-- (These functions remain unchanged)
+local function saveTableToFile(path, data)
+    local file = fs.open(path, "w")
+    if not file then logActivity("Could not open " .. path .. " for writing.", true); return false end
+    local success, err = pcall(function() file.write(textutils.serialize(data)); file.close() end)
+    if not success then logActivity("Failed to write to " .. path .. ": " .. tostring(err), true); return false end
     return true
 end
 
--- (autoUpdateCheck, getLocalVersion remain unchanged)
+local function loadTableFromFile(path)
+    if fs.exists(path) then
+        local file = fs.open(path, "r")
+        if file then
+            local data = file.readAll(); file.close()
+            local success, result = pcall(textutils.unserialize, data)
+            if success and type(result) == "table" then return result
+            else logActivity("Corrupted data in " .. path .. ". A new file will be created.", true) end
+        end
+    end
+    return {}
+end
+
+local function loadAllData()
+    users = loadTableFromFile(USERS_DB)
+    lists = loadTableFromFile(LISTS_DB)
+    games = loadTableFromFile(GAMES_DB)
+    chatHistory = loadTableFromFile(CHAT_DB)
+    gameList = loadTableFromFile(GAMELIST_DB)
+    local updaterData = loadTableFromFile(UPDATER_DB)
+    programVersions = updaterData.v or {}
+    programCode = updaterData.c or {}
+    gameCode = loadTableFromFile(GAMES_CODE_DB)
+    if fs.exists(MOTD_FILE) then local file = fs.open(MOTD_FILE, "r"); motd = file.readAll(); file.close() end
+    logActivity("All Mainframe data loaded successfully.")
+end
 
 --==============================================================================
--- Application Screens
+-- Mail & List Management Functions
 --==============================================================================
--- (readMail, viewInbox, sendMail, sendFile, manageLists, startChat are unchanged)
-local function readMail(mail)
-    local w, h = getSafeSize(); local bodyLines = wordWrap(mail.body, w - 3); local scroll = 1
-    while true do
-        drawWindow("Read Mail"); local y = 3
-        term.setCursorPos(2, y); term.write("From:    " .. mail.from_nickname); term.setCursorPos(2, y+1); term.write("To:      " .. mail.to); term.setCursorPos(2, y+2); term.write("Subject: " .. mail.subject)
-        term.setCursorPos(2, y+4); term.write(string.rep("-", w - 2)); y = y + 5
-        local bodyDisplayHeight = h - y - (mail.attachment and 6 or 2)
-        for i = 1, bodyDisplayHeight do
-            local lineIndex = scroll + i - 1
-            if lineIndex <= #bodyLines then term.setCursorPos(2, y + i - 1); term.write(bodyLines[lineIndex]) end
-        end
-        y = y + bodyDisplayHeight + 1
-        if mail.attachment then
-            term.setCursorPos(2, y); term.write(string.rep("-", w - 2)); y = y + 1
-            term.setCursorPos(2, y); term.write("Attachment: " .. mail.attachment.name); y = y + 2
-            term.setTextColor(theme.prompt); term.setCursorPos(2, y); term.write("Save this file? (Y/N)")
-        else
-            term.setTextColor(theme.prompt); term.setCursorPos(2, h - 2); term.write("Press TAB to return...")
-        end
-        local event, key = os.pullEvent("key")
-        if key == keys.up then scroll = math.max(1, scroll - 1)
-        elseif key == keys.down then scroll = math.min(math.max(1, #bodyLines - bodyDisplayHeight + 1), scroll + 1)
-        elseif key == keys.tab or key == keys.q then break
-        elseif mail.attachment and key == keys.y then
-            local saveName = mail.attachment.name
-            if fs.exists(saveName) then
-                drawWindow("Confirm Overwrite")
-                local message = "File '"..saveName.."' already exists."; local lines = wordWrap(message, w - 4)
-                for i, line in ipairs(lines) do term.setCursorPos(3, 4 + i - 1); term.write(line) end
-                local overwrite = readInput("Overwrite? (y/n): ", 4 + #lines + 1)
-                if not overwrite or string.lower(overwrite) ~= "y" then showMessage("Cancelled", "Save operation cancelled."); break end
-            end
-            local file = fs.open(saveName, "w")
-            if file then file.write(mail.attachment.content); file.close(); showMessage("Success", "File saved as '"..saveName.."'")
-            else showMessage("Error", "Could not open file for writing.") end
-            break
-        elseif mail.attachment and key == keys.n then showMessage("Cancelled", "Save operation cancelled."); break end
-    end
-end
-local function viewInbox()
-    unreadCount = 0
-    drawWindow("Inbox"); term.setCursorPos(2, 4); term.write("Fetching mail..."); rednet.send(mailServerId, { type = "fetch", user = username }, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 10)
-    if not response or not response.mail then showMessage("Error", "Could not retrieve mail."); return end
-    local inbox = response.mail; if #inbox == 0 then showMessage("Inbox", "Your inbox is empty."); return end
-    table.sort(inbox, function(a, b) return a.timestamp > b.timestamp end); local selected = 1; local scroll = 1
-    while true do
-        drawWindow("Inbox"); local w, h = getSafeSize(); local listHeight = h - 5
-        for i = scroll, math.min(scroll + listHeight - 1, #inbox) do local mail = inbox[i]; local line = string.format("From: %-15s Subject: %s", mail.from_nickname, mail.subject); if mail.attachment then line = line .. " [FILE]" end; term.setCursorPos(2, 2 + (i - scroll) + 1); if i == selected then term.setBackgroundColor(theme.highlightBg); term.setTextColor(theme.highlightText) else term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.text) end; term.write(string.sub(line, 1, w - 2)) end
-        term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.prompt); local helpText = "ENTER: Read | D/DEL: Delete | Q/TAB: Back"; term.setCursorPos(w - #helpText, h - 2); term.write(helpText)
-        local event, key = os.pullEvent("key"); if key == keys.up then selected = math.max(1, selected - 1); if selected < scroll then scroll = selected end elseif key == keys.down then selected = math.min(#inbox, selected + 1); if selected >= scroll + listHeight then scroll = selected - listHeight + 1 end elseif key == keys.enter then readMail(inbox[selected]) elseif key == keys.delete or key == keys.d then rednet.send(mailServerId, {type = "delete", user = username, id = inbox[selected].id}, "SimpleMail"); table.remove(inbox, selected); if #inbox == 0 then break end; selected = math.max(1, math.min(selected, #inbox)) elseif key == keys.tab or key == keys.q then break end
-    end
-end
-local function composeAndSend(to, subject, attachment)
-    drawWindow("Compose Mail Body")
-    local w, h = getSafeSize(); local helpText = "ENTER on empty line to send"
-    term.setBackgroundColor(theme.statusBarBg); term.setTextColor(theme.statusBarText); term.setCursorPos(w - #helpText, h); term.write(helpText)
-    term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.prompt); term.setCursorPos(2, 4); term.write("Enter message body (optional for files)."); term.setTextColor(theme.text)
-    local bodyLines = {}; local y = 6
-    while y < h - 2 do
-        term.setCursorPos(2, y); term.setCursorBlink(true)
-        local line = read(); term.setCursorBlink(false)
-        if line == "" then break end
-        table.insert(bodyLines, line); y = y + 1
-    end
-    local body = table.concat(bodyLines, "\n")
-    local mail = { from = username, from_nickname = nickname, to = to, subject = subject, body = body, timestamp = os.time(), attachment = attachment }
-    rednet.send(mailServerId, { type = "send", mail = mail }, "SimpleMail"); drawWindow("Sending..."); term.setCursorPos(2, 4); term.write("Sending mail...")
-    local _, confirm = rednet.receive("SimpleMail", 10)
-    if confirm and confirm.status then showMessage("Success", confirm.status) else showMessage("Error", "No response from server.") end
-end
-local function sendMail()
-    drawWindow("Compose Mail"); local to = readInput("To: ", 4)
-    if not to or to == "" then return end
-    rednet.send(mailServerId, { type = "user_exists", user = to }, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 3)
-    if not response or not response.exists then showMessage("Error", "Recipient '"..to.."' not found."); return end
-    local subject = readInput("Subject: ", 6); if not subject then subject = "(No Subject)" end
-    composeAndSend(to, subject, nil)
-end
-local function sendFile()
-    drawWindow("Send File"); local fileName = readInput("File to send: ", 4)
-    if not fileName or fileName == "" then return end
-    if not fs.exists(fileName) then showMessage("Error", "File not found."); return end
-    local to = readInput("To: ", 6)
-    if not to or to == "" then return end
-    rednet.send(mailServerId, { type = "user_exists", user = to }, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 3)
-    if not response or not response.exists then showMessage("Error", "Recipient '"..to.."' not found."); return end
-    local subject = readInput("Subject: ", 8); if not subject then subject = "(No Subject)" end
-    local file = fs.open(fileName, "r"); if not file then showMessage("Error", "Could not open file."); return end
-    local content = file.readAll(); file.close()
-    local attachment = { name = fs.getName(fileName), content = content }
-    composeAndSend(to, subject, attachment)
-end
-local function manageLists()
-    local options = {"View All Lists", "Create a List", "Join a List", "Back"}; local selected = 1
-    while true do
-        drawWindow("Mailing Lists"); drawMenu(options, selected, 2, 4)
-        local event, key = os.pullEvent("key"); if key == keys.up then selected = (selected == 1) and #options or selected - 1 elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-        elseif key == keys.enter then
-            if selected == 1 then
-                drawWindow("All Lists"); term.setCursorPos(2, 4); term.write("Fetching lists..."); rednet.send(mailServerId, { type = "get_lists" }, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 5)
-                if response and response.lists then
-                    drawWindow("All Lists"); local listTable = {}; for name, members in pairs(response.lists) do table.insert(listTable, {name = name, members = #members}) end
-                    if #listTable == 0 then showMessage("All Lists", "There are no mailing lists.")
-                    else local y = 4; for _, listData in ipairs(listTable) do term.setCursorPos(2, y); term.write(string.format("@%s (%d members)", listData.name, listData.members)); y = y + 1 end; term.setCursorPos(2, y + 1); term.setTextColor(theme.prompt); term.write("Press any key to continue..."); os.pullEvent("key") end
-                else showMessage("Error", "Could not fetch lists.") end
-            elseif selected == 2 then
-                drawWindow("Create List"); local name = readInput("New list name: @", 4)
-                if name and name ~= "" then rednet.send(mailServerId, { type = "create_list", name = name, creator = username }, "SimpleMail"); local _, r = rednet.receive("SimpleMail", 5); if r and r.status then showMessage("Server Response", r.status) else showMessage("Error", "No response.") end end
-            elseif selected == 3 then
-                drawWindow("Join List"); local name = readInput("List to join: @", 4)
-                if name and name ~= "" then rednet.send(mailServerId, { type = "join_list", name = name, user = username }, "SimpleMail"); local _, r = rednet.receive("SimpleMail", 5); if r and r.status then showMessage("Server Response", r.status) else showMessage("Error", "No response.") end end
-            elseif selected == 4 then break end
-        elseif key == keys.tab then break end
-    end
-end
-local function startChat()
-    drawWindow("General Chat"); term.setCursorPos(2, 4); term.write("Fetching history..."); rednet.send(mailServerId, {type = "get_chat_history"}, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 5)
-    local history = (response and response.history) or {}; local input = ""; local lastMessage = ""
-    local function redrawAll()
-        drawWindow("General Chat"); local w, h = getSafeSize(); local line_y = h - 3
-        for i = #history, 1, -1 do
-            local wrapped = wordWrap(history[i], w - 2)
-            for j = #wrapped, 1, -1 do if line_y < 2 then break end; term.setCursorPos(2, line_y); term.write(wrapped[j]); line_y = line_y - 1 end
-            if line_y < 2 then break end
-        end
-        local inputWidth = w - 4; term.setBackgroundColor(theme.windowBg); term.setCursorPos(1, h - 2); term.write(string.rep(" ", w)); term.setCursorPos(2, h - 2); term.setTextColor(theme.prompt); term.write("> "); term.setTextColor(theme.text)
-        local textToDraw = #input > inputWidth and string.sub(input, -inputWidth) or input; term.write(textToDraw)
-    end
-    local function redrawInputLineOnly()
-        local w, h = getSafeSize(); local inputWidth = w - 4; term.setBackgroundColor(theme.windowBg); term.setCursorPos(1, h - 2); term.write(string.rep(" ", w)); term.setCursorPos(2, h - 2); term.setTextColor(theme.prompt); term.write("> "); term.setTextColor(theme.text)
-        local textToDraw = #input > inputWidth and string.sub(input, -inputWidth) or input; term.write(textToDraw)
-    end
-    local function networkListener()
-        while true do
-            local _, message = rednet.receive("SimpleChat")
-            local formattedMessage = string.format("[%s]: %s", message.from, message.text)
-            if formattedMessage ~= lastMessage then table.insert(history, formattedMessage); if #history > 100 then table.remove(history, 1) end; redrawAll() end
-        end
-    end
-    local function keyboardListener()
-        while true do
-            local event, p1 = os.pullEvent()
-            if event == "key" then
-                if p1 == keys.tab then break
-                elseif p1 == keys.backspace then if #input > 0 then input = string.sub(input, 1, -2); redrawInputLineOnly() end
-                elseif p1 == keys.enter then
-                    if input ~= "" then
-                        local messageToSend = { from = username, text = input }; rednet.send(chatServerId, messageToSend, "SimpleChat")
-                        lastMessage = string.format("[%s]: %s", nickname, messageToSend.text)
-                        table.insert(history, lastMessage); if #history > 100 then table.remove(history, 1) end
-                        input = ""; redrawAll()
-                    end
-                end
-            elseif event == "char" then input = input .. p1; redrawInputLineOnly()
-            elseif event == "terminate" then break end
-        end
-    end
-    redrawAll(); parallel.waitForAny(keyboardListener, networkListener)
+-- (These functions remain unchanged)
+local function saveItem(user, item, itemType)
+    local dir = itemType .. "/" .. user
+    if not fs.exists(dir) then fs.makeDir(dir) end
+    local id = os.time() .. "-" .. math.random(100, 999)
+    saveTableToFile(dir .. "/" .. id, item)
 end
 
-local function sendFeedback()
-    drawWindow("Send Feedback to Admin")
-    local subject = readInput("Subject: ", 4)
-    if not subject or subject == "" then return end
-    -- The recipient 'MuhendizBey' is hard-coded for the feedback system.
-    composeAndSend("MuhendizBey", "Feedback: " .. subject, nil)
-end
-
-local function adminConsole()
-    local w,h = getSafeSize()
-    drawWindow("Remote Admin Console")
-    local history = {}
-    local function redrawConsole()
-        drawWindow("Remote Admin Console")
-        for i, item in ipairs(history) do
-            local prefix = item.type == "cmd" and "> " or ""
-            local lines = wordWrap(prefix .. item.text, w - 2)
-            for _, line in ipairs(lines) do
-                print(line)
+local function loadMail(user)
+    local path = "mail/" .. user
+    local userMail = {}
+    if fs.exists(path) and fs.isDir(path) then
+        for _, fileName in ipairs(fs.list(path)) do
+            local mailPath = path .. "/" .. fileName
+            local mailFile = fs.open(mailPath, "r")
+            if mailFile then
+                local data = mailFile.readAll(); mailFile.close()
+                local success, item = pcall(textutils.unserialize, data)
+                if success and item then item.id = fileName; table.insert(userMail, item)
+                else logActivity("Could not read corrupted mail file: " .. mailPath, true) end
             end
         end
     end
-    
-    while true do
-        term.setCursorBlink(true)
-        term.setCursorPos(1, h-2)
-        term.write(string.rep("-", w))
-        term.setCursorPos(1, h-1)
-        term.clearLine()
-        term.setCursorPos(1, h-1)
-        term.write("> ")
-        local cmd = read()
-        term.setCursorBlink(false)
-
-        if cmd == "exit" or cmd == "quit" then break end
-        if cmd == "clear" then
-            history = {}
-            redrawConsole()
-        elseif cmd ~= "" then
-            table.insert(history, {type="cmd", text=cmd})
-            rednet.send(adminServerId, {
-                type = "execute_command",
-                user = username, -- for verification
-                command = cmd
-            }, "Drunken_Admin")
-            
-            redrawConsole()
-            term.setCursorPos(1, h-1)
-            term.write("Executing...")
-
-            local _, response = rednet.receive("Drunken_Admin", 10)
-            if response and response.output then
-                table.insert(history, {type="resp", text=response.output})
-            else
-                table.insert(history, {type="resp", text="Error: Timed out or no response from server."})
-            end
-            redrawConsole()
-        end
-    end
+    return userMail
 end
 
-local function completeAuthentication(user)
-    drawWindow("Authentication Required")
-    local w, h = getSafeSize()
-    local message = "A token has been sent to the Auth Server admin. Please ask them for your token and enter it below."
-    local lines = wordWrap(message, w - 4)
-    for i, line in ipairs(lines) do
-        term.setCursorPos(3, 4 + i - 1)
-        term.write(line)
-    end
-    
-    local token_raw = readInput("Auth Token: ", 4 + #lines + 2, false)
-    if not token_raw or token_raw == "" then
-        showMessage("Cancelled", "Authentication cancelled.")
-        return false
-    end
-
-    local token_clean = token_raw:gsub("%s+", "")
-
-    drawWindow("Verifying Token...")
-    rednet.send(mailServerId, { type = "submit_auth_token", user = user, token = token_clean }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 10)
-
-    if response and response.success then
-        username = user
-        nickname = response.nickname
-        unreadCount = response.unreadCount or 0
-        isAdmin = response.isAdmin or false -- Store admin status
-        if response.session_token then
-            local file = fs.open(SESSION_FILE, "w")
-            if file then file.write(response.session_token); file.close() end
-        end
-        showMessage("Success", "Authentication successful!")
-        return true
-    else
-        showMessage("Authentication Failed", response.reason or "No response from server.")
-        return false
-    end
+local function deleteItem(user, id, itemType)
+    local path = itemType .. "/" .. user .. "/" .. id
+    if fs.exists(path) then fs.delete(path); return true end
+    return false
 end
-
-local function loginOrRegister()
-    local options = {"Login", "Register", "Exit"}; local selected = 1
-    while not username do
-        drawWindow("Welcome"); drawMenu(options, selected, 2, 5)
-        local event, key = os.pullEvent("key")
-        if key == keys.up then selected = (selected == 1) and #options or selected - 1
-        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-        elseif key == keys.enter then
-            if selected == 1 then -- Login
-                drawWindow("Login")
-                local user = readInput("Username: ", 5, false)
-                if user and user ~= "" then
-                    local pass = readInput("Password: ", 7, true)
-                    if pass and pass ~= "" then
-                        local session_token = nil
-                        if fs.exists(SESSION_FILE) then
-                            local file = fs.open(SESSION_FILE, "r")
-                            if file then session_token = file.readAll(); file.close() end
-                        end
-                        
-                        rednet.send(mailServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "SimpleMail")
-                        local _, response = rednet.receive("SimpleMail", 10)
-
-                        if response and response.success then
-                            if response.needs_auth then
-                                if not completeAuthentication(user) then username = nil end
-                            else -- Direct login with session was successful
-                                username = user
-                                nickname = response.nickname
-                                unreadCount = response.unreadCount or 0
-                                isAdmin = response.isAdmin or false -- Store admin status
-                            end
-                        else
-                            showMessage("Login Failed", response.reason or "No response.")
-                        end
-                    end
-                end
-            elseif selected == 2 then -- Register
-                drawWindow("Register")
-                local user = readInput("Choose Username: ", 5, false)
-                if user and user ~= "" then
-                    local nick = readInput("Choose Nickname: ", 7, false)
-                    if nick and nick ~= "" then
-                        local pass = readInput("Choose Password: ", 9, true)
-                        if pass and pass ~= "" then
-                            rednet.send(mailServerId, { type = "register", user = user, pass = pass, nickname = nick }, "SimpleMail")
-                            local _, response = rednet.receive("SimpleMail", 5)
-                            if response and response.success and response.needs_auth then
-                                if not completeAuthentication(user) then username = nil end
-                            else
-                                showMessage("Registration Failed", response.reason or "No response.")
-                            end
-                        end
-                    end
-                end
-            elseif selected == 3 then return false
-            end
-        elseif key == keys.tab then return false
-        end
-    end
-    return true
-end
-
--- (Other menu functions like settingsMenu, gameMenu, etc. remain unchanged)
-
-local function mainMenu()
-    -- Dynamically build the menu based on admin status
-    local options = {"View Inbox", "Send Mail", "Send File", "Manage Lists", "General Chat", "Play Games", "Send Feedback"}
-    if isAdmin then
-        table.insert(options, "Admin Console")
-    end
-    table.insert(options, "Settings")
-    table.insert(options, "Help")
-    table.insert(options, "Exit")
-
-    local selected = 1; local pollTimer = os.startTimer(10); local needsRedraw = true
-    
-    local ok, err = pcall(function()
-        rednet.unhost("SimpleMail"); rednet.host("SimpleMail", "client." .. username)
-    end)
-    if not ok then
-        showMessage("Login Error", "This user is already logged in on another device.")
-        username = nil; return
-    end
-
-    while true do
-        if needsRedraw then drawWindow("Main Menu"); drawMenu(options, selected, 2, 3); needsRedraw = false end
-        local event, p1, p2, p3 = os.pullEvent("key", "timer", "rednet_message", "terminate")
-        if event == "key" then
-            if p1 == keys.up then selected = (selected == 1) and #options or selected - 1
-            elseif p1 == keys.down then selected = (selected == #options) and 1 or selected + 1
-            elseif p1 == keys.enter then
-                local action = options[selected]
-                if action == "View Inbox" then viewInbox()
-                elseif action == "Send Mail" then sendMail()
-                elseif action == "Send File" then sendFile()
-                elseif action == "Manage Lists" then manageLists()
-                elseif action == "General Chat" then startChat()
-                elseif action == "Play Games" then enterArcade()
-                elseif action == "Send Feedback" then sendFeedback()
-                elseif action == "Admin Console" then adminConsole()
-                elseif action == "Settings" then
-                    if settingsMenu() then return end -- If logout was selected, exit main menu
-                elseif action == "Help" then showHelpScreen()
-                elseif action == "Exit" then return end
-                needsRedraw = true
-            elseif p1 == keys.tab then return end
-            needsRedraw = true
-        elseif event == "timer" and p1 == pollTimer then
-            rednet.send(mailServerId, {type = "get_unread_count", user = username}, "SimpleMail")
-            pollTimer = os.startTimer(10)
-        elseif event == "rednet_message" then
-            if p3 == "SimpleMail" then
-                if p2.type == "broadcast" then showMessage("Admin Broadcast", p2.text); needsRedraw = true
-                elseif p2.type == "unread_count_response" and p2.count and p2.count ~= unreadCount then
-                    unreadCount = p2.count; needsRedraw = true
-                end
-            end
-        elseif event == "terminate" then return end
-    end
-end
-
 
 --==============================================================================
--- Program Entry Point
+-- Authentication Helper Functions
 --==============================================================================
-
-local function showSplashScreen()
-    clear()
-    local w, h = getSafeSize()
-    term.setTextColor(colors.orange)
+-- (This function remains unchanged)
+local function requestAuthCode(username, password, nickname, senderId, purpose)
+    logActivity("Requesting auth code for '" .. username .. "' via HyperAuth API...")
     
-    local art = {
-    "         . .        ",
-    "       .. . *.      ",
-    "- -_ _-__-0oOo      ",
-    " _-_ -__ -||||)     ",
-    "    ______||||______",
-    "~~~~~~~~~~`\"\"'~   "
+    local request_reply, request_err = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
+        username   = username,
+        password   = password, -- This is the hashed password
+        vendorID   = "DrunkenOS_Mainframe",
+        computerID = os.getComputerID(),
+        extra      = { purpose = purpose or "unknown" },
+    })
+
+    if not request_reply then
+        logActivity("HyperAuth requestCode error: " .. tostring(request_err), true)
+        rednet.send(senderId, { success = false, reason = "Authentication service error." }, "SimpleMail")
+        return nil
+    end
+
+    logActivity("HyperAuth API success. Request ID: " .. request_reply.request_id)
+    
+    pendingAuths[username] = {
+        request_id = request_reply.request_id,
+        password = password,
+        nickname = nickname,
+        senderId = senderId,
+        timestamp = os.time()
     }
-    local title = "Drunken Beard OS"
+    
+    return request_reply.request_id
+end
 
-    local startY = math.floor(h/2) - math.floor(#art/2) - 2
-    for i, line in ipairs(art) do
-        term.setCursorPos(math.floor(w/2 - #line/2), startY + i)
-        term.write(line)
+--==============================================================================
+-- Network Request Handlers
+--==============================================================================
+
+local mailHandlers = {}
+function mailHandlers.get_version(senderId, message) rednet.send(senderId, { version = programVersions[message.program] or 0 }, "SimpleMail") end
+function mailHandlers.get_update(senderId, message) rednet.send(senderId, { code = programCode[message.program] }, "SimpleMail") end
+
+function mailHandlers.register(senderId, message)
+    if users[message.user] then
+        rednet.send(senderId, { success = false, reason = "Username taken." }, "SimpleMail")
+        return
+    end
+    local requestId = requestAuthCode(message.user, sha1.hex(message.pass), message.nickname, senderId, "register")
+    if requestId then
+        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
+    end
+end
+
+function mailHandlers.login(senderId, message)
+    local storedHash = users[message.user] and users[message.user].password
+    if not storedHash or storedHash ~= sha1.hex(message.pass) then
+        rednet.send(senderId, { success = false, reason = "Invalid username or password." }, "SimpleMail")
+        return
+    end
+
+    if message.session_token and users[message.user].session_token == message.session_token then
+        logActivity("User '" .. message.user .. "' logged in with session token.")
+        rednet.send(senderId, {
+            success = true,
+            needs_auth = false,
+            nickname = users[message.user].nickname,
+            unreadCount = #loadMail(message.user),
+            isAdmin = admins[message.user] or false -- NEW: Add isAdmin flag
+        }, "SimpleMail")
+        return
+    end
+
+    local requestId = requestAuthCode(message.user, sha1.hex(message.pass), nil, senderId, "login")
+    if requestId then
+        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
+    end
+end
+
+function mailHandlers.submit_auth_token(senderId, message)
+    local user, code = message.user, message.token
+    logActivity("Received auth code from user '" .. user .. "'")
+
+    local authData = pendingAuths[user]
+    if not authData then
+        rednet.send(senderId, { success = false, reason = "No pending authentication for this user." }, "SimpleMail")
+        return
+    end
+
+    logActivity("Verifying code with HyperAuth server for request ID: " .. authData.request_id)
+    local verify_reply, verify_err = AuthClient.verifyCode(AUTH_SERVER_PROTOCOL, {
+        request_id = authData.request_id,
+        code       = code,
+    })
+
+    if not verify_reply then
+        logActivity("HyperAuth verifyCode error: " .. tostring(verify_err), true)
+        rednet.send(senderId, { success = false, reason = "Authentication service error." }, "SimpleMail")
+        return
+    end
+
+    if verify_reply.ok then
+        local response_payload = {}
+        local new_session_token = sha1.hex(os.time() .. math.random())
+        
+        if not users[user] then -- This is a registration
+            users[user] = { password = authData.password, nickname = authData.nickname, session_token = new_session_token }
+            if saveTableToFile(USERS_DB, users) then
+                response_payload = { success = true, unreadCount = 0, nickname = authData.nickname, session_token = new_session_token, isAdmin = admins[user] or false }
+                logActivity("New user '" .. user .. "' successfully verified and registered.")
+            else
+                response_payload = { success = false, reason = "Server database error." }
+            end
+        else -- This is a login
+            users[user].session_token = new_session_token
+            saveTableToFile(USERS_DB, users)
+            response_payload = { success = true, unreadCount = #loadMail(user), nickname = users[user].nickname, session_token = new_session_token, isAdmin = admins[user] or false }
+            logActivity("User '" .. user .. "' successfully verified and logged in.")
+        end
+        rednet.send(senderId, response_payload, "SimpleMail")
+        pendingAuths[user] = nil
+    else
+        rednet.send(senderId, { success = false, reason = verify_reply.reason or "Invalid authentication code." }, "SimpleMail")
+        logActivity("Auth failed for "..user..": " .. (verify_reply.reason or "Unknown reason"), true)
+    end
+end
+
+function mailHandlers.set_nickname(senderId, message)
+    local user, new_nickname = message.user, message.new_nickname
+    if users[user] and new_nickname and new_nickname ~= "" then
+        users[user].nickname = new_nickname
+        if saveTableToFile(USERS_DB, users) then
+            rednet.send(senderId, { success = true, new_nickname = new_nickname }, "SimpleMail")
+            logActivity("User '" .. user .. "' changed nickname to '" .. new_nickname .. "'.")
+        else
+            rednet.send(senderId, { success = false, reason = "Database error." }, "SimpleMail")
+        end
+    else
+        rednet.send(senderId, { success = false, reason = "Invalid request." }, "SimpleMail")
+    end
+end
+
+function mailHandlers.user_exists(senderId, message)
+    local recipient = message.user; local exists = false
+    if recipient and recipient ~= "" then
+        if recipient == "@all" then exists = true
+        elseif string.sub(recipient, 1, 1) == "@" then exists = lists[string.sub(recipient, 2)] ~= nil
+        else exists = users[recipient] ~= nil end
+    end
+    rednet.send(senderId, { exists = exists }, "SimpleMail")
+end
+-- (Other mail handlers like send, fetch, delete, etc. remain unchanged)
+function mailHandlers.send(senderId, message)
+    local mail = message.mail
+    if mail.to == "@all" then
+        for user, _ in pairs(users) do saveItem(user, mail, "mail") end
+        logActivity(string.format("Mail from '%s' sent to @all", mail.from_nickname))
+    elseif string.sub(mail.to, 1, 1) == "@" then
+        local listName = string.sub(mail.to, 2)
+        if lists[listName] then
+            for _, member in ipairs(lists[listName]) do saveItem(member, mail, "mail") end
+            logActivity(string.format("Mail from '%s' sent to list '%s'", mail.from_nickname, listName))
+        end
+    else
+        saveItem(mail.to, mail, "mail")
+        logActivity(string.format("Mail sent from '%s' to '%s'", mail.from_nickname, mail.to))
+    end
+    rednet.send(senderId, { status = "Mail sent successfully!" }, "SimpleMail")
+end
+function mailHandlers.fetch(senderId, message) rednet.send(senderId, { mail = loadMail(message.user) }, "SimpleMail") end
+function mailHandlers.delete(senderId, message) if deleteItem(message.user, message.id, "mail") then logActivity(string.format("User '%s' deleted mail item '%s'", message.user, message.id)) end end
+function mailHandlers.create_list(senderId, message)
+    if lists[message.name] then rednet.send(senderId, { success = false, status = "A list with that name already exists." }, "SimpleMail")
+    else
+        lists[message.name] = { message.creator }
+        if saveTableToFile(LISTS_DB, lists) then
+            rednet.send(senderId, { success = true, status = "List '"..message.name.."' created." }, "SimpleMail")
+            logActivity(string.format("User '%s' created list '%s'", message.creator, message.name))
+        end
+    end
+end
+function mailHandlers.join_list(senderId, message)
+    if not lists[message.name] then rednet.send(senderId, { success = false, status = "That list does not exist." }, "SimpleMail"); return end
+    for _, member in ipairs(lists[message.name]) do if member == message.user then rednet.send(senderId, { success = false, status = "You are already a member of that list." }, "SimpleMail"); return end end
+    table.insert(lists[message.name], message.user)
+    if saveTableToFile(LISTS_DB, lists) then
+        rednet.send(senderId, { success = true, status = "Successfully joined list '"..message.name.."'." }, "SimpleMail")
+        logActivity(string.format("User '%s' joined list '%s'", message.user, message.name))
+    end
+end
+function mailHandlers.get_lists(senderId, message) rednet.send(senderId, { lists = lists }, "SimpleMail") end
+function mailHandlers.get_motd(senderId, message) rednet.send(senderId, { motd = motd }, "SimpleMail") end
+function mailHandlers.get_chat_history(senderId, message) rednet.send(senderId, { history = chatHistory }, "SimpleMail") end
+function mailHandlers.get_unread_count(senderId, message) rednet.send(senderId, { type = "unread_count_response", count = #loadMail(message.user) }, "SimpleMail") end
+function mailHandlers.get_gamelist(senderId, message) rednet.send(senderId, { type = "gamelist_response", games = gameList }, "SimpleMail") end
+function mailHandlers.get_all_game_versions(senderId, message)
+    local versions = {}
+    for filename, data in pairs(gameCode) do
+        versions[filename] = data.version
+    end
+    rednet.send(senderId, { type = "game_versions_response", versions = versions }, "SimpleMail")
+end
+function mailHandlers.get_game_update(senderId, message)
+    local filename = message.filename
+    if gameCode[filename] then
+        rednet.send(senderId, { type = "game_update_response", filename = filename, code = gameCode[filename].code }, "SimpleMail")
+    end
+end
+
+local gameHandlers = {}
+function gameHandlers.submit_score(senderId, message)
+    local game, user, score = message.game, message.user, message.score
+    if not games[game] then games[game] = {} end
+    if not games[game][user] or score > games[game][user] then
+        games[game][user] = score
+        if saveTableToFile(GAMES_DB, games) then
+            logActivity(string.format("New high score for '%s' in '%s': %d", user, game, score))
+        end
+    end
+end
+function gameHandlers.get_leaderboard(senderId, message)
+    local game = message.game
+    local leaderboard = (games[game]) or {}
+    rednet.send(senderId, { leaderboard = leaderboard }, "ArcadeGames")
+end
+
+--==============================================================================
+-- Admin Command Handlers & Main Loops
+--==============================================================================
+
+local adminCommands = {}
+function adminCommands.help() logActivity("--- Admin Commands ---"); logActivity("users, deluser, lists, dellist, board, delscore, motd, broadcast, publish, addgame, delgame, games, publishgame") end
+function adminCommands.users() logActivity("Registered Users:"); for user, data in pairs(users) do logActivity("- " .. user .. " (Nick: " .. (data.nickname or "N/A") .. ")") end end
+function adminCommands.deluser(args) local user = args[2]; if not user then logActivity("Usage: deluser <name>"); return end; if users[user] then users[user] = nil; saveTableToFile(USERS_DB, users); logActivity("Deleted user: " .. user) else logActivity("User not found: " .. user) end end
+function adminCommands.lists() logActivity("Mailing Lists:"); for name, members in pairs(lists) do logActivity(string.format("- %s (%d members)", name, #members)) end end
+function adminCommands.dellist(args) local listName = args[2]; if not listName then logActivity("Usage: dellist <name>"); return end; if lists[listName] then lists[listName] = nil; saveTableToFile(LISTS_DB, lists); logActivity("Deleted list: " .. listName) else logActivity("List not found: " .. listName) end end
+function adminCommands.board(args)
+    local gameName = args[2]; if not gameName then logActivity("Usage: board <game_name>"); return end
+    if games[gameName] then
+        logActivity("Leaderboard for " .. gameName .. ":")
+        for user, score in pairs(games[gameName]) do logActivity(string.format("- %s: %d", user, score)) end
+    else logActivity("No leaderboard found for game: " .. gameName) end
+end
+function adminCommands.delscore(args)
+    local gameName, user = args[2], args[3]; if not gameName or not user then logActivity("Usage: delscore <game_name> <user_name>"); return end
+    if games[gameName] and games[gameName][user] then
+        games[gameName][user] = nil; saveTableToFile(GAMES_DB, games)
+        logActivity(string.format("Deleted score for '%s' in '%s'", user, gameName))
+    else logActivity(string.format("No score for user '%s' in game '%s'", user, gameName)) end
+end
+function adminCommands.motd(args) table.remove(args, 1); motd = table.concat(args, " "); local file = fs.open(MOTD_FILE, "w"); if file then file.write(motd); file.close() end; logActivity("New MOTD set.") end
+function adminCommands.broadcast(args) table.remove(args, 1); local text = table.concat(args, " "); rednet.broadcast({ type = "broadcast", text = text }, "SimpleMail"); logActivity("Broadcast sent: " .. text) end
+function adminCommands.publish(args)
+    local progName, newVersionStr = args[2], args[3]; if not progName or not newVersionStr then logActivity("Usage: publish <prog> <ver>"); return end
+    local newVersion = tonumber(newVersionStr); if not newVersion then logActivity("Error: Version must be a number."); return end
+    logActivity("Waiting for publication of '"..progName.."' v"..newVersion.."..."); local _, message = rednet.receive("Publication", 15)
+    if message and message.code then programCode[progName] = message.code; programVersions[progName] = newVersion; saveTableToFile(UPDATER_DB, {v=programVersions, c=programCode}); logActivity("Published "..progName.." version "..programVersions[progName])
+    else logActivity("Publication timed out or failed.") end
+end
+function adminCommands.addgame(args)
+    local name, file = args[2], args[3]; if not name or not file then logActivity("Usage: addgame <DisplayName> <filename>"); return end
+    table.insert(gameList, {name = name, file = file}); saveTableToFile(GAMELIST_DB, gameList)
+    logActivity("Added game '"..name.."' to the list.")
+end
+function adminCommands.delgame(args)
+    local name = args[2]; if not name then logActivity("Usage: delgame <DisplayName>"); return end
+    for i, game in ipairs(gameList) do
+        if game.name == name then
+            table.remove(gameList, i); saveTableToFile(GAMELIST_DB, gameList)
+            logActivity("Removed game '"..name.."' from the list."); return
+        end
+    end
+    logActivity("Game '"..name.."' not found in the list.")
+end
+function adminCommands.games()
+    logActivity("Available Games:")
+    for _, game in ipairs(gameList) do logActivity("- "..game.name.." (file: "..game.file..")") end
+end
+function adminCommands.publishgame(args)
+    local filename = args[2]
+    if not filename then logActivity("Usage: publishgame <filename>", true); return end
+    if not fs.exists(filename) then logActivity("Error: File '"..filename.."' not found.", true); return end
+    
+    local file = fs.open(filename, "r")
+    if not file then logActivity("Error: Could not open file.", true); return end
+    local content = file.readAll()
+    file.close()
+
+    local version = string.match(content, "%-%-%s*Version:%s*([%d%.]+)")
+    if not version then
+        logActivity("Error: Game file must contain a version comment, e.g. '-- Version: 1.0'", true)
+        return
     end
     
-    term.setCursorPos(math.floor(w/2 - #title/2), startY + #art + 2)
-    term.write(title)
-    sleep(1.5)
+    gameCode[filename] = { code = content, version = tonumber(version) }
+    if saveTableToFile(GAMES_CODE_DB, gameCode) then
+        logActivity("Published game '"..filename.."' version " .. version)
+    else
+        logActivity("Error: Failed to save game code to database.", true)
+    end
+end
+
+-- This function now captures output instead of logging it directly.
+local function executeAdminCommand(command)
+    local output = {}
+    local oldPrint = print
+    _G.print = function(...)
+        local args = {...}
+        local line = ""
+        for i = 1, #args do
+            line = line .. tostring(args[i]) .. "\t"
+        end
+        table.insert(output, line)
+    end
+
+    local args = {}; for arg in string.gmatch(command, "[^%s]+") do table.insert(args, arg) end
+    local cmd = args[1]
+    if adminCommands[cmd] then
+        adminCommands[cmd](args)
+    else
+        print("Unknown command. Type 'help'.")
+    end
+
+    _G.print = oldPrint
+    return table.concat(output, "\n")
+end
+
+local function networkListener()
+    while true do
+        local senderId, message, protocol = rednet.receive()
+        if protocol == "SimpleMail" and message and message.type and mailHandlers[message.type] then
+            mailHandlers[message.type](senderId, message)
+        
+        elseif protocol == "SimpleChat" and message and message.from then
+            local nickname = (users[message.from] and users[message.from].nickname) or message.from
+            local entry = string.format("[%s]: %s", nickname, message.text)
+            table.insert(chatHistory, entry)
+            if #chatHistory > 100 then table.remove(chatHistory, 1) end
+            saveTableToFile(CHAT_DB, chatHistory)
+            rednet.broadcast({ from = nickname, text = message.text }, "SimpleChat")
+        
+        elseif protocol == "ArcadeGames" and message and message.type and gameHandlers[message.type] then
+            gameHandlers[message.type](senderId, message)
+        
+        elseif protocol == AUTH_INTERLINK_PROTOCOL and message.type == "user_exists_check" then
+            local user = message.user
+            rednet.send(senderId, { user = user, exists = (users[user] ~= nil) }, AUTH_INTERLINK_PROTOCOL)
+        
+        elseif protocol == ADMIN_PROTOCOL and message.type == "execute_command" then
+            if message.user and admins[message.user] then
+                logActivity("Executing remote command from admin: " .. message.user)
+                local output = executeAdminCommand(message.command)
+                rednet.send(senderId, { output = output }, ADMIN_PROTOCOL)
+            else
+                logActivity("Unauthorized admin command attempt from user: " .. (message.user or "unknown"), true)
+                rednet.send(senderId, { output = "Error: Access denied." }, ADMIN_PROTOCOL)
+            end
+        end
+    end
+end
+
+local function adminTerminal()
+    while true do
+        local event, p1 = os.pullEvent()
+        if event == "key" then
+            if p1 == keys.enter then
+                if adminInput ~= "" then 
+                    logActivity("Executing local command: " .. adminInput)
+                    local output = executeAdminCommand(adminInput)
+                    -- We print the output back to the log so it shows up in the admin UI
+                    for line in output:gmatch("[^\n]+") do
+                        logActivity(line)
+                    end
+                    adminInput = "" 
+                end
+            elseif p1 == keys.backspace then adminInput = string.sub(adminInput, 1, -2) end
+        elseif event == "char" then adminInput = adminInput .. p1 end
+        redrawAdminUI()
+    end
 end
 
 local function main()
-    showSplashScreen()
-    while true do
-        rednet.open("back")
-        if not findServers() then
-            showMessage("Connection Error", "Could not find servers. Retrying in 5 seconds...")
-            sleep(5)
-        else
-            if autoUpdateCheck() then
-                return
-            end
-
-            username = nil
-            isAdmin = false
-            if not loginOrRegister() then
-                clear(); print("Goodbye!"); break
-            end
-            
-            rednet.send(mailServerId, {type = "get_motd"}, "SimpleMail"); local _, response = rednet.receive("SimpleMail", 3)
-            if response and response.motd and response.motd ~= "" then showMessage("Message of the Day", response.motd) end
-            
-            mainMenu()
-            
-            if not username then
-                rednet.close("back")
-            else
-                rednet.close("back"); clear(); print("Goodbye!"); break
-            end
+    loadAllData()
+    -- Open all attached modems to listen on both wired and wireless networks
+    for _, side in ipairs(rs.getSides()) do
+        if peripheral.getType(side) == "modem" then
+            rednet.open(side)
         end
     end
+
+    rednet.host("SimpleMail", "mail.server")
+    rednet.host("SimpleChat", "chat.server")
+    rednet.host("ArcadeGames", "arcade.server")
+    rednet.host(ADMIN_PROTOCOL, "admin.server") -- Host the new admin protocol
+    logActivity("Mainframe Server started. Type 'help' for commands.")
+    parallel.waitForAny(networkListener, adminTerminal)
 end
 
 main()
+
