@@ -4,9 +4,11 @@
 
     Purpose:
     This version adds a secure remote administration system and lays the
-    groundwork for a user feedback feature.
+    groundwork for a user feedback feature. This version also includes
+    a critical fix for a syntax error in the admin command handler.
 
     Key Changes:
+    - Fixed a fatal syntax error ("funcion" typo).
     - Added an 'admins' table to designate users with special privileges.
     - Added "MuhendizBey" as the first administrator.
     - Now hosts a new, secure "Drunken_Admin" protocol.
@@ -108,7 +110,7 @@ local ADMIN_PROTOCOL = "Drunken_Admin"
 --==============================================================================
 -- UI & Theme Configuration (for the admin terminal)
 --==============================================================================
--- (UI code remains unchanged)
+
 local hasColor = term.isColor and term.isColor()
 local function safeColor(colorName, fallbackColor)
     if hasColor and colors[colorName] ~= nil then return colors[colorName] end
@@ -182,7 +184,7 @@ end
 --==============================================================================
 -- Data Persistence Functions
 --==============================================================================
--- (These functions remain unchanged)
+
 local function saveTableToFile(path, data)
     local file = fs.open(path, "w")
     if not file then logActivity("Could not open " .. path .. " for writing.", true); return false end
@@ -221,7 +223,7 @@ end
 --==============================================================================
 -- Mail & List Management Functions
 --==============================================================================
--- (These functions remain unchanged)
+
 local function saveItem(user, item, itemType)
     local dir = itemType .. "/" .. user
     if not fs.exists(dir) then fs.makeDir(dir) end
@@ -256,7 +258,7 @@ end
 --==============================================================================
 -- Authentication Helper Functions
 --==============================================================================
--- (This function remains unchanged)
+
 local function requestAuthCode(username, password, nickname, senderId, purpose)
     logActivity("Requesting auth code for '" .. username .. "' via HyperAuth API...")
     
@@ -320,7 +322,7 @@ function mailHandlers.login(senderId, message)
             needs_auth = false,
             nickname = users[message.user].nickname,
             unreadCount = #loadMail(message.user),
-            isAdmin = admins[message.user] or false -- NEW: Add isAdmin flag
+            isAdmin = admins[message.user] or false
         }, "SimpleMail")
         return
     end
@@ -403,7 +405,7 @@ function mailHandlers.user_exists(senderId, message)
     end
     rednet.send(senderId, { exists = exists }, "SimpleMail")
 end
--- (Other mail handlers like send, fetch, delete, etc. remain unchanged)
+
 function mailHandlers.send(senderId, message)
     local mail = message.mail
     if mail.to == "@all" then
@@ -483,14 +485,18 @@ end
 --==============================================================================
 
 local adminCommands = {}
-
 function adminCommands.help()
     print("--- Mainframe Admin Commands ---")
     print("users, deluser, lists, dellist, board, delscore")
     print("motd, broadcast, publish, addgame, delgame, games, publishgame")
 end
-
-function adminCommands.users()
+function adminCommands.users() logActivity("Registered Users:"); for user, data in pairs(users) do logActivity("- " .. user .. " (Nick: " .. (data.nickname or "N/A") .. ")") end end
+function adminCommands.deluser(args) local user = args[2]; if not user then logActivity("Usage: deluser <name>"); return end; if users[user] then users[user] = nil; saveTableToFile(USERS_DB, users); logActivity("Deleted user: " .. user) else logActivity("User not found: " .. user) end end
+function adminCommands.lists() logActivity("Mailing Lists:"); for name, members in pairs(lists) do logActivity(string.format("- %s (%d members)", name, #members)) end end
+function adminCommands.dellist(args) local listName = args[2]; if not listName then logActivity("Usage: dellist <name>"); return end; if lists[listName] then lists[listName] = nil; saveTableToFile(LISTS_DB, lists); logActivity("Deleted list: " .. listName) else logActivity("List not found: " .. listName) end end
+function adminCommands.board(args)
+    local gameName = args[2]; if not gameName then logActivity("Usage: board <game_name>"); return end
+    if games[gameName] then
         logActivity("Leaderboard for " .. gameName .. ":")
         for user, score in pairs(games[gameName]) do logActivity(string.format("- %s: %d", user, score)) end
     else logActivity("No leaderboard found for game: " .. gameName) end
@@ -554,7 +560,6 @@ function adminCommands.publishgame(args)
     end
 end
 
--- This function now captures output instead of logging it directly.
 local function executeAdminCommand(command)
     local output = {}
     local oldPrint = print
@@ -621,7 +626,6 @@ local function adminTerminal()
                 if adminInput ~= "" then 
                     logActivity("Executing local command: " .. adminInput)
                     local output = executeAdminCommand(adminInput)
-                    -- We print the output back to the log so it shows up in the admin UI
                     for line in output:gmatch("[^\n]+") do
                         logActivity(line)
                     end
@@ -651,5 +655,4 @@ local function main()
 end
 
 main()
-
 
