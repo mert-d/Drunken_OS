@@ -483,14 +483,14 @@ end
 --==============================================================================
 
 local adminCommands = {}
-function adminCommands.help() logActivity("--- Admin Commands ---"); logActivity("users, deluser, lists, dellist, board, delscore, motd, broadcast, publish, addgame, delgame, games, publishgame") end
-function adminCommands.users() logActivity("Registered Users:"); for user, data in pairs(users) do logActivity("- " .. user .. " (Nick: " .. (data.nickname or "N/A") .. ")") end end
-function adminCommands.deluser(args) local user = args[2]; if not user then logActivity("Usage: deluser <name>"); return end; if users[user] then users[user] = nil; saveTableToFile(USERS_DB, users); logActivity("Deleted user: " .. user) else logActivity("User not found: " .. user) end end
-function adminCommands.lists() logActivity("Mailing Lists:"); for name, members in pairs(lists) do logActivity(string.format("- %s (%d members)", name, #members)) end end
-function adminCommands.dellist(args) local listName = args[2]; if not listName then logActivity("Usage: dellist <name>"); return end; if lists[listName] then lists[listName] = nil; saveTableToFile(LISTS_DB, lists); logActivity("Deleted list: " .. listName) else logActivity("List not found: " .. listName) end end
-function adminCommands.board(args)
-    local gameName = args[2]; if not gameName then logActivity("Usage: board <game_name>"); return end
-    if games[gameName] then
+
+function adminCommands.help()
+    print("--- Mainframe Admin Commands ---")
+    print("users, deluser, lists, dellist, board, delscore")
+    print("motd, broadcast, publish, addgame, delgame, games, publishgame")
+end
+
+function adminCommands.users()
         logActivity("Leaderboard for " .. gameName .. ":")
         for user, score in pairs(games[gameName]) do logActivity(string.format("- %s: %d", user, score)) end
     else logActivity("No leaderboard found for game: " .. gameName) end
@@ -651,4 +651,5 @@ local function main()
 end
 
 main()
+
 
