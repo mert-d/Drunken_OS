@@ -376,54 +376,88 @@ local function sendFeedback()
 end
 
 local function adminConsole()
-    local w,h = getSafeSize()
+    local w, h = getSafeSize()
     drawWindow("Remote Admin Console")
     local history = {}
+    local input = ""
+
     local function redrawConsole()
         drawWindow("Remote Admin Console")
-        for i, item in ipairs(history) do
+        local historyLines = {}
+        for _, item in ipairs(history) do
             local prefix = item.type == "cmd" and "> " or ""
-            local lines = wordWrap(prefix .. item.text, w - 2)
-            for _, line in ipairs(lines) do
-                print(line)
+            for _, line in ipairs(wordWrap(prefix .. item.text, w - 2)) do
+                table.insert(historyLines, line)
             end
         end
+
+        local displayHeight = h - 3
+        local startLine = math.max(1, #historyLines - displayHeight + 1)
+        for i = startLine, #historyLines do
+            term.setCursorPos(2, 2 + (i - startLine))
+            term.write(historyLines[i])
+        end
+    end
+
+    local function redrawInputLine()
+        local inputWidth = w - 4
+        term.setBackgroundColor(theme.windowBg)
+        term.setCursorPos(1, h - 1)
+        term.clearLine()
+        term.setCursorPos(2, h - 1)
+        term.setTextColor(theme.prompt)
+        term.write("> ")
+        term.setTextColor(theme.text)
+        
+        local textToDraw = #input > inputWidth and "..." .. string.sub(input, -inputWidth + 3) or input
+        term.write(textToDraw)
     end
     
+    redrawConsole()
     while true do
+        redrawInputLine()
         term.setCursorBlink(true)
-        term.setCursorPos(1, h-2)
-        term.write(string.rep("-", w))
-        term.setCursorPos(1, h-1)
-        term.clearLine()
-        term.setCursorPos(1, h-1)
-        term.write("> ")
-        local cmd = read()
+
+        local event, p1 = os.pullEvent()
         term.setCursorBlink(false)
 
-        if cmd == "exit" or cmd == "quit" then break end
-        if cmd == "clear" then
-            history = {}
-            redrawConsole()
-        elseif cmd ~= "" then
-            table.insert(history, {type="cmd", text=cmd})
-            rednet.send(adminServerId, {
-                type = "execute_command",
-                user = username,
-                command = cmd
-            }, "Drunken_Admin")
-            
-            redrawConsole()
-            term.setCursorPos(1, h-1)
-            term.write("Executing...")
+        if event == "key" then
+            if p1 == keys.enter then
+                if input == "exit" or input == "quit" then break end
+                if input == "clear" then
+                    history = {}
+                elseif input ~= "" then
+                    table.insert(history, {type="cmd", text=input})
+                    rednet.send(adminServerId, {
+                        type = "execute_command",
+                        user = username,
+                        command = input
+                    }, "Drunken_Admin")
+                    
+                    redrawConsole()
+                    term.setCursorPos(1, h-1)
+                    term.clearLine()
+                    term.setCursorPos(2, h-1)
+                    term.write("Executing...")
 
-            local _, response = rednet.receive("Drunken_Admin", 10)
-            if response and response.output then
-                table.insert(history, {type="resp", text=response.output})
-            else
-                table.insert(history, {type="resp", text="Error: Timed out or no response from server."})
+                    local _, response = rednet.receive("Drunken_Admin", 10)
+                    if response and response.output then
+                        table.insert(history, {type="resp", text=response.output})
+                    else
+                        table.insert(history, {type="resp", text="Error: Timed out or no response from server."})
+                    end
+                end
+                input = ""
+                redrawConsole()
+            elseif p1 == keys.backspace then
+                input = string.sub(input, 1, -2)
+            elseif p1 == keys.tab then
+                -- Placeholder for future tab-completion logic
             end
-            redrawConsole()
+        elseif event == "char" then
+            input = input .. p1
+        elseif event == "terminate" then
+            break
         end
     end
 end
@@ -663,4 +697,5 @@ local function main()
 end
 
 main()
+
 
