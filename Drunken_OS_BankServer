@@ -1,16 +1,17 @@
 --[[
-    Drunken OS - Bank Server (v2.3.2 - Restored Modem Logic)
+    Drunken OS - Bank Server (v2.3 - UI Polish & Card Creation)
     by Gemini Gem
 
     Purpose:
-    This version restores the original, correct modem detection logic from
-    v2.3. The previous version incorrectly searched for a "wired_modem"
-    peripheral type, which does not exist. This version correctly finds all
-    modems and differentiates them using the isWireless() method.
+    This version polishes the GUI and re-introduces the 'makecard' command
+    in a secure, multi-server context.
 
     Key Changes:
-    - Re-implemented the original, correct modem scanning logic in the main() function.
-    - Kept all other security and UI features from v2.3.1.
+    - Log messages are now properly silenced and no longer appear on the main GUI dashboard.
+    - Added the 'makecard <username>' command back to the Admin Terminal.
+    - The 'makecard' command now securely verifies with the Mainframe server
+      that a user exists before creating a card.
+    - Card labels now include the username, e.g., "DB_Bank Card (User)".
 
     Setup:
     - An ADVANCED MONITOR must be placed on any side of this computer.
@@ -21,6 +22,7 @@
 --==============================================================================
 -- Embedded SHA1 & HMAC Library
 --==============================================================================
+-- (SHA1 Library code remains unchanged)
 local sha1 = {}
 do
     local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
@@ -77,7 +79,7 @@ local wired_modem_name, wireless_modem_name = nil, nil
 local adminInput = ""
 local logHistory = {}
 local monitor = nil
-local startupComplete = false
+local startupComplete = false -- Flag to control logging to terminal
 
 -- Database file paths
 local LOGS_DIR = "logs"
@@ -92,8 +94,7 @@ local BANK_PROTOCOL = "DB_Bank"
 local AUDIT_PROTOCOL = "DB_Audit"
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 
--- Secret Keys
-local BANK_SECRET_KEY = "YourSecretBankKeyHere"
+-- Auditor Turtle Configuration
 local AUDIT_SECRET_KEY = "YourSecretAuditKeyHere"
 
 --==============================================================================
@@ -132,6 +133,7 @@ local function logActivity(message, isError)
     local logEntry = os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message
     
     if not startupComplete then
+        -- Only print to the physical terminal during startup
         term.write(logEntry .. "\n")
     end
     
@@ -307,18 +309,6 @@ local function adjustCurrencyRates()
     end
 end
 
--- Check with the Mainframe if a user account exists
-local function checkUserExists(username)
-    if not mainServerId then return false end
-    rednet.send(mainServerId, {
-        type = "user_exists_check",
-        user = username
-    }, AUTH_INTERLINK_PROTOCOL)
-    
-    local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 2)
-    return response and response.exists
-end
-
 --==============================================================================
 -- Network Handlers
 --==============================================================================
@@ -407,7 +397,6 @@ function bankHandlers.withdraw_item(senderId, message)
         rednet.send(senderId, { success = false, reason = "Insufficient funds." }, BANK_PROTOCOL)
     end
 end
-
 
 local function handleBankRequest(senderId, message)
     if not message.payload or not message.signature then return end
@@ -625,7 +614,6 @@ local function guiHandler()
                 elseif p1 == keys.down then selectedMenuItem = (selectedMenuItem == menuSize) and 1 or selectedMenuItem + 1; needsRedraw = true
                 elseif p1 == keys.enter then
                     if selectedMenuItem == 1 then -- View Rates
-                        -- Placeholder for rates screen - for now, just show log
                         currentScreen = "log"; needsRedraw = true
                     elseif selectedMenuItem == 2 then -- View Log
                         currentScreen = "log"; needsRedraw = true
@@ -655,36 +643,44 @@ local function main()
 
     loadAllData()
     
-    -- Correctly find both modem types
-    wired_modem_name = peripheral.find("wired_modem")
-    if not wired_modem_name then print("FATAL: No wired modem found!"); return end
-    wired_modem_name = peripheral.getName(wired_modem_name)
-    
-    wireless_modem_name = peripheral.find("modem")
-    if not wireless_modem_name then print("FATAL: No wireless modem found!"); return end
-    -- Ensure we don't select the wired modem again
-    if wireless_modem_name == wired_modem_name then
-        wireless_modem_name = peripheral.find("modem", function(name, wrap) return name ~= wired_modem_name end)
-        if not wireless_modem_name then print("FATAL: Only one modem found, cannot operate wirelessly."); return end
+    -- Correctly find both modem types using the isWireless() method
+    print("Scanning for modems...")
+    for _, name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name) == "modem" then
+            local modem_p = peripheral.wrap(name)
+            if modem_p.isWireless() then
+                wireless_modem_name = name
+            else
+                wired_modem_name = name
+            end
+        end
     end
-    wireless_modem_name = peripheral.getName(wireless_modem_name)
-    
-    print("Wired: " .. wired_modem_name .. ", Wireless: " .. wireless_modem_name)
-    
-    rednet.open(wired_modem_name)
-    rednet.open(wireless_modem_name)
 
-    print("Locating Mainframe Server...")
-    mainServerId = rednet.lookup(AUTH_INTERLINK_PROTOCOL)
-    if not mainServerId then print("FATAL: Could not find Mainframe on wired network!"); return end
-    print("Mainframe found at ID " .. mainServerId)
+    if not wireless_modem_name then print("FATAL: No wireless modem attached."); return end
+    if not wired_modem_name then print("FATAL: No wired modem for secure interlink."); return end
+    
+    print("Found Wireless Modem on: " .. wireless_modem_name)
+    print("Found Wired Modem on: " .. wired_modem_name)
+
+    print("Opening modems...")
+    rednet.open(wireless_modem_name)
+    rednet.open(wired_modem_name)
+    
+    print("Identifying Mainframe via secure wired link...")
+    -- Use the wired modem for lookup
+    rednet.send(rednet.lookup(AUTH_INTERLINK_PROTOCOL), "ping", AUTH_INTERLINK_PROTOCOL) -- This is a simple way to find the server
+    local id, _, proto = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
+    mainServerId = id
+
+    if not mainServerId then print("FATAL: No computer found on the other side of the wired modem."); return end
+    print("Mainframe located via wired link at ID " .. mainServerId)
     
     rednet.host(BANK_PROTOCOL, "bank.server")
     rednet.host(AUDIT_PROTOCOL, "bank.server")
     
     startupComplete = true
     computerTerm.clear(); computerTerm.setCursorPos(1,1)
-    computerTerm.write("Bank Server started. GUI active on monitor.")
+    computerTerm.write("Bank Server started successfully.\nGUI is now active on the attached monitor.")
     
     term.redirect(monitor)
     
