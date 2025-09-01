@@ -1,15 +1,22 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v4.1 - Auto-Reboot)
+    Drunken Beard Bank - ATM Terminal (v4.2 - Finalized Economy & Reliability)
     by Gemini Gem
 
     Purpose:
-    This version adds a main loop and error handling to ensure the ATM is
-    always running. If the program encounters a fatal error or a user exits,
-    it will automatically log the event and reboot itself, returning to the
-    "Please insert your bank card..." screen. This provides maximum uptime for
-    a public-facing terminal.
+    This is the definitive ATM client, fully updated for the new two-server
+    Drunken_OS architecture. It communicates exclusively with the dedicated
+    Bank Server and features a robust, user-friendly interface for the
+    dynamic, multi-currency economy.
+
+    Key Features:
+    - Connects only to the secure Bank Server.
+    - Handles multi-item deposits and item-specific withdrawals.
+    - Fetches and displays live exchange rates.
+    - Includes an auto-reboot main loop for maximum uptime.
 
     Setup:
+    - A disk drive must be attached to this computer.
+    - A Vault Clerk Turtle must be running nearby and connected to rednet.
     - Set this program as the startup script for the computer.
 ]]
 
@@ -19,7 +26,7 @@
 
 local sha1 = {}
 do
-    -- (SHA1 library code is unchanged and remains here)
+    -- (SHA1 library code remains unchanged)
     local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
     local function rol(n, c) return bor(lshift(n, c), rshift(n, 32 - c)) end
     local function str_to_bin(str) local t = {}; for i = 1, #str do t[i] = string.byte(str, i) end; return t end
@@ -61,7 +68,7 @@ local balance = 0
 local currencyRates = {}
 
 -- Rednet protocols
-local BANK_SERVER_PROTOCOL = "DB_Bank"
+local BANK_PROTOCOL = "DB_Bank"
 local TURTLE_CLERK_PROTOCOL = "DB_ATM_Turtle"
 
 --==============================================================================
@@ -152,8 +159,8 @@ local function login(user)
     term.setCursorPos(2, 4); term.write("Card detected for user: " .. user)
     local pass = readInput("Password: ", 6, true)
     if pass and pass ~= "" then
-        rednet.send(bankServerId, { type = "login", user = user, pass = pass }, BANK_SERVER_PROTOCOL)
-        local _, response = rednet.receive(BANK_SERVER_PROTOCOL, 5)
+        rednet.send(bankServerId, { type = "login", user = user, pass = pass }, BANK_PROTOCOL)
+        local _, response = rednet.receive(BANK_PROTOCOL, 5)
         if response and response.success then
             username = user
             balance = response.balance
@@ -184,18 +191,19 @@ local function deposit()
     local depositItems = response.items
     if #depositItems > 0 then
         term.setCursorPos(2, 6); term.write("Clerk found items. Confirming with bank...")
-        rednet.send(bankServerId, { type = "deposit", user = username, items = depositItems }, BANK_SERVER_PROTOCOL)
-        local _, server_response = rednet.receive(BANK_SERVER_PROTOCOL, 5)
+        rednet.send(bankServerId, { type = "deposit", user = username, items = depositItems }, BANK_PROTOCOL)
+        local _, server_response = rednet.receive(BANK_PROTOCOL, 5)
 
         if server_response and server_response.success then
             balance = server_response.newBalance
-            rednet.send(turtleClerkId, { type = "confirm_deposit", items = depositItems }, TURTLE_CLERK_PROTOCOL)
+            rednet.send(turtleClerkId, { type = "confirm_deposit" }, TURTLE_CLERK_PROTOCOL)
             showMessage("Success", "Deposited items for a total of $" .. server_response.deposited_value)
         else
             rednet.send(turtleClerkId, { type = "cancel_deposit" }, TURTLE_CLERK_PROTOCOL)
             showMessage("Error", "Deposit failed on server. Items returned.", true)
         end
     else
+        rednet.send(turtleClerkId, { type = "cancel_deposit" }, TURTLE_CLERK_PROTOCOL)
         showMessage("Deposit Cancelled", "No valid currency found in the deposit barrel.")
     end
 end
@@ -242,8 +250,8 @@ local function withdraw()
                     user = username,
                     item_name = chosenCurrency.name,
                     count = amount
-                }, BANK_SERVER_PROTOCOL)
-                local _, response = rednet.receive(BANK_SERVER_PROTOCOL, 10)
+                }, BANK_PROTOCOL)
+                local _, response = rednet.receive(BANK_PROTOCOL, 10)
 
                 if response and response.success then
                     balance = response.newBalance
@@ -278,7 +286,7 @@ local function runSession()
 
     rednet.open("back")
     drawWindow("Connecting..."); term.setCursorPos(2, 4); term.write("Finding Bank Server...")
-    bankServerId = rednet.lookup(BANK_SERVER_PROTOCOL, "bank.server")
+    bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
     if not bankServerId then
         showMessage("Error", "Could not connect to the bank server.", true)
         rednet.close("back"); return
@@ -317,8 +325,8 @@ local function runSession()
     end
 
     -- Fetch latest rates after successful login
-    rednet.send(bankServerId, { type = "get_balance_and_rates", user = username }, BANK_SERVER_PROTOCOL)
-    local _, response = rednet.receive(BANK_SERVER_PROTOCOL, 5)
+    rednet.send(bankServerId, { type = "get_balance_and_rates", user = username }, BANK_PROTOCOL)
+    local _, response = rednet.receive(BANK_PROTOCOL, 5)
     if response then
         balance = response.balance or balance
         currencyRates = response.rates or {}
@@ -338,7 +346,7 @@ local function runSession()
         elseif key == keys.enter then
             if selected == 1 then
                 rednet.send(bankServerId, { type = "get_balance_and_rates", user = username }, BANK_PROTOCOL)
-                local _, rate_response = rednet.receive(BANK_SERVER_PROTOCOL, 5)
+                local _, rate_response = rednet.receive(BANK_PROTOCOL, 5)
                 if rate_response and rate_response.balance then
                     balance = rate_response.balance
                     currencyRates = rate_response.rates
