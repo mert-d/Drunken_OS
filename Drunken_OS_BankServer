@@ -1,20 +1,28 @@
 --[[
-    Drunken OS - Bank Server (v2.4.1 - Modem Detection Fix)
+    Drunken OS - Bank Server (v2.3 - UI Polish & Card Creation)
     by Gemini Gem
 
     Purpose:
-    This version fixes a critical race condition in the modem detection
-    logic that could cause a crash on startup.
+    This version polishes the GUI and re-introduces the 'makecard' command
+    in a secure, multi-server context.
 
     Key Changes:
-    - Added a nil-check when wrapping peripherals in the main() function
-      to prevent crashes if a modem is temporarily unavailable.
-    - Kept all security features from v2.4.
+    - Log messages are now properly silenced and no longer appear on the main GUI dashboard.
+    - Added the 'makecard <username>' command back to the Admin Terminal.
+    - The 'makecard' command now securely verifies with the Mainframe server
+      that a user exists before creating a card.
+    - Card labels now include the username, e.g., "DB_Bank Card (User)".
+
+    Setup:
+    - An ADVANCED MONITOR must be placed on any side of this computer.
+    - A WIRELESS modem must be attached for public communication.
+    - A WIRED modem must be attached and cabled to the Mainframe Server.
 ]]
 
 --==============================================================================
 -- Embedded SHA1 & HMAC Library
 --==============================================================================
+-- (SHA1 Library code remains unchanged)
 local sha1 = {}
 do
     local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
@@ -71,7 +79,7 @@ local wired_modem_name, wireless_modem_name = nil, nil
 local adminInput = ""
 local logHistory = {}
 local monitor = nil
-local startupComplete = false
+local startupComplete = false -- Flag to control logging to terminal
 
 -- Database file paths
 local LOGS_DIR = "logs"
@@ -86,9 +94,8 @@ local BANK_PROTOCOL = "DB_Bank"
 local AUDIT_PROTOCOL = "DB_Audit"
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 
--- Secret Keys
-local BANK_SECRET_KEY = "YourSecretBankKeyHere" -- MUST MATCH THE ATM
-local AUDIT_SECRET_KEY = "YourSecretAuditKeyHere" -- MUST MATCH THE AUDITOR
+-- Auditor Turtle Configuration
+local AUDIT_SECRET_KEY = "YourSecretAuditKeyHere"
 
 --==============================================================================
 -- UI & Theme Configuration
@@ -126,6 +133,7 @@ local function logActivity(message, isError)
     local logEntry = os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message
     
     if not startupComplete then
+        -- Only print to the physical terminal during startup
         term.write(logEntry .. "\n")
     end
     
@@ -301,20 +309,6 @@ local function adjustCurrencyRates()
     end
 end
 
-local function checkUserExists(username)
-    if not mainServerId then return false end
-    rednet.send(mainServerId, {
-        type = "user_exists_check",
-        user = username
-    }, AUTH_INTERLINK_PROTOCOL)
-    
-    local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 2)
-    return response and response.exists
-end
-
---==============================================================================
--- Network Handlers
---==============================================================================
 local bankHandlers = {}
 
 function bankHandlers.login(senderId, message)
@@ -401,44 +395,6 @@ function bankHandlers.withdraw_item(senderId, message)
     end
 end
 
-local function handleBankRequest(senderId, message)
-    if not message.payload or not message.signature then
-        logActivity("Received invalid/unsigned bank request from " .. senderId, true)
-        return
-    end
-
-    local payload_serialized = textutils.serializeJSON(message.payload)
-    local expected_signature = sha1.hmac_hex(BANK_SECRET_KEY, payload_serialized)
-
-    if message.signature == expected_signature then
-        local handler = bankHandlers[message.payload.type]
-        if handler then
-            handler(senderId, message.payload)
-        else
-            logActivity("Unknown bank request type from " .. senderId .. ": " .. tostring(message.payload.type), true)
-        end
-    else
-        logActivity("Received bank request with INVALID SIGNATURE from " .. senderId, true)
-        rednet.send(senderId, { success = false, reason = "Invalid signature." }, BANK_PROTOCOL)
-    end
-end
-
-local function handleAuditReport(message)
-    if not message.report or not message.signature then return end
-    local report_serialized = textutils.serializeJSON(message.report)
-    local expected_signature = sha1.hmac_hex(AUDIT_SECRET_KEY, report_serialized)
-    
-    if message.signature == expected_signature then
-        logActivity("Received valid, signed stock report from Auditor.")
-        currentStock = message.report
-        saveTableToFile(STOCK_DB, currentStock)
-        adjustCurrencyRates()
-        needsRedraw = true
-    else
-        logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
-    end
-end
-
 --==============================================================================
 -- Admin Command Handlers & Terminal
 --==============================================================================
@@ -473,48 +429,77 @@ end
 function adminCommands.balance(args)
     local _, user = parseAdminArgs(args)
     if not user then print("Usage: balance <user>"); return end
-    print("Balance for " .. user .. ": $" .. (accounts[user] or 0))
+    print("Balance for " .. user .. ": " .. (accounts[user] or 0))
 end
 
 function adminCommands.setbalance(args)
     local _, user, amount = parseAdminArgs(args)
     if not user or not amount then print("Usage: setbalance <user> <amount>"); return end
     accounts[user] = amount; saveTableToFile(ACCOUNTS_DB, accounts)
-    print("Set balance for " .. user .. " to $" .. amount)
+    print("Set balance for " .. user .. " to " .. amount)
 end
 
 function adminCommands.give(args)
     local _, user, amount = parseAdminArgs(args)
     if not user or not amount then print("Usage: give <user> <amount>"); return end
     accounts[user] = (accounts[user] or 0) + amount; saveTableToFile(ACCOUNTS_DB, accounts)
-    print("Gave $" .. amount .. " to " .. user .. ". New balance: $" .. accounts[user])
+    print("Gave " .. amount .. " to " .. user .. ". New balance: " .. accounts[user])
 end
 
 function adminCommands.makecard(args)
     local _, user = parseAdminArgs(args)
-    if not user then print("Usage: makecard <username>"); return end
+    if not user then
+        print("Usage: makecard <username>")
+        return
+    end
     
     print("Verifying user with Mainframe...")
-    if not checkUserExists(user) then
+    rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
+    local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
+
+    if not response or not response.exists then
         print("Error: Mainframe reports user '" .. user .. "' does not exist.")
         return
     end
 
     print("User verified. Please insert a blank disk.")
     local disk = peripheral.find("drive")
-    if not disk then print("Error: No disk drive attached."); return end
-    if not disk.isDiskPresent() then print("Error: No disk in drive."); return end
+    if not disk then
+        print("Error: No disk drive attached to this server.")
+        return
+    end
+
+    if not disk.isDiskPresent() then
+        print("Error: No disk in the drive.")
+        return
+    end
 
     local mount_path = disk.getMountPath()
-    if not mount_path then print("Error: Could not get disk mount path."); return end
+    if not mount_path then
+        print("Error: Could not get disk mount path.")
+        return
+    end
 
-    disk.setDiskLabel("DB Bank Card (" .. user .. ")")
-    local cardFile = fs.open(fs.combine(mount_path, ".bankcard"), "w")
+    disk.setDiskLabel("Drunken Beard Bank Card (" .. user .. ")")
+    local cardFile = fs.open(mount_path .. "/.bankcard", "w")
     if cardFile then
-        cardFile.write(user); cardFile.close()
-        print("Successfully created bank card for " .. user)
+        cardFile.write(user)
+        cardFile.close()
     else
-        print("Error: Could not write to disk.")
+        print("Error: Could not write main card file to disk.")
+        return
+    end
+
+    local descFile = fs.open(mount_path .. "/.description", "w")
+    if descFile then
+        local description = "Property of: " .. user .. "\n" ..
+                            "Account Type: Standard\n\n" ..
+                            "A proud member of the Drunken Beard banking system."
+        descFile.write(description)
+        descFile.close()
+        print("Successfully created bank card with description for " .. user)
+    else
+        print("Error: Could not write description file to disk.")
     end
 end
 
@@ -528,7 +513,7 @@ function adminCommands.addcurrency(args)
     if saveTableToFile(fs.combine(CURRENCIES_DIR, itemName .. ".json"), currencyRates[itemName]) then
         print("Added new currency '" .. itemName .. "' with base rate $" .. baseRate)
     else
-        currencyRates[itemName] = nil
+        currencyRates[itemName] = nil -- Revert change if save failed
         print("Failed to save new currency.")
     end
 end
@@ -570,24 +555,26 @@ end
 local function handleAdminCommand(command)
     local args = {}; for arg in string.gmatch(command, "[^%s]+") do table.insert(args, arg) end
     local cmd = args[1]
-    if cmd == "exit" then return false end
-    if adminCommands[cmd] then adminCommands[cmd](args) else print("Unknown command.") end
-    return true
+    if cmd == "exit" then return false end -- Signal to exit terminal
+    if adminCommands[cmd] then adminCommands[cmd](args) else print("Unknown command. Type 'help'.") end
+    return true -- Continue terminal session
 end
 
 local function adminTerminal()
-    local oldTerm = term.redirect(term.native())
-    oldTerm.clear()
-    oldTerm.setCursorPos(1,1)
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1,1)
     print("Bank Admin Terminal. Type 'exit' to return to GUI.")
     
     while true do
         term.write("> ")
         local input = read()
-        if not handleAdminCommand(input) then break end
+        if not handleAdminCommand(input) then
+            break
+        end
     end
     
-    term.redirect(monitor)
     currentScreen = "main"
     needsRedraw = true
 end
@@ -600,12 +587,21 @@ local function networkListener()
     while true do
         local senderId, message, protocolReceived = rednet.receive()
         
-        if protocolReceived == BANK_PROTOCOL then
-            -- MODIFIED: All bank requests go through the secure handler now
-            handleBankRequest(senderId, message)
+        if protocolReceived == BANK_PROTOCOL and message and message.type and bankHandlers[message.type] then
+            bankHandlers[message.type](senderId, message)
         
         elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "stock_report" then
-            handleAuditReport(message)
+            local messageToVerify = textutils.serializeJSON(message.report)
+            local signature = sha1.hmac_hex(AUDIT_SECRET_KEY, messageToVerify)
+            if signature == message.signature then
+                logActivity("Received valid, signed stock report from Auditor.")
+                currentStock = message.report
+                saveTableToFile(STOCK_DB, currentStock)
+                adjustCurrencyRates()
+                needsRedraw = true
+            else
+                logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
+            end
         end
     end
 end
@@ -613,39 +609,55 @@ end
 local function guiHandler()
     while true do
         if needsRedraw then
-            if currentScreen == "main" then drawMainMenu()
-            elseif currentScreen == "log" then drawLogScreen() end
+            if currentScreen == "main" then
+                drawMainMenu()
+            elseif currentScreen == "log" then
+                drawLogScreen()
+            end
         end
 
         local event, p1, p2, p3 = os.pullEvent()
         if event == "key" then
             if currentScreen == "main" then
                 local menuSize = 4
-                if p1 == keys.up then selectedMenuItem = (selectedMenuItem == 1) and menuSize or selectedMenuItem - 1; needsRedraw = true
-                elseif p1 == keys.down then selectedMenuItem = (selectedMenuItem == menuSize) and 1 or selectedMenuItem + 1; needsRedraw = true
+                if p1 == keys.up then
+                    selectedMenuItem = (selectedMenuItem == 1) and menuSize or selectedMenuItem - 1
+                    needsRedraw = true
+                elseif p1 == keys.down then
+                    selectedMenuItem = (selectedMenuItem == menuSize) and 1 or selectedMenuItem + 1
+                    needsRedraw = true
                 elseif p1 == keys.enter then
                     if selectedMenuItem == 1 then -- View Rates
                         -- Placeholder for rates screen
                     elseif selectedMenuItem == 2 then -- View Log
-                        currentScreen = "log"; needsRedraw = true
+                        currentScreen = "log"
+                        needsRedraw = true
                     elseif selectedMenuItem == 3 then -- Open Terminal
-                        currentScreen = "terminal"; adminTerminal()
-                    elseif selectedMenuItem == 4 then return end -- Shutdown
+                        currentScreen = "terminal"
+                        adminTerminal()
+                    elseif selectedMenuItem == 4 then -- Shutdown
+                        return -- End the GUI handler
+                    end
                 end
             elseif currentScreen == "log" or currentScreen == "rates" then
-                currentScreen = "main"; needsRedraw = true
+                currentScreen = "main"
+                needsRedraw = true
             end
         elseif event == "monitor_touch" then
             if currentScreen == "main" and p2 >= 9 and p2 <= 12 then
-                selectedMenuItem = p2 - 8; os.queueEvent("key", keys.enter)
+                selectedMenuItem = p2 - 8
+                os.queueEvent("key", keys.enter)
             end
-        elseif event == "terminate" then return end
+        elseif event == "terminate" then
+            return
+        end
     end
 end
 
 local function main()
     local computerTerm = term.current()
-    computerTerm.clear(); computerTerm.setCursorPos(1,1)
+    computerTerm.clear()
+    computerTerm.setCursorPos(1,1)
     
     print("Drunken OS Bank Server Initializing...")
 
@@ -661,7 +673,7 @@ local function main()
     for _, name in ipairs(peripheral.getNames()) do
         if peripheral.getType(name) == "modem" then
             local modem_p = peripheral.wrap(name)
-            if modem_p and modem_p.isWireless() then
+            if modem_p.isWireless() then
                 wireless_modem_name = name
             else
                 wired_modem_name = name
@@ -693,7 +705,6 @@ local function main()
     rednet.open(wired_modem_name)
     
     rednet.host(BANK_PROTOCOL, "bank.server")
-    rednet.host(AUTH_INTERLINK_PROTOCOL) -- Host the interlink protocol
     
     startupComplete = true -- Stop logging to the physical terminal
     computerTerm.clear()
@@ -708,8 +719,10 @@ local function main()
     
     -- When the loops exit (on shutdown), restore the original terminal
     term.redirect(computerTerm)
-    monitor.setBackgroundColor(colors.black); monitor.clear()
-    term.clear(); term.setCursorPos(1,1)
+    monitor.setBackgroundColor(colors.black)
+    monitor.clear()
+    term.clear()
+    term.setCursorPos(1,1)
     print("Bank Server has shut down.")
 end
 
