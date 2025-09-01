@@ -309,6 +309,20 @@ local function adjustCurrencyRates()
     end
 end
 
+local function checkUserExists(username)
+    if not mainServerId then return false end
+    rednet.send(mainServerId, {
+        type = "user_exists_check",
+        user = username
+    }, AUTH_INTERLINK_PROTOCOL)
+
+    local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 2)
+    return response and response.exists
+end
+
+--==============================================================================
+-- Network Handlers
+--==============================================================================
 local bankHandlers = {}
 
 function bankHandlers.login(senderId, message)
@@ -429,77 +443,48 @@ end
 function adminCommands.balance(args)
     local _, user = parseAdminArgs(args)
     if not user then print("Usage: balance <user>"); return end
-    print("Balance for " .. user .. ": " .. (accounts[user] or 0))
+    print("Balance for " .. user .. ": $" .. (accounts[user] or 0))
 end
 
 function adminCommands.setbalance(args)
     local _, user, amount = parseAdminArgs(args)
     if not user or not amount then print("Usage: setbalance <user> <amount>"); return end
     accounts[user] = amount; saveTableToFile(ACCOUNTS_DB, accounts)
-    print("Set balance for " .. user .. " to " .. amount)
+    print("Set balance for " .. user .. " to $" .. amount)
 end
 
 function adminCommands.give(args)
     local _, user, amount = parseAdminArgs(args)
     if not user or not amount then print("Usage: give <user> <amount>"); return end
     accounts[user] = (accounts[user] or 0) + amount; saveTableToFile(ACCOUNTS_DB, accounts)
-    print("Gave " .. amount .. " to " .. user .. ". New balance: " .. accounts[user])
+    print("Gave $" .. amount .. " to " .. user .. ". New balance: $" .. accounts[user])
 end
 
 function adminCommands.makecard(args)
     local _, user = parseAdminArgs(args)
-    if not user then
-        print("Usage: makecard <username>")
-        return
-    end
+    if not user then print("Usage: makecard <username>"); return end
     
     print("Verifying user with Mainframe...")
-    rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
-    local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
-
-    if not response or not response.exists then
+    if not checkUserExists(user) then
         print("Error: Mainframe reports user '" .. user .. "' does not exist.")
         return
     end
 
     print("User verified. Please insert a blank disk.")
     local disk = peripheral.find("drive")
-    if not disk then
-        print("Error: No disk drive attached to this server.")
-        return
-    end
-
-    if not disk.isDiskPresent() then
-        print("Error: No disk in the drive.")
-        return
-    end
+    if not disk then print("Error: No disk drive attached."); return end
+    if not disk.isDiskPresent() then print("Error: No disk in drive."); return end
 
     local mount_path = disk.getMountPath()
-    if not mount_path then
-        print("Error: Could not get disk mount path.")
-        return
-    end
+    if not mount_path then print("Error: Could not get disk mount path."); return end
 
-    disk.setDiskLabel("Drunken Beard Bank Card (" .. user .. ")")
-    local cardFile = fs.open(mount_path .. "/.bankcard", "w")
+    disk.setDiskLabel("DB Bank Card (" .. user .. ")")
+    local cardFile = fs.open(fs.combine(mount_path, ".bankcard"), "w")
     if cardFile then
-        cardFile.write(user)
-        cardFile.close()
+        cardFile.write(user); cardFile.close()
+        print("Successfully created bank card for " .. user)
     else
-        print("Error: Could not write main card file to disk.")
-        return
-    end
-
-    local descFile = fs.open(mount_path .. "/.description", "w")
-    if descFile then
-        local description = "Property of: " .. user .. "\n" ..
-                            "Account Type: Standard\n\n" ..
-                            "A proud member of the Drunken Beard banking system."
-        descFile.write(description)
-        descFile.close()
-        print("Successfully created bank card with description for " .. user)
-    else
-        print("Error: Could not write description file to disk.")
+        print("Error: Could not write to disk.")
     end
 end
 
@@ -513,7 +498,7 @@ function adminCommands.addcurrency(args)
     if saveTableToFile(fs.combine(CURRENCIES_DIR, itemName .. ".json"), currencyRates[itemName]) then
         print("Added new currency '" .. itemName .. "' with base rate $" .. baseRate)
     else
-        currencyRates[itemName] = nil -- Revert change if save failed
+        currencyRates[itemName] = nil
         print("Failed to save new currency.")
     end
 end
@@ -555,26 +540,24 @@ end
 local function handleAdminCommand(command)
     local args = {}; for arg in string.gmatch(command, "[^%s]+") do table.insert(args, arg) end
     local cmd = args[1]
-    if cmd == "exit" then return false end -- Signal to exit terminal
-    if adminCommands[cmd] then adminCommands[cmd](args) else print("Unknown command. Type 'help'.") end
-    return true -- Continue terminal session
+    if cmd == "exit" then return false end
+    if adminCommands[cmd] then adminCommands[cmd](args) else print("Unknown command.") end
+    return true
 end
 
 local function adminTerminal()
-    term.setBackgroundColor(colors.black)
-    term.setTextColor(colors.white)
-    term.clear()
-    term.setCursorPos(1,1)
+    local oldTerm = term.redirect(term.native())
+    oldTerm.clear()
+    oldTerm.setCursorPos(1,1)
     print("Bank Admin Terminal. Type 'exit' to return to GUI.")
     
     while true do
         term.write("> ")
         local input = read()
-        if not handleAdminCommand(input) then
-            break
-        end
+        if not handleAdminCommand(input) then break end
     end
     
+    term.redirect(monitor)
     currentScreen = "main"
     needsRedraw = true
 end
@@ -598,7 +581,7 @@ local function networkListener()
                 currentStock = message.report
                 saveTableToFile(STOCK_DB, currentStock)
                 adjustCurrencyRates()
-                needsRedraw = true -- Update dashboard stats
+                needsRedraw = true
             else
                 logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
             end
@@ -609,55 +592,39 @@ end
 local function guiHandler()
     while true do
         if needsRedraw then
-            if currentScreen == "main" then
-                drawMainMenu()
-            elseif currentScreen == "log" then
-                drawLogScreen()
-            end
+            if currentScreen == "main" then drawMainMenu()
+            elseif currentScreen == "log" then drawLogScreen() end
         end
 
         local event, p1, p2, p3 = os.pullEvent()
         if event == "key" then
             if currentScreen == "main" then
                 local menuSize = 4
-                if p1 == keys.up then
-                    selectedMenuItem = (selectedMenuItem == 1) and menuSize or selectedMenuItem - 1
-                    needsRedraw = true
-                elseif p1 == keys.down then
-                    selectedMenuItem = (selectedMenuItem == menuSize) and 1 or selectedMenuItem + 1
-                    needsRedraw = true
+                if p1 == keys.up then selectedMenuItem = (selectedMenuItem == 1) and menuSize or selectedMenuItem - 1; needsRedraw = true
+                elseif p1 == keys.down then selectedMenuItem = (selectedMenuItem == menuSize) and 1 or selectedMenuItem + 1; needsRedraw = true
                 elseif p1 == keys.enter then
                     if selectedMenuItem == 1 then -- View Rates
                         -- Placeholder for rates screen
                     elseif selectedMenuItem == 2 then -- View Log
-                        currentScreen = "log"
-                        needsRedraw = true
+                        currentScreen = "log"; needsRedraw = true
                     elseif selectedMenuItem == 3 then -- Open Terminal
-                        currentScreen = "terminal"
-                        adminTerminal()
-                    elseif selectedMenuItem == 4 then -- Shutdown
-                        return -- End the GUI handler
-                    end
+                        currentScreen = "terminal"; adminTerminal()
+                    elseif selectedMenuItem == 4 then return end -- Shutdown
                 end
-            elseif currentScreen == "log" then
-                currentScreen = "main"
-                needsRedraw = true
+            elseif currentScreen == "log" or currentScreen == "rates" then
+                currentScreen = "main"; needsRedraw = true
             end
         elseif event == "monitor_touch" then
             if currentScreen == "main" and p2 >= 9 and p2 <= 12 then
-                selectedMenuItem = p2 - 8
-                os.queueEvent("key", keys.enter)
+                selectedMenuItem = p2 - 8; os.queueEvent("key", keys.enter)
             end
-        elseif event == "terminate" then
-            return
-        end
+        elseif event == "terminate" then return end
     end
 end
 
 local function main()
     local computerTerm = term.current()
-    computerTerm.clear()
-    computerTerm.setCursorPos(1,1)
+    computerTerm.clear(); computerTerm.setCursorPos(1,1)
     
     print("Drunken OS Bank Server Initializing...")
 
@@ -727,3 +694,4 @@ local function main()
 end
 
 main()
+
