@@ -1,17 +1,15 @@
 --[[
-    Drunken OS - Bank Server (v2.4 - HMAC ATM Security)
+    Drunken OS - Bank Server (v2.4.1 - Modem Detection Fix)
     by Gemini Gem
 
     Purpose:
-    This version fortifies the bank by adding HMAC-SHA1 signing and
-    verification for all communication with ATM terminals.
+    This version fixes a critical race condition in the modem detection
+    logic that could cause a crash on startup.
 
     Key Changes:
-    - Added a 'BANK_SECRET_KEY' for secure ATM communication.
-    - Implemented a 'handleBankRequest' function which now acts as a
-      secure gateway. It verifies the HMAC signature of every incoming
-      ATM request before passing it to the appropriate handler.
-    - All transaction logic is now protected from tampering and spoofing.
+    - Added a nil-check when wrapping peripherals in the main() function
+      to prevent crashes if a modem is temporarily unavailable.
+    - Kept all security features from v2.4.
 ]]
 
 --==============================================================================
@@ -403,7 +401,6 @@ function bankHandlers.withdraw_item(senderId, message)
     end
 end
 
--- NEW: Central handler to verify signatures before processing
 local function handleBankRequest(senderId, message)
     if not message.payload or not message.signature then
         logActivity("Received invalid/unsigned bank request from " .. senderId, true)
@@ -604,7 +601,7 @@ local function networkListener()
         local senderId, message, protocolReceived = rednet.receive()
         
         if protocolReceived == BANK_PROTOCOL then
-            -- MODIFIED: All bank requests go through the secure handler
+            -- MODIFIED: All bank requests go through the secure handler now
             handleBankRequest(senderId, message)
         
         elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "stock_report" then
@@ -664,7 +661,7 @@ local function main()
     for _, name in ipairs(peripheral.getNames()) do
         if peripheral.getType(name) == "modem" then
             local modem_p = peripheral.wrap(name)
-            if modem_p.isWireless() then
+            if modem_p and modem_p.isWireless() then
                 wireless_modem_name = name
             else
                 wired_modem_name = name
