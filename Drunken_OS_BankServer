@@ -1,28 +1,22 @@
 --[[
-    Drunken OS - Bank Server (v2.3 - UI Polish & Card Creation)
+    Drunken OS - Bank Server (v2.4 - HMAC ATM Security)
     by Gemini Gem
 
     Purpose:
-    This version polishes the GUI and re-introduces the 'makecard' command
-    in a secure, multi-server context.
+    This version fortifies the bank by adding HMAC-SHA1 signing and
+    verification for all communication with ATM terminals.
 
     Key Changes:
-    - Log messages are now properly silenced and no longer appear on the main GUI dashboard.
-    - Added the 'makecard <username>' command back to the Admin Terminal.
-    - The 'makecard' command now securely verifies with the Mainframe server
-      that a user exists before creating a card.
-    - Card labels now include the username, e.g., "DB_Bank Card (User)".
-
-    Setup:
-    - An ADVANCED MONITOR must be placed on any side of this computer.
-    - A WIRELESS modem must be attached for public communication.
-    - A WIRED modem must be attached and cabled to the Mainframe Server.
+    - Added a 'BANK_SECRET_KEY' for secure ATM communication.
+    - Implemented a 'handleBankRequest' function which now acts as a
+      secure gateway. It verifies the HMAC signature of every incoming
+      ATM request before passing it to the appropriate handler.
+    - All transaction logic is now protected from tampering and spoofing.
 ]]
 
 --==============================================================================
 -- Embedded SHA1 & HMAC Library
 --==============================================================================
--- (SHA1 Library code remains unchanged)
 local sha1 = {}
 do
     local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
@@ -79,7 +73,7 @@ local wired_modem_name, wireless_modem_name = nil, nil
 local adminInput = ""
 local logHistory = {}
 local monitor = nil
-local startupComplete = false -- Flag to control logging to terminal
+local startupComplete = false
 
 -- Database file paths
 local LOGS_DIR = "logs"
@@ -94,8 +88,9 @@ local BANK_PROTOCOL = "DB_Bank"
 local AUDIT_PROTOCOL = "DB_Audit"
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 
--- Auditor Turtle Configuration
-local AUDIT_SECRET_KEY = "YourSecretAuditKeyHere"
+-- Secret Keys
+local BANK_SECRET_KEY = "YourSecretBankKeyHere" -- MUST MATCH THE ATM
+local AUDIT_SECRET_KEY = "YourSecretAuditKeyHere" -- MUST MATCH THE AUDITOR
 
 --==============================================================================
 -- UI & Theme Configuration
@@ -133,7 +128,6 @@ local function logActivity(message, isError)
     local logEntry = os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message
     
     if not startupComplete then
-        -- Only print to the physical terminal during startup
         term.write(logEntry .. "\n")
     end
     
@@ -315,7 +309,7 @@ local function checkUserExists(username)
         type = "user_exists_check",
         user = username
     }, AUTH_INTERLINK_PROTOCOL)
-
+    
     local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 2)
     return response and response.exists
 end
@@ -406,6 +400,45 @@ function bankHandlers.withdraw_item(senderId, message)
         end
     else
         rednet.send(senderId, { success = false, reason = "Insufficient funds." }, BANK_PROTOCOL)
+    end
+end
+
+-- NEW: Central handler to verify signatures before processing
+local function handleBankRequest(senderId, message)
+    if not message.payload or not message.signature then
+        logActivity("Received invalid/unsigned bank request from " .. senderId, true)
+        return
+    end
+
+    local payload_serialized = textutils.serializeJSON(message.payload)
+    local expected_signature = sha1.hmac_hex(BANK_SECRET_KEY, payload_serialized)
+
+    if message.signature == expected_signature then
+        local handler = bankHandlers[message.payload.type]
+        if handler then
+            handler(senderId, message.payload)
+        else
+            logActivity("Unknown bank request type from " .. senderId .. ": " .. tostring(message.payload.type), true)
+        end
+    else
+        logActivity("Received bank request with INVALID SIGNATURE from " .. senderId, true)
+        rednet.send(senderId, { success = false, reason = "Invalid signature." }, BANK_PROTOCOL)
+    end
+end
+
+local function handleAuditReport(message)
+    if not message.report or not message.signature then return end
+    local report_serialized = textutils.serializeJSON(message.report)
+    local expected_signature = sha1.hmac_hex(AUDIT_SECRET_KEY, report_serialized)
+    
+    if message.signature == expected_signature then
+        logActivity("Received valid, signed stock report from Auditor.")
+        currentStock = message.report
+        saveTableToFile(STOCK_DB, currentStock)
+        adjustCurrencyRates()
+        needsRedraw = true
+    else
+        logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
     end
 end
 
@@ -570,21 +603,12 @@ local function networkListener()
     while true do
         local senderId, message, protocolReceived = rednet.receive()
         
-        if protocolReceived == BANK_PROTOCOL and message and message.type and bankHandlers[message.type] then
-            bankHandlers[message.type](senderId, message)
+        if protocolReceived == BANK_PROTOCOL then
+            -- MODIFIED: All bank requests go through the secure handler
+            handleBankRequest(senderId, message)
         
         elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "stock_report" then
-            local messageToVerify = textutils.serializeJSON(message.report)
-            local signature = sha1.hmac_hex(AUDIT_SECRET_KEY, messageToVerify)
-            if signature == message.signature then
-                logActivity("Received valid, signed stock report from Auditor.")
-                currentStock = message.report
-                saveTableToFile(STOCK_DB, currentStock)
-                adjustCurrencyRates()
-                needsRedraw = true
-            else
-                logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
-            end
+            handleAuditReport(message)
         end
     end
 end
@@ -672,6 +696,7 @@ local function main()
     rednet.open(wired_modem_name)
     
     rednet.host(BANK_PROTOCOL, "bank.server")
+    rednet.host(AUTH_INTERLINK_PROTOCOL) -- Host the interlink protocol
     
     startupComplete = true -- Stop logging to the physical terminal
     computerTerm.clear()
@@ -686,10 +711,8 @@ local function main()
     
     -- When the loops exit (on shutdown), restore the original terminal
     term.redirect(computerTerm)
-    monitor.setBackgroundColor(colors.black)
-    monitor.clear()
-    term.clear()
-    term.setCursorPos(1,1)
+    monitor.setBackgroundColor(colors.black); monitor.clear()
+    term.clear(); term.setCursorPos(1,1)
     print("Bank Server has shut down.")
 end
 
