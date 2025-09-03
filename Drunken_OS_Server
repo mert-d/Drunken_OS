@@ -1,18 +1,16 @@
 --[[
-    Drunken OS - Mainframe Server (v9.1 - Gem Standard Formatting)
+    Drunken OS - Mainframe Server (v9.2 - Input & Formatting Fix)
     by Gemini Gem
 
     Purpose:
-    This version is a full refactor of the server script to adhere to the
-    "Gem Standard" of code clarity and readability. All single-line functions
-    have been expanded, proper indentation has been applied, and comments have
-    been clarified. This script is functionally identical to v9.0 but is now
-    vastly more maintainable.
+    This version corrects a critical bug in the admin terminal event handler
+    that prevented any character input from being registered. It also ensures
+    all code adheres to the "Gem Standard" of readability.
 
     Key Changes:
-    - Complete code reformatting for clarity.
-    - All functions are now properly structured in multi-line blocks.
-    - Added more descriptive comments to complex sections.
+    - Fixed the nested `if/elseif` logic in the `adminTerminal` function to
+      correctly handle both "key" and "char" events.
+    - Ensured all functions are properly formatted for maximum clarity.
 ]]
 
 --==============================================================================
@@ -573,7 +571,6 @@ end
 --==============================================================================
 
 local adminCommands = {}
-
 function adminCommands.help()
     print("--- Mainframe Admin Commands ---")
     print("users, deluser, lists, dellist, board, delscore")
@@ -696,15 +693,14 @@ function adminCommands.publishlib(args)
     local content = file.readAll()
     file.close()
 
-    -- The key in the database should be the path the client will use to `require` it.
-    local dbKey = libPath:match("^/?(.-)$") -- Remove leading slash if it exists
+    local dbKey = libPath:match("^/?(.-)$")
     libraryCode[dbKey] = content
 
     if saveTableToFile(LIBS_DB, libraryCode) then
         logActivity("Published library '"..dbKey.."' to distribution database.")
     else
         logActivity("Error: Could not save library database.", true)
-        libraryCode[dbKey] = nil -- Revert change on failure
+        libraryCode[dbKey] = nil
     end
 end
 
@@ -834,9 +830,10 @@ local function adminTerminal()
                 end
             elseif p1 == keys.backspace then
                 adminInput = string.sub(adminInput, 1, -2)
-            elseif event == "char" then
-                adminInput = adminInput .. p1
             end
+            redrawAdminUI()
+        elseif event == "char" then
+            adminInput = adminInput .. p1
             redrawAdminUI()
         end
     end
@@ -860,3 +857,4 @@ local function main()
 end
 
 main()
+
