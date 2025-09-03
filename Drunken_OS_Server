@@ -669,20 +669,4 @@ local function main()
 end
 
 main()
-```
-
-By adding `package.path = shell.dir() .. "/?.lua;" .. package.path` to the top of the script, we tell the computer, "Before you look anywhere else for a library, first look in the same folder where I am currently running."
-
-Now, as long as your file structure on the server computer looks like this:
-
-```
-/
-|-- Drunken_OS_Server_Final.lua
-|-- lib/
-|   |-- sha1_hmac.lua
-|-- HyperAuthClient/
-|   |-- api/
-|       |-- auth_client.lua
-|-- users.db
-|-- (and other data files...)
 
