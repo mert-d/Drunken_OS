@@ -111,7 +111,6 @@ local function redrawAdminUI()
     local w, h = term.getSize()
     term.setBackgroundColor(theme.windowBg)
     term.clear()
-
     term.setBackgroundColor(theme.title)
     term.setCursorPos(1, 1)
     term.write(string.rep(" ", w))
@@ -119,7 +118,6 @@ local function redrawAdminUI()
     local titleText = " Mainframe Admin Console "
     term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1)
     term.write(titleText)
-
     term.setBackgroundColor(theme.statusBarBg)
     term.setTextColor(theme.statusBarText)
     term.setCursorPos(1, h)
@@ -127,10 +125,8 @@ local function redrawAdminUI()
     local statusText = "RUNNING | Type 'help' for commands"
     term.setCursorPos(2, h)
     term.write(statusText)
-
     term.setBackgroundColor(theme.windowBg)
     term.setTextColor(theme.text)
-
     local logAreaHeight = h - 4
     local displayLines = {}
     for i = #logHistory, 1, -1 do
@@ -141,12 +137,10 @@ local function redrawAdminUI()
         end
         if #displayLines >= logAreaHeight then break end
     end
-
     for i = 1, math.min(#displayLines, logAreaHeight) do
         term.setCursorPos(1, 1 + i)
         term.write(displayLines[i])
     end
-
     term.setCursorPos(1, h - 2)
     term.write(string.rep("-", w))
     term.setCursorPos(1, h - 1)
@@ -297,9 +291,7 @@ end
 -- Network & Admin Handlers
 --==============================================================================
 
-local mailHandlers = {}
-local gameHandlers = {}
-local adminCommands = {}
+local mailHandlers, gameHandlers, adminCommands = {}, {}, {}
 
 function mailHandlers.get_version(s, m)
     rednet.send(s, { version = programVersions[m.program] or 0 }, "SimpleMail")
