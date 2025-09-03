@@ -291,7 +291,7 @@ end
 
 local function requestAuthCode(username, password, nickname, senderId, purpose)
     logActivity("Requesting auth code for '" .. username .. "' via HyperAuth API...")
-    
+
     local request_reply, request_err = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
         username   = username,
         password   = password, -- This is the hashed password
@@ -307,7 +307,7 @@ local function requestAuthCode(username, password, nickname, senderId, purpose)
     end
 
     logActivity("HyperAuth API success. Request ID: " .. request_reply.request_id)
-    
+
     pendingAuths[username] = {
         request_id = request_reply.request_id,
         password = password,
@@ -315,7 +315,7 @@ local function requestAuthCode(username, password, nickname, senderId, purpose)
         senderId = senderId,
         timestamp = os.time()
     }
-    
+
     return request_reply.request_id
 end
 
@@ -406,7 +406,7 @@ function mailHandlers.submit_auth_token(senderId, message)
     if verify_reply.ok then
         local response_payload = {}
         local new_session_token = crypto.hex(os.time() .. math.random())
-        
+
         if not users[user] then -- This is a registration
             users[user] = { password = authData.password, nickname = authData.nickname, session_token = new_session_token }
             if saveTableToFile(USERS_DB, users) then
@@ -567,10 +567,11 @@ function gameHandlers.get_leaderboard(senderId, message)
 end
 
 --==============================================================================
--- Admin Command Handlers & Main Loops
+-- Admin Command Handlers
 --==============================================================================
 
 local adminCommands = {}
+
 function adminCommands.help()
     print("--- Mainframe Admin Commands ---")
     print("users, deluser, lists, dellist, board, delscore")
@@ -663,7 +664,7 @@ function adminCommands.publish(args)
     if not progName or not newVersionStr then logActivity("Usage: publish <prog> <ver>"); return end
     local newVersion = tonumber(newVersionStr)
     if not newVersion then logActivity("Error: Version must be a number."); return end
-    logActivity("Waiting for publication of '"..progName.."' v"..newVersion.."...")
+    logActivity("Waiting for publication of '"..progName.."' v"..newVersion.."...");
     local _, message = rednet.receive("Publication", 15)
     if message and message.code then
         programCode[progName] = message.code
@@ -780,6 +781,10 @@ local function executeAdminCommand(command)
     _G.print = oldPrint
     return table.concat(output, "\n")
 end
+
+--==============================================================================
+-- Main Program Loops
+--==============================================================================
 
 local function networkListener()
     while true do
