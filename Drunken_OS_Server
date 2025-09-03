@@ -1,26 +1,31 @@
 --[[
-    Drunken OS - Mainframe Server (v8.4 - Library Distribution)
+    Drunken OS - Mainframe Server (v8.5 - Pathing Fix)
     by Gemini Gem
 
     Purpose:
-    This version adds the server-side functionality to support the client's
-    new auto-installer. It can now serve library files to clients upon
-    request and provides an admin command to upload new libraries.
+    This version includes a critical fix for the `require()` system. By
+    dynamically adding the script's own directory to the package search path,
+    it ensures that local libraries (like sha1_hmac) can always be found,
+    regardless of where the server program is located.
 
     Key Changes:
-    - Added a new `get_library` network handler to `mailHandlers`. This will
-      read a library file from the server's disk and send its contents to a client.
-    - Added a new `publishlib <path>` admin command. This allows an admin to
-      upload a file (like the sha1_hmac library) directly to the server's
-      filesystem, making it available for clients to download.
+    - Added a line at the top of the script to prepend the program's
+      directory to `package.path`. This resolves the "module not found" error.
 ]]
+
+--==============================================================================
+-- Environment Setup
+--==============================================================================
+
+-- Add the current program's directory to the list of places Lua looks for libraries.
+-- This ensures that `require("lib.sha1_hmac")` will work correctly.
+package.path = shell.dir() .. "/?.lua;" .. package.path
 
 --==============================================================================
 -- API & Library Initialization
 --==============================================================================
 
 -- Load our new, centralized cryptography library.
--- This file should be placed at "/lib/sha1_hmac.lua" on the computer.
 local crypto = require("lib.sha1_hmac")
 
 -- Load the HyperAuth Client API for secure authentication.
@@ -262,7 +267,7 @@ local mailHandlers = {}
 function mailHandlers.get_version(senderId, message) rednet.send(senderId, { version = programVersions[message.program] or 0 }, "SimpleMail") end
 function mailHandlers.get_update(senderId, message) rednet.send(senderId, { code = programCode[message.program] }, "SimpleMail") end
 
--- NEW: Handler for the client's auto-installer
+-- Handler for the client's auto-installer
 function mailHandlers.get_library(senderId, message)
     local path = message.path
     logActivity("Client " .. senderId .. " requested library at path: " .. path)
@@ -502,7 +507,7 @@ function adminCommands.publish(args)
     if message and message.code then programCode[progName] = message.code; programVersions[progName] = newVersion; saveTableToFile(UPDATER_DB, {v=programVersions, c=programCode}); logActivity("Published "..progName.." version "..programVersions[progName])
     else logActivity("Publication timed out or failed.") end
 end
--- NEW: Admin command to upload a library file.
+-- Admin command to upload a library file.
 function adminCommands.publishlib(args)
     local libPath = args[2]
     if not libPath or string.sub(libPath, 1, 4) ~= "lib/" then
@@ -664,3 +669,20 @@ local function main()
 end
 
 main()
+```
+
+By adding `package.path = shell.dir() .. "/?.lua;" .. package.path` to the top of the script, we tell the computer, "Before you look anywhere else for a library, first look in the same folder where I am currently running."
+
+Now, as long as your file structure on the server computer looks like this:
+
+```
+/
+|-- Drunken_OS_Server_Final.lua
+|-- lib/
+|   |-- sha1_hmac.lua
+|-- HyperAuthClient/
+|   |-- api/
+|       |-- auth_client.lua
+|-- users.db
+|-- (and other data files...)
+
