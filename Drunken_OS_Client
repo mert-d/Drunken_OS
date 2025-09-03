@@ -1,18 +1,19 @@
 --[[
-    SimpleMail & Chat Client (v10.9 - Fully Restored & Formatted)
+    SimpleMail & Chat Client (v11.0 - Modular Architecture)
     by Gemini Gem
 
     Purpose:
-    This definitive version restores all previously redacted application
-    functions, making the client script complete and fully functional. It uses
-    the robust Pastebin-based installer to ensure all dependencies are met,
-    providing a seamless user experience on all computer types. All code is
-    now fully formatted to the "Gem Standard".
+    This version refactors the client into a modular architecture. The main
+    script now handles core OS functions (startup, updates, UI engine, and
+    main menu), while all application-specific screens are loaded from an
+    external library, `lib/drunken_os_apps.lua`.
 
     Key Changes:
-    - Restored the complete, unabridged code for all application screens
-      and helper functions (login, main menu, mail, chat, admin, etc.).
-    - This fixes the "attempt to call global (a nil value)" crash on startup.
+    - All application screen functions have been moved to `lib/drunken_os_apps.lua`.
+    - The main script now `requires` the new application library.
+    - The installer now downloads both `sha1_hmac` and `drunken_os_apps`.
+    - A `context` table is passed to library functions, containing shared
+      state and UI helper functions.
 ]]
 
 --==============================================================================
@@ -29,14 +30,24 @@ package.path = fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 10.9
+local currentVersion = 11.0
 local programName = "mail"
 local SESSION_FILE = ".session"
-local REQUIRED_LIBS = { "sha1_hmac" }
+local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
 
-local mailServerId, chatServerId, arcadeServerId, adminServerId = nil, nil, nil, nil
-local username, nickname, unreadCount, isAdmin = nil, nil, 0, false
-local crypto -- To be loaded after installation
+-- This table holds the shared state of the application
+local state = {
+    username = nil,
+    nickname = nil,
+    unreadCount = 0,
+    isAdmin = false,
+    mailServerId = nil,
+    chatServerId = nil,
+    arcadeServerId = nil,
+    adminServerId = nil,
+    crypto = nil, -- Loaded after install
+    apps = nil -- Loaded after install
+}
 
 --==============================================================================
 -- UI & Theme
@@ -117,7 +128,7 @@ local function drawWindow(title)
     term.setTextColor(theme.statusBarText)
     term.setCursorPos(1, h)
     term.write(string.rep(" ", w))
-    local userText = "User: " .. (nickname or "Guest") .. (isAdmin and " (Admin)" or "")
+    local userText = "User: " .. (state.nickname or "Guest") .. (state.isAdmin and " (Admin)" or "")
     local versionText = "v" .. currentVersion
     
     if w < 35 then
@@ -141,8 +152,8 @@ end
 local function drawMenu(options, selectedIndex, startX, startY)
     for i, option in ipairs(options) do
         local text = option
-        if option == "View Inbox" and unreadCount > 0 then
-            text = text .. " [" .. unreadCount .. "]"
+        if option == "View Inbox" and state.unreadCount > 0 then
+            text = text .. " [" .. state.unreadCount .. "]"
         end
         term.setCursorPos(startX, startY + i - 1)
         if i == selectedIndex then
@@ -186,6 +197,19 @@ local function readInput(prompt, y, hideText)
     return input
 end
 
+-- Create the context table that will be passed to library functions
+local context = {
+    getSafeSize = getSafeSize,
+    wordWrap = wordWrap,
+    clear = clear,
+    drawWindow = drawWindow,
+    drawMenu = drawMenu,
+    showMessage = showMessage,
+    readInput = readInput,
+    theme = theme,
+    parent = state -- a reference to the main state table
+}
+
 --==============================================================================
 -- Installation & Update Functions
 --==============================================================================
@@ -194,15 +218,15 @@ local function findServers()
     drawWindow("Connecting")
     term.setCursorPos(2, 4); term.write("Searching for servers...")
 
-    mailServerId = rednet.lookup("SimpleMail", "mail.server")
-    chatServerId = rednet.lookup("SimpleChat", "chat.server")
-    arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
-    adminServerId = rednet.lookup("Drunken_Admin", "admin.server")
+    state.mailServerId = rednet.lookup("SimpleMail", "mail.server")
+    state.chatServerId = rednet.lookup("SimpleChat", "chat.server")
+    state.arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
+    state.adminServerId = rednet.lookup("Drunken_Admin", "admin.server")
 
-    if not mailServerId or not chatServerId or not arcadeServerId then
+    if not state.mailServerId or not state.chatServerId or not state.arcadeServerId then
         return false, "Could not find all required servers."
     end
-    if not adminServerId then
+    if not state.adminServerId then
         print("Admin server not found. Admin console disabled.")
     end
     return true
@@ -224,7 +248,7 @@ local function installDependencies()
         if not fs.exists(localLibPath) then
             term.setCursorPos(2, yPos); term.write("- Requesting library: " .. libName); yPos = yPos + 1
             
-            rednet.send(mailServerId, { type = "get_lib_paste", lib_name = libName }, "SimpleMail")
+            rednet.send(state.mailServerId, { type = "get_lib_paste", lib_name = libName }, "SimpleMail")
             local _, response = rednet.receive("SimpleMail", 10)
 
             if response and response.code then
@@ -241,9 +265,11 @@ local function installDependencies()
         end
     end
 
-    local ok, lib = pcall(require, "lib.sha1_hmac")
-    if ok then
-        crypto = lib
+    local ok_c, lib_c = pcall(require, "lib.sha1_hmac")
+    local ok_a, lib_a = pcall(require, "lib.drunken_os_apps")
+    if ok_c and ok_a then
+        state.crypto = lib_c
+        state.apps = lib_a
     else
         showMessage("Installation Error", "Failed to load a critical library. The program cannot continue.")
         return false
@@ -257,13 +283,13 @@ end
 local function autoUpdateCheck()
     drawWindow("Updater")
     term.setCursorPos(2, 4); term.write("Checking for client updates...")
-    rednet.send(mailServerId, {type = "get_version", program = programName}, "SimpleMail")
+    rednet.send(state.mailServerId, {type = "get_version", program = programName}, "SimpleMail")
     local _, response = rednet.receive("SimpleMail", 3)
     
     if response and response.version and response.version > currentVersion then
         term.setCursorPos(2, 6); term.write("Update found! v"..response.version.." is available.")
         term.setCursorPos(2, 7); term.write("Downloading...")
-        rednet.send(mailServerId, {type = "get_update", program = programName}, "SimpleMail")
+        rednet.send(state.mailServerId, {type = "get_update", program = programName}, "SimpleMail")
         local _, update = rednet.receive("SimpleMail", 10)
         
         if update and update.code then
@@ -288,261 +314,6 @@ local function autoUpdateCheck()
 end
 
 --==============================================================================
--- Application Screens
---==============================================================================
-
-local function readMail(mail)
-    local w, h = getSafeSize()
-    local bodyLines = wordWrap(mail.body, w - 3)
-    local scroll = 1
-    while true do
-        drawWindow("Read Mail")
-        local y = 3
-        term.setCursorPos(2, y); term.write("From:    " .. mail.from_nickname)
-        term.setCursorPos(2, y + 1); term.write("To:      " .. mail.to)
-        term.setCursorPos(2, y + 2); term.write("Subject: " .. mail.subject)
-        term.setCursorPos(2, y + 4); term.write(string.rep("-", w - 2)); y = y + 5
-        local bodyDisplayHeight = h - y - (mail.attachment and 6 or 2)
-        for i = 1, bodyDisplayHeight do
-            local lineIndex = scroll + i - 1
-            if lineIndex <= #bodyLines then
-                term.setCursorPos(2, y + i - 1)
-                term.write(bodyLines[lineIndex])
-            end
-        end
-        y = y + bodyDisplayHeight + 1
-        if mail.attachment then
-            term.setCursorPos(2, y); term.write(string.rep("-", w - 2)); y = y + 1
-            term.setCursorPos(2, y); term.write("Attachment: " .. mail.attachment.name); y = y + 2
-            term.setTextColor(theme.prompt); term.setCursorPos(2, y); term.write("Save this file? (Y/N)")
-        else
-            term.setTextColor(theme.prompt); term.setCursorPos(2, h - 2); term.write("Press Q/TAB to return...")
-        end
-        local event, key = os.pullEvent("key")
-        if key == keys.up then
-            scroll = math.max(1, scroll - 1)
-        elseif key == keys.down then
-            scroll = math.min(math.max(1, #bodyLines - bodyDisplayHeight + 1), scroll + 1)
-        elseif key == keys.tab or key == keys.q then
-            break
-        elseif mail.attachment and key == keys.y then
-            local saveName = mail.attachment.name
-            if fs.exists(saveName) then
-                if readInput("Overwrite '"..saveName.."'? (y/n): ", y + 1):lower() ~= "y" then
-                    showMessage("Cancelled", "Save operation cancelled.")
-                    break
-                end
-            end
-            local file = fs.open(saveName, "w")
-            if file then
-                file.write(mail.attachment.content)
-                file.close()
-                showMessage("Success", "File saved as '"..saveName.."'")
-            else
-                showMessage("Error", "Could not open file for writing.")
-            end
-            break
-        elseif mail.attachment and key == keys.n then
-            showMessage("Cancelled", "Save operation cancelled.")
-            break
-        end
-    end
-end
-
-local function viewInbox()
-    unreadCount = 0
-    drawWindow("Inbox"); term.setCursorPos(2, 4); term.write("Fetching mail...")
-    rednet.send(mailServerId, { type = "fetch", user = username }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 10)
-    
-    if not response or not response.mail then
-        showMessage("Error", "Could not retrieve mail.")
-        return
-    end
-    
-    local inbox = response.mail
-    if #inbox == 0 then
-        showMessage("Inbox", "Your inbox is empty.")
-        return
-    end
-    
-    table.sort(inbox, function(a, b) return a.timestamp > b.timestamp end)
-    local selected = 1
-    local scroll = 1
-    
-    while true do
-        drawWindow("Inbox")
-        local w, h = getSafeSize()
-        local listHeight = h - 5
-        
-        for i = scroll, math.min(scroll + listHeight - 1, #inbox) do
-            local mail = inbox[i]
-            local line = string.format("From: %-15s Subject: %s", mail.from_nickname, mail.subject)
-            if mail.attachment then line = line .. " [FILE]" end
-            term.setCursorPos(2, 2 + (i - scroll) + 1)
-            if i == selected then
-                term.setBackgroundColor(theme.highlightBg); term.setTextColor(theme.highlightText)
-            else
-                term.setBackgroundColor(theme.windowBg); term.setTextColor(theme.text)
-            end
-            term.write(string.sub(line, 1, w - 2))
-        end
-        
-        term.setBackgroundColor(theme.windowBg)
-        term.setTextColor(theme.prompt)
-        local helpText = "ENTER: Read | D: Delete | Q: Back"
-        term.setCursorPos(w - #helpText, h - 2)
-        term.write(helpText)
-        
-        local event, key = os.pullEvent("key")
-        if key == keys.up then
-            selected = math.max(1, selected - 1)
-            if selected < scroll then scroll = selected end
-        elseif key == keys.down then
-            selected = math.min(#inbox, selected + 1)
-            if selected >= scroll + listHeight then scroll = selected - listHeight + 1 end
-        elseif key == keys.enter then
-            readMail(inbox[selected])
-        elseif key == keys.delete or key == keys.d then
-            rednet.send(mailServerId, {type = "delete", user = username, id = inbox[selected].id}, "SimpleMail")
-            table.remove(inbox, selected)
-            if #inbox == 0 then break end
-            selected = math.max(1, math.min(selected, #inbox))
-        elseif key == keys.tab or key == keys.q then
-            break
-        end
-    end
-end
-
-local function composeAndSend(to, subject, attachment)
-    drawWindow("Compose Mail Body")
-    local w, h = getSafeSize()
-    term.setCursorPos(w - 26, h)
-    term.write("ENTER on empty line to send")
-    term.setCursorPos(2, 4)
-    term.write("Enter message body:")
-    
-    local bodyLines = {}
-    local y = 6
-    while y < h - 2 do
-        term.setCursorPos(2, y)
-        term.setCursorBlink(true)
-        local line = read()
-        term.setCursorBlink(false)
-        if line == "" then break end
-        table.insert(bodyLines, line)
-        y = y + 1
-    end
-    
-    local body = table.concat(bodyLines, "\n")
-    local mail = {
-        from = username,
-        from_nickname = nickname,
-        to = to,
-        subject = subject,
-        body = body,
-        timestamp = os.time(),
-        attachment = attachment
-    }
-    rednet.send(mailServerId, { type = "send", mail = mail }, "SimpleMail")
-    drawWindow("Sending...")
-    local _, confirm = rednet.receive("SimpleMail", 10)
-    showMessage("Server Response", confirm and confirm.status or "No response from server.")
-end
-
-local function sendMail()
-    drawWindow("Compose Mail")
-    local to = readInput("To: ", 4)
-    if not to or to == "" then return end
-    rednet.send(mailServerId, { type = "user_exists", user = to }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 3)
-    if not response or not response.exists then
-        showMessage("Error", "Recipient '"..to.."' not found.")
-        return
-    end
-    local subject = readInput("Subject: ", 6)
-    composeAndSend(to, subject or "(No Subject)", nil)
-end
-
-local function sendFile()
-    drawWindow("Send File")
-    local fileName = readInput("File to send: ", 4)
-    if not fileName or not fs.exists(fileName) then
-        showMessage("Error", "File not found.")
-        return
-    end
-    local to = readInput("To: ", 6)
-    if not to or to == "" then return end
-    rednet.send(mailServerId, { type = "user_exists", user = to }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 3)
-    if not response or not response.exists then
-        showMessage("Error", "Recipient '"..to.."' not found.")
-        return
-    end
-    local subject = readInput("Subject: ", 8)
-    local file = fs.open(fileName, "r")
-    if not file then
-        showMessage("Error", "Could not open file.")
-        return
-    end
-    local content = file.readAll()
-    file.close()
-    composeAndSend(to, subject or "(No Subject)", { name = fs.getName(fileName), content = content })
-end
-
-local function manageLists()
-    -- Placeholder for full implementation
-    showMessage("Mailing Lists", "This feature is coming soon!")
-end
-
-local function startChat()
-    -- Placeholder for full implementation
-    showMessage("Chat", "This feature is coming soon!")
-end
-
-local function sendFeedback()
-    drawWindow("Send Feedback to Admin")
-    local subject = readInput("Subject: ", 4)
-    if subject and subject ~= "" then
-        composeAndSend("MuhendizBey", "Feedback: " .. subject, nil)
-    end
-end
-
-local function adminConsole()
-    if not adminServerId then
-        showMessage("Error", "Admin server not found.")
-        return
-    end
-    -- Placeholder for full implementation
-    showMessage("Admin Console", "This feature is coming soon!")
-end
-
-local function settingsMenu()
-    showMessage("Settings", "This feature is coming soon!")
-    return false -- Don't log out
-end
-
-local function enterArcade()
-    showMessage("Arcade", "This feature is coming soon!")
-end
-
-local function showHelpScreen()
-    drawWindow("Help")
-    local y = 3
-    term.setCursorPos(2, y); term.write("Use UP/DOWN arrows and ENTER to navigate menus.")
-    y = y + 2
-    term.setCursorPos(2, y); term.write("Q or TAB will usually go back to the previous screen.")
-    y = y + 2
-    term.setCursorPos(2, y); term.write("Most screens have context-specific help on the")
-    y = y + 1
-    term.setCursorPos(2, y); term.write("bottom status bar.")
-    y = y + 3
-    term.setTextColor(theme.prompt)
-    term.write("Press any key to return...")
-    os.pullEvent("key")
-end
-
---==============================================================================
 -- Login & Main Menu Logic
 --==============================================================================
 
@@ -564,14 +335,14 @@ local function completeAuthentication(user)
 
     local token_clean = token_raw:gsub("%s+", "")
     drawWindow("Verifying Token...")
-    rednet.send(mailServerId, { type = "submit_auth_token", user = user, token = token_clean }, "SimpleMail")
+    rednet.send(state.mailServerId, { type = "submit_auth_token", user = user, token = token_clean }, "SimpleMail")
     local _, response = rednet.receive("SimpleMail", 10)
 
     if response and response.success then
-        username = user
-        nickname = response.nickname
-        unreadCount = response.unreadCount or 0
-        isAdmin = response.isAdmin or false
+        state.username = user
+        state.nickname = response.nickname
+        state.unreadCount = response.unreadCount or 0
+        state.isAdmin = response.isAdmin or false
         if response.session_token then
             local file = fs.open(SESSION_FILE, "w")
             if file then
@@ -590,7 +361,7 @@ end
 function loginOrRegister()
     local options = {"Login", "Register", "Exit"}
     local selected = 1
-    while not username do
+    while not state.username do
         drawWindow("Welcome")
         drawMenu(options, selected, 2, 5)
         local event, key = os.pullEvent("key")
@@ -614,19 +385,19 @@ function loginOrRegister()
                             end
                         end
                         
-                        rednet.send(mailServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "SimpleMail")
+                        rednet.send(state.mailServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "SimpleMail")
                         local _, response = rednet.receive("SimpleMail", 10)
 
                         if response and response.success then
                             if response.needs_auth then
                                 if not completeAuthentication(user) then
-                                    username = nil
+                                    state.username = nil
                                 end
                             else
-                                username = user
-                                nickname = response.nickname
-                                unreadCount = response.unreadCount or 0
-                                isAdmin = response.isAdmin or false
+                                state.username = user
+                                state.nickname = response.nickname
+                                state.unreadCount = response.unreadCount or 0
+                                state.isAdmin = response.isAdmin or false
                             end
                         else
                             showMessage("Login Failed", response.reason or "No response.")
@@ -641,11 +412,11 @@ function loginOrRegister()
                     if nick and nick ~= "" then
                         local pass = readInput("Choose Password: ", 9, true)
                         if pass and pass ~= "" then
-                            rednet.send(mailServerId, { type = "register", user = user, pass = pass, nickname = nick }, "SimpleMail")
+                            rednet.send(state.mailServerId, { type = "register", user = user, pass = pass, nickname = nick }, "SimpleMail")
                             local _, response = rednet.receive("SimpleMail", 5)
                             if response and response.success and response.needs_auth then
                                 if not completeAuthentication(user) then
-                                    username = nil
+                                    state.username = nil
                                 end
                             else
                                 showMessage("Registration Failed", response.reason or "No response.")
@@ -665,7 +436,7 @@ end
 
 function mainMenu()
     local options = {"View Inbox", "Send Mail", "Send File", "Manage Lists", "General Chat", "Play Games", "Send Feedback"}
-    if isAdmin and adminServerId then
+    if state.isAdmin and state.adminServerId then
         table.insert(options, "Admin Console")
     end
     table.insert(options, "Settings")
@@ -678,11 +449,11 @@ function mainMenu()
     
     local ok, err = pcall(function()
         rednet.unhost("SimpleMail")
-        rednet.host("SimpleMail", "client." .. username)
+        rednet.host("SimpleMail", "client." .. state.username)
     end)
     if not ok then
         showMessage("Login Error", "This user is already logged in elsewhere.")
-        username = nil
+        state.username = nil
         return
     end
 
@@ -701,17 +472,17 @@ function mainMenu()
                 selected = (selected == #options) and 1 or selected + 1
             elseif p1 == keys.enter then
                 local action = options[selected]
-                if action == "View Inbox" then viewInbox()
-                elseif action == "Send Mail" then sendMail()
-                elseif action == "Send File" then sendFile()
-                elseif action == "Manage Lists" then manageLists()
-                elseif action == "General Chat" then startChat()
-                elseif action == "Play Games" then enterArcade()
-                elseif action == "Send Feedback" then sendFeedback()
-                elseif action == "Admin Console" then adminConsole()
+                if action == "View Inbox" then state.apps.viewInbox(context)
+                elseif action == "Send Mail" then state.apps.sendMail(context)
+                elseif action == "Send File" then state.apps.sendFile(context)
+                elseif action == "Manage Lists" then state.apps.manageLists(context)
+                elseif action == "General Chat" then state.apps.startChat(context)
+                elseif action == "Play Games" then state.apps.enterArcade(context)
+                elseif action == "Send Feedback" then state.apps.sendFeedback(context)
+                elseif action == "Admin Console" then state.apps.adminConsole(context)
                 elseif action == "Settings" then
-                    if settingsMenu() then return end
-                elseif action == "Help" then showHelpScreen()
+                    if state.apps.settingsMenu(context) then return end
+                elseif action == "Help" then state.apps.showHelpScreen(context)
                 elseif action == "Exit" then return end
                 needsRedraw = true
             elseif p1 == keys.tab or p1 == keys.q then
@@ -719,14 +490,14 @@ function mainMenu()
             end
             needsRedraw = true
         elseif event == "timer" and p1 == pollTimer then
-            rednet.send(mailServerId, {type = "get_unread_count", user = username}, "SimpleMail")
+            rednet.send(state.mailServerId, {type = "get_unread_count", user = state.username}, "SimpleMail")
             pollTimer = os.startTimer(10)
         elseif event == "rednet_message" and p3 == "SimpleMail" then
             if p2.type == "broadcast" then
                 showMessage("Broadcast", p2.text)
                 needsRedraw = true
-            elseif p2.type == "unread_count_response" and p2.count ~= unreadCount then
-                unreadCount = p2.count
+            elseif p2.type == "unread_count_response" and p2.count ~= state.unreadCount then
+                state.unreadCount = p2.count
                 needsRedraw = true
             end
         elseif event == "terminate" then
@@ -777,13 +548,13 @@ local function main()
                 rednet.close("back"); sleep(5); os.reboot(); return
             end
             
-            username = nil
-            isAdmin = false
+            state.username = nil
+            state.isAdmin = false
             if not loginOrRegister() then
                 clear(); print("Goodbye!"); break
             end
             
-            rednet.send(mailServerId, {type = "get_motd"}, "SimpleMail")
+            rednet.send(state.mailServerId, {type = "get_motd"}, "SimpleMail")
             local _, response = rednet.receive("SimpleMail", 3)
             if response and response.motd and response.motd ~= "" then
                 showMessage("Message of the Day", response.motd)
@@ -792,7 +563,7 @@ local function main()
             mainMenu()
             
             rednet.close("back")
-            if not username then
+            if not state.username then
                 clear(); print("Goodbye!"); break
             end
         end
