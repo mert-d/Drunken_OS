@@ -1,34 +1,27 @@
 --[[
-    Drunken OS - Mainframe Server (v8.2 - Remote Admin & Feedback)
+    Drunken OS - Mainframe Server (v8.3 - Refactored Crypto)
     by Gemini Gem
 
     Purpose:
-    This version adds a secure remote administration system and lays the
-    groundwork for a user feedback feature. This version also includes
-    a critical fix for a syntax error in the admin command handler.
+    This version refactors the cryptographic functions into a separate,
+    reusable library file (`lib/sha1_hmac.lua`). This simplifies the
+    server code, making it cleaner and easier to maintain.
 
     Key Changes:
-    - Fixed a fatal syntax error ("funcion" typo).
-    - Added an 'admins' table to designate users with special privileges.
-    - Added "MuhendizBey" as the first administrator.
-    - Now hosts a new, secure "Drunken_Admin" protocol.
-    - Listens for remote commands from authorized admins on the new protocol,
-      executes them, and returns the output.
-    - Login responses now include an 'isAdmin' flag for the client.
+    - Removed the large, embedded SHA1 library block.
+    - Added a `require()` call to the new `lib/sha1_hmac` library.
+    - Updated password hashing calls to use the new crypto library.
 ]]
-
---==============================================================================
--- Configuration
---==============================================================================
--- A list of users who are allowed to use the remote admin console.
-local admins = {
-    ["MuhendizBey"] = true,
-}
 
 --==============================================================================
 -- API & Library Initialization
 --==============================================================================
 
+-- Load our new, centralized cryptography library.
+-- This file should be placed at "/lib/sha1_hmac.lua" on the computer.
+local crypto = require("lib.sha1_hmac")
+
+-- Load the HyperAuth Client API for secure authentication.
 local AuthClient = require("HyperAuthClient/api/auth_client")
 
 if not AuthClient then
@@ -46,45 +39,15 @@ if not AuthClient then
 end
 
 --==============================================================================
--- Embedded SHA1 Library
+-- Configuration
 --==============================================================================
-
-local sha1 = {}
-do
-    -- (SHA1 library code remains unchanged)
-    local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
-    local function rol(n, c) return bor(lshift(n, c), rshift(n, 32 - c)) end
-    local function str_to_bin(str) local t = {}; for i = 1, #str do t[i] = string.byte(str, i) end; return t end
-    local function bin_to_hex(bin) local hex = ""; for i = 1, #bin do hex = hex .. string.format("%02x", bin[i]) end; return hex end
-    function sha1.hex(s) return bin_to_hex(sha1.bin(s)) end
-    function sha1.bin(s)
-      local H0, H1, H2, H3, H4 = 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0
-      local str = str_to_bin(s); local len = #str; str[len + 1] = 0x80
-      for i = len + 2, (len + 64) - ((len + 8) % 64) do str[i] = 0 end
-      local bit_len = len * 8
-      for i = 0, 7 do str[#str + 1] = band(rshift(bit_len, (7 - i) * 8), 0xff) end
-      for i = 1, #str, 64 do
-        local W = {}; for j = 0, 15 do W[j] = bor(lshift(str[i+j*4], 24), lshift(str[i+j*4+1], 16), lshift(str[i+j*4+2], 8), str[i+j*4+3]) end
-        for j = 16, 79 do W[j] = rol(bxor(W[j-3], W[j-8], W[j-14], W[j-16]), 1) end
-        local a,b,c,d,e = H0,H1,H2,H3,H4
-        for j = 0, 79 do
-          local f, k
-          if j < 20 then f = bxor(d, band(b, bxor(c, d))); k = 0x5A827999
-          elseif j < 40 then f = bxor(b, c, d); k = 0x6ED9EBA1
-          elseif j < 60 then f = bor(band(b, c), band(b, d), band(c, d)); k = 0x8F1BBCDC
-          else f = bxor(b, c, d); k = 0xCA62C1D6 end
-          local temp = rol(a, 5) + f + e + W[j] + k; e=d; d=c; c=rol(b, 30); b=a; a=temp
-        end
-        H0=(H0+a); H1=(H1+b); H2=(H2+c); H3=(H3+d); H4=(H4+e)
-      end
-      local result = {}; for i=0,3 do result[i+1]=band(rshift(H0,(3-i)*8),0xff) end; for i=0,3 do result[i+5]=band(rshift(H1,(3-i)*8),0xff) end; for i=0,3 do result[i+9]=band(rshift(H2,(3-i)*8),0xff) end; for i=0,3 do result[i+13]=band(rshift(H3,(3-i)*8),0xff) end; for i=0,3 do result[i+17]=band(rshift(H4,(3-i)*8),0xff) end
-      return result
-    end
-end
-
+-- A list of users who are allowed to use the remote admin console.
+local admins = {
+    ["MuhendizBey"] = true,
+}
 
 --==============================================================================
--- Configuration & State
+-- State Variables
 --==============================================================================
 
 local users, lists, games, chatHistory, gameList, pendingAuths = {}, {}, {}, {}, {}, {}
@@ -302,7 +265,7 @@ function mailHandlers.register(senderId, message)
         rednet.send(senderId, { success = false, reason = "Username taken." }, "SimpleMail")
         return
     end
-    local requestId = requestAuthCode(message.user, sha1.hex(message.pass), message.nickname, senderId, "register")
+    local requestId = requestAuthCode(message.user, crypto.hex(message.pass), message.nickname, senderId, "register")
     if requestId then
         rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
     end
@@ -310,7 +273,7 @@ end
 
 function mailHandlers.login(senderId, message)
     local storedHash = users[message.user] and users[message.user].password
-    if not storedHash or storedHash ~= sha1.hex(message.pass) then
+    if not storedHash or storedHash ~= crypto.hex(message.pass) then
         rednet.send(senderId, { success = false, reason = "Invalid username or password." }, "SimpleMail")
         return
     end
@@ -327,7 +290,7 @@ function mailHandlers.login(senderId, message)
         return
     end
 
-    local requestId = requestAuthCode(message.user, sha1.hex(message.pass), nil, senderId, "login")
+    local requestId = requestAuthCode(message.user, crypto.hex(message.pass), nil, senderId, "login")
     if requestId then
         rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
     end
@@ -357,7 +320,7 @@ function mailHandlers.submit_auth_token(senderId, message)
 
     if verify_reply.ok then
         local response_payload = {}
-        local new_session_token = sha1.hex(os.time() .. math.random())
+        local new_session_token = crypto.hex(os.time() .. math.random())
         
         if not users[user] then -- This is a registration
             users[user] = { password = authData.password, nickname = authData.nickname, session_token = new_session_token }
@@ -655,4 +618,3 @@ local function main()
 end
 
 main()
-
