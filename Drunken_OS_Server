@@ -1,16 +1,18 @@
 --[[
-    Drunken OS - Mainframe Server (v8.3 - Refactored Crypto)
+    Drunken OS - Mainframe Server (v8.4 - Library Distribution)
     by Gemini Gem
 
     Purpose:
-    This version refactors the cryptographic functions into a separate,
-    reusable library file (`lib/sha1_hmac.lua`). This simplifies the
-    server code, making it cleaner and easier to maintain.
+    This version adds the server-side functionality to support the client's
+    new auto-installer. It can now serve library files to clients upon
+    request and provides an admin command to upload new libraries.
 
     Key Changes:
-    - Removed the large, embedded SHA1 library block.
-    - Added a `require()` call to the new `lib/sha1_hmac` library.
-    - Updated password hashing calls to use the new crypto library.
+    - Added a new `get_library` network handler to `mailHandlers`. This will
+      read a library file from the server's disk and send its contents to a client.
+    - Added a new `publishlib <path>` admin command. This allows an admin to
+      upload a file (like the sha1_hmac library) directly to the server's
+      filesystem, making it available for clients to download.
 ]]
 
 --==============================================================================
@@ -260,6 +262,26 @@ local mailHandlers = {}
 function mailHandlers.get_version(senderId, message) rednet.send(senderId, { version = programVersions[message.program] or 0 }, "SimpleMail") end
 function mailHandlers.get_update(senderId, message) rednet.send(senderId, { code = programCode[message.program] }, "SimpleMail") end
 
+-- NEW: Handler for the client's auto-installer
+function mailHandlers.get_library(senderId, message)
+    local path = message.path
+    logActivity("Client " .. senderId .. " requested library at path: " .. path)
+    -- Security: Only allow requests for files in the 'lib' directory.
+    if path and string.sub(path, 1, 4) == "lib/" and fs.exists(path) then
+        local file = fs.open(path, "r")
+        if file then
+            local content = file.readAll()
+            file.close()
+            rednet.send(senderId, { code = content }, "SimpleMail")
+            logActivity("Sent library '" .. path .. "' to client " .. senderId)
+            return
+        end
+    end
+    -- If file doesn't exist or is not allowed, send back nil.
+    rednet.send(senderId, { code = nil }, "SimpleMail")
+    logActivity("Could not find or access library '" .. (path or "nil") .. "' for client " .. senderId, true)
+end
+
 function mailHandlers.register(senderId, message)
     if users[message.user] then
         rednet.send(senderId, { success = false, reason = "Username taken." }, "SimpleMail")
@@ -451,7 +473,7 @@ local adminCommands = {}
 function adminCommands.help()
     print("--- Mainframe Admin Commands ---")
     print("users, deluser, lists, dellist, board, delscore")
-    print("motd, broadcast, publish, addgame, delgame, games, publishgame")
+    print("motd, broadcast, publish, publishlib, addgame, delgame, games, publishgame")
 end
 function adminCommands.users() logActivity("Registered Users:"); for user, data in pairs(users) do logActivity("- " .. user .. " (Nick: " .. (data.nickname or "N/A") .. ")") end end
 function adminCommands.deluser(args) local user = args[2]; if not user then logActivity("Usage: deluser <name>"); return end; if users[user] then users[user] = nil; saveTableToFile(USERS_DB, users); logActivity("Deleted user: " .. user) else logActivity("User not found: " .. user) end end
@@ -479,6 +501,30 @@ function adminCommands.publish(args)
     logActivity("Waiting for publication of '"..progName.."' v"..newVersion.."..."); local _, message = rednet.receive("Publication", 15)
     if message and message.code then programCode[progName] = message.code; programVersions[progName] = newVersion; saveTableToFile(UPDATER_DB, {v=programVersions, c=programCode}); logActivity("Published "..progName.." version "..programVersions[progName])
     else logActivity("Publication timed out or failed.") end
+end
+-- NEW: Admin command to upload a library file.
+function adminCommands.publishlib(args)
+    local libPath = args[2]
+    if not libPath or string.sub(libPath, 1, 4) ~= "lib/" then
+        logActivity("Usage: publishlib lib/<name>.lua", true)
+        return
+    end
+    logActivity("Waiting for publication of library '" .. libPath .. "'...");
+    local _, message = rednet.receive("Publication", 15)
+    if message and message.code then
+        local dir = fs.getDir(libPath)
+        if not fs.exists(dir) then fs.makeDir(dir) end
+        local file = fs.open(libPath, "w")
+        if file then
+            file.write(message.code)
+            file.close()
+            logActivity("Published library " .. libPath)
+        else
+            logActivity("Could not open file '"..libPath.."' for writing.", true)
+        end
+    else
+        logActivity("Publication timed out or failed.")
+    end
 end
 function adminCommands.addgame(args)
     local name, file = args[2], args[3]; if not name or not file then logActivity("Usage: addgame <DisplayName> <filename>"); return end
