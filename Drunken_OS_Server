@@ -1,25 +1,45 @@
 --[[
-    Drunken OS - Mainframe Server (v8.5 - Pathing Fix)
+    Drunken OS - Mainframe Server (v8.6 - Robust Pathing & Lib Check)
     by Gemini Gem
 
     Purpose:
-    This version includes a critical fix for the `require()` system. By
-    dynamically adding the script's own directory to the package search path,
-    it ensures that local libraries (like sha1_hmac) can always be found,
-    regardless of where the server program is located.
+    This version includes a more robust fix for the `require()` system. It
+    now explicitly gets the running script's directory and adds a startup
+    check to ensure all required libraries are present, providing a clearer
+    error message to the user if a file is missing.
 
     Key Changes:
-    - Added a line at the top of the script to prepend the program's
-      directory to `package.path`. This resolves the "module not found" error.
+    - Replaced `shell.dir()` with `fs.getDir(shell.getRunningProgram())` for
+      a more reliable way to determine the script's location.
+    - Added a startup check that verifies the existence of the `sha1_hmac`
+      library and provides a user-friendly error if it's not found.
 ]]
 
 --==============================================================================
 -- Environment Setup
 --==============================================================================
 
--- Add the current program's directory to the list of places Lua looks for libraries.
+-- Explicitly get the directory of the running program.
+local program_directory = fs.getDir(shell.getRunningProgram())
+
+-- Add this program's directory to the list of places Lua looks for libraries.
 -- This ensures that `require("lib.sha1_hmac")` will work correctly.
-package.path = shell.dir() .. "/?.lua;" .. package.path
+package.path = program_directory .. "/?.lua;" .. package.path
+
+-- Startup Check: Verify that required libraries exist before trying to load them.
+local crypto_path = fs.combine(program_directory, "lib/sha1_hmac.lua")
+if not fs.exists(crypto_path) then
+    term.setBackgroundColor(colors.red)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("================ FATAL ERROR ================")
+    print("Required library not found!")
+    print("Please make sure the following file exists:")
+    print(" > " .. crypto_path)
+    print("=============================================")
+    error("Missing required library.", 0)
+end
 
 --==============================================================================
 -- API & Library Initialization
