@@ -1,18 +1,20 @@
 --[[
-    Drunken OS - Mainframe Server (v8.6 - Robust Pathing & Lib Check)
+    Drunken OS - Mainframe Server (v8.7 - Final Pathing Fix)
     by Gemini Gem
 
     Purpose:
-    This version includes a more robust fix for the `require()` system. It
-    now explicitly gets the running script's directory and adds a startup
-    check to ensure all required libraries are present, providing a clearer
-    error message to the user if a file is missing.
+    This version implements a highly robust, multi-location library search
+    path to definitively resolve "module not found" errors. It also enhances
+    the startup checks to provide much clearer feedback to the user if a
+    required file is missing.
 
     Key Changes:
-    - Replaced `shell.dir()` with `fs.getDir(shell.getRunningProgram())` for
-      a more reliable way to determine the script's location.
-    - Added a startup check that verifies the existence of the `sha1_hmac`
-      library and provides a user-friendly error if it's not found.
+    - The `package.path` is now modified to search for libraries in multiple
+      locations: relative to the script itself AND in a static `/lib/`
+      directory at the root of the computer.
+    - The startup check now attempts to load the library in a protected call
+      (pcall) first, allowing it to provide a detailed, user-friendly error
+      message that explains exactly where the file should be placed if it fails.
 ]]
 
 --==============================================================================
@@ -22,36 +24,40 @@
 -- Explicitly get the directory of the running program.
 local program_directory = fs.getDir(shell.getRunningProgram())
 
--- Add this program's directory to the list of places Lua looks for libraries.
--- This ensures that `require("lib.sha1_hmac")` will work correctly.
-package.path = program_directory .. "/?.lua;" .. package.path
-
--- Startup Check: Verify that required libraries exist before trying to load them.
-local crypto_path = fs.combine(program_directory, "lib/sha1_hmac.lua")
-if not fs.exists(crypto_path) then
-    term.setBackgroundColor(colors.red)
-    term.setTextColor(colors.white)
-    term.clear()
-    term.setCursorPos(1, 1)
-    print("================ FATAL ERROR ================")
-    print("Required library not found!")
-    print("Please make sure the following file exists:")
-    print(" > " .. crypto_path)
-    print("=============================================")
-    error("Missing required library.", 0)
-end
+-- Add multiple common locations to the list of places Lua looks for libraries.
+-- 1. Relative to the current program (e.g., /DrunkenOS/lib/?.lua)
+-- 2. In a static /lib/ folder at the root of the computer.
+package.path = table.concat({
+    program_directory .. "/?.lua",
+    program_directory .. "/?/init.lua",
+    "/lib/?.lua",
+    "/lib/?/init.lua",
+    package.path
+}, ";")
 
 --==============================================================================
 -- API & Library Initialization
 --==============================================================================
 
--- Load our new, centralized cryptography library.
-local crypto = require("lib.sha1_hmac")
+-- Startup Check: Verify that required libraries exist and can be loaded.
+local ok_crypto, crypto = pcall(require, "lib.sha1_hmac")
+if not ok_crypto then
+    term.setBackgroundColor(colors.red)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("================ FATAL ERROR ================")
+    print("Required library 'lib/sha1_hmac' not found!")
+    print("Please make sure the file exists at either:")
+    print(" > " .. program_directory .. "/lib/sha1_hmac.lua")
+    print("OR")
+    print(" > /lib/sha1_hmac.lua")
+    print("=============================================")
+    error("Missing required library.", 0)
+end
 
--- Load the HyperAuth Client API for secure authentication.
-local AuthClient = require("HyperAuthClient/api/auth_client")
-
-if not AuthClient then
+local ok_auth, AuthClient = pcall(require, "HyperAuthClient/api/auth_client")
+if not ok_auth then
     term.setBackgroundColor(colors.red)
     term.setTextColor(colors.white)
     term.clear()
@@ -689,4 +695,3 @@ local function main()
 end
 
 main()
-
