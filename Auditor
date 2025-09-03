@@ -1,15 +1,24 @@
 --[[
-    Drunken Beard Bank - Auditor Turtle (v1.1 - Secure HMAC Reporting)
+    Drunken Beard Bank - Auditor Turtle (v1.2 - Refactored Crypto)
     by Gemini Gem
 
     Purpose:
-    This version adds HMAC-SHA1 signing to all stock reports sent to the main
-    server. This ensures the data is authentic and has not been tampered with
-    in transit, preventing economic espionage.
+    This version refactors the cryptographic functions into the new, separate
+    `lib/sha1_hmac.lua` library.
 
-    Setup:
-    - The SECRET_KEY in this script must EXACTLY match the one in the main server script.
+    Key Changes:
+    - Removed the embedded SHA1 & HMAC library block.
+    - Added a `require()` call to the new `lib/sha1_hmac` library.
+    - Updated HMAC signing calls to use the new crypto library.
 ]]
+
+--==============================================================================
+-- API & Library Initialization
+--==============================================================================
+
+-- Load our new, centralized cryptography library.
+-- This file should be placed at "/lib/sha1_hmac.lua" on the computer.
+local crypto = require("lib.sha1_hmac")
 
 --==============================================================================
 -- Configuration
@@ -24,62 +33,6 @@ local audit_interval = 300 -- 5 minutes
 -- A secret key shared between this turtle and the main server for HMAC signing.
 -- IMPORTANT: This MUST match the key in the server script!
 local SECRET_KEY = "YourSecretAuditKeyHere"
-
---==============================================================================
--- Embedded SHA1 & HMAC Library
---==============================================================================
-
-local sha1 = {}
-do
-    local lshift, rshift, bor, band, bxor = bit32.lshift, bit32.rshift, bit32.bor, bit32.band, bit32.bxor
-    local function rol(n, c) return bor(lshift(n, c), rshift(n, 32 - c)) end
-    local function str_to_bin(str) local t = {}; for i = 1, #str do t[i] = string.byte(str, i) end; return t end
-    local function bin_to_hex(bin) local hex = ""; for i = 1, #bin do hex = hex .. string.format("%02x", bin[i]) end; return hex end
-    local function bin_to_str(bin) return string.char(table.unpack(bin)) end
-
-    function sha1.bin(s)
-      local H0, H1, H2, H3, H4 = 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0
-      local str = str_to_bin(s); local len = #str; str[len + 1] = 0x80
-      for i = len + 2, (len + 64) - ((len + 8) % 64) do str[i] = 0 end
-      local bit_len = len * 8
-      for i = 0, 7 do str[#str + 1] = band(rshift(bit_len, (7 - i) * 8), 0xff) end
-      for i = 1, #str, 64 do
-        local W = {}; for j = 0, 15 do W[j] = bor(lshift(str[i+j*4], 24), lshift(str[i+j*4+1], 16), lshift(str[i+j*4+2], 8), str[i+j*4+3]) end
-        for j = 16, 79 do W[j] = rol(bxor(W[j-3], W[j-8], W[j-14], W[j-16]), 1) end
-        local a,b,c,d,e = H0,H1,H2,H3,H4
-        for j = 0, 79 do
-          local f, k
-          if j < 20 then f = bxor(d, band(b, bxor(c, d))); k = 0x5A827999
-          elseif j < 40 then f = bxor(b, c, d); k = 0x6ED9EBA1
-          elseif j < 60 then f = bor(band(b, c), band(b, d), band(c, d)); k = 0x8F1BBCDC
-          else f = bxor(b, c, d); k = 0xCA62C1D6 end
-          local temp = rol(a, 5) + f + e + W[j] + k; e=d; d=c; c=rol(b, 30); b=a; a=temp
-        end
-        H0=(H0+a); H1=(H1+b); H2=(H2+c); H3=(H3+d); H4=(H4+e)
-      end
-      local result = {}; for i=0,3 do result[i+1]=band(rshift(H0,(3-i)*8),0xff) end; for i=0,3 do result[i+5]=band(rshift(H1,(3-i)*8),0xff) end; for i=0,3 do result[i+9]=band(rshift(H2,(3-i)*8),0xff) end; for i=0,3 do result[i+13]=band(rshift(H3,(3-i)*8),0xff) end; for i=0,3 do result[i+17]=band(rshift(H4,(3-i)*8),0xff) end
-      return result
-    end
-
-    function sha1.hmac_hex(key, message)
-        local blocksize = 64
-        if #key > blocksize then key = bin_to_str(sha1.bin(key)) end
-
-        local key_padding = {}
-        for i = 1, blocksize do key_padding[i] = string.byte(key, i) or 0 end
-
-        local o_key_pad = ""
-        local i_key_pad = ""
-        for i = 1, blocksize do
-            o_key_pad = o_key_pad .. string.char(bxor(key_padding[i], 0x5c))
-            i_key_pad = i_key_pad .. string.char(bxor(key_padding[i], 0x36))
-        end
-
-        local inner_hash = bin_to_str(sha1.bin(i_key_pad .. message))
-        local final_hash = sha1.bin(o_key_pad .. inner_hash)
-        return bin_to_hex(final_hash)
-    end
-end
 
 --==============================================================================
 -- Core Functions
@@ -142,9 +95,9 @@ local function main()
             report = stock_report
         }
         
-        -- Sign the report before sending
-        local messageToSign = textutils.serialize(payload.report)
-        payload.signature = sha1.hmac_hex(SECRET_KEY, messageToSign)
+        -- Sign the report before sending using our new crypto library
+        local messageToSign = textutils.serializeJSON(payload.report)
+        payload.signature = crypto.hmac_hex(SECRET_KEY, messageToSign)
         
         rednet.send(bankServerId, payload, protocol)
         print("Sent signed stock report to server.")
