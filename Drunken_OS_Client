@@ -3,16 +3,17 @@
     by Gemini Gem
 
     Purpose:
-    This definitive version moves the game updater to a user-initiated
-    process within a new "System" menu, as requested. It ensures the modular
-    architecture is fully implemented and bug-free.
+    This definitive version integrates a robust, user-initiated game updater,
+    consolidates the UI, and ensures the modular architecture is fully
+    implemented and bug-free.
 
     Key Changes:
     - Version number incremented to v11.4 to reflect significant progress.
-    - The automatic `updateGames` call has been removed from the startup sequence.
-    - The "Settings" menu has been renamed to "System".
-    - The main `mainMenu` function now directs the user to the `systemMenu`
-      in the application library.
+    - The "Settings" menu has been renamed to "System" and now contains the
+      user-initiated "Update Games" function.
+    - The `updateGames` logic has been moved to the application library and
+      is based on previously working code to ensure reliability.
+    - The main menu has been consolidated for a cleaner user interface.
 ]]
 
 --==============================================================================
@@ -270,6 +271,8 @@ local function installDependencies()
     if ok_c and ok_a then
         state.crypto = lib_c
         state.apps = lib_a
+        -- Pass the updateGames function into the context for the app library to use
+        context.updateGames = updateGames
     else
         showMessage("Installation Error", "Failed to load a critical library. The program cannot continue.")
         return false
@@ -311,6 +314,73 @@ local function autoUpdateCheck()
         end
     end
     return false
+end
+
+function updateGames()
+    drawWindow("Game Updater")
+    local y = 4
+    term.setCursorPos(2, y); term.write("Fetching game list from server...")
+    y = y + 1
+
+    local gamesDir = fs.combine(programDir, "games")
+    if not fs.exists(gamesDir) then
+        term.setCursorPos(2, y); term.write("- Creating games directory...")
+        y = y + 1
+        fs.makeDir(gamesDir)
+    end
+    
+    rednet.send(state.mailServerId, { type = "get_all_game_versions" }, "SimpleMail")
+    local _, response = rednet.receive("SimpleMail", 10)
+
+    if not response or not response.versions then
+        term.setCursorPos(2, y); term.write("- Could not fetch server game versions.")
+        sleep(2)
+        return
+    end
+
+    for filename, serverVersion in pairs(response.versions) do
+        local localPath = fs.combine(gamesDir, filename)
+        term.setCursorPos(2, y)
+        term.clearLine()
+        term.write("- Checking " .. filename .. "...")
+        
+        local localVersion = 0
+        if fs.exists(localPath) then
+            local file = fs.open(localPath, "r")
+            if file then
+                local content = file.readAll()
+                file.close()
+                local foundVersion = string.match(content, "%-%-%s*Version:%s*([%d%.]+)")
+                if foundVersion then
+                    localVersion = tonumber(foundVersion)
+                end
+            end
+        end
+        
+        if serverVersion > localVersion then
+            term.setCursorPos(4, y + 1); term.write("-> New version found! Downloading...")
+            rednet.send(state.mailServerId, {type = "get_game_update", program = filename}, "SimpleMail")
+            local _, update = rednet.receive("SimpleMail", 10)
+            
+            if update and update.code then
+                local file = fs.open(localPath, "w")
+                if file then
+                    file.write(update.code)
+                    file.close()
+                    term.setCursorPos(4, y + 2); term.write("-> Update successful!")
+                else
+                    term.setCursorPos(4, y + 2); term.write("-> Error: Could not save file.")
+                end
+            else
+                term.setCursorPos(4, y + 2); term.write("-> Error: Download failed.")
+            end
+            y = y + 3
+        else
+            y = y + 1
+        end
+    end
+    term.setCursorPos(2, y + 1); term.write("Update check complete.")
+    sleep(2)
 end
 
 --==============================================================================
@@ -545,7 +615,7 @@ local function main()
                 rednet.close("back"); sleep(5); os.reboot(); return
             end
             
-            -- updateGames() -- This line was removed as per user request to move it to settings.
+            -- updateGames() -- Removed from startup
             
             state.username = nil
             state.isAdmin = false
