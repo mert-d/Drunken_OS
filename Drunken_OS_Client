@@ -3,17 +3,16 @@
     by Gemini Gem
 
     Purpose:
-    This definitive version integrates a robust game updater into the main
-    startup sequence, consolidates the UI, and ensures the modular
+    This definitive version moves the game updater to a user-initiated
+    process within a new "System" menu, as requested. It ensures the modular
     architecture is fully implemented and bug-free.
 
     Key Changes:
-    - Implemented a new, verbose `updateGames` function based on previously
-      working logic to automatically download and update all games from the server.
-    - The client now creates and manages a `games/` directory.
-    - All application functions in the library are now fully implemented.
-    - The main menu has been consolidated for a cleaner user interface.
     - Version number incremented to v11.4 to reflect significant progress.
+    - The automatic `updateGames` call has been removed from the startup sequence.
+    - The "Settings" menu has been renamed to "System".
+    - The main `mainMenu` function now directs the user to the `systemMenu`
+      in the application library.
 ]]
 
 --==============================================================================
@@ -314,64 +313,6 @@ local function autoUpdateCheck()
     return false
 end
 
-local function updateGames()
-    drawWindow("Game Updater")
-    local yPos = 4
-    term.setCursorPos(2, yPos); term.write("Checking for game updates..."); yPos = yPos + 1
-
-    local gamesDir = fs.combine(programDir, "games")
-    if not fs.exists(gamesDir) then
-        term.setCursorPos(2, yPos); term.write("- Creating games directory..."); yPos = yPos + 1
-        fs.makeDir(gamesDir)
-    end
-
-    rednet.send(state.mailServerId, { type = "get_all_game_versions" }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 10)
-
-    if not response or not response.versions then
-        term.setCursorPos(2, yPos); term.write("- Could not fetch server game versions.")
-        sleep(2)
-        return
-    end
-
-    for filename, serverVersion in pairs(response.versions) do
-        local localPath = fs.combine(gamesDir, filename)
-        local needsUpdate = true
-        
-        if fs.exists(localPath) then
-            local file = fs.open(localPath, "r")
-            if file then
-                local content = file.readAll()
-                file.close()
-                local localVersion = tonumber(string.match(content, "%-%-%s*Version:%s*([%d%.]+)"))
-                if localVersion and localVersion >= serverVersion then
-                    needsUpdate = false
-                end
-            end
-        end
-
-        if needsUpdate then
-            term.setCursorPos(2, yPos)
-            term.clearLine()
-            term.write("- Updating game: " .. filename .. "...")
-            
-            rednet.send(state.mailServerId, { type = "get_game_update", filename = filename }, "SimpleMail")
-            local _, gameUpdate = rednet.receive("SimpleMail", 10)
-
-            if gameUpdate and gameUpdate.code then
-                local file = fs.open(localPath, "w")
-                if file then
-                    file.write(gameUpdate.code)
-                    file.close()
-                end
-            end
-        end
-    end
-    
-    term.setCursorPos(2, yPos + 1); term.write("All games are up to date!")
-    sleep(1.5)
-end
-
 --==============================================================================
 -- Login & Main Menu Logic
 --==============================================================================
@@ -498,7 +439,7 @@ function mainMenu()
     if state.isAdmin and state.adminServerId then
         table.insert(options, "Admin Console")
     end
-    table.insert(options, "Settings")
+    table.insert(options, "System")
     table.insert(options, "Help")
     table.insert(options, "Exit")
 
@@ -537,8 +478,7 @@ function mainMenu()
                 elseif action == "Play Games" then state.apps.enterArcade(context)
                 elseif action == "Send Feedback" then state.apps.sendFeedback(context)
                 elseif action == "Admin Console" then state.apps.adminConsole(context)
-                elseif action == "Settings" then
-                    if state.apps.settingsMenu(context) then return end
+                elseif action == "System" then state.apps.systemMenu(context)
                 elseif action == "Help" then state.apps.showHelpScreen(context)
                 elseif action == "Exit" then return end
                 needsRedraw = true
@@ -605,7 +545,7 @@ local function main()
                 rednet.close("back"); sleep(5); os.reboot(); return
             end
             
-            updateGames() -- Update all games after initial setup
+            -- updateGames() -- This line was removed as per user request to move it to settings.
             
             state.username = nil
             state.isAdmin = false
@@ -630,3 +570,4 @@ local function main()
 end
 
 main()
+
