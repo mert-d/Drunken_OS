@@ -5,15 +5,14 @@
     Purpose:
     This library contains all the major "application" functions for the
     Drunken_OS_Client. This version restores the full, working implementations
-    for all menu options, including a robust game updater for the arcade.
+    for all menu options, including a robust game updater.
 
     Key Changes:
     - All placeholder "feature coming soon" messages have been replaced with
       their full, original implementations.
-    - All features, including Chat, Admin Console, and Mailing Lists, are now
-      fully functional and adapted to the modular context system.
-    - The Arcade now automatically checks for and downloads game updates before
-      displaying the game selection menu.
+    - A new `systemMenu` provides access to settings and the game updater.
+    - The `updateGames` function is now fully implemented based on user-provided
+      working code, ensuring reliability.
 ]]
 
 local apps = {}
@@ -233,6 +232,33 @@ function apps.sendFile(context)
     local content = file.readAll()
     file.close()
     apps.composeAndSend(context, to, subject or "(No Subject)", { name = fs.getName(fileName), content = content })
+end
+
+function apps.mailMenu(context)
+    local options = {"View Inbox", "Send Mail", "Send File", "Back"}
+    local selected = 1
+    while true do
+        context.drawWindow("Mail Menu")
+        context.drawMenu(options, selected, 2, 4)
+        local event, key = os.pullEvent("key")
+        if key == keys.up then
+            selected = (selected == 1) and #options or selected - 1
+        elseif key == keys.down then
+            selected = (selected == #options) and 1 or selected + 1
+        elseif key == keys.enter then
+            if selected == 1 then
+                apps.viewInbox(context)
+            elseif selected == 2 then
+                apps.sendMail(context)
+            elseif selected == 3 then
+                apps.sendFile(context)
+            elseif selected == 4 then
+                break
+            end
+        elseif key == keys.tab or key == keys.q then
+            break
+        end
+    end
 end
 
 function apps.manageLists(context)
@@ -507,49 +533,106 @@ function apps.adminConsole(context)
     end
 end
 
-function apps.settingsMenu(context)
-    local options = {"Change Nickname", "Back"}
+function apps.systemMenu(context)
+    local options = {"Change Nickname", "Update Games", "Back"}
     local selected = 1
     while true do
-        context.drawWindow("Settings")
+        context.drawWindow("System")
         context.drawMenu(options, selected, 2, 4)
-
         local event, key = os.pullEvent("key")
-        if key == keys.up then
-            selected = (selected == 1) and #options or selected - 1
-        elseif key == keys.down then
-            selected = (selected == #options) and 1 or selected + 1
+        if key == keys.up then selected = (selected == 1) and #options or selected - 1
+        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
         elseif key == keys.enter then
-            if selected == 1 then
-                context.drawWindow("Change Nickname")
-                local new_nick = context.readInput("New nickname: ", 4)
-                if new_nick and new_nick ~= "" then
-                    rednet.send(getParent(context).mailServerId, {
-                        type = "set_nickname",
-                        user = getParent(context).username,
-                        new_nickname = new_nick
-                    }, "SimpleMail")
-                    context.drawWindow("Updating...")
-                    local _, response = rednet.receive("SimpleMail", 5)
-                    if response and response.success then
-                        getParent(context).nickname = response.new_nickname
-                        context.showMessage("Success", "Nickname updated!")
-                    else
-                        context.showMessage("Error", "Could not update nickname.")
-                    end
-                end
-                break
-            elseif selected == 2 then
-                break
-            end
-        elseif key == keys.tab or key == keys.q then
-            break
-        end
+            if selected == 1 then apps.changeNickname(context); break
+            elseif selected == 2 then apps.updateGames(context)
+            elseif selected == 3 then break end
+        elseif key == keys.tab or key == keys.q then break end
     end
-    return false -- Don't log out
 end
 
-function apps.enterArcade(context)
+function apps.changeNickname(context)
+    context.drawWindow("Change Nickname")
+    local new_nick = context.readInput("New nickname: ", 4)
+    if new_nick and new_nick ~= "" then
+        rednet.send(getParent(context).mailServerId, { type = "set_nickname", user = getParent(context).username, new_nickname = new_nick }, "SimpleMail")
+        context.drawWindow("Updating...")
+        local _, response = rednet.receive("SimpleMail", 5)
+        if response and response.success then
+            getParent(context).nickname = response.new_nickname
+            context.showMessage("Success", "Nickname updated!")
+        else
+            context.showMessage("Error", "Could not update nickname.")
+        end
+    end
+end
+
+function apps.updateGames(context)
+    context.drawWindow("Updating Arcade")
+    local y = 4
+    local gamesDir = fs.combine(context.programDir, "games")
+    if not fs.exists(gamesDir) then
+        term.setCursorPos(2, y); term.write("- Creating games directory...")
+        fs.makeDir(gamesDir)
+        y = y + 1
+    end
+
+    rednet.send(getParent(context).mailServerId, { type = "get_gamelist" }, "SimpleMail")
+    local _, gameListResponse = rednet.receive("SimpleMail", 5)
+    if not gameListResponse or not gameListResponse.games then
+        context.showMessage("Error", "Could not fetch game list.")
+        return
+    end
+    local games = gameListResponse.games
+
+    local function getLocalVersion(filename)
+        local path = fs.combine(gamesDir, filename)
+        if fs.exists(path) then
+            local file = fs.open(path, "r")
+            if file then
+                local content = file.readAll()
+                file.close()
+                local version = string.match(content, "%-%-%s*Version:%s*([%d%.]+)")
+                return tonumber(version) or 0
+            end
+        end
+        return 0
+    end
+
+    for i, game in ipairs(games) do
+        local filename = game.file
+        term.setCursorPos(2, y); term.write("Checking " .. game.name .. "...")
+        local localVersion = getLocalVersion(filename)
+        
+        rednet.send(getParent(context).mailServerId, {type = "get_version", program = filename}, "SimpleMail")
+        local _, response = rednet.receive("SimpleMail", 3)
+        
+        if response and response.version and response.version > localVersion then
+            term.setCursorPos(2, y+1); term.write("  -> New version found! Downloading...")
+            rednet.send(getParent(context).mailServerId, {type = "get_update", program = filename}, "SimpleMail")
+            local _, update = rednet.receive("SimpleMail", 10)
+            
+            if update and update.code then
+                local path = fs.combine(gamesDir, filename)
+                local file = fs.open(path, "w")
+                if file then
+                    file.write(update.code)
+                    file.close()
+                    term.setCursorPos(2, y+2); term.write("  -> Update successful!")
+                else
+                    term.setCursorPos(2, y+2); term.write("  -> Error: Could not save file.")
+                end
+            else
+                term.setCursorPos(2, y+2); term.write("  -> Error: Download failed.")
+            end
+            y = y + 3
+        else
+            y = y + 1
+        end
+    end
+    term.setCursorPos(2, y+1); term.write("Update check complete.")
+    sleep(1.5)
+end
+	function apps.enterArcade(context)
     context.drawWindow("Arcade")
     term.setCursorPos(2, 4); term.write("Fetching game list...")
     rednet.send(getParent(context).mailServerId, { type = "get_gamelist" }, "SimpleMail")
@@ -582,7 +665,7 @@ function apps.enterArcade(context)
                     local game = games[selected]
                     local gameFile = fs.combine(context.programDir, "games/" .. game.file)
                     if not fs.exists(gameFile) then
-                        context.showMessage("Error", "Game file '"..game.file.."' not found! Please run the updater.")
+                        context.showMessage("Error", "Game file '"..game.file.."' not found! Please run the updater in the System menu.")
                     else
                         context.clear()
                         shell.run(gameFile, getParent(context).username)
