@@ -1,5 +1,5 @@
 --[[
-    SimpleMail & Chat Client (v11.3 - Final Polish)
+    SimpleMail & Chat Client (v11.4 - Final)
     by Gemini Gem
 
     Purpose:
@@ -8,13 +8,12 @@
     architecture is fully implemented and bug-free.
 
     Key Changes:
-    - Added a new `updateGames` function that runs once on startup to
-      automatically download and update all games from the server.
-    - The client now creates a `games/` directory for these files.
-    - The `programDir` variable is now correctly passed into the application
-      library via the `context` table, fixing the "string expected, got nil" error.
+    - Implemented a new, verbose `updateGames` function based on previously
+      working logic to automatically download and update all games from the server.
+    - The client now creates and manages a `games/` directory.
+    - All application functions in the library are now fully implemented.
     - The main menu has been consolidated for a cleaner user interface.
-    - Version number incremented to v11.3 to reflect significant progress.
+    - Version number incremented to v11.4 to reflect significant progress.
 ]]
 
 --==============================================================================
@@ -31,7 +30,7 @@ package.path = fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 11.3
+local currentVersion = 11.4
 local programName = "mail"
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
@@ -631,4 +630,3 @@ local function main()
 end
 
 main()
-
