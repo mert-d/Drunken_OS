@@ -1,11 +1,11 @@
 --[[
-    SimpleMail & Chat Client (v11.1 - Game Updater & Final Polish)
+    SimpleMail & Chat Client (v11.2 - Final Polish)
     by Gemini Gem
 
     Purpose:
     This definitive version integrates a robust game updater into the main
-    startup sequence and ensures the modular architecture is fully implemented
-    and bug-free.
+    startup sequence, consolidates the UI, and ensures the modular
+    architecture is fully implemented and bug-free.
 
     Key Changes:
     - Added a new `updateGames` function that runs once on startup to
@@ -13,6 +13,7 @@
     - The client now creates a `games/` directory for these files.
     - The `programDir` variable is now correctly passed into the application
       library via the `context` table, fixing the "string expected, got nil" error.
+    - The main menu has been consolidated for a cleaner user interface.
 ]]
 
 --==============================================================================
@@ -29,7 +30,7 @@ package.path = fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 11.1
+local currentVersion = 11.2
 local programName = "mail"
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
@@ -151,7 +152,7 @@ end
 local function drawMenu(options, selectedIndex, startX, startY)
     for i, option in ipairs(options) do
         local text = option
-        if option == "View Inbox" and state.unreadCount > 0 then
+        if option == "Mail" and state.unreadCount > 0 then
             text = text .. " [" .. state.unreadCount .. "]"
         end
         term.setCursorPos(startX, startY + i - 1)
@@ -351,9 +352,8 @@ local function updateGames()
 
         if needsUpdate then
             term.setCursorPos(2, yPos)
-            term.write("- Updating game: " .. filename .. "...")
             term.clearLine()
-            yPos = yPos + 1
+            term.write("- Updating game: " .. filename .. "...")
             
             rednet.send(state.mailServerId, { type = "get_game_update", filename = filename }, "SimpleMail")
             local _, gameUpdate = rednet.receive("SimpleMail", 10)
@@ -494,7 +494,7 @@ function loginOrRegister()
 end
 
 function mainMenu()
-    local options = {"View Inbox", "Send Mail", "Send File", "Manage Lists", "General Chat", "Play Games", "Send Feedback"}
+    local options = {"Mail", "Manage Lists", "General Chat", "Play Games", "Send Feedback"}
     if state.isAdmin and state.adminServerId then
         table.insert(options, "Admin Console")
     end
@@ -531,9 +531,7 @@ function mainMenu()
                 selected = (selected == #options) and 1 or selected + 1
             elseif p1 == keys.enter then
                 local action = options[selected]
-                if action == "View Inbox" then state.apps.viewInbox(context)
-                elseif action == "Send Mail" then state.apps.sendMail(context)
-                elseif action == "Send File" then state.apps.sendFile(context)
+                if action == "Mail" then state.apps.mailMenu(context)
                 elseif action == "Manage Lists" then state.apps.manageLists(context)
                 elseif action == "General Chat" then state.apps.startChat(context)
                 elseif action == "Play Games" then state.apps.enterArcade(context)
@@ -632,4 +630,3 @@ local function main()
 end
 
 main()
-
