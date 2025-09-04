@@ -1,5 +1,5 @@
 --[[
-    SimpleMail & Chat Client (v11.2 - Final Polish)
+    SimpleMail & Chat Client (v11.3 - Final Polish)
     by Gemini Gem
 
     Purpose:
@@ -14,6 +14,7 @@
     - The `programDir` variable is now correctly passed into the application
       library via the `context` table, fixing the "string expected, got nil" error.
     - The main menu has been consolidated for a cleaner user interface.
+    - Version number incremented to v11.3 to reflect significant progress.
 ]]
 
 --==============================================================================
@@ -30,7 +31,7 @@ package.path = fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 11.2
+local currentVersion = 11.3
 local programName = "mail"
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
@@ -368,7 +369,7 @@ local function updateGames()
         end
     end
     
-    term.setCursorPos(2, yPos); term.write("All games are up to date!")
+    term.setCursorPos(2, yPos + 1); term.write("All games are up to date!")
     sleep(1.5)
 end
 
