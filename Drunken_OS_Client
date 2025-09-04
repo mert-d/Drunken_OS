@@ -152,7 +152,7 @@ end
 local function drawMenu(options, selectedIndex, startX, startY)
     for i, option in ipairs(options) do
         local text = option
-        if option == "Mail" and state.unreadCount > 0 then
+        if (option == "Mail" or option == "View Inbox") and state.unreadCount > 0 then
             text = text .. " [" .. state.unreadCount .. "]"
         end
         term.setCursorPos(startX, startY + i - 1)
@@ -630,3 +630,4 @@ local function main()
 end
 
 main()
+
