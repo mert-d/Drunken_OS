@@ -1,20 +1,17 @@
 --[[
-    SimpleMail & Chat Client (v11.6 - Unified Installer)
+    SimpleMail & Chat Client (v11.7 - Direct Library Download)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version refactors the library installer to use the same robust,
-    direct-download logic as the main client auto-updater. This fixes a
-    critical reboot loop and removes the dependency on the 'pastebin' program.
+    This version updates the client to use the new, more robust direct-download
+    protocol for installing required libraries.
 
     Key Changes:
-    - The `installDependencies` function no longer uses `shell.run("pastebin", ...)`
-    - It now requests library code directly from the server and writes it to
-      the `/lib/` folder using the fs API.
-    - Added comprehensive error checking to prevent reboot loops on download
-      or file-write failures.
+    - The `installDependencies` function now sends a "get_lib_code" request
+      to the server instead of the old "get_lib".
+    - This ensures it receives the raw library source code, fixing the reboot loop
+      and making the installation process fully self-contained and reliable.
 ]]
-
 
 --==============================================================================
 -- Environment & Path Setup
@@ -30,7 +27,7 @@ package.path = fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 11.6
+local currentVersion = 11.7
 local programName = "mail"
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
@@ -249,7 +246,8 @@ local function installDependencies()
                 return false -- Halt execution
             end
 
-            rednet.send(server, { type = "get_lib", lib = libName }, "SimpleMail")
+            -- Use the new, direct code transfer protocol.
+            rednet.send(server, { type = "get_lib_code", lib = libName }, "SimpleMail")
             local _, response = rednet.receive("SimpleMail", 10) -- Increased timeout for reliability
             
             if response and response.success and response.code then
