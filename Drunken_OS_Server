@@ -1,19 +1,19 @@
 --[[
-    Drunken OS - Mainframe Server (v10.3 - Timeout Fix)
+    Drunken OS - Mainframe Server (v10.4 - Direct Library Transfer)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version adds a critical fault-tolerance feature to the authentication
-    process. It prevents the server from hanging indefinitely if the external
-    HyperAuthClient server is unreachable.
+    This version adds a new, robust network handler to serve library files
+    directly to clients. This replaces the old, problematic system of sending
+    Pastebin codes.
 
     Key Changes:
-    - The `requestAuthCode` function has been refactored.
-    - It now uses `parallel.waitForAny` to run the `AuthClient.requestCode`
-      with a 5-second timeout.
-    - If the authentication request times out, it will log the error and send
-      a proper failure message to the client, preventing the client from crashing.
+    - Added a new mail handler: `mailHandlers.get_lib_code`.
+    - This handler reads library files from the server's `/lib/` directory
+      and sends the raw source code to the client.
+    - This ensures a reliable, self-contained installation process for clients.
 ]]
+
 --==============================================================================
 -- Environment Setup
 --==============================================================================
@@ -380,6 +380,30 @@ function mailHandlers.get_lib(senderId, message)
         rednet.send(senderId, { success = true, code = pasteCode }, "SimpleMail")
     else
         rednet.send(senderId, { success = false, reason = "Library not found." }, "SimpleMail")
+    end
+end
+
+function mailHandlers.get_lib_code(senderId, message)
+    local libName = message.lib
+    if not libName then return end
+
+    -- Construct the expected path on the server computer
+    local libPath = fs.combine(fs.getDir(shell.getRunningProgram()), "lib/" .. libName .. ".lua")
+    
+    if fs.exists(libPath) then
+        local file, err = fs.open(libPath, "r")
+        if file then
+            local code = file.readAll()
+            file.close()
+            rednet.send(senderId, { success = true, code = code }, "SimpleMail")
+            logActivity("Served library '" .. libName .. "' to client " .. senderId)
+        else
+            logActivity("Could not read library file '" .. libPath .. "': " .. tostring(err), true)
+            rednet.send(senderId, { success = false, reason = "Server file read error." }, "SimpleMail")
+        end
+    else
+        logActivity("Client requested non-existent library: '" .. libPath .. "'", true)
+        rednet.send(senderId, { success = false, reason = "Library not found on server." }, "SimpleMail")
     end
 end
 
