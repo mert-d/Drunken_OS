@@ -1,19 +1,18 @@
 --[[
-    SimpleMail & Chat Client (v11.4 - Final)
-    by Gemini Gem
+    SimpleMail & Chat Client (v11.5 - Dependency Fix)
+    by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive version integrates a robust, user-initiated game updater,
-    consolidates the UI, and ensures the modular architecture is fully
-    implemented and bug-free.
+    This version fixes a critical startup bug where the client could not
+    download required libraries if its initial server check failed.
 
     Key Changes:
-    - Version number incremented to v11.4 to reflect significant progress.
-    - The "Settings" menu has been renamed to "System" and now contains the
-      user-initiated "Update Games" function.
-    - The `updateGames` logic has been moved to the application library and
-      is based on previously working code to ensure reliability.
-    - The main menu has been consolidated for a cleaner user interface.
+    - The `installDependencies` function has been re-engineered to be
+      self-sufficient.
+    - It now performs its own `rednet.lookup` to find the server right
+      before it needs to download a missing library.
+    - This removes the circular dependency and makes the startup and
+      installation process much more robust and fault-tolerant.
 ]]
 
 --==============================================================================
@@ -30,23 +29,27 @@ package.path = fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 11.4
+local currentVersion = 11.5
 local programName = "mail"
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
 
--- This table holds the shared state of the application
+-- This table holds the program's state, which is passed to the app library.
 local state = {
-    username = nil,
-    nickname = nil,
-    unreadCount = 0,
-    isAdmin = false,
     mailServerId = nil,
     chatServerId = nil,
-    arcadeServerId = nil,
-    adminServerId = nil,
-    crypto = nil, -- Loaded after install
-    apps = nil -- Loaded after install
+    gameServerId = nil,
+    username = nil,
+    nickname = nil,
+    session_token = nil,
+    isAdmin = false,
+    programDir = programDir,
+    -- Forward-declare functions so the app library can call them
+    showMessage = nil,
+    drawMenu = nil,
+    drawWindow = nil,
+    getSafeSize = nil,
+    wordWrap = nil
 }
 
 --==============================================================================
@@ -216,71 +219,56 @@ local context = {
 --==============================================================================
 
 local function findServers()
-    drawWindow("Connecting")
-    term.setCursorPos(2, 4); term.write("Searching for servers...")
-
     state.mailServerId = rednet.lookup("SimpleMail", "mail.server")
+    if not state.mailServerId then return false, "Cannot find mail.server" end
+    
     state.chatServerId = rednet.lookup("SimpleChat", "chat.server")
-    state.arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
-    state.adminServerId = rednet.lookup("Drunken_Admin", "admin.server")
+    if not state.chatServerId then return false, "Cannot find chat.server" end
 
-    if not state.mailServerId or not state.chatServerId or not state.arcadeServerId then
-        return false, "Could not find all required servers."
-    end
-    if not state.adminServerId then
-        print("Admin server not found. Admin console disabled.")
-    end
+    state.gameServerId = rednet.lookup("ArcadeGames", "arcade.server")
+    if not state.gameServerId then return false, "Cannot find arcade.server" end
+    
     return true
 end
 
 local function installDependencies()
-    local yPos = 4
-    drawWindow("First-Time Setup")
-    term.setCursorPos(2, yPos); term.write("Checking for required libraries..."); yPos = yPos + 1
-
-    local libDir = fs.combine(programDir, "lib")
-    if not fs.exists(libDir) then
-        term.setCursorPos(2, yPos); term.write("- Creating library directory..."); yPos = yPos + 1
-        fs.makeDir(libDir)
-    end
-
+    local all_found = true
     for _, libName in ipairs(REQUIRED_LIBS) do
-        local localLibPath = fs.combine(libDir, libName .. ".lua")
-        if not fs.exists(localLibPath) then
-            term.setCursorPos(2, yPos); term.write("- Requesting library: " .. libName); yPos = yPos + 1
+        local ok = pcall(require, "lib." .. libName)
+        if not ok then
+            all_found = false
+            term.clear(); term.setCursorPos(1,1)
+            print("Missing required library: " .. libName)
+            print("Attempting to download from server...")
             
-            rednet.send(state.mailServerId, { type = "get_lib_paste", lib_name = libName }, "SimpleMail")
-            local _, response = rednet.receive("SimpleMail", 10)
+            -- Perform our own server lookup right when we need it.
+            local server = rednet.lookup("SimpleMail", "mail.server")
+            if not server then
+                print("Error: Cannot find mail.server to download libraries.")
+                return false
+            end
 
-            if response and response.code then
-                term.setCursorPos(2, yPos); term.write("- Downloading via Pastebin..."); yPos = yPos + 1
-                local success = shell.run("pastebin", "get", response.code, localLibPath)
-                if not success then
-                    showMessage("Installation Error", "Pastebin download failed. Check HTTP is enabled.")
-                    return false
-                end
+            rednet.send(server, { type = "get_lib", lib = libName }, "SimpleMail")
+            local _, response = rednet.receive("SimpleMail", 5)
+            
+            if response and response.success and response.code then
+                print("Download successful. Installing...")
+                shell.run("pastebin", "put", response.code, "/lib/" .. libName)
+                sleep(1) -- Give fs time to process
             else
-                showMessage("Installation Error", "Failed to download '"..libName.."' from server.")
+                print("Error: Could not download library.")
+                print("Reason: " .. (response and response.reason or "Timeout"))
                 return false
             end
         end
     end
-
-    local ok_c, lib_c = pcall(require, "lib.sha1_hmac")
-    local ok_a, lib_a = pcall(require, "lib.drunken_os_apps")
-    if ok_c and ok_a then
-        state.crypto = lib_c
-        state.apps = lib_a
-        -- Pass the updateGames function into the context for the app library to use
-        context.updateGames = updateGames
-    else
-        showMessage("Installation Error", "Failed to load a critical library. The program cannot continue.")
-        return false
+    if not all_found then
+        print("All libraries installed. Rebooting...")
+        sleep(2)
+        os.reboot()
+        return true -- Although it will reboot, signal that the process needs to stop.
     end
-    
-    term.setCursorPos(2, yPos); term.write("Setup complete!"); yPos = yPos + 1
-    sleep(1.5)
-    return true
+    return false -- Signal that no reboot is needed.
 end
 
 local function autoUpdateCheck()
