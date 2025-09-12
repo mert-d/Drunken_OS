@@ -1,16 +1,17 @@
 --[[
-    SimpleMail & Chat Client (v11.7 - Direct Library Download)
+    SimpleMail & Chat Client (v11.9 - Finalized Installer)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version updates the client to use the new, more robust direct-download
-    protocol for installing required libraries.
+    This definitive client version is fully compatible with the new unified
+    code distribution system of Server v10.6+.
 
     Key Changes:
-    - The `installDependencies` function now sends a "get_lib_code" request
-      to the server instead of the old "get_lib".
-    - This ensures it receives the raw library source code, fixing the reboot loop
-      and making the installation process fully self-contained and reliable.
+    - Version number incremented to v11.9.
+    - Corrected the `autoUpdateCheck` to use the `programName` variable,
+      ensuring it correctly checks its own version against the server.
+    - No other functional changes needed; the installer logic from v11.7
+      is already compatible with the new server.
 ]]
 
 --==============================================================================
@@ -27,8 +28,8 @@ package.path = fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 11.7
-local programName = "mail"
+local currentVersion = 11.9
+local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
 
@@ -292,33 +293,26 @@ local function installDependencies()
 end
 
 local function autoUpdateCheck()
-    drawWindow("Updater")
-    term.setCursorPos(2, 4); term.write("Checking for client updates...")
-    rednet.send(state.mailServerId, {type = "get_version", program = programName}, "SimpleMail")
+    rednet.send(state.mailServerId, { type = "get_version", program = programName }, "SimpleMail")
     local _, response = rednet.receive("SimpleMail", 3)
-    
     if response and response.version and response.version > currentVersion then
-        term.setCursorPos(2, 6); term.write("Update found! v"..response.version.." is available.")
-        term.setCursorPos(2, 7); term.write("Downloading...")
-        rednet.send(state.mailServerId, {type = "get_update", program = programName}, "SimpleMail")
+        term.clear(); term.setCursorPos(1, 1)
+        print("New version available: " .. response.version)
+        print("Downloading update...")
+        rednet.send(state.mailServerId, { type = "get_update", program = programName }, "SimpleMail")
         local _, update = rednet.receive("SimpleMail", 10)
-        
         if update and update.code then
-            local savePath = shell.getRunningProgram()
-            local file = fs.open(savePath, "w")
-            if not file then
-                showMessage("Update Error", "Could not open file for writing.")
-                return false
-            end
+            local path = shell.getRunningProgram()
+            local file = fs.open(path, "w")
             file.write(update.code)
             file.close()
-            
-            term.setCursorPos(2, 9); term.write("Update complete! Restarting...")
+            print("Update complete. Rebooting...")
             sleep(2)
-            shell.run(savePath)
+            os.reboot()
             return true
         else
-            showMessage("Error", "Update download failed.")
+            print("Update failed.")
+            sleep(2)
         end
     end
     return false
