@@ -1,18 +1,16 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v4.14 - Definitive Stable Fix)
+    Drunken Beard Bank - ATM Terminal (v5.0 - Definitive Stable Build)
     by Gemini Gem & MuhendizBey
 
     Purpose:
     This is the definitive, stable version of the ATM script, built upon the
-    user-provided working baseline (v4.3). It incorporates a user-suggested
-    hardcoded turtle ID for reliability and the single necessary fix for
-    the login handshake, while preserving all original, working logic and UI.
+    user-provided working baseline (v4.3). It incorporates only the essential
+    fixes for modern compatibility while preserving all original, working logic.
 
     Key Changes:
-    - Added a `CLERK_TURTLE_ID` variable at the top for easy configuration.
-    - Removed the unreliable `rednet.lookup` for the turtle.
+    - Added a user-configurable CLERK_TURTLE_ID for reliable connection.
     - The login function now correctly sends the password hash to the Bank Server.
-    - All other logic and UI is identical to the trusted v4.3.
+    - All other logic, UI, and functionality is identical to the trusted v4.3.
 ]]
 
 --==============================================================================
@@ -25,8 +23,8 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
--- THE FIX: Hardcoded Turtle ID for reliability, as requested.
-local CLERK_TURTLE_ID = 73 -- <<< SET YOUR TURTLE'S ID HERE
+-- <<< SET YOUR TURTLE'S COMPUTER ID HERE
+local CLERK_TURTLE_ID = 73 
 
 local bankServerId = nil
 local turtleClerkId = nil -- This will be set from the config above
@@ -62,7 +60,7 @@ local function showMessage(title, message)
     print(titleText)
 
     local lines = {}
-    for line in message:gmatch("[^\n]+") do
+    for line in message:gmatch("[^\\n]+") do
         while #line > w - 4 do
             table.insert(lines, line:sub(1, w - 4))
             line = line:sub(w - 3)
@@ -137,7 +135,6 @@ local function login()
 
     if pass_hash == card_data.pass_hash then
         print("Password verified. Contacting bank server...")
-        -- THE FIX: Send the verified hash to the server.
         rednet.send(bankServerId, { type = "login", user = username, pass_hash = pass_hash }, BANK_PROTOCOL)
         local _, response = rednet.receive(BANK_PROTOCOL, 10)
         
@@ -250,7 +247,7 @@ local function runSession()
     bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
     if not bankServerId then error("Could not find bank server.", 0) end
     
-    -- THE FIX: Use the hardcoded ID. No more unreliable lookups.
+    -- Use the configured ID
     turtleClerkId = CLERK_TURTLE_ID
 
     clear()
@@ -293,7 +290,7 @@ local function runSession()
         mainMenu()
     else
         disk.eject(p1)
-        print("\nCard ejected.")
+        print("\\nCard ejected.")
         sleep(2)
     end
 end
