@@ -122,9 +122,11 @@ local function login()
     term.clear(); term.setCursorPos(1,1)
     print("Please enter your Drunken OS password.")
     write("> ")
-    term.setCursorVisible(true)
+    -- THE FIX: Use the correct API function.
+    term.setCursorBlink(true)
     local pass = read("*")
-    term.setCursorVisible(false)
+    -- THE FIX: Use the correct API function.
+    term.setCursorBlink(false)
 
     if not pass or pass == "" then return false end
 
@@ -133,7 +135,6 @@ local function login()
     if pass_hash == card_data.pass_hash then
         print("Password verified locally. Contacting bank server...")
         
-        -- THE FIX: We now include the verified pass_hash in the message.
         rednet.send(bankServerId, { type = "login", user = username, pass_hash = pass_hash }, BANK_PROTOCOL)
         
         local _, response = rednet.receive(BANK_PROTOCOL, 10)
