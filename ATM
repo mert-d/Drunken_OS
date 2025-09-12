@@ -1,22 +1,24 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v4.6 - Scope and Data Fix)
-    by Gemini Gem & MuhendizBey
+    Drunken Beard Bank - ATM Terminal (v4.3 - Refactored Crypto)
+    by Gemini Gem
 
     Purpose:
-    This version fixes a critical runtime error caused by a variable scope
-    issue, where the login function could not access the data read from
-    the bank card.
+    This version refactors the cryptographic functions into the new, separate
+    `lib/sha1_hmac.lua` library. This is the final step in modularizing the
+    entire OS.
 
     Key Changes:
-    - The `login` function now accepts a `card_data` table as a parameter.
-    - The `runSession` function now passes the locally read `card_data`
-      directly to the `login` function.
+    - Removed the embedded SHA1 library block.
+    - Added a `require()` call to the new `lib/sha1_hmac` library.
+    - Updated password hashing calls to use the new crypto library.
 ]]
 
 --==============================================================================
 -- API & Library Initialization
 --==============================================================================
 
+-- It is assumed the `sha1_hmac` library is available, as the user would
+-- typically install it with the main Drunken_OS_Client first.
 local crypto = require("lib.sha1_hmac")
 
 --==============================================================================
@@ -29,6 +31,7 @@ local username = nil
 local balance = 0
 local currencyRates = {}
 
+-- Rednet protocols
 local BANK_PROTOCOL = "DB_Bank"
 local TURTLE_CLERK_PROTOCOL = "DB_ATM_Turtle"
 
@@ -115,39 +118,24 @@ end
 -- Banking Functions
 --==============================================================================
 
-local function login(card_data) -- THE FIX: Function now accepts card_data
-    term.clear(); term.setCursorPos(1,1)
-    print("Please enter your Drunken OS password.")
-    write("> ")
-    term.setCursorBlink(true)
-    local pass = read("*")
-    term.setCursorBlink(false)
-
-    if not pass or pass == "" then return false end
-
-    local pass_hash = crypto.hex(pass)
-
-    if pass_hash == card_data.pass_hash then -- THE FIX: Now correctly accesses the passed-in table
-        print("Password verified locally. Contacting bank server...")
-        
-        rednet.send(bankServerId, { type = "login", user = username, pass_hash = pass_hash }, BANK_PROTOCOL)
-        
-        local _, response = rednet.receive(BANK_PROTOCOL, 10)
-        
+local function login(user)
+    drawWindow("Drunken Beard Bank - Login")
+    term.setCursorPos(2, 4); term.write("Card detected for user: " .. user)
+    local pass = readInput("Password: ", 6, true)
+    if pass and pass ~= "" then
+        -- Use the new crypto library for hashing
+        rednet.send(bankServerId, { type = "login", user = user, pass = pass }, BANK_PROTOCOL)
+        local _, response = rednet.receive(BANK_PROTOCOL, 5)
         if response and response.success then
+            username = user
             balance = response.balance
-            currencyRates = response.rates
-            print("Login successful!")
-            sleep(1)
             return true
         else
-            showMessage("Login Failed", (response and response.reason) or "No response from server.")
+            showMessage("Login Failed", response and response.reason or "No response from server.", true)
             return false
         end
-    else
-        showMessage("Login Failed", "Invalid password.")
-        return false
     end
+    return false
 end
 
 local function deposit()
@@ -255,53 +243,100 @@ end
 --==============================================================================
 
 local function runSession()
-    term.clear(); term.setCursorPos(1,1)
-    print("Drunken Beard Bank")
-    print("Please insert your bank card...")
-
     local drive = peripheral.find("drive")
     if not drive then
-        showMessage("ATM Error", "No Disk Drive is attached to this terminal.")
+        showMessage("ATM Error", "No disk drive attached.", true)
         return
+    end
+
+    rednet.open("back")
+    drawWindow("Connecting..."); term.setCursorPos(2, 4); term.write("Finding Bank Server...")
+    bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
+    if not bankServerId then
+        showMessage("Error", "Could not connect to the bank server.", true)
+        rednet.close("back"); return
     end
     
-    local event, side = os.pullEvent("disk")
-    if peripheral.getName(drive) ~= side then return end -- Not our drive
+    term.setCursorPos(2, 5); term.write("Finding Vault Clerk...")
+    turtleClerkId = rednet.lookup(TURTLE_CLERK_PROTOCOL)
+    if not turtleClerkId then
+        showMessage("Error", "Could not connect to the vault clerk.", true)
+        rednet.close("back"); return
+    end
 
-    local disk_label = disk.getLabel(side)
-    if not disk_label or not disk_label:match("^DrunkenBeard_Card_.+") then
-        showMessage("Card Error", "This is not a valid Drunken Beard Bank card.")
-        disk.eject(side)
-        return
+    drawWindow("Drunken Beard Bank")
+    term.setCursorPos(2, 4); term.write("Please insert your bank card...")
+    
+    local user_from_card = nil
+    while not user_from_card do
+        local event, side = os.pullEvent("disk")
+        
+        if drive.isDiskPresent() then
+            local mount_path = drive.getMountPath()
+            if mount_path and fs.exists(mount_path .. "/.bankcard") then
+                local file = fs.open(mount_path .. "/.bankcard", "r")
+                if file then
+                    user_from_card = file.readAll()
+                    file.close()
+                end
+            end
+        end
     end
     
-    username = disk_label:match("^DrunkenBeard_Card_(.+)")
-    local handle = fs.open(disk.getMountPath(side) .. "/.card_data", "r")
-    if not handle then
-        showMessage("Card Error", "Card is missing its data file.")
-        disk.eject(side)
-        return
+    if not login(user_from_card) then
+        drive.ejectDisk()
+        showMessage("Login Failed", "Please take your card.", true)
+        rednet.close("back"); return
     end
 
-    local card_contents = handle.readAll()
-    handle.close()
-    local ok, card_data_local = pcall(textutils.unserialize, card_contents)
-
-    if not ok or not card_data_local then
-        showMessage("Card Error", "Card data is corrupt.")
-        disk.eject(side)
-        return
+    -- Fetch latest rates after successful login
+    rednet.send(bankServerId, { type = "get_balance_and_rates", user = username }, BANK_PROTOCOL)
+    local _, response = rednet.receive(BANK_PROTOCOL, 5)
+    if response then
+        balance = response.balance or balance
+        currencyRates = response.rates or {}
     end
 
-    local loggedIn = login(card_data_local) -- THE FIX: Pass the local card data to the login function
-
-    if loggedIn then
-        mainMenu()
+    local options = {"View Balance & Rates", "Deposit", "Withdraw", "Exit"}
+    local selected = 1
+    while true do
+        drawWindow("Drunken Beard Bank")
+        term.setCursorPos(2, 4); term.write("Welcome, " .. username)
+        term.setCursorPos(2, 5); term.write("Current Balance: $" .. balance)
+        drawMenu(options, selected, 2, 8)
+        
+        local event, key = os.pullEvent("key")
+        if key == keys.up then selected = (selected == 1) and #options or selected - 1
+        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+        elseif key == keys.enter then
+            if selected == 1 then
+                rednet.send(bankServerId, { type = "get_balance_and_rates", user = username }, BANK_PROTOCOL)
+                local _, rate_response = rednet.receive(BANK_PROTOCOL, 5)
+                if rate_response and rate_response.balance then
+                    balance = rate_response.balance
+                    currencyRates = rate_response.rates
+                    drawWindow("Balance & Rates")
+                    term.setCursorPos(2, 4); term.write("Current Balance: $" .. balance)
+                    term.setCursorPos(2, 6); term.write("--- Live Exchange Rates ---")
+                    local y = 7
+                    for item, data in pairs(currencyRates) do
+                        local name = item:gsub("minecraft:", ""):gsub("_", " ")
+                        term.setCursorPos(2, y); term.write(string.format("1 %s = $%d", name, data.current))
+                        y = y + 1
+                    end
+                    term.setCursorPos(2, y+1); term.write("Press any key to return...")
+                    os.pullEvent("key")
+                end
+            elseif selected == 2 then deposit()
+            elseif selected == 3 then withdraw()
+            elseif selected == 4 then break end
+        elseif key == keys.tab or key == keys.q then break end
     end
 
-    disk.eject(side)
-    print("\nCard ejected. Thank you!")
-    sleep(2)
+    drive.ejectDisk()
+    rednet.close("back")
+    clear(); print("Thank you for banking with Drunken Beard Bank!")
+    sleep(2) -- Pause before the program reboots
 end
 
 --==============================================================================
@@ -309,20 +344,21 @@ end
 --==============================================================================
 
 while true do
-    local ok, err = pcall(function()
-        local modem = peripheral.find("modem")
-        if not modem then error("No modem attached.", 0) end
-        rednet.open(peripheral.getName(modem))
-
-        bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
-        if not bankServerId then error("Could not find bank server.", 0) end
-        
-        runSession()
-        rednet.close()
-    end)
-    
+    local ok, err = pcall(runSession)
     if not ok then
-        showMessage("Fatal Error", tostring(err))
+        -- If an error occurred, log it and reboot
+        local file = fs.open("atm_crash.log", "a")
+        if file then
+            file.writeLine(os.date() .. " - FATAL ERROR: " .. tostring(err))
+            file.close()
+        end
+        
+        clear()
+        term.setTextColor(colors.red)
+        print("A fatal error occurred. The ATM will now reboot.")
+        print(err)
         sleep(5)
+        os.reboot()
     end
+    -- If the session ended normally (user exited), the loop will just restart
 end
