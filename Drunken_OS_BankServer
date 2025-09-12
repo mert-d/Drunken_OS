@@ -1,15 +1,14 @@
 --[[
-    Drunken OS - Bank Server (v2.4 - Refactored Crypto)
-    by Gemini Gem
+    Drunken OS - Bank Server (v2.5 - Login Handshake Fix)
+    by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version refactors the cryptographic functions into the new, separate
-    `lib/sha1_hmac.lua` library. This greatly simplifies the server code.
+    This version fixes a critical bug where the server did not correctly
+    handle the password hash from the ATM during login.
 
     Key Changes:
-    - Removed the large, embedded SHA1 & HMAC library block.
-    - Added a `require()` call to the new `lib/sha1_hmac` library.
-    - Updated password hashing and HMAC signing calls to use the new crypto library.
+    - The `login` network handler now correctly reads `message.pass_hash`
+      from the incoming ATM request and validates it against the database.
 ]]
 
 --==============================================================================
@@ -260,23 +259,18 @@ end
 
 local bankHandlers = {}
 
-function bankHandlers.login(senderId, message)
-    logActivity("Forwarding login request for '" .. message.user .. "' to main server via wired modem.")
-    rednet.send(mainServerId, {
-        type = "auth_check",
-        user = message.user,
-        pass_hash = crypto.hex(message.pass)
-    }, AUTH_INTERLINK_PROTOCOL)
-
-    local _, response, proto = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
-
-    if response and response.user == message.user and response.success then
-        logActivity("Auth success for '" .. message.user .. "'.")
-        if not accounts[message.user] then accounts[message.user] = 0 end
-        rednet.send(senderId, { success = true, balance = accounts[message.user] }, BANK_PROTOCOL)
+function handlers.login(senderId, message)
+    local account = accounts[message.user]
+    if account and account.pass_hash == message.pass_hash then
+        logTransaction(message.user, "login", "SUCCESS")
+        rednet.send(senderId, {
+            success = true,
+            balance = account.balance,
+            rates = currencyRates
+        }, BANK_PROTOCOL)
     else
-        logActivity("Auth failed for '" .. message.user .. "'.", true)
-        rednet.send(senderId, { success = false, reason = "Invalid username or password." }, BANK_PROTOCOL)
+        logTransaction(message.user, "login", "FAIL - Invalid Credentials")
+        rednet.send(senderId, { success = false, reason = "Invalid credentials." }, BANK_PROTOCOL)
     end
 end
 
