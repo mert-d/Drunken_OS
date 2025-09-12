@@ -1,19 +1,20 @@
 --[[
-    SimpleMail & Chat Client (v11.5 - Dependency Fix)
+    SimpleMail & Chat Client (v11.6 - Unified Installer)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version fixes a critical startup bug where the client could not
-    download required libraries if its initial server check failed.
+    This version refactors the library installer to use the same robust,
+    direct-download logic as the main client auto-updater. This fixes a
+    critical reboot loop and removes the dependency on the 'pastebin' program.
 
     Key Changes:
-    - The `installDependencies` function has been re-engineered to be
-      self-sufficient.
-    - It now performs its own `rednet.lookup` to find the server right
-      before it needs to download a missing library.
-    - This removes the circular dependency and makes the startup and
-      installation process much more robust and fault-tolerant.
+    - The `installDependencies` function no longer uses `shell.run("pastebin", ...)`
+    - It now requests library code directly from the server and writes it to
+      the `/lib/` folder using the fs API.
+    - Added comprehensive error checking to prevent reboot loops on download
+      or file-write failures.
 ]]
+
 
 --==============================================================================
 -- Environment & Path Setup
@@ -29,7 +30,7 @@ package.path = fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 11.5
+local currentVersion = 11.6
 local programName = "mail"
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
@@ -232,43 +233,64 @@ local function findServers()
 end
 
 local function installDependencies()
-    local all_found = true
+    local needsReboot = false
     for _, libName in ipairs(REQUIRED_LIBS) do
         local ok = pcall(require, "lib." .. libName)
         if not ok then
-            all_found = false
+            needsReboot = true -- A reboot will be required if we install anything.
             term.clear(); term.setCursorPos(1,1)
             print("Missing required library: " .. libName)
             print("Attempting to download from server...")
-            
-            -- Perform our own server lookup right when we need it.
+
             local server = rednet.lookup("SimpleMail", "mail.server")
             if not server then
                 print("Error: Cannot find mail.server to download libraries.")
-                return false
+                print("Please check server and network connection.")
+                return false -- Halt execution
             end
 
             rednet.send(server, { type = "get_lib", lib = libName }, "SimpleMail")
-            local _, response = rednet.receive("SimpleMail", 5)
+            local _, response = rednet.receive("SimpleMail", 10) -- Increased timeout for reliability
             
             if response and response.success and response.code then
                 print("Download successful. Installing...")
-                shell.run("pastebin", "put", response.code, "/lib/" .. libName)
+                local libPath = fs.combine(programDir, "lib/" .. libName .. ".lua")
+                
+                -- Ensure the /lib/ directory exists
+                if not fs.isDir(fs.combine(programDir, "lib")) then
+                    fs.makeDir(fs.combine(programDir, "lib"))
+                end
+
+                local file, err = fs.open(libPath, "w")
+                if not file then
+                    print("Error: Could not open file for writing at:")
+                    print(libPath)
+                    print("Reason: " .. tostring(err))
+                    return false -- Halt execution
+                end
+                
+                file.write(response.code)
+                file.close()
+                print("Library '" .. libName .. "' installed.")
                 sleep(1) -- Give fs time to process
             else
                 print("Error: Could not download library.")
                 print("Reason: " .. (response and response.reason or "Timeout"))
-                return false
+                return false -- Halt execution
             end
         end
     end
-    if not all_found then
+    
+    if needsReboot then
         print("All libraries installed. Rebooting...")
         sleep(2)
         os.reboot()
-        return true -- Although it will reboot, signal that the process needs to stop.
+        -- The program will not reach here, but we return true for logical consistency.
+        return true 
     end
-    return false -- Signal that no reboot is needed.
+    
+    -- If we get here, no installation was needed.
+    return true -- Signal success
 end
 
 local function autoUpdateCheck()
@@ -599,11 +621,18 @@ local function main()
         else
             if autoUpdateCheck() then return end
             
+            -- The installDependencies function now returns true on success,
+            -- and false on a critical failure that requires stopping.
             if not installDependencies() then
-                rednet.close("back"); sleep(5); os.reboot(); return
+                -- A critical error occurred during installation, so we stop.
+                print("Halting due to installation error.")
+                return 
             end
             
-            -- updateGames() -- Removed from startup
+            -- If we reach here, it means either no reboot was needed, or the
+            -- os.reboot() call is pending. The old logic was flawed.
+            -- After a successful install and reboot, the script will restart
+            -- and this block will be passed correctly.
             
             state.username = nil
             state.isAdmin = false
