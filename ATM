@@ -137,42 +137,34 @@ end
 -- Main Application Logic
 --==============================================================================
 
-local function login()
-    setStatus("Requesting salt for user " .. username .. "...")
-    rednet.send(bankServerId, ("getsalt \"%s\""):format(username), BANK_PROTOCOL)
+local function login(user)
+    drawWindow("Drunken Beard Bank - Login")
+    term.setCursorPos(2, 4)
+    term.write("Card detected for user: " .. user)
 
-    local sender, salt = rednet.receive(BANK_PROTOCOL, 5)
-    if not sender then
-        setStatus("Server did not respond to salt request.", COLOR_ERROR)
-        sleep(2)
-        return false
+    local pass = readInput("Password: ", 6, true)
+    if pass and pass ~= "" then
+        -- Hash the password using the crypto library before sending.
+        local pass_hash = crypto.sha1_hex(pass)
+
+        -- Send the hashed password to the server.
+        rednet.send(bankServerId, {
+            type = "login",
+            user = user,
+            pass_hash = pass_hash
+        }, BANK_PROTOCOL)
+
+        local _, response = rednet.receive(BANK_PROTOCOL, 5)
+        if response and response.success then
+            username = user
+            balance = response.balance
+            return true
+        else
+            showMessage("Login Failed", response and response.reason or "No response from server.", true)
+            return false
+        end
     end
-
-    if salt == "UNKNOWN_USER" then
-        setStatus("Username not recognized by server.", COLOR_ERROR)
-        sleep(2)
-        return false
-    end
-
-    local password = passwordPrompt()
-    if not password then return false end
-
-    local hashedPassword = crypto.sha1_hmac(tostring(salt), password)
-    setStatus("Verifying credentials...")
-    rednet.send(bankServerId, ("login \"%s\" \"%s\""):format(username, hashedPassword), BANK_PROTOCOL)
-
-    local _, response = rednet.receive(BANK_PROTOCOL, 5)
-    if response == "true" then
-        setStatus("Login successful.", COLOR_SUCCESS)
-        rednet.send(bankServerId, "get_balance", BANK_PROTOCOL)
-        local _, newBalance = rednet.receive(BANK_PROTOCOL, 5)
-        balance = tonumber(newBalance) or 0
-        return true
-    else
-        setStatus("Invalid PIN.", COLOR_ERROR)
-        sleep(2)
-        return false
-    end
+    return false
 end
 
 local function deposit()
