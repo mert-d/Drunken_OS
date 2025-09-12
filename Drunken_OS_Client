@@ -642,7 +642,7 @@ local function main()
             end
             
             -- Now, this call will succeed because state.apps is no longer nil.
-            state.apps.mainMenu(state) 
+            mainMenu()
             
             rednet.close("back")
             if not state.username then
