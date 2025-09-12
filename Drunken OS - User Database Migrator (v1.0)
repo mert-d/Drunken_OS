@@ -1,0 +1,119 @@
+--[[
+    Drunken OS - User Database Migrator (v1.0)
+    by Gemini Gem
+
+    Purpose:
+    This is a one-time utility to fix a password hashing incompatibility.
+    Older server versions double-hashed passwords before saving them. This
+    script will guide the admin through re-hashing all user passwords to the
+    correct, single-hash format required by server v10.1 and later.
+
+    Instructions:
+    1. STOP your main Drunken_OS_Server script.
+    2. Place this file on the server computer in the same directory as your
+       'users.db' and the '/lib/' folder.
+    3. Run this script: `Drunken_OS_DB_Migrator`
+    4. For each user listed, you will be prompted to enter their original
+       plain-text password.
+    5. The script will re-hash the password correctly and update the database.
+    6. Once complete, you can delete this script and restart your main server.
+]]
+
+--==============================================================================
+-- Initialization
+--==============================================================================
+
+local USERS_DB = "users.db"
+
+-- Load the crypto library, which is essential for this operation.
+local ok_crypto, crypto = pcall(require, "lib.sha1_hmac")
+if not ok_crypto then
+    error("Could not find the 'lib/sha1_hmac' library. Please ensure it is in the /lib/ directory.", 0)
+end
+
+-- Load the existing user database.
+if not fs.exists(USERS_DB) then
+    print("No 'users.db' file found. Nothing to migrate.")
+    return
+end
+
+local file = fs.open(USERS_DB, "r")
+local data = file.readAll()
+file.close()
+
+local success, users = pcall(textutils.unserialize, data)
+if not success or type(users) ~= "table" then
+    error("Could not read or parse 'users.db'. The file may be corrupt.", 0)
+end
+
+--==============================================================================
+-- Migration Process
+--==============================================================================
+
+term.clear()
+term.setCursorPos(1, 1)
+print("--- Drunken OS User Password Migration ---")
+print("This tool will update your user database to the new password format.")
+print("You will be prompted to enter the ORIGINAL password for each user.")
+print("--------------------------------------------------")
+
+local updatedCount = 0
+
+-- Iterate through every user in the database.
+for username, userData in pairs(users) do
+    print("\nProcessing user: " .. username)
+    write(" > Enter original password (or press Enter to skip): ")
+    
+    local plainTextPassword = read()
+
+    -- If a password was entered, update the hash.
+    if plainTextPassword and #plainTextPassword > 0 then
+        local newHash = crypto.hex(plainTextPassword)
+        
+        -- Check if the old hash matches a double-hash of the entered password.
+        -- This is a safety check to help ensure the correct password was entered.
+        if userData.password == crypto.hex(newHash) then
+            userData.password = newHash
+            print("   Password OK. Hash updated.")
+            updatedCount = updatedCount + 1
+        else
+            print("   WARNING: The entered password does not seem to match the old one.")
+            write("   Are you sure you want to update? (y/n): ")
+            local confirm = read():lower()
+            if confirm == "y" or confirm == "yes" then
+                userData.password = newHash
+                print("   Hash updated by force.")
+                updatedCount = updatedCount + 1
+            else
+                print("   Skipping user " .. username)
+            end
+        end
+    else
+        print("   Skipping user " .. username)
+    end
+end
+
+--==============================================================================
+-- Save Results
+--==============================================================================
+
+print("--------------------------------------------------")
+print("Migration complete.")
+print(updatedCount .. " user(s) updated.")
+
+if updatedCount > 0 then
+    write("Save changes to 'users.db'? (y/n): ")
+    local finalConfirm = read():lower()
+    if finalConfirm == "y" or finalConfirm == "yes" then
+        local saveFile = fs.open(USERS_DB, "w")
+        saveFile.write(textutils.serialize(users))
+        saveFile.close()
+        print("Database saved successfully!")
+    else
+        print("Changes discarded.")
+    end
+else
+    print("No changes were made.")
+end
+
+print("You may now restart your Drunken_OS_Server.")
