@@ -1,17 +1,19 @@
 --[[
-    Drunken OS - Mainframe Server (v10.4 - Direct Library Transfer)
+    Drunken OS - Mainframe Server (v10.6 - Unified Publisher)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version adds a new, robust network handler to serve library files
-    directly to clients. This replaces the old, problematic system of sending
-    Pastebin codes.
+    This definitive version unifies all code distribution through a single,
+    database-driven system, based on a superior engineering proposal. The server
+    no longer serves files from its local disk, but from a managed database.
 
     Key Changes:
-    - Added a new mail handler: `mailHandlers.get_lib_code`.
-    - This handler reads library files from the server's `/lib/` directory
-      and sends the raw source code to the client.
-    - This ensures a reliable, self-contained installation process for clients.
+    - The `publish` command is now the single method for publishing ALL code,
+      including programs and libraries. It now supports un-versioned libraries.
+    - The `publishlib` and `setlibpaste` commands have been removed as they
+      are now obsolete, streamlining the admin experience.
+    - The `get_lib_code` network handler now correctly serves files directly from
+      the central code database (`programCode` table).
 ]]
 
 --==============================================================================
@@ -373,37 +375,17 @@ function mailHandlers.get_update(senderId, message)
     rednet.send(senderId, { code = programCode[message.program] }, "SimpleMail")
 end
 
-function mailHandlers.get_lib(senderId, message)
-    local libName = message.lib
-    local pasteCode = libraryPastes[libName]
-    if pasteCode then
-        rednet.send(senderId, { success = true, code = pasteCode }, "SimpleMail")
-    else
-        rednet.send(senderId, { success = false, reason = "Library not found." }, "SimpleMail")
-    end
-end
-
+-- UNIFIED LIBRARY HANDLER: Serves code directly from the programCode database.
 function mailHandlers.get_lib_code(senderId, message)
     local libName = message.lib
     if not libName then return end
 
-    -- Construct the expected path on the server computer
-    local libPath = fs.combine(fs.getDir(shell.getRunningProgram()), "lib/" .. libName .. ".lua")
-    
-    if fs.exists(libPath) then
-        local file, err = fs.open(libPath, "r")
-        if file then
-            local code = file.readAll()
-            file.close()
-            rednet.send(senderId, { success = true, code = code }, "SimpleMail")
-            logActivity("Served library '" .. libName .. "' to client " .. senderId)
-        else
-            logActivity("Could not read library file '" .. libPath .. "': " .. tostring(err), true)
-            rednet.send(senderId, { success = false, reason = "Server file read error." }, "SimpleMail")
-        end
+    if programCode[libName] then
+        rednet.send(senderId, { success = true, code = programCode[libName] }, "SimpleMail")
+        logActivity("Served library '" .. libName .. "' to client " .. senderId)
     else
-        logActivity("Client requested non-existent library: '" .. libPath .. "'", true)
-        rednet.send(senderId, { success = false, reason = "Library not found on server." }, "SimpleMail")
+        logActivity("Client requested non-existent library: '" .. libName .. "'", true)
+        rednet.send(senderId, { success = false, reason = "Library not in server database." }, "SimpleMail")
     end
 end
 
@@ -655,7 +637,7 @@ local adminCommands = {}
 function adminCommands.help()
     logActivity("--- Mainframe Admin Commands ---")
     logActivity("users, deluser, lists, dellist, board, delscore")
-    logActivity("motd, broadcast, publish, addgame, delgame, games, publishgame, setlibpaste")
+    logActivity("motd, broadcast, publish, addgame, delgame, games, publishgame")
 end
 
 function adminCommands.users()
@@ -752,25 +734,52 @@ function adminCommands.broadcast(a)
 end
 
 function adminCommands.publish(a)
-    local p, v = a[2], a[3]
-    if not p or not v then
-        logActivity("Usage: publish <prog> <ver>")
+    local progName, versionOrPath = a[2], a[3]
+    if not progName or not versionOrPath then
+        logActivity("Usage: publish <name> <version_or_path>")
+        logActivity("For programs: publish Drunken_OS_Client 11.9")
+        logActivity("For libraries: publish sha1_hmac /lib/sha1_hmac.lua")
         return
     end
-    local n = tonumber(v)
-    if not n then
-        logActivity("Version must be a number.")
-        return
-    end
-    logActivity("Waiting for '" .. p .. "' v" .. n)
-    local _, m = rednet.receive("Publication", 15)
-    if m and m.code then
-        programCode[p] = m.code
-        programVersions[p] = n
-        saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
-        logActivity("Published " .. p .. " v" .. n)
+
+    local isLibrary = fs.exists(versionOrPath)
+
+    if isLibrary then
+        -- This is a library publication
+        local filePath = versionOrPath
+        local file, err = fs.open(filePath, "r")
+        if not file then
+            logActivity("Error opening file: " .. tostring(err), true)
+            return
+        end
+
+        local code = file.readAll()
+        file.close()
+
+        programCode[progName] = code
+        if saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode}) then
+            logActivity("Published library '" .. progName .. "' to code database.")
+        else
+            logActivity("Error: Could not save updater database.", true)
+            programCode[progName] = nil -- Revert on failure
+        end
     else
-        logActivity("Publish timed out.")
+        -- This is a versioned program publication
+        local n = tonumber(versionOrPath)
+        if not n then
+            logActivity("Version must be a number for programs.", true)
+            return
+        end
+        logActivity("Waiting for '" .. progName .. "' v" .. n .. " publication...")
+        local _, m = rednet.receive("Publication", 15)
+        if m and m.code then
+            programCode[progName] = m.code
+            programVersions[progName] = n
+            saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
+            logActivity("Published " .. progName .. " v" .. n)
+        else
+            logActivity("Publish timed out.")
+        end
     end
 end
 
