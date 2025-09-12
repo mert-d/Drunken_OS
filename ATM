@@ -118,13 +118,32 @@ end
 -- Banking Functions
 --==============================================================================
 
+--[[
+    Header: Drunken Beard Bank - ATM Terminal
+    Purpose: This script provides the user interface for the Drunken Beard Bank ATM.
+    Peripherals:
+        - A disk drive (peripheral.find("drive")) must be attached to the computer.
+        - A wireless modem must be attached to the back of the computer.
+    Usage: Run this script on an advanced computer to start the ATM.
+--]]
+
 local function login(user)
     drawWindow("Drunken Beard Bank - Login")
-    term.setCursorPos(2, 4); term.write("Card detected for user: " .. user)
+    term.setCursorPos(2, 4)
+    term.write("Card detected for user: " .. user)
+
     local pass = readInput("Password: ", 6, true)
     if pass and pass ~= "" then
-        -- Use the new crypto library for hashing
-        rednet.send(bankServerId, { type = "login", user = user, pass = pass }, BANK_PROTOCOL)
+        -- Hash the password using the crypto library before sending.
+        local pass_hash = crypto.sha1_hex(pass)
+
+        -- Send the hashed password to the server.
+        rednet.send(bankServerId, {
+            type = "login",
+            user = user,
+            pass_hash = pass_hash
+        }, BANK_PROTOCOL)
+
         local _, response = rednet.receive(BANK_PROTOCOL, 5)
         if response and response.success then
             username = user
