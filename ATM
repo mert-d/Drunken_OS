@@ -118,24 +118,41 @@ end
 -- Banking Functions
 --==============================================================================
 
-local function login(user)
-    drawWindow("Drunken Beard Bank - Login")
-    term.setCursorPos(2, 4); term.write("Card detected for user: " .. user)
-    local pass = readInput("Password: ", 6, true)
-    if pass and pass ~= "" then
-        -- Use the new crypto library for hashing
-        rednet.send(bankServerId, { type = "login", user = user, pass = pass }, BANK_PROTOCOL)
-        local _, response = rednet.receive(BANK_PROTOCOL, 5)
+local function login()
+    clear()
+    term.setCursorPos(1,1)
+    print("Please enter your Drunken OS password.")
+    write("> ")
+    term.setCursorBlink(true)
+    local pass = read("*")
+    term.setCursorBlink(false)
+
+    if not pass or pass == "" then return false end
+
+    local pass_hash = crypto.hex(pass)
+
+    if pass_hash == card_data.pass_hash then
+        print("Password verified. Contacting bank server...")
+        
+        -- THE ONLY CHANGE IS HERE: We now include the verified pass_hash.
+        rednet.send(bankServerId, { type = "login", user = username, pass_hash = pass_hash }, BANK_PROTOCOL)
+        
+        local _, response = rednet.receive(BANK_PROTOCOL, 10)
+        
         if response and response.success then
-            username = user
             balance = response.balance
+            currencyRates = response.rates
+            print("Login successful!")
+            sleep(1)
             return true
         else
-            showMessage("Login Failed", response and response.reason or "No response from server.", true)
+            showMessage("Login Failed", (response and response.reason) or "No response from server.")
             return false
         end
+    else
+        showMessage("Login Failed", "Invalid password.")
+        return false
     end
-    return false
 end
 
 local function deposit()
