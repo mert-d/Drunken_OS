@@ -259,10 +259,8 @@ end
 
 local bankHandlers = {}
 
-local handlers = {}
-
 -- THE FIX: The handler now correctly uses message.pass_hash.
-function handlers.login(senderId, message)
+function bankHandlers.login(senderId, message)
     local account = accounts[message.user]
     if account and account.pass_hash == message.pass_hash then
         logTransaction(message.user, "login", "SUCCESS")
