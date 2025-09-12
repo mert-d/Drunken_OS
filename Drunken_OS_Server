@@ -389,15 +389,38 @@ function mailHandlers.get_lib_code(senderId, message)
     end
 end
 
+-- In your Drunken_OS_Server file, find the "authHandlers.register" function
+-- and replace it with this version.
+
 function mailHandlers.register(senderId, message)
-    if users[message.user] then
-        rednet.send(senderId, { success = false, reason = "Username taken." }, "SimpleMail")
+    local user, pass_hash = message.user, message.pass_hash
+    logActivity("Received registration request for user '" .. user .. "' from client " .. senderId)
+
+    if not user or not pass_hash or user == "" or pass_hash == "" then
+        rednet.send(senderId, { success = false, reason = "Invalid username or password." }, AUTH_PROTOCOL)
+        logActivity("Registration for '" .. user .. "' failed: Invalid data.", true)
         return
     end
-    -- CORRECTED: Pass the already-hashed password (message.pass) directly. Do not re-hash.
-    if requestAuthCode(message.user, message.pass, message.nickname, senderId, "register") then
-        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
+
+    if users[user] then
+        rednet.send(senderId, { success = false, reason = "User already exists." }, AUTH_PROTOCOL)
+        logActivity("Registration for '" .. user .. "' failed: User already exists.", true)
+        return
     end
+
+    local code = generate2FACode()
+    pending2FA[user] = {
+        code = code,
+        expiry = os.time() + 120, -- 2 minute expiry
+        pass_hash = pass_hash
+    }
+    
+    -- Tell the player their code via in-game chat.
+    tellPlayer(user, "[Drunken OS] Your 2FA registration code is: " .. code)
+    logActivity("Generated 2FA code " .. code .. " for new user '" .. user .. "'")
+    
+    -- THE FIX: Send the required challenge message back to the client computer.
+    rednet.send(senderId, { type = "register_challenge" }, AUTH_PROTOCOL)
 end
 
 function mailHandlers.login(senderId, message)
