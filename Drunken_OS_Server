@@ -1,20 +1,20 @@
 --[[
-    Drunken OS - Mainframe Server (v10.0 - Full Refactor)
+    Drunken OS - Mainframe Server (v10.2 - Graceful Migration Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This is the definitive, fully refactored version of the Mainframe Server.
-    Every function has been expanded, formatted, and commented to meet the
-    highest engineering standards for readability, maintainability, and stability.
+    This version introduces a "graceful migration" feature to automatically
+    fix legacy accounts that have double-hashed passwords in the database.
 
     Key Changes:
-    - ALL condensed, single-line functions have been properly formatted.
-    - Added extensive comments to `mailHandlers`, `gameHandlers`, UI functions,
-      and core logic to explain their purpose and operation.
-    - Standardized the entire script to the "Gem Standard" of clarity.
-    - This version is considered the new stable base for all future development.
+    - The `mailHandlers.login` function is now much more robust.
+    - It first attempts to log in using the new, correct single-hash method.
+    - If that fails, it checks against the old double-hash method.
+    - If the double-hash succeeds, it automatically overwrites the old password
+      in the database with the correct single-hash and then logs the user in.
+    - This provides a seamless, automatic upgrade path for existing users
+      without requiring any manual intervention.
 ]]
-
 --==============================================================================
 -- Environment Setup
 --==============================================================================
@@ -372,22 +372,47 @@ function mailHandlers.register(senderId, message)
 end
 
 function mailHandlers.login(senderId, message)
-    local userHash = users[message.user] and users[message.user].password
-    -- CORRECTED: Compare the received hash (message.pass) directly with the stored hash.
-    if not userHash or userHash ~= message.pass then
+    local userData = users[message.user]
+    local receivedHash = message.pass
+
+    if not userData then
         rednet.send(senderId, { success = false, reason = "Invalid credentials." }, "SimpleMail")
         return
     end
 
-    -- CORRECTED: Use 'message' variable instead of the old 'm' variable.
+    local storedHash = userData.password
+    local loginSuccess = false
+    local needsMigration = false
+
+    -- 1. Try the new, correct method first (single-hash comparison)
+    if storedHash == receivedHash then
+        loginSuccess = true
+    -- 2. If that fails, try the old, legacy method (double-hash comparison)
+    elseif storedHash == crypto.hex(receivedHash) then
+        loginSuccess = true
+        needsMigration = true
+        logActivity("Legacy password for '" .. message.user .. "' detected. Migrating.")
+    end
+
+    if not loginSuccess then
+        rednet.send(senderId, { success = false, reason = "Invalid credentials." }, "SimpleMail")
+        return
+    end
+
+    -- If a legacy password was used, fix it in the database now.
+    if needsMigration then
+        users[message.user].password = receivedHash -- Store the correct single-hash
+        saveTableToFile(USERS_DB, users)
+    end
+    
+    -- Now, proceed with the login process as normal
     if message.session_token and users[message.user].session_token == message.session_token then
         logActivity("'" .. message.user .. "' logged in via session.")
         rednet.send(senderId, { success = true, needs_auth = false, nickname = users[message.user].nickname, unreadCount = #loadMail(message.user), isAdmin = admins[message.user] or false }, "SimpleMail")
         return
     end
     
-    -- CORRECTED: Pass the already-hashed password (message.pass) directly.
-    if requestAuthCode(message.user, message.pass, nil, senderId, "login") then
+    if requestAuthCode(message.user, receivedHash, nil, senderId, "login") then
         rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
     end
 end
