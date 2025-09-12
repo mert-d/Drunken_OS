@@ -613,18 +613,21 @@ local function main()
         else
             if autoUpdateCheck() then return end
             
-            -- The installDependencies function now returns true on success,
-            -- and false on a critical failure that requires stopping.
+            -- Stage 1: Ensure library files exist on disk.
             if not installDependencies() then
-                -- A critical error occurred during installation, so we stop.
+                rednet.close("back")
                 print("Halting due to installation error.")
                 return 
             end
-            
-            -- If we reach here, it means either no reboot was needed, or the
-            -- os.reboot() call is pending. The old logic was flawed.
-            -- After a successful install and reboot, the script will restart
-            -- and this block will be passed correctly.
+
+            -- Stage 2: Now that files are guaranteed to exist, load them.
+            if not crypto then crypto = require("lib.sha1_hmac") end
+            if not apps then apps = require("lib.drunken_os_apps") end
+
+            -- Stage 3: Inject the loaded libraries into the state table so all
+            --          other functions and the apps library can use them.
+            state.crypto = crypto
+            state.apps = apps
             
             state.username = nil
             state.isAdmin = false
@@ -638,7 +641,8 @@ local function main()
                 showMessage("Message of the Day", response.motd)
             end
             
-            mainMenu()
+            -- Now, this call will succeed because state.apps is no longer nil.
+            state.apps.mainMenu(state) 
             
             rednet.close("back")
             if not state.username then
@@ -647,6 +651,7 @@ local function main()
         end
     end
 end
+
 
 main()
 
