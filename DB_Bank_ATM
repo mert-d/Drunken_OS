@@ -134,10 +134,12 @@ local function login(user)
 
     local pass = readInput("Password: ", 6, true)
     if pass and pass ~= "" then
-        -- CORRECTED: Use the crypto.sha1() function to hash the password.
-        local pass_hash = crypto.sha1(pass)
+        -- CORRECTED: Use the crypto.hex() function to hash the password.
+        local pass_hash = crypto.hex(pass)
 
         -- Send the correctly hashed password to the server.
+        -- NOTE: The server is expecting a field named 'pass_hash', so we must
+        -- maintain that field name in the message we send.
         rednet.send(bankServerId, {
             type = "login",
             user = user,
