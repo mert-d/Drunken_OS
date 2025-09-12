@@ -1,19 +1,18 @@
 --[[
-    Drunken OS - Mainframe Server (v10.2 - Graceful Migration Fix)
+    Drunken OS - Mainframe Server (v10.3 - Timeout Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version introduces a "graceful migration" feature to automatically
-    fix legacy accounts that have double-hashed passwords in the database.
+    This version adds a critical fault-tolerance feature to the authentication
+    process. It prevents the server from hanging indefinitely if the external
+    HyperAuthClient server is unreachable.
 
     Key Changes:
-    - The `mailHandlers.login` function is now much more robust.
-    - It first attempts to log in using the new, correct single-hash method.
-    - If that fails, it checks against the old double-hash method.
-    - If the double-hash succeeds, it automatically overwrites the old password
-      in the database with the correct single-hash and then logs the user in.
-    - This provides a seamless, automatic upgrade path for existing users
-      without requiring any manual intervention.
+    - The `requestAuthCode` function has been refactored.
+    - It now uses `parallel.waitForAny` to run the `AuthClient.requestCode`
+      with a 5-second timeout.
+    - If the authentication request times out, it will log the error and send
+      a proper failure message to the client, preventing the client from crashing.
 ]]
 --==============================================================================
 -- Environment Setup
@@ -311,29 +310,53 @@ end
 
 local function requestAuthCode(username, password, nickname, senderId, purpose)
     logActivity("Requesting auth code for '" .. username .. "'...")
-    local reply, err = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
-        username = username,
-        password = password,
-        vendorID = "DrunkenOS_Mainframe",
-        computerID = os.getComputerID(),
-        extra = { purpose = purpose or "unknown" },
-    })
+
+    local result, err
     
-    if not reply then
+    -- We run the authentication request in parallel with a timer.
+    -- This prevents the server from hanging if the HyperAuth server is down.
+    local event, p1, p2 = parallel.waitForAny(
+        function()
+            -- This function runs the actual request.
+            local reply, requestErr = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
+                username = username,
+                password = password,
+                vendorID = "DrunkenOS_Mainframe",
+                computerID = os.getComputerID(),
+                extra = { purpose = purpose or "unknown" },
+            })
+            return reply, requestErr
+        end,
+        function()
+            -- This function is just a simple timer.
+            os.startTimer(5)
+            os.pullEvent("timer")
+        end
+    )
+
+    if event == "task_complete" then
+        -- The AuthClient finished successfully.
+        result, err = p1, p2
+    else
+        -- The timer finished first, meaning the request timed out.
+        result, err = nil, "Authentication request timed out"
+    end
+    
+    if not result then
         logActivity("HyperAuth error: " .. tostring(err), true)
-        rednet.send(senderId, { success = false, reason = "Auth service error." }, "SimpleMail")
+        rednet.send(senderId, { success = false, reason = "Auth service error: timed out." }, "SimpleMail")
         return nil
     end
     
-    logActivity("Auth request ID: " .. reply.request_id)
+    logActivity("Auth request ID: " .. result.request_id)
     pendingAuths[username] = {
-        request_id = reply.request_id,
+        request_id = result.request_id,
         password = password,
         nickname = nickname,
         senderId = senderId,
         timestamp = os.time()
     }
-    return reply.request_id
+    return result.request_id
 end
 
 --==============================================================================
@@ -903,7 +926,7 @@ local function main()
     rednet.host("SimpleChat", "chat.server")
     rednet.host("ArcadeGames", "arcade.server")
     rednet.host(ADMIN_PROTOCOL, "admin.server")
-    logActivity("Mainframe Server v10.0 Initialized.")
+    logActivity("Mainframe Server v10.3 Initialized.")
     mainEventLoop()
 end
 
