@@ -401,47 +401,22 @@ function mailHandlers.register(senderId, message)
 end
 
 function mailHandlers.login(senderId, message)
-    local userData = users[message.user]
-    local receivedHash = message.pass
-
-    if not userData then
+    local userHash = users[message.user] and users[message.user].password
+    -- CORRECTED: Compare the received hash (message.pass) directly with the stored hash.
+    if not userHash or userHash ~= message.pass then
         rednet.send(senderId, { success = false, reason = "Invalid credentials." }, "SimpleMail")
         return
     end
 
-    local storedHash = userData.password
-    local loginSuccess = false
-    local needsMigration = false
-
-    -- 1. Try the new, correct method first (single-hash comparison)
-    if storedHash == receivedHash then
-        loginSuccess = true
-    -- 2. If that fails, try the old, legacy method (double-hash comparison)
-    elseif storedHash == crypto.hex(receivedHash) then
-        loginSuccess = true
-        needsMigration = true
-        logActivity("Legacy password for '" .. message.user .. "' detected. Migrating.")
-    end
-
-    if not loginSuccess then
-        rednet.send(senderId, { success = false, reason = "Invalid credentials." }, "SimpleMail")
-        return
-    end
-
-    -- If a legacy password was used, fix it in the database now.
-    if needsMigration then
-        users[message.user].password = receivedHash -- Store the correct single-hash
-        saveTableToFile(USERS_DB, users)
-    end
-    
-    -- Now, proceed with the login process as normal
+    -- CORRECTED: Use 'message' variable instead of the old 'm' variable.
     if message.session_token and users[message.user].session_token == message.session_token then
         logActivity("'" .. message.user .. "' logged in via session.")
         rednet.send(senderId, { success = true, needs_auth = false, nickname = users[message.user].nickname, unreadCount = #loadMail(message.user), isAdmin = admins[message.user] or false }, "SimpleMail")
         return
     end
     
-    if requestAuthCode(message.user, receivedHash, nil, senderId, "login") then
+    -- CORRECTED: Pass the already-hashed password (message.pass) directly.
+    if requestAuthCode(message.user, message.pass, nil, senderId, "login") then
         rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
     end
 end
