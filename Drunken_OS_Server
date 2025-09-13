@@ -389,11 +389,35 @@ function mailHandlers.get_lib_code(senderId, message)
     end
 end
 
+function mailHandlers.register_2fa(senderId, message)
+    local user, code = message.user, message.code
+    local pending = pending2FA[user]
+
+    -- Check if the request exists, the code is correct, AND it has not expired.
+    if pending and pending.code == code and os.time() < pending.expiry then
+        -- Success! Create the user account.
+        users[user] = { pass_hash = pending.pass_hash }
+        if saveTableToFile(USERS_DB, users) then
+            logActivity("User '" .. user .. "' registered successfully.")
+            rednet.send(senderId, { success = true }, AUTH_PROTOCOL)
+        else
+            logActivity("Failed to save new user '" .. user .. "' to database.", true)
+            rednet.send(senderId, { success = false, reason = "Server database error." }, AUTH_PROTOCOL)
+        end
+        pending2FA[user] = nil -- Clean up the pending request
+    else
+        -- Failure. The code was wrong or the timer ran out.
+        logActivity("Failed 2FA for user '" .. (user or "unknown") .. "'.", true)
+        rednet.send(senderId, { success = false, reason = "Invalid 2FA code or request expired." }, AUTH_PROTOCOL)
+        if user then pending2FA[user] = nil end -- Clean up
+    end
+end
+
 -- In your Drunken_OS_Server file, find the "authHandlers.register" function
 -- and replace it with this version.
 
 function mailHandlers.register(senderId, message)
-    -- THE FIX: Read the hash from "message.pass", not "message.pass_hash".
+    -- Read the hash from "message.pass", which the client sends.
     local user, pass_hash = message.user, message.pass
     logActivity("Received registration request for user '" .. user .. "' from client " .. senderId)
 
@@ -413,60 +437,27 @@ function mailHandlers.register(senderId, message)
     pending2FA[user] = {
         code = code,
         expiry = os.time() + 120, -- 2 minute expiry
-        pass_hash = pass_hash -- Internally, we still call it pass_hash for clarity.
+        pass_hash = pass_hash
     }
     
-    tellPlayer(user, "[Drunken OS] Your 2FA registration code is: " .. code)
+    -- This is the "HyperAuth" call that sends the code to the player in chat.
+    tellPlayer(user, "[Drunken OS] Your registration code is: " .. code)
     logActivity("Generated 2FA code " .. code .. " for new user '" .. user .. "'")
     
-    -- This part is still correct and prevents the timeout.
+    -- This message prevents the client from timing out.
     rednet.send(senderId, { type = "register_challenge" }, AUTH_PROTOCOL)
 end
 
 function mailHandlers.login(senderId, message)
-    local userData = users[message.user]
-    local receivedHash = message.pass
-
-    if not userData then
-        rednet.send(senderId, { success = false, reason = "Invalid credentials." }, "SimpleMail")
+    local user, pass_hash = message.user, message.pass_hash
+    if not user or not users[user] or users[user].pass_hash ~= pass_hash then
+        logActivity("Failed login attempt for user '" .. (user or "unknown") .. "'", true)
+        rednet.send(senderId, { success = false, reason = "Invalid credentials." }, AUTH_PROTOCOL)
         return
     end
 
-    local storedHash = userData.password
-    local loginSuccess = false
-    local needsMigration = false
-
-    -- 1. Try the new, correct method first (single-hash comparison)
-    if storedHash == receivedHash then
-        loginSuccess = true
-    -- 2. If that fails, try the old, legacy method (double-hash comparison)
-    elseif storedHash == crypto.hex(receivedHash) then
-        loginSuccess = true
-        needsMigration = true
-        logActivity("Legacy password for '" .. message.user .. "' detected. Migrating.")
-    end
-
-    if not loginSuccess then
-        rednet.send(senderId, { success = false, reason = "Invalid credentials." }, "SimpleMail")
-        return
-    end
-
-    -- If a legacy password was used, fix it in the database now.
-    if needsMigration then
-        users[message.user].password = receivedHash -- Store the correct single-hash
-        saveTableToFile(USERS_DB, users)
-    end
-    
-    -- Now, proceed with the login process as normal
-    if message.session_token and users[message.user].session_token == message.session_token then
-        logActivity("'" .. message.user .. "' logged in via session.")
-        rednet.send(senderId, { success = true, needs_auth = false, nickname = users[message.user].nickname, unreadCount = #loadMail(message.user), isAdmin = admins[message.user] or false }, "SimpleMail")
-        return
-    end
-    
-    if requestAuthCode(message.user, receivedHash, nil, senderId, "login") then
-        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
-    end
+    logActivity("User '" .. user .. "' logged in successfully.")
+    rednet.send(senderId, { success = true }, AUTH_PROTOCOL)
 end
 
 function mailHandlers.submit_auth_token(senderId, message)
