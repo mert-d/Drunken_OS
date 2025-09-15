@@ -261,17 +261,53 @@ local bankHandlers = {}
 
 -- THE FIX: The handler now correctly uses message.pass_hash.
 function bankHandlers.login(senderId, message)
-    local account = accounts[message.user]
-    if account and account.pass_hash == message.pass_hash then
-        logTransaction(message.user, "login", "SUCCESS")
-        rednet.send(senderId, {
-            success = true,
-            balance = account.balance,
-            rates = currencyRates
-        }, BANK_PROTOCOL)
+    local user, pass_hash = message.user, message.pass_hash
+    local account = accounts[user]
+
+    if account then
+        -- This is an existing bank customer.
+        if account.pass_hash == pass_hash then
+            logTransaction(user, "login", "SUCCESS")
+            rednet.send(senderId, {
+                success = true,
+                balance = account.balance,
+                rates = currencyRates
+            }, BANK_PROTOCOL)
+        else
+            logTransaction(user, "login", "FAIL - Invalid Credentials")
+            rednet.send(senderId, { success = false, reason = "Invalid credentials." }, BANK_PROTOCOL)
+        end
     else
-        logTransaction(message.user, "login", "FAIL - Invalid Credentials")
-        rednet.send(senderId, { success = false, reason = "Invalid credentials." }, BANK_PROTOCOL)
+        -- This is a potential new bank customer.
+        logActivity("New customer login attempt: '" .. user .. "'. Verifying with Mainframe...")
+        
+        rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
+        local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
+
+        if response and response.exists then
+            -- The Mainframe confirms this is a valid user. Create a bank account.
+            logActivity("Mainframe verified user. Creating new bank account for '" .. user .. "'.")
+            accounts[user] = {
+                pass_hash = pass_hash,
+                balance = 0
+            }
+            if saveTableToFile(ACCOUNTS_DB, accounts) then
+                rednet.send(senderId, {
+                    success = true,
+                    balance = 0,
+                    rates = currencyRates
+                }, BANK_PROTOCOL)
+                logTransaction(user, "login", "SUCCESS - New account created")
+            else
+                logActivity("Failed to save new account for " .. user, true)
+                rednet.send(senderId, { success = false, reason = "Bank database error." }, BANK_PROTOCOL)
+            end
+        else
+            -- The Mainframe says this user doesn't exist.
+            logActivity("Mainframe verification failed for '" .. user .. "'. Denying access.", true)
+            rednet.send(senderId, { success = false, reason = "User is not registered in the Mainframe." }, BANK_PROTOCOL)
+            logTransaction(user, "login", "FAIL - User does not exist in Mainframe")
+        end
     end
 end
 
