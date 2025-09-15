@@ -58,12 +58,11 @@ end
 -- Configuration & State
 --==============================================================================
 
-local admins = { ["MuhendizBey"] = true }
-local users, lists, games, chatHistory, gameList, pendingAuths, libraryPastes = {}, {}, {}, {}, {}, {}, {}
+local admins = {} -- This will now be loaded from a file
+local users, lists, games, chatHistory, gameList, pendingAuths = {}, {}, {}, {}, {}, {}
 local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
-
--- Database file paths
+local ADMINS_DB = "admins.db" -- New database file for admins
 local USERS_DB = "users.db"
 local LISTS_DB = "lists.db"
 local GAMES_DB = "games.db"
@@ -73,9 +72,6 @@ local GAMELIST_DB = "gamelist.db"
 local MOTD_FILE = "motd.txt"
 local LOG_FILE = "server.log"
 local GAMES_CODE_DB = "games_code.db"
-local LIB_PASTES_DB = "lib_pastes.db"
-
--- Network protocols
 local AUTH_SERVER_PROTOCOL = "auth.secure.v1"
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 local ADMIN_PROTOCOL = "Drunken_Admin"
