@@ -1,19 +1,18 @@
 --[[
-    Drunken OS - Mainframe Server (v10.6 - Unified Publisher)
+    Drunken OS - Mainframe Server (v10.8 - Async Auth Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive version unifies all code distribution through a single,
-    database-driven system, based on a superior engineering proposal. The server
-    no longer serves files from its local disk, but from a managed database.
+    This version re-engineers the authentication flow to be asynchronous,
+    fixing a critical bug where the server would time out before the user
+    could enter their authentication code.
 
     Key Changes:
-    - The `publish` command is now the single method for publishing ALL code,
-      including programs and libraries. It now supports un-versioned libraries.
-    - The `publishlib` and `setlibpaste` commands have been removed as they
-      are now obsolete, streamlining the admin experience.
-    - The `get_lib_code` network handler now correctly serves files directly from
-      the central code database (`programCode` table).
+    - The `login` and `register` handlers now immediately reply to the client,
+      telling it to proceed to the token entry screen.
+    - A new `initiateAuthRequest` function now handles the potentially slow
+      communication with the HyperAuth server in the background using `parallel.run`.
+    - Removed the flawed `requestAuthCode` function entirely.
 ]]
 
 --==============================================================================
@@ -310,55 +309,43 @@ end
 -- Authentication Helper Functions
 --==============================================================================
 
-local function requestAuthCode(username, password, nickname, senderId, purpose)
-    logActivity("Requesting auth code for '" .. username .. "'...")
+--==============================================================================
+-- Authentication Helper Functions (RE-ENGINEERED)
+--==============================================================================
 
-    local result, err
-    
-    -- We run the authentication request in parallel with a timer.
-    -- This prevents the server from hanging if the HyperAuth server is down.
-    local event, p1, p2 = parallel.waitForAny(
-        function()
-            -- This function runs the actual request.
-            local reply, requestErr = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
-                username = username,
-                password = password,
-                vendorID = "DrunkenOS_Mainframe",
-                computerID = os.getComputerID(),
-                extra = { purpose = purpose or "unknown" },
-            })
-            return reply, requestErr
-        end,
-        function()
-            -- This function is just a simple timer.
-            os.startTimer(5)
-            os.pullEvent("timer")
-        end
-    )
+---
+-- This function runs in the background to request an auth code without
+-- blocking the main server thread.
+-- @param username The user's name.
+-- @param password The user's hashed password.
+-- @param nickname The user's chosen nickname (for registration).
+-- @param senderId The rednet ID of the client computer.
+-- @param purpose A string indicating "login" or "register".
+local function initiateAuthRequest(username, password, nickname, senderId, purpose)
+    logActivity("Initiating auth request for '" .. username .. "' in background...")
 
-    if event == "task_complete" then
-        -- The AuthClient finished successfully.
-        result, err = p1, p2
-    else
-        -- The timer finished first, meaning the request timed out.
-        result, err = nil, "Authentication request timed out"
-    end
-    
-    if not result then
-        logActivity("HyperAuth error: " .. tostring(err), true)
-        rednet.send(senderId, { success = false, reason = "Auth service error: timed out." }, "SimpleMail")
-        return nil
-    end
-    
-    logActivity("Auth request ID: " .. result.request_id)
-    pendingAuths[username] = {
-        request_id = result.request_id,
+    local reply, err = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
+        username = username,
         password = password,
-        nickname = nickname,
-        senderId = senderId,
-        timestamp = os.time()
-    }
-    return result.request_id
+        vendorID = "DrunkenOS_Mainframe",
+        computerID = os.getComputerID(),
+        extra = { purpose = purpose or "unknown" },
+    })
+
+    if not reply then
+        logActivity("HyperAuth requestCode error: " .. tostring(err), true)
+        -- The user's subsequent token submission will fail, which is an
+        -- acceptable failure condition if the auth server is truly down.
+    else
+        logActivity("Auth request ID created: " .. reply.request_id)
+        pendingAuths[username] = {
+            request_id = reply.request_id,
+            password = password,
+            nickname = nickname,
+            senderId = senderId,
+            timestamp = os.time()
+        }
+    end
 end
 
 --==============================================================================
@@ -395,12 +382,15 @@ function mailHandlers.register(senderId, message)
         return
     end
 
-    -- THE FIX: Pass the already-hashed password (message.pass) directly. Do not re-hash.
-    if requestAuthCode(message.user, message.pass, message.nickname, senderId, "register") then
-        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
-    end
+    -- Step 1: Immediately tell the client to proceed to the auth screen.
+    rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
+
+    -- Step 2: Start the (potentially slow) request to the auth server in the background.
+    parallel.run(initiateAuthRequest, message.user, message.pass, message.nickname, senderId, "register")
 end
 
+---
+-- Handles a user login.
 function mailHandlers.login(senderId, message)
     local userData = users[message.user]
     local receivedHash = message.pass
@@ -414,7 +404,6 @@ function mailHandlers.login(senderId, message)
     local loginSuccess = false
     local needsMigration = false
 
-    -- Graceful Migration Logic from v10.2
     if storedHash == receivedHash then
         loginSuccess = true
     elseif storedHash == crypto.hex(receivedHash) then
@@ -439,9 +428,11 @@ function mailHandlers.login(senderId, message)
         return
     end
     
-    if requestAuthCode(message.user, receivedHash, nil, senderId, "login") then
-        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
-    end
+    -- Step 1: Immediately tell the client to proceed to the auth screen.
+    rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
+
+    -- Step 2: Start the (potentially slow) request to the auth server in the background.
+    parallel.run(initiateAuthRequest, message.user, receivedHash, nil, senderId, "login")
 end
 
 function mailHandlers.submit_auth_token(senderId, message)
@@ -957,7 +948,7 @@ local function main()
     rednet.host("SimpleChat", "chat.server")
     rednet.host("ArcadeGames", "arcade.server")
     rednet.host(ADMIN_PROTOCOL, "admin.server")
-    logActivity("Mainframe Server v10.3 Initialized.")
+    logActivity("Mainframe Server v10.8 Initialized.")
     mainEventLoop()
 end
 
