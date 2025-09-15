@@ -1,18 +1,17 @@
 --[[
-    Drunken OS - Mainframe Server (v10.8 - Async Auth Fix)
+    Drunken OS - Mainframe Server (v10.9 - Correct Async Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version re-engineers the authentication flow to be asynchronous,
-    fixing a critical bug where the server would time out before the user
-    could enter their authentication code.
+    This version corrects a critical API error from v10.8. It implements a
+    proper, non-blocking authentication request using the correct parallel API,
+    fixing the timeout issue definitively.
 
     Key Changes:
-    - The `login` and `register` handlers now immediately reply to the client,
-      telling it to proceed to the token entry screen.
-    - A new `initiateAuthRequest` function now handles the potentially slow
-      communication with the HyperAuth server in the background using `parallel.run`.
-    - Removed the flawed `requestAuthCode` function entirely.
+    - Replaced the incorrect calls to the non-existent 'parallel.run'.
+    - The `login` and `register` handlers now use a `parallel.waitForAny`
+      construct to correctly launch the authentication request in the
+      background without blocking the main server thread.
 ]]
 
 --==============================================================================
@@ -956,7 +955,7 @@ local function main()
     rednet.host("SimpleChat", "chat.server")
     rednet.host("ArcadeGames", "arcade.server")
     rednet.host(ADMIN_PROTOCOL, "admin.server")
-    logActivity("Mainframe Server v10.8 Initialized.")
+    logActivity("Mainframe Server v10.9 Initialized.")
     mainEventLoop()
 end
 
