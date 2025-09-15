@@ -446,7 +446,7 @@ function adminCommands.makecard(args)
         print("Usage: makecard <username>")
         return
     end
-    
+
     print("Verifying user with Mainframe...")
     rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
     local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
@@ -474,26 +474,32 @@ function adminCommands.makecard(args)
         return
     end
 
-    disk.setDiskLabel("Drunken Beard Bank Card (" .. user .. ")")
-    local cardFile = fs.open(mount_path .. "/.bankcard", "w")
-    if cardFile then
-        cardFile.write(user)
-        cardFile.close()
-    else
-        print("Error: Could not write main card file to disk.")
-        return
-    end
+    -- FIX: Set the label to the format the ATM expects.
+    disk.setDiskLabel("DrunkenBeard_Card_" .. user)
 
-    local descFile = fs.open(mount_path .. "/.description", "w")
-    if descFile then
-        local description = "Property of: " .. user .. "\n" ..
-                            "Account Type: Standard\n\n" ..
-                            "A proud member of the Drunken Beard banking system."
-        descFile.write(description)
-        descFile.close()
-        print("Successfully created bank card with description for " .. user)
+    -- The rest of the function remains the same.
+    -- This creates the hidden data file on the card.
+    -- NOTE: This assumes you have a way to get the user's password hash.
+    -- For now, we'll create the card, but you may need a separate
+    -- "set password" step if the hash isn't available here.
+    if not accounts[user] then
+        print("Warning: User does not have a bank account yet. Creating one.")
+        accounts[user] = {
+            -- You need a secure way to get this hash. Placeholder for now.
+            pass_hash = "placeholder_hash_needs_to_be_set",
+            balance = 0
+        }
+        saveTableToFile(ACCOUNTS_DB, accounts)
+    end
+    
+    local cardData = { pass_hash = accounts[user].pass_hash }
+    local cardFile = fs.open(mount_path .. "/.card_data", "w")
+    if cardFile then
+        cardFile.write(textutils.serialize(cardData))
+        cardFile.close()
+        print("Successfully created bank card for " .. user)
     else
-        print("Error: Could not write description file to disk.")
+        print("Error: Could not write data file to disk.")
     end
 end
 
