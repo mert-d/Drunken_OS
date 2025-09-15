@@ -186,9 +186,10 @@ end
 --==============================================================================
 
 local function login()
-    clear()
-    term.setCursorPos(1,1)
+    drawFrame("Login")
+    term.setCursorPos(3, 4)
     print("Please enter your Drunken OS password.")
+    term.setCursorPos(3, 6)
     write("> ")
     term.setCursorBlink(true)
     local pass = read("*")
@@ -199,9 +200,8 @@ local function login()
     local pass_hash = crypto.hex(pass)
 
     if pass_hash == card_data.pass_hash then
-        print("Password verified. Contacting bank server...")
+        printCentered(10, "Password verified. Contacting bank server...")
         
-        -- FIX #1: Send the verified hash to the server.
         rednet.send(bankServerId, { type = "login", user = username, pass_hash = pass_hash }, BANK_PROTOCOL)
         
         local _, response = rednet.receive(BANK_PROTOCOL, 10)
@@ -209,30 +209,32 @@ local function login()
         if response and response.success then
             balance = response.balance
             currencyRates = response.rates
-            print("Login successful!")
-            sleep(1)
+            printCentered(12, "Login successful!")
+            sleep(1.5)
             return true
         else
-            showMessage("Login Failed", (response and response.reason) or "No response from server.")
+            showMessage("Login Failed", (response and response.reason) or "No response from server.", true)
             return false
         end
     else
-        showMessage("Login Failed", "Invalid password.")
+        showMessage("Login Failed", "Invalid password.", true)
         return false
     end
 end
 
 local function deposit()
-    clear()
-    term.setCursorPos(1,1)
-    print("Requesting deposit...")
+    drawFrame("Deposit")
+    printCentered(6, "Requesting deposit...")
+    printCentered(8, "Please place items in the deposit barrel.")
+    
     rednet.send(turtleClerkId, {type = "request_deposit"}, TURTLE_CLERK_PROTOCOL)
     local _, response = rednet.receive(TURTLE_CLERK_PROTOCOL, 30)
+    
     if response and response.success then
         balance = response.new_balance
         showMessage("Success", "Deposit complete. Your new balance is $" .. balance)
     else
-        showMessage("Deposit Failed", (response and response.reason) or "Turtle did not respond.")
+        showMessage("Deposit Failed", (response and response.reason) or "Turtle did not respond.", true)
     end
 end
 
@@ -252,9 +254,12 @@ local function withdraw()
     local item_name = item_names[choice]
     local rate = currencyRates[item_name].current
 
-    clear()
-    term.setCursorPos(1,1)
-    print("How many " .. item_name:gsub("minecraft:", ""):gsub("_", " ") .. " would you like to withdraw?")
+    drawFrame("Withdraw Amount")
+    term.setCursorPos(3, 4)
+    print("How many " .. item_name:gsub("minecraft:", ""):gsub("_", " ") .. " would you like?")
+    term.setCursorPos(3, 5)
+    print("(Cost: $"..rate.." each | Your balance: $"..balance..")")
+    term.setCursorPos(3, 7)
     write("> ")
     term.setCursorBlink(true)
     local amount_str = read()
@@ -262,11 +267,11 @@ local function withdraw()
     
     local amount = tonumber(amount_str)
     if not amount or amount <= 0 or (amount * rate > balance) then
-        showMessage("Error", "Invalid amount or insufficient funds.")
+        showMessage("Error", "Invalid amount or insufficient funds.", true)
         return
     end
 
-    print("Requesting withdrawal of " .. amount .. " " .. item_name .. "...")
+    printCentered(10, "Requesting withdrawal of " .. amount .. " " .. item_name .. "...")
     rednet.send(turtleClerkId, {type = "request_dispense", item_name = item_name, count = amount}, TURTLE_CLERK_PROTOCOL)
     local _, response = rednet.receive(TURTLE_CLERK_PROTOCOL, 30)
     
@@ -274,7 +279,7 @@ local function withdraw()
         balance = response.new_balance
         showMessage("Success", "Please collect your items. New balance: $" .. balance)
     else
-        showMessage("Withdrawal Failed", (response and response.reason) or "Turtle did not respond.")
+        showMessage("Withdrawal Failed", (response and response.reason) or "Turtle did not respond.", true)
     end
 end
 
@@ -287,14 +292,18 @@ local function mainMenu()
         if not choice or choice == 4 then break end
         
         if choice == 1 then
-            clear(); term.setCursorPos(1,1); print("Current Exchange Rates:")
-            local y = 3
+            drawFrame("Current Exchange Rates")
+            term.setCursorPos(3, 3)
+            print("Current Exchange Rates:")
+            local y = 5
             for name, data in pairs(currencyRates) do
                 local clean_name = name:gsub("minecraft:", ""):gsub("_", " ")
-                term.setCursorPos(2, y); print(string.format("1 %s = $%d", clean_name, data.current))
+                term.setCursorPos(4, y)
+                print(string.format("1 %s = $%d", clean_name, data.current))
                 y = y + 1
             end
-            term.setCursorPos(2, y+1); print("Press any key to return...")
+            term.setCursorPos(4, y + 1)
+            print("Press any key to return...")
             os.pullEvent("key")
         elseif choice == 2 then deposit()
         elseif choice == 3 then withdraw()
@@ -303,7 +312,8 @@ local function mainMenu()
 
     drive.ejectDisk()
     rednet.close("back")
-    clear(); print("Thank you for banking with Drunken Beard Bank!")
+    drawFrame("Goodbye")
+    printCentered(8, "Thank you for banking with Drunken Beard Bank!")
     sleep(2)
 end
 
@@ -318,18 +328,18 @@ local function runSession()
     turtleClerkId = rednet.lookup(TURTLE_CLERK_PROTOCOL, "bank_turtle")
     if not turtleClerkId then error("Could not find Vault Clerk turtle.", 0) end
 
-    clear()
-    print("Drunken Beard Bank")
-    print("Please insert your bank card...")
+    drawFrame("Welcome")
+    printCentered(8, "Welcome to Drunken Beard Bank")
+    printCentered(10, "Please insert your bank card...")
 
     local drive = peripheral.find("drive")
     if not drive then error("No Disk Drive is attached to this terminal.", 0) end
     
     local event, p1 = os.pullEvent("disk")
-
+    
     local disk_label = disk.getLabel(p1)
     if not disk_label or not disk_label:match("^DrunkenBeard_Card_.+") then
-        showMessage("Card Error", "This is not a valid Drunken Beard Bank card.")
+        showMessage("Card Error", "This is not a valid Drunken Beard Bank card.", true)
         disk.eject(p1)
         return
     end
@@ -337,7 +347,7 @@ local function runSession()
     username = disk_label:match("^DrunkenBeard_Card_(.+)")
     local handle = fs.open(disk.getMountPath(p1) .. "/.card_data", "r")
     if not handle then
-        showMessage("Card Error", "Card is missing its data file.")
+        showMessage("Card Error", "Card is missing its data file.", true)
         disk.eject(p1)
         return
     end
@@ -347,19 +357,19 @@ local function runSession()
     local ok, data = pcall(textutils.unserialize, card_contents)
 
     if not ok or not data then
-        showMessage("Card Error", "Card data is corrupt.")
+        showMessage("Card Error", "Card data is corrupt.", true)
         disk.eject(p1)
         return
     end
     
-    -- FIX #2: Assign the data we just read to the main variable.
     card_data = data
 
     if login() then
         mainMenu()
     else
         disk.eject(p1)
-        print("\nCard ejected.")
+        drawFrame("Login Failed")
+        printCentered(8, "Card ejected.")
         sleep(2)
     end
 end
