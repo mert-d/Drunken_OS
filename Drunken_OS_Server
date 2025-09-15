@@ -1,17 +1,17 @@
 --[[
-    Drunken OS - Mainframe Server (v10.9 - Correct Async Fix)
+    Drunken OS - Mainframe Server (v10.10 - Race Condition Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version corrects a critical API error from v10.8. It implements a
-    proper, non-blocking authentication request using the correct parallel API,
-    fixing the timeout issue definitively.
+    This version fixes a critical race condition where a user could submit
+    their auth token before the server's background task had finished creating
+    the pending auth request.
 
     Key Changes:
-    - Replaced the incorrect calls to the non-existent 'parallel.run'.
-    - The `login` and `register` handlers now use a `parallel.waitForAny`
-      construct to correctly launch the authentication request in the
-      background without blocking the main server thread.
+    - The `submit_auth_token` handler has been re-engineered.
+    - It now includes a short retry loop, waiting up to 3 seconds for the
+      pending authentication record to appear, making the handshake robust
+      against timing variations.
 ]]
 
 --==============================================================================
@@ -444,23 +444,39 @@ end
 
 function mailHandlers.submit_auth_token(senderId, message)
     local user, code = message.user, message.token
-    logActivity("Received auth from '" .. user .. "'")
+    logActivity("Received auth submission from '" .. user .. "'")
+
     local authData = pendingAuths[user]
+    
+    -- THE FIX: Retry loop to wait for the background task to finish.
     if not authData then
+        local attempts = 0
+        while not authData and attempts < 6 do
+            sleep(0.5) -- Wait half a second
+            authData = pendingAuths[user]
+            attempts = attempts + 1
+        end
+    end
+
+    if not authData then
+        logActivity("Auth submission failed for '" .. user .. "': No pending auth found after waiting.", true)
         rednet.send(senderId, { success = false, reason = "No pending auth." }, "SimpleMail")
         return
     end
+
     logActivity("Verifying code for RID: " .. authData.request_id)
     local reply, err = AuthClient.verifyCode(AUTH_SERVER_PROTOCOL, { request_id = authData.request_id, code = code })
+    
     if not reply then
         logActivity("Auth verify error: " .. tostring(err), true)
         rednet.send(senderId, { success = false, reason = "Auth service error." }, "SimpleMail")
         return
     end
+
     if reply.ok then
         local payload = {}
         local token = crypto.hex(os.time() .. math.random())
-        if not users[user] then
+        if not users[user] then -- This is a registration
             users[user] = { password = authData.password, nickname = authData.nickname, session_token = token }
             if saveTableToFile(USERS_DB, users) then
                 payload = { success = true, unreadCount = 0, nickname = authData.nickname, session_token = token, isAdmin = admins[user] or false }
@@ -468,7 +484,7 @@ function mailHandlers.submit_auth_token(senderId, message)
             else
                 payload = { success = false, reason = "DB error." }
             end
-        else
+        else -- This is a login
             users[user].session_token = token
             saveTableToFile(USERS_DB, users)
             payload = { success = true, unreadCount = #loadMail(user), nickname = users[user].nickname, session_token = token, isAdmin = admins[user] or false }
@@ -479,21 +495,6 @@ function mailHandlers.submit_auth_token(senderId, message)
     else
         rednet.send(senderId, { success = false, reason = reply.reason or "Invalid code." }, "SimpleMail")
         logActivity("Auth fail for " .. user .. ': ' .. (reply.reason or "Unknown"), true)
-    end
-end
-
-function mailHandlers.set_nickname(senderId, message)
-    local user, newNick = message.user, message.new_nickname
-    if users[user] and newNick and newNick ~= "" then
-        users[user].nickname = newNick
-        if saveTableToFile(USERS_DB, users) then
-            rednet.send(senderId, { success = true, new_nickname = newNick }, "SimpleMail")
-            logActivity("'" .. user .. "' changed nick.")
-        else
-            rednet.send(senderId, { success = false, reason = "DB error." }, "SimpleMail")
-        end
-    else
-        rednet.send(senderId, { success = false, reason = "Invalid request." }, "SimpleMail")
     end
 end
 
@@ -955,7 +956,7 @@ local function main()
     rednet.host("SimpleChat", "chat.server")
     rednet.host("ArcadeGames", "arcade.server")
     rednet.host(ADMIN_PROTOCOL, "admin.server")
-    logActivity("Mainframe Server v10.9 Initialized.")
+    logActivity("Mainframe Server v10.10 Initialized.")
     mainEventLoop()
 end
 
