@@ -1,17 +1,16 @@
 --[[
-    Drunken OS - Bank Server (v2.10 - Definitive Fix)
+    Drunken OS - Bank Server (v2.11 - Transactional Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive version fixes all known data-type and logic errors across
-    all transaction functions. It is the stable, production-ready version
-    and should be used with a fresh `bank_accounts.db` file to prevent issues
-    from previous corrupted data.
+    This definitive version re-engineers the withdrawal process to be fully
+    transactional, preventing funds from being deducted on failed withdrawals.
 
     Key Changes:
-    - Re-engineered all network handlers (`login`, `deposit`, `withdraw`,
-      `get_balance_and_rates`) to consistently and correctly handle the
-      account data structure, preventing all data-type related crashes.
+    - `withdraw_item` now only authorizes transactions, it does not deduct funds.
+    - Added a new `finalize_withdrawal` handler that is called by the ATM
+      *after* the turtle confirms success. This is now the only function
+      that deducts funds from a user's account.
 ]]
 
 
@@ -340,7 +339,7 @@ function bankHandlers.deposit(senderId, message)
 end
 
 ---
--- Handles a withdrawal of items.
+-- PHASE 1: Authorizes a withdrawal but does not deduct funds.
 function bankHandlers.withdraw_item(senderId, message)
     local user, itemName, count = message.user, message.item_name, message.count
     local account = accounts[user]
@@ -352,19 +351,41 @@ function bankHandlers.withdraw_item(senderId, message)
     local totalCost = rateInfo.current * count
     if account.balance >= totalCost then
         if (currentStock[itemName] or 0) >= count then
-            account.balance = account.balance - totalCost
-            if saveTableToFile(ACCOUNTS_DB, accounts) then
-                rednet.send(senderId, { success = true, newBalance = account.balance }, BANK_PROTOCOL)
-                logTransaction(user, string.format("WITHDRAW of $%d (%d x %s)", totalCost, count, itemName))
-            else
-                account.balance = account.balance + totalCost -- Refund on DB error
-                rednet.send(senderId, { success = false, reason = "Server database error." }, BANK_PROTOCOL)
-            end
+            -- Authorize the transaction, but do not change the balance yet.
+            rednet.send(senderId, { success = true, authorized = true }, BANK_PROTOCOL)
+            logActivity(string.format("Authorized withdrawal for '%s' of %d %s.", user, count, itemName))
         else
             rednet.send(senderId, { success = false, reason = "Insufficient stock in vault." }, BANK_PROTOCOL)
         end
     else
         rednet.send(senderId, { success = false, reason = "Insufficient funds." }, BANK_PROTOCOL)
+    end
+end
+
+---
+-- PHASE 3: Finalizes the transaction and deducts funds after turtle success.
+function bankHandlers.finalize_withdrawal(senderId, message)
+    local user, itemName, count = message.user, message.item_name, message.count
+    local account = accounts[user]
+    local rateInfo = currencyRates[itemName]
+    
+    if not account or not rateInfo then
+        -- This should not happen in a normal flow, but is a safety check.
+        logActivity("Finalization failed: account or rate info missing.", true)
+        return
+    end
+
+    local totalCost = rateInfo.current * count
+    account.balance = account.balance - totalCost
+    if saveTableToFile(ACCOUNTS_DB, accounts) then
+        logTransaction(user, string.format("WITHDRAW of $%d (%d x %s)", totalCost, count, itemName))
+        logActivity(string.format("Finalized withdrawal for '%s'. New balance: $%d", user, account.balance))
+        -- Send final confirmation back to ATM
+        rednet.send(senderId, { success = true, newBalance = account.balance }, BANK_PROTOCOL)
+    else
+        logActivity("CRITICAL: FAILED TO SAVE DATABASE AFTER FINALIZATION FOR " .. user, true)
+        -- At this point, the user has the items but the balance wasn't saved.
+        -- This is a critical state that requires manual admin intervention.
     end
 end
 
