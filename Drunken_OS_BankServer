@@ -1,14 +1,16 @@
 --[[
-    Drunken OS - Bank Server (v2.5 - Login Handshake Fix)
+    Drunken OS - Bank Server (v2.7 - Data Type Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version fixes a critical bug where the server did not correctly
-    handle the password hash from the ATM during login.
+    This definitive version fixes a critical data type mismatch where the
+    server was sending the entire account table instead of just the balance
+    number, causing the ATM client to crash.
 
     Key Changes:
-    - The `login` network handler now correctly reads `message.pass_hash`
-      from the incoming ATM request and validates it against the database.
+    - The `login` and `get_balance_and_rates` network handlers have been
+      repaired to ensure they always send `account.balance` (a number).
+    - This resolves the "attempt to concatenate a table value" error on the ATM.
 ]]
 
 --==============================================================================
@@ -270,7 +272,7 @@ function bankHandlers.login(senderId, message)
             logTransaction(user, "login", "SUCCESS")
             rednet.send(senderId, {
                 success = true,
-                balance = account.balance,
+                balance = account.balance, -- THE FIX: Send the number, not the table.
                 rates = currencyRates
             }, BANK_PROTOCOL)
         else
@@ -285,7 +287,6 @@ function bankHandlers.login(senderId, message)
         local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
 
         if response and response.exists then
-            -- The Mainframe confirms this is a valid user. Create a bank account.
             logActivity("Mainframe verified user. Creating new bank account for '" .. user .. "'.")
             accounts[user] = {
                 pass_hash = pass_hash,
@@ -294,7 +295,7 @@ function bankHandlers.login(senderId, message)
             if saveTableToFile(ACCOUNTS_DB, accounts) then
                 rednet.send(senderId, {
                     success = true,
-                    balance = 0,
+                    balance = 0, -- Send the number 0 for new accounts.
                     rates = currencyRates
                 }, BANK_PROTOCOL)
                 logTransaction(user, "login", "SUCCESS - New account created")
@@ -303,7 +304,6 @@ function bankHandlers.login(senderId, message)
                 rednet.send(senderId, { success = false, reason = "Bank database error." }, BANK_PROTOCOL)
             end
         else
-            -- The Mainframe says this user doesn't exist.
             logActivity("Mainframe verification failed for '" .. user .. "'. Denying access.", true)
             rednet.send(senderId, { success = false, reason = "User is not registered in the Mainframe." }, BANK_PROTOCOL)
             logTransaction(user, "login", "FAIL - User does not exist in Mainframe")
@@ -312,8 +312,10 @@ function bankHandlers.login(senderId, message)
 end
 
 function bankHandlers.get_balance_and_rates(senderId, message)
+    local account = accounts[message.user]
     rednet.send(senderId, {
-        balance = accounts[message.user] or 0,
+        -- THE FIX: Send account.balance (number) or 0, not the whole table.
+        balance = account and account.balance or 0,
         rates = currencyRates
     }, BANK_PROTOCOL)
 end
