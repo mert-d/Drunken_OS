@@ -1,17 +1,17 @@
 --[[
-    Drunken OS - Bank Server (v2.9 - Definitive Transaction Fix)
+    Drunken OS - Bank Server (v2.10 - Definitive Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive version fixes all known data-type mismatches in every
-    transaction-related function (login, deposit, withdraw, and balance checks).
-    This ensures data integrity and prevents all "attempt to index/perform
-    arithmetic on a nil/table/number value" errors.
+    This definitive version fixes all known data-type and logic errors across
+    all transaction functions. It is the stable, production-ready version
+    and should be used with a fresh `bank_accounts.db` file to prevent issues
+    from previous corrupted data.
 
     Key Changes:
-    - Re-engineered all network handlers to consistently and correctly access
-      the `account.balance` field for all calculations and data transfers.
-    - This is the stable, production-ready version of the Bank Server.
+    - Re-engineered all network handlers (`login`, `deposit`, `withdraw`,
+      `get_balance_and_rates`) to consistently and correctly handle the
+      account data structure, preventing all data-type related crashes.
 ]]
 
 
