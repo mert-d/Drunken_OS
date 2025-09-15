@@ -385,8 +385,13 @@ function mailHandlers.register(senderId, message)
     -- Step 1: Immediately tell the client to proceed to the auth screen.
     rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
 
-    -- Step 2: Start the (potentially slow) request to the auth server in the background.
-    parallel.run(initiateAuthRequest, message.user, message.pass, message.nickname, senderId, "register")
+    -- Step 2: Start the auth request in the background.
+    -- We use waitForAny with a function that returns instantly. This makes the
+    -- call non-blocking, allowing the main thread to continue immediately.
+    parallel.waitForAny(
+        function() initiateAuthRequest(message.user, message.pass, message.nickname, senderId, "register") end,
+        function() return end
+    )
 end
 
 ---
@@ -431,8 +436,11 @@ function mailHandlers.login(senderId, message)
     -- Step 1: Immediately tell the client to proceed to the auth screen.
     rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
 
-    -- Step 2: Start the (potentially slow) request to the auth server in the background.
-    parallel.run(initiateAuthRequest, message.user, receivedHash, nil, senderId, "login")
+    -- Step 2: Start the auth request in the background using the non-blocking technique.
+    parallel.waitForAny(
+        function() initiateAuthRequest(message.user, receivedHash, nil, senderId, "login") end,
+        function() return end
+    )
 end
 
 function mailHandlers.submit_auth_token(senderId, message)
