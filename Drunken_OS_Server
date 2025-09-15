@@ -310,21 +310,8 @@ end
 -- Authentication Helper Functions
 --==============================================================================
 
---==============================================================================
--- Authentication Helper Functions (RE-ENGINEERED)
---==============================================================================
-
----
--- This function runs in the background to request an auth code without
--- blocking the main server thread.
--- @param username The user's name.
--- @param password The user's hashed password.
--- @param nickname The user's chosen nickname (for registration).
--- @param senderId The rednet ID of the client computer.
--- @param purpose A string indicating "login" or "register".
-local function initiateAuthRequest(username, password, nickname, senderId, purpose)
-    logActivity("Initiating auth request for '" .. username .. "' in background...")
-
+local function requestAuthCode(username, password, nickname, senderId, purpose)
+    logActivity("Requesting auth code for '" .. username .. "'...")
     local reply, err = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
         username = username,
         password = password,
@@ -332,21 +319,22 @@ local function initiateAuthRequest(username, password, nickname, senderId, purpo
         computerID = os.getComputerID(),
         extra = { purpose = purpose or "unknown" },
     })
-
+    
     if not reply then
-        logActivity("HyperAuth requestCode error: " .. tostring(err), true)
-        -- The user's subsequent token submission will fail, which is an
-        -- acceptable failure condition if the auth server is truly down.
-    else
-        logActivity("Auth request ID created: " .. reply.request_id)
-        pendingAuths[username] = {
-            request_id = reply.request_id,
-            password = password,
-            nickname = nickname,
-            senderId = senderId,
-            timestamp = os.time()
-        }
+        logActivity("HyperAuth error: " .. tostring(err), true)
+        rednet.send(senderId, { success = false, reason = "Auth service error." }, "SimpleMail")
+        return nil
     end
+    
+    logActivity("Auth request ID created: " .. reply.request_id)
+    pendingAuths[username] = {
+        request_id = reply.request_id,
+        password = password,
+        nickname = nickname,
+        senderId = senderId,
+        timestamp = os.time()
+    }
+    return true
 end
 
 --==============================================================================
