@@ -39,78 +39,144 @@ local TURTLE_CLERK_PROTOCOL = "DB_ATM_Turtle"
 -- UI & Theme (Preserved from original baseline)
 --==============================================================================
 
-local hasColor = term.isColor and term.isColor()
-local function safeColor(c) if hasColor then return c else return colors.white end end
+-- A theme table to make color changes simple and consistent.
+local theme = {
+    bg = colors.black,
+    text = colors.white,
+    border = colors.gray,
+    titleBg = colors.gray,
+    titleText = colors.white,
+    highlightBg = colors.blue,
+    highlightText = colors.white,
+    errorBg = colors.red,
+    errorText = colors.white,
+}
 
-local function clear() term.setBackgroundColor(colors.black); term.clear() end
-
-local function showMessage(title, message)
+-- A helper function to draw a graphical window frame and title.
+local function drawFrame(title)
     local w, h = term.getSize()
-    local bg = hasColor and colors.red or colors.gray
-    local text = hasColor and colors.white or colors.black
     
-    term.setBackgroundColor(bg)
-    term.setTextColor(text)
+    -- Draw the background
+    term.setBackgroundColor(theme.bg)
     term.clear()
-    term.setCursorPos(1,1)
-    
-    local titleText = " " .. title .. " "
-    term.setCursorPos(math.floor((w - #titleText) / 2), 2)
-    print(titleText)
 
+    -- Draw borders
+    term.setBackgroundColor(theme.border)
+    for y = 1, h do
+        term.setCursorPos(1, y)
+        term.write(" ")
+        term.setCursorPos(w, y)
+        term.write(" ")
+    end
+    for x = 1, w do
+        term.setCursorPos(x, 1)
+        term.write(" ")
+        term.setCursorPos(x, h)
+        term.write(" ")
+    end
+
+    -- Draw Title bar
+    term.setBackgroundColor(theme.titleBg)
+    term.setTextColor(theme.titleText)
+    local titleText = " " .. (title or "Drunken Beard Bank") .. " "
+    local titleStart = math.floor((w - #titleText) / 2)
+    term.setCursorPos(titleStart, 1)
+    term.write(titleText)
+
+    -- Reset colors for content
+    term.setBackgroundColor(theme.bg)
+    term.setTextColor(theme.text)
+end
+
+-- A helper function to print centered text within the frame
+local function printCentered(y, text)
+    local w, h = term.getSize()
+    local x = math.floor((w - #text) / 2)
+    term.setCursorPos(x, y)
+    term.write(text)
+end
+
+-- Reworked to use the new graphical frame
+local function showMessage(title, message, isError)
+    local w, h = term.getSize()
+    
+    local boxBg = isError and theme.errorBg or theme.titleBg
+    local boxText = isError and theme.errorText or theme.titleText
+    
+    -- Draw a smaller box for the message
+    local boxW, boxH = math.floor(w * 0.8), math.floor(h * 0.6)
+    local boxX, boxY = math.floor((w - boxW) / 2), math.floor((h - boxH) / 2)
+
+    term.setBackgroundColor(boxBg)
+    for y = boxY, boxY + boxH - 1 do
+        term.setCursorPos(boxX, y)
+        term.write(string.rep(" ", boxW))
+    end
+    
+    term.setTextColor(boxText)
+    local titleText = " " .. title .. " "
+    term.setCursorPos(math.floor(w - #titleText) / 2, boxY + 1)
+    term.write(titleText)
+    
+    -- Word wrap message inside the box
     local lines = {}
+    local maxLen = boxW - 4
     for line in message:gmatch("[^\n]+") do
-        while #line > w - 4 do
-            table.insert(lines, line:sub(1, w - 4))
-            line = line:sub(w - 3)
+        while #line > maxLen do
+            table.insert(lines, line:sub(1, maxLen))
+            line = line:sub(maxLen + 1)
         end
         table.insert(lines, line)
     end
 
     for i, line in ipairs(lines) do
-        term.setCursorPos(3, 4 + i)
+        term.setCursorPos(boxX + 2, boxY + 3 + i)
         print(line)
     end
 
-    term.setCursorPos(3, 5 + #lines)
-    print("Press any key to continue...")
+    local continueText = "Press any key to continue..."
+    term.setCursorPos(math.floor((w - #continueText) / 2), boxY + boxH - 2)
+    print(continueText)
+    
     os.pullEvent("key")
 end
 
 local function drawMenu(title, options, help)
     local w, h = term.getSize()
     local selected = 1
+    
     while true do
-        term.setBackgroundColor(colors.black)
-        term.clear()
-        term.setCursorPos(1,1)
-        term.setTextColor(colors.yellow)
-        print(title)
-        term.setCursorPos(1,2)
-        print(string.rep("-", #title))
+        drawFrame(title)
         
         for i, opt in ipairs(options) do
-            term.setCursorPos(3, 3 + i)
+            term.setCursorPos(4, 4 + i)
             if i == selected then
-                term.setTextColor(colors.black)
-                term.setBackgroundColor(colors.white)
+                term.setBackgroundColor(theme.highlightBg)
+                term.setTextColor(theme.highlightText)
             else
-                term.setTextColor(colors.white)
-                term.setBackgroundColor(colors.black)
+                term.setBackgroundColor(theme.bg)
+                term.setTextColor(theme.text)
             end
-            term.write(opt)
+            term.write(" " .. opt .. string.rep(" ", w - 6 - #opt) .. " ") -- Add padding
         end
 
-        term.setBackgroundColor(colors.black)
-        term.setTextColor(colors.gray)
-        term.setCursorPos(1, h)
-        term.write(help or "Use UP/DOWN and ENTER to select.")
-
-        local event, key = os.pullEvent("key")
-        if key == keys.up then selected = (selected == 1) and #options or selected - 1
-        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-        elseif key == keys.enter then return selected
-        elseif key == keys.tab or key == keys.q then return nil
+        term.setBackgroundColor(theme.bg)
+        term.setTextColor(colors.yellow)
+        if help then
+            printCentered(h - 2, help)
+        end
+        
+        local _, key = os.pullEvent("key")
+        if key == keys.up then
+            selected = (selected == 1) and #options or selected - 1
+        elseif key == keys.down then
+            selected = (selected == #options) and 1 or selected + 1
+        elseif key == keys.enter then
+            term.setBackgroundColor(theme.bg)
+            term.setTextColor(theme.text)
+            return selected
+        elseif key == keys.q or key == keys.tab then
+            return nil
         end
     end
 end
