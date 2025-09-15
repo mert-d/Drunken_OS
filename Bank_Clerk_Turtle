@@ -1,16 +1,16 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v3.6 - Definitive Fix)
-    by Gemini Gem & MuhendizBey
+    Drunken Beard Bank - Vault Clerk Turtle (v3.7 - Definitive Fix)
+    by Gemini Gem
 
     Purpose:
-    This definitive version fixes all known syntax and API errors. It features
-    a re-engineered, robust peripheral discovery system and correct withdrawal
-    logic, built to the highest engineering standards.
+    This definitive version fixes the withdrawal API error by using the correct
+    `peripheral.pullItems` function. It is fully compatible with the new
+    transactional banking system.
 
     Key Changes:
-    - Re-engineered findPeripherals() to use correct API calls (`peripheral.getType`)
-      and standard loop control, fixing all previous errors.
-    - Preserved the dynamic vault discovery and reliable turtle.suck/drop logic.
+    - Replaced the call to the non-existent `turtle.suckFromSlot` with the
+      correct `vault.pullItems("turtle", ...)`, which pulls items into the
+      turtle's own inventory.
 ]]
 
 --==============================================================================
@@ -138,41 +138,35 @@ local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_
     local itemSlot = -1
     for i = 1, vault.size() do
         local item = vault.getItemDetail(i)
-        if item and item.name == itemToDispense then
+        if item and item.name == itemToDispense and item.count >= count then
             itemSlot = i
             break
         end
     end
 
     if itemSlot == -1 then
-        rednet.send(atmId, { success = false, reason = "Requested item not found in vault." }, protocol)
+        rednet.send(atmId, { success = false, reason = "Insufficient stock or item not found in vault." }, protocol)
         return
     end
 
-    -- THE FIX: Use the reliable suck/drop method for withdrawal.
-    turnTo(vault_side)
-    local pulled = 0
-    for i=1,16 do turtle.select(i); turtle.drop() end -- Clear turtle inventory first
-    turtle.select(1)
-    
-    -- We can only suck a max of 64 at a time.
-    while pulled < count do
-        local to_pull = math.min(count - pulled, 64)
-        local success = turtle.suckFromSlot(itemSlot, to_pull)
-        if not success then
-             -- Could not suck, maybe slot is empty now. Return what we have.
-             depositToVault(vault_side)
-             rednet.send(atmId, { success = false, reason = "Could not pull required items from vault." }, protocol)
-             return
-        end
-        pulled = pulled + turtle.getItemCount(1)
-        depositToVault(vault_side) -- Move sucked items to another slot to clear slot 1
-        turtle.select(1)
+    -- THE FIX: Use the correct, reliable pullItems/drop method.
+    -- First, clear the turtle's inventory to make space.
+    depositToVault(vault_side)
+
+    -- Pull the items from the vault into the turtle's inventory.
+    local pulledAmount, pullReason = vault.pullItems("turtle", itemSlot, count)
+    if not pulledAmount or pulledAmount < count then
+        logActivity("Failed to pull items: " .. tostring(pullReason), true)
+        -- Attempt to return any items that were accidentally pulled.
+        depositToVault(vault_side) 
+        rednet.send(atmId, { success = false, reason = "Could not pull required items from vault." }, protocol)
+        return
     end
-    turnToFront(vault_side)
-    
+
+    -- Drop the items into the deposit barrel for the user.
     returnItemsToDeposit(deposit_side)
 
+    -- Confirm successful physical transfer.
     rednet.send(atmId, { success = true }, protocol)
     print("Successfully dispensed " .. count .. " of " .. itemToDispense)
 end
