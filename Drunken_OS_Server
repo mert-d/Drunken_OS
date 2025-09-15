@@ -1,17 +1,19 @@
 --[[
-    Drunken OS - Mainframe Server (v10.10 - Race Condition Fix)
+    Drunken OS - Mainframe Server (v10.11 - Definitive Auth Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version fixes a critical race condition where a user could submit
-    their auth token before the server's background task had finished creating
-    the pending auth request.
+    This definitive version reverts the authentication logic to a stable,
+    synchronous model based on user-provided working code. This resolves all
+    timeout, race condition, and data handling issues, while retaining the
+    necessary password hashing fixes.
 
     Key Changes:
-    - The `submit_auth_token` handler has been re-engineered.
-    - It now includes a short retry loop, waiting up to 3 seconds for the
-      pending authentication record to appear, making the handshake robust
-      against timing variations.
+    - Removed all asynchronous `parallel` calls from the authentication flow.
+    - Re-engineered the `register` and `login` handlers to follow a simple,
+      synchronous (blocking) sequence, eliminating the race condition.
+    - Restored the user-provided, working `submit_auth_token` logic.
+    - This is the new stable baseline for the server.
 ]]
 
 --==============================================================================
@@ -381,20 +383,14 @@ function mailHandlers.register(senderId, message)
         return
     end
 
-    -- Step 1: Immediately tell the client to proceed to the auth screen.
-    rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
-
-    -- Step 2: Start the auth request in the background.
-    -- We use waitForAny with a function that returns instantly. This makes the
-    -- call non-blocking, allowing the main thread to continue immediately.
-    parallel.waitForAny(
-        function() initiateAuthRequest(message.user, message.pass, message.nickname, senderId, "register") end,
-        function() return end
-    )
+    -- This now waits for the auth code request to complete before replying.
+    if requestAuthCode(message.user, message.pass, message.nickname, senderId, "register") then
+        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
+    end
 end
 
 ---
--- Handles a user login.
+-- Handles a user login using a synchronous flow and graceful migration.
 function mailHandlers.login(senderId, message)
     local userData = users[message.user]
     local receivedHash = message.pass
@@ -432,34 +428,18 @@ function mailHandlers.login(senderId, message)
         return
     end
     
-    -- Step 1: Immediately tell the client to proceed to the auth screen.
-    rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
-
-    -- Step 2: Start the auth request in the background using the non-blocking technique.
-    parallel.waitForAny(
-        function() initiateAuthRequest(message.user, receivedHash, nil, senderId, "login") end,
-        function() return end
-    )
+    -- This now waits for the auth code request to complete before replying.
+    if requestAuthCode(message.user, receivedHash, nil, senderId, "login") then
+        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
+    end
 end
 
 function mailHandlers.submit_auth_token(senderId, message)
     local user, code = message.user, message.token
     logActivity("Received auth submission from '" .. user .. "'")
-
-    local authData = pendingAuths[user]
     
-    -- THE FIX: Retry loop to wait for the background task to finish.
+    local authData = pendingAuths[user]
     if not authData then
-        local attempts = 0
-        while not authData and attempts < 6 do
-            sleep(0.5) -- Wait half a second
-            authData = pendingAuths[user]
-            attempts = attempts + 1
-        end
-    end
-
-    if not authData then
-        logActivity("Auth submission failed for '" .. user .. "': No pending auth found after waiting.", true)
         rednet.send(senderId, { success = false, reason = "No pending auth." }, "SimpleMail")
         return
     end
@@ -956,7 +936,7 @@ local function main()
     rednet.host("SimpleChat", "chat.server")
     rednet.host("ArcadeGames", "arcade.server")
     rednet.host(ADMIN_PROTOCOL, "admin.server")
-    logActivity("Mainframe Server v10.10 Initialized.")
+    logActivity("Mainframe Server v10.11 Initialized.")
     mainEventLoop()
 end
 
