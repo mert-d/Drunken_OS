@@ -1,17 +1,17 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v4.15 - Definitive Handshake Fix)
+    Drunken Beard Bank - ATM Terminal (v4.17 - Transactional Client)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This is the definitive, stable version of the ATM script, built directly
-    upon the user-provided working baseline (v4.3). It incorporates the single
-    necessary fix for the login handshake to make it compatible with the modern,
-    secure Bank Server (v2.5+), while preserving all original, working logic.
+    This definitive version implements the client-side logic for the new
+    transactional withdrawal system, ensuring funds are only deducted
+    after a successful physical item transfer.
 
     Key Changes:
-    - The login function now correctly sends the verified password hash to
-      the Bank Server, resolving the "Invalid credentials" error.
-    - All other logic, UI, and functionality is identical to the trusted v4.3.
+    - The `withdraw` function is now a multi-stage process.
+    - It first requests authorization from the server.
+    - If authorized, it commands the turtle to dispense items.
+    - If the turtle succeeds, it sends a finalization request to the server.
 ]]
 
 --==============================================================================
@@ -183,10 +183,8 @@ local function withdraw()
     if choice == nil or choice > #item_names then return end
     
     local item_name = item_names[choice]
-    local rate = currencyRates[item_name].current
-
-    clear()
-    term.setCursorPos(1,1)
+    
+    term.clear(); term.setCursorPos(1,1)
     print("How many " .. item_name:gsub("minecraft:", ""):gsub("_", " ") .. " would you like to withdraw?")
     write("> ")
     term.setCursorBlink(true)
@@ -194,20 +192,51 @@ local function withdraw()
     term.setCursorBlink(false)
     
     local amount = tonumber(amount_str)
-    if not amount or amount <= 0 or (amount * rate > balance) then
-        showMessage("Error", "Invalid amount or insufficient funds.")
+    if not amount or amount <= 0 then
+        showMessage("Error", "Invalid amount.")
         return
     end
 
-    print("Requesting withdrawal of " .. amount .. " " .. item_name .. "...")
-    rednet.send(turtleClerkId, {type = "request_dispense", item_name = item_name, count = amount}, TURTLE_CLERK_PROTOCOL)
-    local _, response = rednet.receive(TURTLE_CLERK_PROTOCOL, 30)
-    
-    if response and response.success then
-        balance = response.new_balance
-        showMessage("Success", "Please collect your items. New balance: $" .. balance)
+    -- PHASE 1: Request Authorization
+    print("Contacting bank to authorize transaction...")
+    rednet.send(bankServerId, {
+        type = "withdraw_item", user = username,
+        item_name = item_name, count = amount
+    }, BANK_PROTOCOL)
+    local _, authResponse = rednet.receive(BANK_PROTOCOL, 10)
+
+    if not authResponse or not authResponse.authorized then
+        showMessage("Transaction Denied", (authResponse and authResponse.reason) or "No response from server.")
+        return
+    end
+
+    -- PHASE 2: Command Turtle
+    print("Authorization received. Commanding clerk...")
+    rednet.send(turtleClerkId, {
+        type = "request_dispense", item_name = item_name, count = amount
+    }, TURTLE_CLERK_PROTOCOL)
+    local _, turtleResponse = rednet.receive(TURTLE_CLERK_PROTOCOL, 30)
+
+    if not turtleResponse or not turtleResponse.success then
+        showMessage("Withdrawal Failed", (turtleResponse and turtleResponse.reason) or "Clerk did not respond.")
+        return
+    end
+
+    -- PHASE 3: Finalize Transaction
+    print("Items dispensed. Finalizing with bank...")
+    rednet.send(bankServerId, {
+        type = "finalize_withdrawal", user = username,
+        item_name = item_name, count = amount
+    }, BANK_PROTOCOL)
+    local _, finalResponse = rednet.receive(BANK_PROTOCOL, 10)
+
+    if finalResponse and finalResponse.success then
+        balance = finalResponse.newBalance
+        showMessage("Success", "Withdrawal complete. Your new balance is $" .. balance)
     else
-        showMessage("Withdrawal Failed", (response and response.reason) or "Turtle did not respond.")
+        -- This is a critical error state. The user has the items, but the server
+        -- failed to deduct the balance. This needs to be flagged.
+        showMessage("CRITICAL ERROR", "Could not finalize transaction with server. Please contact an admin.")
     end
 end
 
