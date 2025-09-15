@@ -1,18 +1,18 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v4.16 - Definitive Stable Upgrade)
+    Drunken Beard Bank - ATM Terminal (v4.17 - Graphical UI Upgrade)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This is the definitive, stable version of the ATM script, built directly
-    upon the user-provided working baseline (ATM_Test.txt). It incorporates
-    the two necessary fixes for the card data scope and the login handshake,
-    while preserving all original, working logic, UI, and discovery methods.
+    This version implements a full graphical user interface overhaul, inspired
+    by the Drunken OS Bank Server's UI. It provides a more professional and
+    visually appealing user experience.
 
     Key Changes:
-    - Fixed the scope issue by correctly assigning read card data to the
-      main 'card_data' variable in the `runSession` function.
-    - The login function now correctly sends the password hash to the Bank Server.
-    - All other logic is identical to the trusted baseline.
+    - Added a theme table to easily manage colors.
+    - Created a new 'drawFrame' function to draw window borders and titles.
+    - Re-engineered 'showMessage' and 'drawMenu' to operate within the new
+      graphical framework.
+    - All core banking and networking logic is preserved from v4.16.
 ]]
 
 --==============================================================================
