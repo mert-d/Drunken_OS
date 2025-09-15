@@ -377,10 +377,14 @@ while true do
             file.close()
         end
         
-        clear()
-        term.setTextColor(colors.red)
-        print("A fatal error occurred. The ATM will now reboot.")
-        print(err)
+        -- Use the new UI for the crash screen too
+        drawFrame("FATAL ERROR")
+        term.setBackgroundColor(colors.red)
+        term.setTextColor(colors.white)
+        term.setCursorPos(2, 4)
+        print("A fatal error occurred. The ATM will reboot.")
+        term.setCursorPos(2, 6)
+        print(tostring(err))
         sleep(5)
         os.reboot()
     end
