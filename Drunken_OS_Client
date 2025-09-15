@@ -506,73 +506,39 @@ function loginOrRegister()
     return true
 end
 
-function mainMenu()
-    local options = {"Mail", "Manage Lists", "General Chat", "Play Games", "Send Feedback"}
-    if state.isAdmin and state.adminServerId then
-        table.insert(options, "Admin Console")
-    end
-    table.insert(options, "System")
-    table.insert(options, "Help")
-    table.insert(options, "Exit")
-
-    local selected = 1
-    local pollTimer = os.startTimer(10)
-    local needsRedraw = true
-    
-    local ok, err = pcall(function()
-        rednet.unhost("SimpleMail")
-        rednet.host("SimpleMail", "client." .. state.username)
-    end)
-    if not ok then
-        showMessage("Login Error", "This user is already logged in elsewhere.")
-        state.username = nil
-        return
-    end
-
+local function mainMenu()
     while true do
-        if needsRedraw then
-            drawWindow("Main Menu")
-            drawMenu(options, selected, 2, 3)
-            needsRedraw = false
+        rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
+        local _, response = rednet.receive("SimpleMail", 2)
+        local unreadCount = response and response.count or 0
+        
+        local options = {
+            "Read Mail" .. (unreadCount > 0 and " (" .. unreadCount .. " unread)" or ""),
+            "Send Mail", "General Chat", "Mailing Lists", "Games", "System", "Help", "Logout"
+        }
+        
+        -- THE FIX: Correctly check for admin status
+        if state.isAdmin then
+            table.insert(options, 8, "Admin Console")
         end
-
-        local event, p1, p2, p3 = os.pullEvent("key", "timer", "rednet_message", "terminate")
-        if event == "key" then
-            if p1 == keys.up then
-                selected = (selected == 1) and #options or selected - 1
-            elseif p1 == keys.down then
-                selected = (selected == #options) and 1 or selected + 1
-            elseif p1 == keys.enter then
-                local action = options[selected]
-                if action == "Mail" then state.apps.mailMenu(context)
-                elseif action == "Manage Lists" then state.apps.manageLists(context)
-                elseif action == "General Chat" then state.apps.startChat(context)
-                elseif action == "Play Games" then state.apps.enterArcade(context)
-                elseif action == "Send Feedback" then state.apps.sendFeedback(context)
-                elseif action == "Admin Console" then state.apps.adminConsole(context)
-                elseif action == "System" then state.apps.systemMenu(context)
-                elseif action == "Help" then state.apps.showHelpScreen(context)
-                elseif action == "Exit" then return end
-                needsRedraw = true
-            elseif p1 == keys.tab or p1 == keys.q then
-                return
-            end
-            needsRedraw = true
-        elseif event == "timer" and p1 == pollTimer then
-            rednet.send(state.mailServerId, {type = "get_unread_count", user = state.username}, "SimpleMail")
-            pollTimer = os.startTimer(10)
-        elseif event == "rednet_message" and p3 == "SimpleMail" then
-            if p2.type == "broadcast" then
-                showMessage("Broadcast", p2.text)
-                needsRedraw = true
-            elseif p2.type == "unread_count_response" and p2.count ~= state.unreadCount then
-                state.unreadCount = p2.count
-                needsRedraw = true
-            end
-        elseif event == "terminate" then
-            return
+        
+        local choice = state.apps.drawMenu(state, "Main Menu", options, "Welcome, " .. state.nickname)
+        
+        if not choice or options[choice] == "Logout" then break end
+        
+        local selection = options[choice]
+        -- THE FIX: All calls now correctly reference the 'apps' library
+        if selection:match("Read Mail") then state.apps.readMail(state)
+        elseif selection == "Send Mail" then state.apps.sendMail(state)
+        elseif selection == "General Chat" then state.apps.chat(state)
+        elseif selection == "Mailing Lists" then state.apps.manageLists(state)
+        elseif selection == "Games" then state.apps.gameMenu(state)
+        elseif selection == "System" then state.apps.systemMenu(state)
+        elseif selection == "Help" then state.apps.showHelpScreen(state)
+        elseif selection == "Admin Console" then state.apps.adminConsole(state)
         end
     end
+    state.username = nil -- Signal logout
 end
 
 --==============================================================================
@@ -602,47 +568,44 @@ local function showSplashScreen()
     sleep(1.5)
 end
 
+
 local function main()
     showSplashScreen()
     while true do
         rednet.open("back")
         local connected, reason = findServers()
         if not connected then
-            showMessage("Connection Error", reason or "Could not find servers. Retrying...", true)
+            local tempShowMessage = function(title, msg) term.clear(); print(title.."\n"..msg); sleep(3) end
+            tempShowMessage("Connection Error", reason or "Could not find servers. Retrying...")
             sleep(5)
         else
             if autoUpdateCheck() then return end
-            
-            -- Stage 1: Ensure library files exist on disk.
             if not installDependencies() then
                 rednet.close("back")
-                print("Halting due to installation error.")
                 return 
             end
 
-            -- Stage 2: Now that files are guaranteed to exist, load them.
+            -- Load libraries after ensuring they exist
             if not crypto then crypto = require("lib.sha1_hmac") end
             if not apps then apps = require("lib.drunken_os_apps") end
 
-            -- Stage 3: Inject the loaded libraries into the state table so all
-            --          other functions and the apps library can use them.
             state.crypto = crypto
             state.apps = apps
-            
+
             state.username = nil
             state.isAdmin = false
-            if not loginOrRegister() then
+            if not state.apps.loginOrRegister(state) then -- Hand off to the library for login UI
                 clear(); print("Goodbye!"); break
             end
             
             rednet.send(state.mailServerId, {type = "get_motd"}, "SimpleMail")
-            local _, response = rednet.receive("SimpleMail", 3)
-            if response and response.motd and response.motd ~= "" then
-                showMessage("Message of the Day", response.motd)
+            local _, motd_response = rednet.receive("SimpleMail", 3)
+            if motd_response and motd_response.motd and motd_response.motd ~= "" then
+                state.apps.showMessage(state, "Message of the Day", motd_response.motd)
             end
             
-            -- Now, this call will succeed because state.apps is no longer nil.
-            mainMenu()
+            -- Call the local mainMenu controller
+            mainMenu() 
             
             rednet.close("back")
             if not state.username then
