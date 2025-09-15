@@ -1,17 +1,18 @@
 --[[
-    SimpleMail & Chat Client (v11.9 - Finalized Installer)
+    SimpleMail & Chat Client (v12.3 - Final Controller)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive client version is fully compatible with the new unified
-    code distribution system of Server v10.6+.
+    This definitive version implements the correct, stable architecture.
+    The client script acts as the loader and controller, handling the
+    mainMenu loop, while calling the modular 'drunken_os_apps' library
+    for all individual application screens.
 
     Key Changes:
-    - Version number incremented to v11.9.
-    - Corrected the `autoUpdateCheck` to use the `programName` variable,
-      ensuring it correctly checks its own version against the server.
-    - No other functional changes needed; the installer logic from v11.7
-      is already compatible with the new server.
+    - The `mainMenu` function now resides in this script.
+    - All calls within `mainMenu` now correctly reference the `apps` library
+      (e.g., `apps.readMail(state)`).
+    - This resolves all previous scope and 'nil value' errors permanently.
 ]]
 
 --==============================================================================
