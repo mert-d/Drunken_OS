@@ -1,19 +1,18 @@
 --[[
-    Drunken OS - Mainframe Server (v10.11 - Definitive Auth Fix)
+    Drunken OS - Mainframe Server (v10.13 - Dynamic Admin Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive version reverts the authentication logic to a stable,
-    synchronous model based on user-provided working code. This resolves all
-    timeout, race condition, and data handling issues, while retaining the
-    necessary password hashing fixes.
+    This definitive version replaces the hardcoded admin list with a dynamic
+    system managed via a database file and new admin commands. This resolves
+    the issue where admin privileges were not being correctly assigned.
 
     Key Changes:
-    - Removed all asynchronous `parallel` calls from the authentication flow.
-    - Re-engineered the `register` and `login` handlers to follow a simple,
-      synchronous (blocking) sequence, eliminating the race condition.
-    - Restored the user-provided, working `submit_auth_token` logic.
-    - This is the new stable baseline for the server.
+    - Server now loads an `admins.db` file to manage the list of administrators.
+    - Removed the hardcoded `admins` table.
+    - Added new admin commands: `addadmin <user>` and `deladmin <user>`.
+    - All login and registration functions now check against the new dynamic
+      admin list.
 ]]
 
 --==============================================================================
@@ -245,12 +244,17 @@ end
 ---
 -- Loads all server databases from disk into memory.
 local function loadAllData()
+    admins = loadTableFromFile(ADMINS_DB)
+    if not admins.MuhendizBey then
+        -- Ensure the default admin exists if the file is new/empty
+        admins.MuhendizBey = true
+        saveTableToFile(ADMINS_DB, admins)
+    end
     users = loadTableFromFile(USERS_DB)
     lists = loadTableFromFile(LISTS_DB)
     games = loadTableFromFile(GAMES_DB)
     chatHistory = loadTableFromFile(CHAT_DB)
     gameList = loadTableFromFile(GAMELIST_DB)
-    libraryPastes = loadTableFromFile(LIB_PASTES_DB)
     local updaterData = loadTableFromFile(UPDATER_DB)
     programVersions = updaterData.v or {}
     programCode = updaterData.c or {}
@@ -601,7 +605,7 @@ local adminCommands = {}
 
 function adminCommands.help()
     logActivity("--- Mainframe Admin Commands ---")
-    logActivity("users, deluser, lists, dellist, board, delscore")
+    logActivity("users, deluser, addadmin, deladmin, lists, dellist, board, delscore")
     logActivity("motd, broadcast, publish, addgame, delgame, games, publishgame")
 end
 
@@ -830,6 +834,46 @@ function adminCommands.publishgame(a)
     end
 end
 
+function adminCommands.addadmin(args)
+    local username = args[2]
+    if not username then
+        logActivity("Usage: addadmin <username>")
+        return
+    end
+    if not users[username] then
+        logActivity("Error: User '" .. username .. "' does not exist.", true)
+        return
+    end
+
+    admins[username] = true
+    if saveTableToFile(ADMINS_DB, admins) then
+        logActivity("User '" .. username .. "' has been granted admin privileges.")
+    else
+        logActivity("Failed to save admin database.", true)
+        admins[username] = nil -- Revert on failure
+    end
+end
+
+function adminCommands.deladmin(args)
+    local username = args[2]
+    if not username then
+        logActivity("Usage: deladmin <username>")
+        return
+    end
+    if not admins[username] then
+        logActivity("Error: User '" .. username .. "' is not an admin.", true)
+        return
+    end
+
+    admins[username] = nil
+    if saveTableToFile(ADMINS_DB, admins) then
+        logActivity("Admin privileges have been revoked for '" .. username .. "'.")
+    else
+        logActivity("Failed to save admin database.", true)
+        admins[username] = true -- Revert on failure
+    end
+end
+
 local function executeAdminCommand(command)
     local output = {}
     local oldPrint = print
@@ -924,7 +968,7 @@ local function main()
     rednet.host("SimpleChat", "chat.server")
     rednet.host("ArcadeGames", "arcade.server")
     rednet.host(ADMIN_PROTOCOL, "admin.server")
-    logActivity("Mainframe Server v10.11 Initialized.")
+    logActivity("Mainframe Server v10.13 Initialized.")
     mainEventLoop()
 end
 
