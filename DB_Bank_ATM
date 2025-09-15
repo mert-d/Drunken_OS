@@ -1,12 +1,12 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v4.3 - Definitive Login Fix)
+    Drunken Beard Bank - ATM Terminal (v4.15 - Definitive Handshake Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This is a direct upgrade of the user-provided, stable v4.3 baseline.
-    It incorporates the single necessary fix for the login handshake to make
-    it compatible with the modern, secure Bank Server (v2.5+), while
-    preserving all original, working logic and UI.
+    This is the definitive, stable version of the ATM script, built directly
+    upon the user-provided working baseline (v4.3). It incorporates the single
+    necessary fix for the login handshake to make it compatible with the modern,
+    secure Bank Server (v2.5+), while preserving all original, working logic.
 
     Key Changes:
     - The login function now correctly sends the verified password hash to
