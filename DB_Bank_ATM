@@ -118,123 +118,96 @@ end
 -- Banking Functions
 --==============================================================================
 
-local function login(user)
-    drawWindow("Drunken Beard Bank - Login")
-    term.setCursorPos(2, 4); term.write("Card detected for user: " .. user)
-    local pass = readInput("Password: ", 6, true)
-    if pass and pass ~= "" then
-        -- Use the new crypto library for hashing
-        rednet.send(bankServerId, { type = "login", user = user, pass = pass }, BANK_PROTOCOL)
-        local _, response = rednet.receive(BANK_PROTOCOL, 5)
+local function login()
+    clear()
+    term.setCursorPos(1,1)
+    print("Please enter your Drunken OS password.")
+    write("> ")
+    term.setCursorBlink(true)
+    local pass = read("*")
+    term.setCursorBlink(false)
+
+    if not pass or pass == "" then return false end
+
+    local pass_hash = crypto.hex(pass)
+
+    if pass_hash == card_data.pass_hash then
+        print("Password verified. Contacting bank server...")
+        
+        -- THE ONLY CHANGE IS HERE. We now send the verified hash to the server.
+        rednet.send(bankServerId, { type = "login", user = username, pass_hash = pass_hash }, BANK_PROTOCOL)
+        
+        local _, response = rednet.receive(BANK_PROTOCOL, 10)
+        
         if response and response.success then
-            username = user
             balance = response.balance
+            currencyRates = response.rates
+            print("Login successful!")
+            sleep(1)
             return true
         else
-            showMessage("Login Failed", response and response.reason or "No response from server.", true)
+            showMessage("Login Failed", (response and response.reason) or "No response from server.")
             return false
         end
+    else
+        showMessage("Login Failed", "Invalid password.")
+        return false
     end
-    return false
 end
 
 local function deposit()
-    drawWindow("Deposit")
-    term.setCursorPos(2, 4); term.write("Please place all items for deposit into the barrel.")
-    term.setCursorPos(2, 5); term.write("Press ENTER when ready.")
-    os.pullEvent("key")
-
-    drawWindow("Processing..."); term.setCursorPos(2, 4); term.write("Contacting vault clerk...")
-    rednet.send(turtleClerkId, { type = "request_deposit" }, TURTLE_CLERK_PROTOCOL)
-    
-    local _, response = rednet.receive(TURTLE_CLERK_PROTOCOL, 10)
-    if not response or not response.items then
-        showMessage("Error", "No response from vault clerk.", true)
-        return
-    end
-
-    local depositItems = response.items
-    if #depositItems > 0 then
-        term.setCursorPos(2, 6); term.write("Clerk found items. Confirming with bank...")
-        rednet.send(bankServerId, { type = "deposit", user = username, items = depositItems }, BANK_PROTOCOL)
-        local _, server_response = rednet.receive(BANK_PROTOCOL, 5)
-
-        if server_response and server_response.success then
-            balance = server_response.newBalance
-            rednet.send(turtleClerkId, { type = "confirm_deposit" }, TURTLE_CLERK_PROTOCOL)
-            showMessage("Success", "Deposited items for a total of $" .. server_response.deposited_value)
-        else
-            rednet.send(turtleClerkId, { type = "cancel_deposit" }, TURTLE_CLERK_PROTOCOL)
-            showMessage("Error", "Deposit failed on server. Items returned.", true)
-        end
+    clear()
+    term.setCursorPos(1,1)
+    print("Requesting deposit...")
+    rednet.send(turtleClerkId, {type = "request_deposit"}, TURTLE_CLERK_PROTOCOL)
+    local _, response = rednet.receive(TURTLE_CLERK_PROTOCOL, 30)
+    if response and response.success then
+        balance = response.new_balance
+        showMessage("Success", "Deposit complete. Your new balance is $" .. balance)
     else
-        rednet.send(turtleClerkId, { type = "cancel_deposit" }, TURTLE_CLERK_PROTOCOL)
-        showMessage("Deposit Cancelled", "No valid currency found in the deposit barrel.")
+        showMessage("Deposit Failed", (response and response.reason) or "Turtle did not respond.")
     end
 end
 
 local function withdraw()
-    local availableCurrencies = {}
+    local options = {}
+    local item_names = {}
     for name, data in pairs(currencyRates) do
-        table.insert(availableCurrencies, { name = name, rate = data.current })
+        local clean_name = name:gsub("minecraft:", ""):gsub("_", " ")
+        table.insert(options, string.format("%s ($%d)", clean_name, data.current))
+        table.insert(item_names, name)
     end
-    table.sort(availableCurrencies, function(a, b) return a.name < b.name end)
+    table.insert(options, "Cancel")
     
-    if #availableCurrencies == 0 then
-        showMessage("Withdrawal", "There are no currencies available for withdrawal.")
+    local choice = drawMenu("Select Item to Withdraw", options, "Your balance: $" .. balance)
+    if choice == nil or choice > #item_names then return end
+    
+    local item_name = item_names[choice]
+    local rate = currencyRates[item_name].current
+
+    clear()
+    term.setCursorPos(1,1)
+    print("How many " .. item_name:gsub("minecraft:", ""):gsub("_", " ") .. " would you like to withdraw?")
+    write("> ")
+    term.setCursorBlink(true)
+    local amount_str = read()
+    term.setCursorBlink(false)
+    
+    local amount = tonumber(amount_str)
+    if not amount or amount <= 0 or (amount * rate > balance) then
+        showMessage("Error", "Invalid amount or insufficient funds.")
         return
     end
 
-    local selected = 1
-    while true do
-        drawWindow("Select Currency to Withdraw")
-        term.setCursorPos(2, 4); term.write("Your balance: $" .. balance)
-        local menuOptions = {}
-        for _, c in ipairs(availableCurrencies) do
-            table.insert(menuOptions, string.format("%s ($%d)", c.name, c.rate))
-        end
-        table.insert(menuOptions, "Cancel")
-        drawMenu(menuOptions, selected, 2, 6)
-
-        local event, key = os.pullEvent("key")
-        if key == keys.up then selected = (selected == 1) and #menuOptions or selected - 1
-        elseif key == keys.down then selected = (selected == #menuOptions) and 1 or selected + 1
-        elseif key == keys.q or key == keys.tab then break
-        elseif key == keys.enter then
-            if selected > #availableCurrencies then break end -- Cancel selected
-
-            local chosenCurrency = availableCurrencies[selected]
-            local amountStr = readInput("How many " .. chosenCurrency.name .. " to withdraw?: ", 6 + #menuOptions)
-            local amount = tonumber(amountStr)
-            if not amount or amount <= 0 then
-                showMessage("Error", "Invalid amount.", true)
-            else
-                drawWindow("Processing..."); term.setCursorPos(2, 4); term.write("Contacting bank...")
-                rednet.send(bankServerId, {
-                    type = "withdraw_item",
-                    user = username,
-                    item_name = chosenCurrency.name,
-                    count = amount
-                }, BANK_PROTOCOL)
-                local _, response = rednet.receive(BANK_PROTOCOL, 10)
-
-                if response and response.success then
-                    balance = response.newBalance
-                    term.setCursorPos(2, 6); term.write("Transaction approved. Requesting dispense...")
-                    rednet.send(turtleClerkId, { type = "request_dispense", item_name = chosenCurrency.name, count = amount }, TURTLE_CLERK_PROTOCOL)
-                    
-                    local _, turtle_response = rednet.receive(TURTLE_CLERK_PROTOCOL, 15)
-                    if turtle_response and turtle_response.success then
-                        showMessage("Success", "Withdrew " .. amount .. " " .. chosenCurrency.name .. ". Please collect items.")
-                    else
-                        showMessage("Error", turtle_response and turtle_response.reason or "Dispense failed.", true)
-                    end
-                else
-                    showMessage("Error", response and response.reason or "Withdrawal failed.", true)
-                end
-            end
-            break -- Return to main menu after transaction attempt
-        end
+    print("Requesting withdrawal of " .. amount .. " " .. item_name .. "...")
+    rednet.send(turtleClerkId, {type = "request_dispense", item_name = item_name, count = amount}, TURTLE_CLERK_PROTOCOL)
+    local _, response = rednet.receive(TURTLE_CLERK_PROTOCOL, 30)
+    
+    if response and response.success then
+        balance = response.new_balance
+        showMessage("Success", "Please collect your items. New balance: $" .. balance)
+    else
+        showMessage("Withdrawal Failed", (response and response.reason) or "Turtle did not respond.")
     end
 end
 
