@@ -1,22 +1,22 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v6.0 - Universal Interaction)
+    Drunken Beard Bank - Vault Clerk Turtle (v6.1 - Modern API Compliance)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive version of the clerk turtle features completely re-engineered
-    interaction logic, allowing it to work reliably with inventories placed on
-    any of its six sides (top, bottom, front, back, left, or right).
+    This definitive version of the clerk turtle features universal 6-sided
+    interaction logic and is compliant with the modern CC:Tweaked turtle API.
 
     Changelog:
+    v6.1:
+    - Fixed a crash in 'handleDispense' by correctly handling the boolean
+      return value of turtle.suck() and its variants.
+    - The turtle now manually verifies the quantity of items in its inventory
+      after a pull action to ensure the transaction is correct.
     v6.0:
-    - Re-engineered all item transfer functions (depositToVault, handleDispense,
-      etc.) to use the correct vertical (suckUp/Down, dropUp/Down) or
-      horizontal (turn and suck/drop) turtle commands.
-    - This definitively fixes all previous withdrawal and deposit bugs related
-      to physical orientation and peripheral interaction.
-    v5.1:
-    - Added a pre-flight check to diagnose inventory-full errors.
+    - Re-engineered all item transfer functions to support vertical and
+      horizontal inventories.
 ]]
+
 --==============================================================================
 -- Configuration
 --==============================================================================
@@ -154,7 +154,7 @@ end
 local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_side)
     logActivity("Initiating Universal withdrawal for "..count.." "..itemToDispense)
 
-    -- 1. Empty the turtle's inventory into the vault.
+    -- 1. Empty the turtle's inventory.
     depositToVault(vault_side)
 
     -- 2. Pre-flight Check
@@ -172,40 +172,49 @@ local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_
     local first_slot_item = vault.getItemDetail(1)
 
     if not first_slot_item or first_slot_item.name ~= itemToDispense then
-        logActivity("Incorrect item in vault slot 1.", true)
-        rednet.send(atmId, { success = false, reason = "Incorrect item in vault slot 1." }, protocol)
-        return
+        rednet.send(atmId, { success = false, reason = "Incorrect item in vault slot 1." }, protocol); return
     end
-
     if first_slot_item.count < count then
-        logActivity("Insufficient stock in vault slot 1.", true)
-        rednet.send(atmId, { success = false, reason = "Insufficient stock in vault slot 1." }, protocol)
-        return
+        rednet.send(atmId, { success = false, reason = "Insufficient stock in vault slot 1." }, protocol); return
     end
 
-    -- 4. THE FIX: Use the correct interaction command based on the vault's side.
-    local pulled = false
-    if vault_side == "top" then
-        pulled = turtle.suckUp(count)
-    elseif vault_side == "bottom" then
-        pulled = turtle.suckDown(count)
-    else -- Horizontal
+    -- 4. Perform the suck action and get a boolean success result.
+    local success = false
+    if vault_side == "top" then success = turtle.suckUp(count)
+    elseif vault_side == "bottom" then success = turtle.suckDown(count)
+    else
         turnTo(vault_side)
-        pulled = turtle.suck(count)
+        success = turtle.suck(count)
         turnToFront(vault_side)
     end
 
-    if not pulled or pulled < count then
-        logActivity("Failed to pull the required number of items.", true)
-        depositToVault(vault_side) -- Attempt to return whatever was pulled
+    -- 5. THE FIX: Manually count the items pulled and compare numbers.
+    if success then
+        local pulledAmount = 0
+        for i = 1, 16 do
+            local item = turtle.getItemDetail(i)
+            if item and item.name == itemToDispense then
+                pulledAmount = pulledAmount + item.count
+            end
+        end
+
+        if pulledAmount >= count then
+            -- Success! We have the items. Dispense them.
+            returnItemsToDeposit(deposit_side)
+            rednet.send(atmId, { success = true }, protocol)
+            logActivity("Successfully dispensed " .. count .. " of " .. itemToDispense)
+        else
+            -- We succeeded in sucking, but didn't get enough items.
+            logActivity("Failed to pull the required number of items (Got "..pulledAmount..", needed "..count..").", true)
+            depositToVault(vault_side)
+            rednet.send(atmId, { success = false, reason = "Partial vault transfer." }, protocol)
+        end
+    else
+        -- The suck command itself failed entirely.
+        logActivity("The suck command failed.", true)
+        depositToVault(vault_side)
         rednet.send(atmId, { success = false, reason = "A vault hardware error occurred." }, protocol)
-        return
     end
-    
-    -- 5. Dispense items to the user
-    returnItemsToDeposit(deposit_side)
-    rednet.send(atmId, { success = true }, protocol)
-    logActivity("Successfully dispensed " .. count .. " of " .. itemToDispense)
 end
 
 --==============================================================================
