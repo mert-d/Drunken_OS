@@ -1,25 +1,21 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v4.3 - Direct Peripheral Call)
+    Drunken Beard Bank - Vault Clerk Turtle (v5.0 - Targeted Suck Method)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive version of the clerk turtle is fully compliant with the
-    server's transactional architecture. Its sole responsibility is the physical
-    movement of items between the deposit barrel and the vault.
+    This version implements a completely new withdrawal method to work around
+    a persistent peripheral bug. It uses the basic turtle API for maximum
+    reliability at the cost of some vault organization flexibility.
 
     Changelog:
+    v5.0:
+    - Complete redesign of 'handleDispense' to bypass the failing
+      'peripheral.pullItems' function.
+    - The turtle now uses 'turtle.suck()' to pull items from the vault.
+    - CRITICAL CHANGE: This requires the user to place the desired withdrawal
+      item into the first slot of the vault inventory.
     v4.3:
-    - Corrected a critical bug in 'handleDispense' where "pushItems" was used
-      instead of "pullItems" in the direct peripheral call. The turtle now
-      correctly instructs the vault to send items.
-    v4.2:
-    - Added a detailed diagnostic report on startup.
-    v4.1:
-    - Fixed a critical peripheral bug by dynamically determining the target
-      for 'pullItems'.
-    v4.0:
-    - Re-engineered 'handleDispense' to pull from multiple stacks and rely
-      on the server for transaction authorization.
+    - Corrected "pushItems" to "pullItems" in the direct peripheral call.
 ]]
 
 --==============================================================================
@@ -135,47 +131,55 @@ local function handleDeposit(atmId, deposit_side, vault_side)
     end
 end
 
--- (handleDispense is unchanged from v4.1)
 local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_side)
-    -- This function no longer needs the vault peripheral to be wrapped.
-    -- We will call it directly by its name (the value of vault_side).
+    logActivity("Initiating new 'Targeted Suck' withdrawal.")
 
+    -- Clear the turtle's inventory to make space for the new items.
     depositToVault(vault_side)
 
-    local push_direction = opposite_sides[vault_side]
-    if not push_direction then
-        logActivity("Cannot determine push direction for vault on side: " .. tostring(vault_side), true)
-        rednet.send(atmId, { success = false, reason = "Clerk has invalid vault configuration." }, protocol); return
+    -- Turn to face the vault inventory.
+    turnTo(vault_side)
+
+    -- Check what item is in the first slot of the vault.
+    local vault = peripheral.wrap(vault_side)
+    local first_slot_item = vault.getItemDetail(1)
+
+    -- Safety check: Ensure the item in the first slot is the one requested.
+    if not first_slot_item or first_slot_item.name ~= itemToDispense then
+        logActivity("Item in slot 1 does not match requested item.", true)
+        logActivity("Expected '"..itemToDispense.."' but found '"..(first_slot_item and first_slot_item.name or "nothing").."'", true)
+        rednet.send(atmId, { success = false, reason = "Incorrect item in vault slot 1." }, protocol)
+        turnToFront(vault_side) -- Turn back to the front
+        return
     end
 
-    local remaining = count
-    local slots = peripheral.call(vault_side, "list")
-
-    for slot, item in pairs(slots) do
-        if item.name == itemToDispense then
-            local amountToPull = math.min(remaining, item.count)
-
-            -- THE FIX: Use "pullItems" to tell the vault to SEND items.
-            local pulled, reason = peripheral.call(vault_side, "pullItems", push_direction, slot, amountToPull)
-
-            if not pulled or pulled < amountToPull then
-                logActivity("Failed to pull " .. amountToPull .. " of " .. itemToDispense .. ": " .. tostring(reason), true)
-                depositToVault(vault_side) -- Return any partially collected items.
-                rednet.send(atmId, { success = false, reason = "A vault hardware error occurred." }, protocol); return
-            end
-
-            remaining = remaining - pulled
-            if remaining <= 0 then break end
-        end
+    -- Safety check: Ensure there is enough stock in the first slot.
+    if first_slot_item.count < count then
+        logActivity("Item in slot 1 has insufficient stock.", true)
+        logActivity("Requested " .. count .. " but found " .. first_slot_item.count, true)
+        rednet.send(atmId, { success = false, reason = "Insufficient stock in vault slot 1." }, protocol)
+        turnToFront(vault_side) -- Turn back to the front
+        return
     end
 
-    if remaining > 0 then
-        logActivity("Could not find enough " .. itemToDispense .. " in the vault.", true)
+    -- THE FIX: Use the basic, reliable turtle.suck() command.
+    local pulled = turtle.suck(count)
+    
+    -- Turn back to the front immediately after sucking.
+    turnToFront(vault_side)
+
+    if not pulled or pulled < count then
+        logActivity("Failed to suck the required number of items.", true)
+        -- Attempt to return whatever was pulled.
         depositToVault(vault_side)
-        rednet.send(atmId, { success = false, reason = "Vault stock count was incorrect." }, protocol); return
+        rednet.send(atmId, { success = false, reason = "A vault hardware error occurred." }, protocol)
+        return
     end
-
+    
+    -- Dispense the successfully collected items for the user.
     returnItemsToDeposit(deposit_side)
+
+    -- Confirm success to the ATM.
     rednet.send(atmId, { success = true }, protocol)
     logActivity("Successfully dispensed " .. count .. " of " .. itemToDispense)
 end
