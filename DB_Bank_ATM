@@ -1,5 +1,5 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v5.1 - UI Polish & Theming)
+    Drunken Beard Bank - ATM Terminal (v5.2 - Universal Word Wrap)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -9,15 +9,14 @@
     security and reliability.
 
     Changelog:
+    v5.2:
+    - Refactored word-wrapping logic into a reusable utility function.
+    - Upgraded 'showMessage' to use the new word-wrap function, preventing
+      broken words in long messages.
+    - Re-engineered the "Check Rates" screen with a robust two-column layout
+      to handle long item names gracefully.
     v5.1:
-    - Implemented a new "Drunken Bank" color theme (orange, yellow, brown).
-    - Fixed text overflow bugs by creating a new 'printCenteredWrapped'
-      function that automatically handles word wrapping for long messages.
-    - Adjusted padding on all UI elements to ensure text stays within the
-      graphical border.
-    v5.0:
-    - Re-engineered all transaction logic to be fully compliant with the
-      server's secure protocol.
+    - Implemented a "Drunken Bank" color theme and initial word-wrapping.
 ]]
 
 --==============================================================================
@@ -41,13 +40,33 @@ local BANK_PROTOCOL = "DB_Bank"
 local TURTLE_CLERK_PROTOCOL = "DB_ATM_Turtle"
 
 --==============================================================================
--- Graphical UI & Theme (Unchanged from v4.17)
---==============================================================================
-
---==============================================================================
 -- Graphical UI & Theme (With new "Beer" theme and text wrapping)
 --==============================================================================
+-- A new table for reusable utility functions.
+local utils = {}
 
+-- A universal word-wrap function.
+-- @param text The string to wrap.
+-- @param maxWidth The maximum width of each line.
+-- @return A table of strings, where each entry is a wrapped line.
+function utils.wordWrap(text, maxWidth)
+    local lines = {}
+    for line in text:gmatch("[^\n]+") do
+        while #line > maxWidth do
+            local breakPoint = maxWidth
+            -- Try to find a space to break at.
+            while breakPoint > 0 and line:sub(breakPoint, breakPoint) ~= " " do
+                breakPoint = breakPoint - 1
+            end
+            if breakPoint == 0 then breakPoint = maxWidth end -- Force break if no space
+            
+            table.insert(lines, line:sub(1, breakPoint))
+            line = line:sub(breakPoint + 1)
+        end
+        table.insert(lines, line)
+    end
+    return lines
+end
 -- A theme table to make color changes simple and consistent.
 local theme = {
     bg = colors.black,
@@ -79,25 +98,8 @@ end
 -- NEW: A word-wrapping version of printCentered to prevent text overflow.
 local function printCenteredWrapped(startY, text)
     local w, h = term.getSize()
-    local maxLen = w - 4 -- Maximum line length inside the border
+    local lines = utils.wordWrap(text, w - 4)
 
-    -- Word wrapping logic
-    local lines = {}
-    for line in text:gmatch("[^\n]+") do
-        while #line > maxLen do
-            local breakPoint = maxLen
-            while breakPoint > 0 and line:sub(breakPoint, breakPoint) ~= " " do
-                breakPoint = breakPoint - 1
-            end
-            if breakPoint == 0 then breakPoint = maxLen end -- Force break if no space
-            
-            table.insert(lines, line:sub(1, breakPoint))
-            line = line:sub(breakPoint + 1)
-        end
-        table.insert(lines, line)
-    end
-
-    -- Print the centered lines
     for i, line in ipairs(lines) do
         local x = math.floor((w - #line) / 2) + 1
         term.setCursorPos(x, startY + i - 1)
@@ -105,44 +107,45 @@ local function printCenteredWrapped(startY, text)
     end
 end
 
-local function printCentered(y, text)
+local function printCentered(startY, text)
     local w, h = term.getSize()
-    local x = math.floor((w - #text) / 2)
-    term.setCursorPos(x, y)
-    term.write(text)
+    local lines = utils.wordWrap(text, w - 4)
+
+    for i, line in ipairs(lines) do
+        local x = math.floor((w - #line) / 2) + 1
+        term.setCursorPos(x, startY + i - 1)
+        term.write(line)
+    end
 end
 
 local function showMessage(title, message, isError)
     local w, h = term.getSize()
     local boxBg = isError and theme.errorBg or theme.titleBg
     local boxText = isError and theme.errorText or theme.titleText
-    local boxW, boxH = math.floor(w * 0.8), math.floor(h * 0.6)
+    local boxW, boxH = math.floor(w * 0.8), math.floor(h * 0.7)
     local boxX, boxY = math.floor((w - boxW) / 2), math.floor((h - boxH) / 2)
+
     term.setBackgroundColor(boxBg)
     for y = boxY, boxY + boxH - 1 do
-        term.setCursorPos(boxX, y)
-        term.write(string.rep(" ", boxW))
+        term.setCursorPos(boxX, y); term.write(string.rep(" ", boxW))
     end
+    
     term.setTextColor(boxText)
-    local titleText = " " .. title .. " "
-    term.setCursorPos(math.floor(w - #titleText) / 2, boxY + 1)
-    term.write(titleText)
-    local lines = {}
-    local maxLen = boxW - 4
-    for line in message:gmatch("[^\n]+") do
-        while #line > maxLen do
-            table.insert(lines, line:sub(1, maxLen))
-            line = line:sub(maxLen + 1)
-        end
-        table.insert(lines, line)
-    end
+    local titleText = " " .. title .. " ";
+    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, boxY + 1); term.write(titleText)
+    
+    -- THE FIX: Use the smart word-wrapper
+    local lines = utils.wordWrap(message, boxW - 4)
+
     for i, line in ipairs(lines) do
         term.setCursorPos(boxX + 2, boxY + 3 + i)
         print(line)
     end
+
     local continueText = "Press any key to continue..."
-    term.setCursorPos(math.floor((w - #continueText) / 2), boxY + boxH - 2)
+    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, boxY + boxH - 2)
     print(continueText)
+    
     os.pullEvent("key")
 end
 
@@ -344,27 +347,50 @@ local function mainMenu()
     while true do
         local options = { "Check Balance / Rates", "Deposit Items", "Withdraw Items", "Exit" }
         local choice = drawMenu("ATM Main Menu", options, "Welcome, " .. username .. " | Balance: $" .. balance)
+
         if not choice or choice == 4 then break end
+        
         if choice == 1 then
             drawFrame("Current Exchange Rates")
-            term.setCursorPos(3, 3); print("Current Exchange Rates:")
-            local y = 5
+            local w,h = term.getSize()
+            
+            -- THE FIX: Create a two-column layout
+            local itemColWidth = math.floor((w - 6) * 0.7)
+            local rateColWidth = w - 6 - itemColWidth
+            
+            term.setCursorPos(3, 4)
+            term.setTextColor(colors.yellow)
+            term.write(string.format("%-"..itemColWidth.."s %"..rateColWidth.."s", " Item", "Value "))
+            term.setCursorPos(3, 5)
+            term.write(string.rep("-", w - 4))
+            term.setTextColor(colors.white)
+
+            local y = 6
             for name, data in pairs(currencyRates) do
                 local clean_name = name:gsub("minecraft:", ""):gsub("_", " ")
-                term.setCursorPos(4, y)
-                print(string.format("1 %s = $%d", clean_name, data.current))
+                -- Truncate name if it's too long for the column
+                if #clean_name > itemColWidth - 1 then
+                    clean_name = clean_name:sub(1, itemColWidth - 4) .. "..."
+                end
+                
+                local rate = "$" .. data.current
+                
+                term.setCursorPos(3, y)
+                term.write(string.format(" %-"..itemColWidth-1 .."s %"..rateColWidth.."s", clean_name, rate))
                 y = y + 1
             end
-            term.setCursorPos(4, y + 1); print("Press any key to return...")
+            
+            printCenteredWrapped(h - 2, "Press any key to return...")
             os.pullEvent("key")
         elseif choice == 2 then deposit()
         elseif choice == 3 then withdraw()
         end
     end
+
     drive.ejectDisk()
-    rednet.close("back")
+    rednet.close(peripheral.getName(peripheral.find("modem")))
     drawFrame("Goodbye")
-    printCentered(8, "Thank you for banking with Drunken Beard Bank!")
+    printCenteredWrapped(8, "Thank you for banking with Drunken Beard Bank!")
     sleep(2)
 end
 
