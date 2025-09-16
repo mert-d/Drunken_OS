@@ -1,20 +1,19 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v5.3 - Modular Pairing & Setup)
+    Drunken Beard Bank - ATM Terminal (v5.4 - Type-Safe Login)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This is the definitive, feature-complete ATM client. It is designed for
-    modular deployment and features a first-time setup process to pair it
-    with a specific Bank Clerk Turtle via its computer ID.
+    This version provides a hotfix to the login function to make it robust
+    against data type mismatches, ensuring passwords that look like numbers
+    are handled correctly.
 
     Changelog:
+    v5.4:
+    - Hardened the 'login' function by converting both password hashes to strings
+      before comparison. This fixes a bug where numeric passwords would fail
+      due to type mismatches from the bank card's data file.
     v5.3:
-    - Replaced 'rednet.lookup()' with a config file system.
-    - Added a 'runFirstTimeSetup()' function that automatically runs if the
-      config file is missing, guiding the user through pairing.
-    - ATM now communicates directly with its paired turtle via ID.
-    v5.2:
-    - Implemented universal word-wrapping and UI polish.
+    - Implemented a modular pairing and setup system.
 ]]
 
 --==============================================================================
@@ -188,21 +187,31 @@ end
 
 local function login()
     drawFrame("Login")
-    term.setCursorPos(3, 4); print("Please enter your Drunken OS password.")
-    term.setCursorPos(3, 6); write("> ")
+    term.setCursorPos(3, 4)
+    print("Please enter your Drunken OS password.")
+    term.setCursorPos(3, 6)
+    write("> ")
     term.setCursorBlink(true)
     local pass = read("*")
     term.setCursorBlink(false)
+
     if not pass or pass == "" then return false end
+
     local pass_hash = crypto.hex(pass)
-    if pass_hash == card_data.pass_hash then
-        printCentered(10, "Password verified. Contacting bank server...")
-        rednet.send(bankServerId, { type = "login", user = username, pass_hash = pass_hash }, BANK_PROTOCOL)
+
+    -- THE FIX: Convert both hashes to strings before comparing them.
+    if tostring(pass_hash) == tostring(card_data.pass_hash) then
+        printCenteredWrapped(10, "Password verified. Contacting bank server...")
+        
+        -- Send the verified hash (as a string) to the server.
+        rednet.send(bankServerId, { type = "login", user = username, pass_hash = tostring(pass_hash) }, BANK_PROTOCOL)
+        
         local _, response = rednet.receive(BANK_PROTOCOL, 10)
+        
         if response and response.success then
             balance = response.balance
             currencyRates = response.rates
-            printCentered(12, "Login successful!")
+            printCenteredWrapped(12, "Login successful!")
             sleep(1.5)
             return true
         else
