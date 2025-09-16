@@ -1,5 +1,5 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v3.7 - Definitive Fix)
+    Drunken Beard Bank - Vault Clerk Turtle (v3.9 - Dispense Fix)
     by Gemini Gem
 
     Purpose:
@@ -128,6 +128,15 @@ local function handleDeposit(atmId, deposit_side, vault_side)
     end
 end
 
+-- A simple logging function for better debugging on the turtle.
+local function logActivity(msg, isError)
+    if isError then
+        print("ERROR: " .. msg)
+    else
+        print(msg)
+    end
+end
+
 local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_side)
     local vault = peripheral.wrap(vault_side)
     if not vault then
@@ -135,40 +144,52 @@ local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_
         return
     end
 
-    local itemSlot = -1
-    for i = 1, vault.size() do
-        local item = vault.getItemDetail(i)
-        if item and item.name == itemToDispense and item.count >= count then
-            itemSlot = i
-            break
+    -- THE FIX: Smarter inventory management.
+    -- The turtle no longer checks for stock. It assumes the server has already
+    -- authorized the withdrawal and just focuses on the physical task of moving items.
+
+    -- First, clear the turtle's inventory to make space and prevent mixing items.
+    depositToVault(vault_side)
+
+    local remaining = count
+    local slots = vault.list()
+    
+    -- Loop through all slots in the vault to find the items we need.
+    for slot, item in pairs(slots) do
+        if item.name == itemToDispense then
+            local amountToPull = math.min(remaining, item.count)
+            local pulled, reason = vault.pullItems("turtle", slot, amountToPull)
+            
+            if not pulled or pulled < amountToPull then
+                logActivity("Failed to pull " .. amountToPull .. " of " .. itemToDispense .. " from slot " .. slot .. ": " .. tostring(reason), true)
+                -- Critical failure: try to return everything we've collected so far.
+                depositToVault(vault_side) 
+                rednet.send(atmId, { success = false, reason = "A vault hardware error occurred." }, protocol)
+                return
+            end
+            
+            remaining = remaining - pulled
+            if remaining <= 0 then
+                break -- We've collected enough items.
+            end
         end
     end
 
-    if itemSlot == -1 then
-        rednet.send(atmId, { success = false, reason = "Insufficient stock or item not found in vault." }, protocol)
+    if remaining > 0 then
+        -- This should theoretically not happen if the server's stock is correct,
+        -- but it's an important safety check.
+        logActivity("Could not find enough " .. itemToDispense .. " in the vault.", true)
+        depositToVault(vault_side) -- Return what we did manage to pull.
+        rednet.send(atmId, { success = false, reason = "Vault stock count was incorrect." }, protocol)
         return
     end
 
-    -- THE FIX: Use the correct, reliable pullItems/drop method.
-    -- First, clear the turtle's inventory to make space.
-    depositToVault(vault_side)
-
-    -- Pull the items from the vault into the turtle's inventory.
-    local pulledAmount, pullReason = vault.pullItems("turtle", itemSlot, count)
-    if not pulledAmount or pulledAmount < count then
-        logActivity("Failed to pull items: " .. tostring(pullReason), true)
-        -- Attempt to return any items that were accidentally pulled.
-        depositToVault(vault_side) 
-        rednet.send(atmId, { success = false, reason = "Could not pull required items from vault." }, protocol)
-        return
-    end
-
-    -- Drop the items into the deposit barrel for the user.
+    -- Drop the collected items into the deposit barrel for the user.
     returnItemsToDeposit(deposit_side)
 
-    -- Confirm successful physical transfer.
+    -- Confirm successful physical transfer to the ATM.
     rednet.send(atmId, { success = true }, protocol)
-    print("Successfully dispensed " .. count .. " of " .. itemToDispense)
+    logActivity("Successfully dispensed " .. count .. " of " .. itemToDispense)
 end
 
 --==============================================================================
