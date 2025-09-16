@@ -1,21 +1,19 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v5.0 - Targeted Suck Method)
+    Drunken Beard Bank - Vault Clerk Turtle (v5.1 - Pre-flight Check)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version implements a completely new withdrawal method to work around
-    a persistent peripheral bug. It uses the basic turtle API for maximum
-    reliability at the cost of some vault organization flexibility.
+    This version adds a rigorous pre-flight check to the withdrawal process,
+    ensuring the turtle's inventory is completely empty before attempting to
+    pull new items from the vault. This helps diagnose inventory-full errors.
 
     Changelog:
+    v5.1:
+    - Added a pre-flight check to 'handleDispense' that verifies the turtle's
+      inventory is empty before proceeding with a withdrawal.
     v5.0:
-    - Complete redesign of 'handleDispense' to bypass the failing
-      'peripheral.pullItems' function.
-    - The turtle now uses 'turtle.suck()' to pull items from the vault.
-    - CRITICAL CHANGE: This requires the user to place the desired withdrawal
-      item into the first slot of the vault inventory.
-    v4.3:
-    - Corrected "pushItems" to "pullItems" in the direct peripheral call.
+    - Complete redesign of 'handleDispense' to use 'turtle.suck()' as a
+      workaround for a persistent peripheral bug.
 ]]
 
 --==============================================================================
@@ -132,54 +130,54 @@ local function handleDeposit(atmId, deposit_side, vault_side)
 end
 
 local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_side)
-    logActivity("Initiating new 'Targeted Suck' withdrawal.")
+    logActivity("Initiating 'Targeted Suck' withdrawal.")
 
-    -- Clear the turtle's inventory to make space for the new items.
+    -- 1. Empty the turtle's inventory.
     depositToVault(vault_side)
 
-    -- Turn to face the vault inventory.
+    -- 2. THE FIX: Pre-flight Check - Verify the turtle is actually empty.
+    for i = 1, 16 do
+        if turtle.getItemCount(i) > 0 then
+            logActivity("Pre-flight check failed: Turtle inventory not empty at slot " .. i, true)
+            rednet.send(atmId, { success = false, reason = "Clerk inventory malfunction." }, protocol)
+            return
+        end
+    end
+    logActivity("Pre-flight check passed: Turtle inventory is empty.")
+
+    -- 3. Proceed with the withdrawal logic from v5.0
     turnTo(vault_side)
 
-    -- Check what item is in the first slot of the vault.
     local vault = peripheral.wrap(vault_side)
     local first_slot_item = vault.getItemDetail(1)
 
-    -- Safety check: Ensure the item in the first slot is the one requested.
     if not first_slot_item or first_slot_item.name ~= itemToDispense then
         logActivity("Item in slot 1 does not match requested item.", true)
         logActivity("Expected '"..itemToDispense.."' but found '"..(first_slot_item and first_slot_item.name or "nothing").."'", true)
         rednet.send(atmId, { success = false, reason = "Incorrect item in vault slot 1." }, protocol)
-        turnToFront(vault_side) -- Turn back to the front
+        turnToFront(vault_side)
         return
     end
 
-    -- Safety check: Ensure there is enough stock in the first slot.
     if first_slot_item.count < count then
         logActivity("Item in slot 1 has insufficient stock.", true)
         logActivity("Requested " .. count .. " but found " .. first_slot_item.count, true)
         rednet.send(atmId, { success = false, reason = "Insufficient stock in vault slot 1." }, protocol)
-        turnToFront(vault_side) -- Turn back to the front
+        turnToFront(vault_side)
         return
     end
 
-    -- THE FIX: Use the basic, reliable turtle.suck() command.
     local pulled = turtle.suck(count)
-    
-    -- Turn back to the front immediately after sucking.
     turnToFront(vault_side)
 
     if not pulled or pulled < count then
         logActivity("Failed to suck the required number of items.", true)
-        -- Attempt to return whatever was pulled.
-        depositToVault(vault_side)
+        depositToVault(vault_side) -- Attempt to return whatever was pulled
         rednet.send(atmId, { success = false, reason = "A vault hardware error occurred." }, protocol)
         return
     end
     
-    -- Dispense the successfully collected items for the user.
     returnItemsToDeposit(deposit_side)
-
-    -- Confirm success to the ATM.
     rednet.send(atmId, { success = true }, protocol)
     logActivity("Successfully dispensed " .. count .. " of " .. itemToDispense)
 end
