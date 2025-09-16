@@ -307,21 +307,6 @@ end
 
 ---
 -- Handles a deposit of items.
-That is very perplexing indeed. My apologies, it seems my last fix was addressing the symptom but not the absolute root cause. It's clear the server is receiving the deposit request but is still unable to find a value for the items you are depositing. When a robust fix doesn't work, it means we're missing a piece of data.
-
-This situation calls for better diagnostics. We need to see exactly what item names the Bank Server is receiving from the turtle, down to the exact character and capitalization. The best way to do this is to add more detailed logging to the server itself.
-
-Here is an updated deposit function for your Drunken_OS_BankServer script. This new version adds a logging step that will write the exact details of the rejected items to your log file. This will be our "smoking gun."
-
-Diagnostic Update for Drunken_OS_BankServer
-Please replace the bankHandlers.deposit function in your Drunken_OS_BankServer script with this new version.
-
-Lua
-
--- In Drunken_OS_BankServer
--- Replace the existing bankHandlers.deposit function with this one.
-
----
 -- Handles a deposit of items with enhanced logging for debugging.
 function bankHandlers.deposit(senderId, message)
     local user, items = message.user, message.items
