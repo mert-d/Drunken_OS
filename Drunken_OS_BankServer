@@ -1,16 +1,15 @@
 --[[
-    Drunken OS - Bank Server (v2.13 - Currency Data Fix)
+    Drunken OS - Bank Server (v2.14 - Admin Command Hotfix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive version re-engineers the withdrawal process to be fully
-    transactional, preventing funds from being deducted on failed withdrawals.
+    This version provides a critical hotfix to the 'setbalance' admin command,
+    preventing it from corrupting user account data.
 
     Key Changes:
-    - `withdraw_item` now only authorizes transactions, it does not deduct funds.
-    - Added a new `finalize_withdrawal` handler that is called by the ATM
-      *after* the turtle confirms success. This is now the only function
-      that deducts funds from a user's account.
+    - The 'setbalance' command now correctly modifies the '.balance' field of an
+      account instead of overwriting the entire account object.
+    - Added a check to ensure the account exists before attempting to modify it.
 ]]
 
 
@@ -463,9 +462,19 @@ end
 
 function adminCommands.setbalance(args)
     local _, user, amount = parseAdminArgs(args)
-    if not user or not amount then print("Usage: setbalance <user> <amount>"); return end
-    accounts[user] = amount; saveTableToFile(ACCOUNTS_DB, accounts)
-    print("Set balance for " .. user .. " to " .. amount)
+    if not user or not amount then
+        print("Usage: setbalance <user> <amount>")
+        return
+    end
+
+    -- THE FIX: Check for the account and only update the balance.
+    if accounts[user] then
+        accounts[user].balance = amount
+        saveTableToFile(ACCOUNTS_DB, accounts)
+        print("Set balance for " .. user .. " to $" .. amount)
+    else
+        print("Error: Account for user '" .. user .. "' does not exist.")
+    end
 end
 
 function adminCommands.give(args)
