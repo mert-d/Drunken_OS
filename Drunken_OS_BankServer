@@ -305,9 +305,7 @@ function bankHandlers.get_balance_and_rates(senderId, message)
     rednet.send(senderId, { balance = currentBalance, rates = currencyRates }, BANK_PROTOCOL)
 end
 
----
--- Handles a deposit of items.
--- Handles a deposit of items with enhanced logging for debugging.
+-- Handles a deposit of items with real-time stock updates.
 function bankHandlers.deposit(senderId, message)
     local user, items = message.user, message.items
     local total_value = 0
@@ -315,13 +313,10 @@ function bankHandlers.deposit(senderId, message)
 
     for _, item in ipairs(items) do
         local rateInfo = nil
-        local itemName = item.name or "unknown" -- Safety check
-        
-        -- Try to find the currency by its full name.
+        local itemName = item.name or "unknown"
         if currencyRates[itemName] then
             rateInfo = currencyRates[itemName]
         else
-            -- If that fails, try looking for it without the "minecraft:" prefix.
             local shortName = itemName:match("^minecraft:(.+)")
             if shortName and currencyRates[shortName] then
                 rateInfo = currencyRates[shortName]
@@ -332,16 +327,21 @@ function bankHandlers.deposit(senderId, message)
             local value = item.count * rateInfo.current
             total_value = total_value + value
             table.insert(transaction_summary, string.format("%d %s for $%d", item.count, itemName, value))
+            
+            -- THE FIX #1: Immediately update the internal stock count upon deposit.
+            currentStock[itemName] = (currentStock[itemName] or 0) + item.count
         end
     end
 
     if total_value > 0 then
         if accounts[user] then
             accounts[user].balance = accounts[user].balance + total_value
-            if saveTableToFile(ACCOUNTS_DB, accounts) then
+            if saveTableToFile(ACCOUNTS_DB, accounts) and saveTableToFile(STOCK_DB, currentStock) then
                 rednet.send(senderId, { success = true, newBalance = accounts[user].balance, deposited_value = total_value }, BANK_PROTOCOL)
                 local log_msg = string.format("DEPOSIT of $%d. Details: %s", total_value, table.concat(transaction_summary, ", "))
                 logTransaction(user, log_msg)
+                logActivity(string.format("Stock updated for deposit: %s", table.concat(transaction_summary, ", ")))
+                needsRedraw = true -- Update the GUI
             else
                 rednet.send(senderId, { success = false, reason = "Server database error." }, BANK_PROTOCOL)
             end
@@ -349,12 +349,10 @@ function bankHandlers.deposit(senderId, message)
             rednet.send(senderId, { success = false, reason = "Account not found for deposit." }, BANK_PROTOCOL)
         end
     else
-        -- THE FIX: Add detailed logging when a deposit fails.
         logActivity(string.format("Deposit failed for user '%s': No valid currency detected.", user), true)
         for i, item in ipairs(items) do
             logActivity(string.format(" - Received item: '%s' (count: %d)", tostring(item.name), item.count), true)
         end
-        
         rednet.send(senderId, { success = false, reason = "No valid currency detected." }, BANK_PROTOCOL)
     end
 end
@@ -384,28 +382,36 @@ function bankHandlers.withdraw_item(senderId, message)
 end
 
 ---
--- PHASE 3: Finalizes the transaction and deducts funds after turtle success.
+-- PHASE 3: Finalizes the transaction and deducts funds and stock after turtle success.
 function bankHandlers.finalize_withdrawal(senderId, message)
     local user, itemName, count = message.user, message.item_name, message.count
     local account = accounts[user]
     local rateInfo = currencyRates[itemName]
     
     if not account or not rateInfo then
-        -- This should not happen in a normal flow, but is a safety check.
         logActivity("Finalization failed: account or rate info missing.", true)
         return
     end
 
     local totalCost = rateInfo.current * count
     account.balance = account.balance - totalCost
-    if saveTableToFile(ACCOUNTS_DB, accounts) then
+    
+    -- THE FIX #2: Immediately update the internal stock count upon withdrawal.
+    currentStock[itemName] = (currentStock[itemName] or 0) - count
+    if currentStock[itemName] < 0 then
+        logActivity("CRITICAL: Stock for " .. itemName .. " went negative. Resetting to 0.", true)
+        currentStock[itemName] = 0
+    end
+    
+    if saveTableToFile(ACCOUNTS_DB, accounts) and saveTableToFile(STOCK_DB, currentStock) then
         logTransaction(user, string.format("WITHDRAW of $%d (%d x %s)", totalCost, count, itemName))
         logActivity(string.format("Finalized withdrawal for '%s'. New balance: $%d", user, account.balance))
-        -- Send final confirmation back to ATM
+        logActivity(string.format("Stock updated for withdrawal: %d %s", count, itemName))
+        needsRedraw = true -- Update the GUI
+        
         rednet.send(senderId, { success = true, newBalance = account.balance }, BANK_PROTOCOL)
     else
         logActivity("CRITICAL: FAILED TO SAVE DATABASE AFTER FINALIZATION FOR " .. user, true)
-        -- At this point, the user has the items but the balance wasn't saved.
         -- This is a critical state that requires manual admin intervention.
     end
 end
