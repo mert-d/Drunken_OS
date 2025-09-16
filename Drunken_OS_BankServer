@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Bank Server (v2.11 - Transactional Fix)
+    Drunken OS - Bank Server (v2.12 - Transactional Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -313,8 +313,20 @@ function bankHandlers.deposit(senderId, message)
     local transaction_summary = {}
 
     for _, item in ipairs(items) do
+        local rateInfo = nil
+        -- THE FIX: First, try to find the currency by its full name.
         if currencyRates[item.name] then
-            local value = item.count * currencyRates[item.name].current
+            rateInfo = currencyRates[item.name]
+        else
+            -- If that fails, try looking for it without the "minecraft:" prefix.
+            local shortName = item.name:match("^minecraft:(.+)")
+            if shortName and currencyRates[shortName] then
+                rateInfo = currencyRates[shortName]
+            end
+        end
+
+        if rateInfo then
+            local value = item.count * rateInfo.current
             total_value = total_value + value
             table.insert(transaction_summary, string.format("%d %s for $%d", item.count, item.name, value))
         end
