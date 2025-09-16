@@ -1,21 +1,18 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v7.2 - Universal Deposit)
+    Drunken Beard Bank - Vault Clerk Turtle (v7.3 - Modular Pairing)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This is the definitive, feature-complete version of the clerk turtle. It
-    features universal 6-sided interaction logic for all inventory operations,
-    including deposits and multi-stack withdrawals.
+    This version is designed for modular deployment. It no longer hosts a
+    public rednet protocol, instead displaying its unique computer ID on
+    startup so it can be paired with a specific ATM.
 
     Changelog:
+    v7.3:
+    - Removed 'rednet.host()'. The turtle is now a private agent.
+    - Added a clear startup message that displays the turtle's ID for easy ATM pairing.
     v7.2:
-    - Re-engineered all deposit-related functions ('collectFromDeposit',
-      'depositToVault', 'returnItemsToDeposit') to support 6-sided
-      interaction, matching the withdrawal function's capabilities. This
-      fixes items being dropped on the ground with vertical inventories.
-    v7.1 (Definitive):
-    - Implemented the "Internal Shuffle" method for robust multi-stack
-      withdrawals.
+    - Implemented universal 6-sided deposit logic.
 ]]
 
 --==============================================================================
@@ -276,25 +273,20 @@ local function main()
         print("Fatal Error: " .. err); return
     end
 
-    -- THE FIX: Add a diagnostic report on startup.
     print("--- Configuration Report ---")
     print("Modem found on: " .. modem_side)
     print("Deposit Barrel found on: " .. deposit_side)
     print("Vault Inventory found on: " .. vault_side)
-    local pull_target = opposite_sides[vault_side]
-    if pull_target then
-        print("Withdrawal Target Name: '" .. pull_target .. "'")
-        print("This means the vault expects to push items to its '"..pull_target.."' side.")
-    else
-        print("ERROR: Could not determine withdrawal target!")
-    end
     print("----------------------------")
-    print("System starting in 5 seconds...")
-    sleep(5)
-
+    
     rednet.open(modem_side)
-    rednet.host(protocol, "bank_turtle") 
-    logActivity("Vault Clerk Turtle online (ID " .. os.getComputerID() .. "). Waiting for commands...")
+    
+    -- THE FIX: Announce ID instead of hosting a public name.
+    term.setTextColor(colors.yellow)
+    print("Vault Clerk Module Online.")
+    print("My Computer ID is: " .. os.getComputerID())
+    term.setTextColor(colors.white)
+    print("Waiting for commands from paired ATM...")
 
     while true do
         local senderId, message, proto = rednet.receive()
