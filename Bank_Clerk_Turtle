@@ -1,16 +1,28 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v3.9 - Dispense Fix)
-    by Gemini Gem
+    Drunken Beard Bank - Vault Clerk Turtle (v4.1 - Definitive Peripheral Fix)
+    by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive version fixes the withdrawal API error by using the correct
-    `peripheral.pullItems` function. It is fully compatible with the new
-    transactional banking system.
+    This definitive version of the clerk turtle is fully compliant with the
+    server's transactional architecture. Its sole responsibility is the physical
+    movement of items between the deposit barrel and the vault, based on trusted
+    commands from the ATM.
 
-    Key Changes:
-    - Replaced the call to the non-existent `turtle.suckFromSlot` with the
-      correct `vault.pullItems("turtle", ...)`, which pulls items into the
-      turtle's own inventory.
+    Changelog:
+    v4.1:
+    - Fixed a critical bug in 'handleDispense' where a hardcoded target name
+      ("turtle") was used for peripheral.pullItems.
+    - The target name is now dynamically and reliably determined by calculating
+      the opposite side of the vault peripheral, making the turtle's orientation
+      flexible.
+    v4.0:
+    - Re-engineered 'handleDispense' to be a "dumb" agent; it no longer checks
+      for stock, as authorization is now handled by the server.
+    - Upgraded dispense logic to intelligently pull a requested amount from
+      multiple stacks within the vault.
+    - Added better error handling and logging.
+    v3.7:
+    - Initial stable version with bug fixes for peripheral APIs.
 ]]
 
 --==============================================================================
@@ -24,9 +36,14 @@ local depositBlockName = "minecraft:barrel"
 -- Core Functions (Definitive Version)
 --==============================================================================
 
----
--- Scans for required peripherals and dynamically identifies the vault.
--- @return The names of the modem, deposit side, vault side, or an error.
+local function logActivity(msg, isError)
+    if isError then
+        print("ERROR: " .. msg)
+    else
+        print(msg)
+    end
+end
+
 local function findPeripherals()
     print("Scanning for peripherals...")
     
@@ -40,15 +57,13 @@ local function findPeripherals()
     deposit_side = peripheral.getName(deposit_side)
     print("Found Deposit Barrel on: " .. deposit_side)
 
-    -- THE FIX: Dynamic Vault Discovery using correct API calls and loops.
     local vault_side = nil
     for _, name in ipairs(peripheral.getNames()) do
         if name ~= modem_side and name ~= deposit_side then
-            -- A peripheral can have multiple types. Check if one of them is 'inventory'.
             if peripheral.hasType(name, "inventory") then
                 vault_side = name
                 print("Dynamically found Vault (".. peripheral.getType(name) ..") on: " .. vault_side)
-                break -- Exit the loop once we've found our vault.
+                break
             end
         end
     end
@@ -74,10 +89,7 @@ end
 
 local function collectFromDeposit(deposit_side)
     turnTo(deposit_side)
-    for i = 1, 16 do
-        turtle.select(i)
-        turtle.suck()
-    end
+    for i = 1, 16 do turtle.select(i); turtle.suck() end
     turnToFront(deposit_side)
 end
 
@@ -85,9 +97,7 @@ local function depositToVault(vault_side)
     turnTo(vault_side)
     for i = 1, 16 do
         turtle.select(i)
-        if turtle.getItemCount(i) > 0 then
-            turtle.drop()
-        end
+        if turtle.getItemCount(i) > 0 then turtle.drop() end
     end
     turnToFront(vault_side)
 end
@@ -96,9 +106,7 @@ local function returnItemsToDeposit(deposit_side)
     turnTo(deposit_side)
     for i = 1, 16 do
         turtle.select(i)
-        if turtle.getItemCount(i) > 0 then
-            turtle.drop()
-        end
+        if turtle.getItemCount(i) > 0 then turtle.drop() end
     end
     turnToFront(deposit_side)
 end
@@ -120,20 +128,11 @@ local function handleDeposit(atmId, deposit_side, vault_side)
     if message and message.type == "confirm_deposit" then
         depositToVault(vault_side)
         rednet.send(atmId, { success = true, new_balance = message.new_balance }, protocol)
-        print("Successfully processed deposit.")
+        logActivity("Successfully processed deposit.")
     else
         returnItemsToDeposit(deposit_side)
-        rednet.send(atmId, { success = false, reason = "Deposit cancelled or timed out." }, protocol)
-        print("Deposit failed. Returned items.")
-    end
-end
-
--- A simple logging function for better debugging on the turtle.
-local function logActivity(msg, isError)
-    if isError then
-        print("ERROR: " .. msg)
-    else
-        print(msg)
+        rednet.send(atmId, { success = false, reason = "Deposit cancelled or timed out by ATM." }, protocol)
+        logActivity("Deposit failed. Returned items to barrel.")
     end
 end
 
@@ -144,50 +143,48 @@ local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_
         return
     end
 
-    -- THE FIX: Smarter inventory management.
-    -- The turtle no longer checks for stock. It assumes the server has already
-    -- authorized the withdrawal and just focuses on the physical task of moving items.
-
-    -- First, clear the turtle's inventory to make space and prevent mixing items.
+    -- Clear the turtle's inventory to make space.
     depositToVault(vault_side)
+
+    -- THE FIX: Determine the correct peripheral name for the turtle's inventory
+    -- from the vault's perspective. It's always the opposite side.
+    local opposite_sides = { top="bottom", bottom="top", left="right", right="left", front="back", back="front" }
+    local pullTarget = opposite_sides[vault_side]
+    
+    if not pullTarget then
+        logActivity("Cannot determine pull target for vault on side: " .. tostring(vault_side), true)
+        rednet.send(atmId, { success = false, reason = "Clerk has invalid vault configuration." }, protocol)
+        return
+    end
 
     local remaining = count
     local slots = vault.list()
     
-    -- Loop through all slots in the vault to find the items we need.
     for slot, item in pairs(slots) do
         if item.name == itemToDispense then
             local amountToPull = math.min(remaining, item.count)
-            local pulled, reason = vault.pullItems("turtle", slot, amountToPull)
+            local pulled, reason = vault.pullItems(pullTarget, slot, amountToPull)
             
             if not pulled or pulled < amountToPull then
-                logActivity("Failed to pull " .. amountToPull .. " of " .. itemToDispense .. " from slot " .. slot .. ": " .. tostring(reason), true)
-                -- Critical failure: try to return everything we've collected so far.
-                depositToVault(vault_side) 
+                logActivity("Failed to pull " .. amountToPull .. " of " .. itemToDispense .. ": " .. tostring(reason), true)
+                depositToVault(vault_side) -- Return any partially collected items.
                 rednet.send(atmId, { success = false, reason = "A vault hardware error occurred." }, protocol)
                 return
             end
             
             remaining = remaining - pulled
-            if remaining <= 0 then
-                break -- We've collected enough items.
-            end
+            if remaining <= 0 then break end
         end
     end
 
     if remaining > 0 then
-        -- This should theoretically not happen if the server's stock is correct,
-        -- but it's an important safety check.
         logActivity("Could not find enough " .. itemToDispense .. " in the vault.", true)
         depositToVault(vault_side) -- Return what we did manage to pull.
         rednet.send(atmId, { success = false, reason = "Vault stock count was incorrect." }, protocol)
         return
     end
 
-    -- Drop the collected items into the deposit barrel for the user.
     returnItemsToDeposit(deposit_side)
-
-    -- Confirm successful physical transfer to the ATM.
     rednet.send(atmId, { success = true }, protocol)
     logActivity("Successfully dispensed " .. count .. " of " .. itemToDispense)
 end
@@ -199,14 +196,11 @@ end
 local function main()
     local modem_side, deposit_side, vault_side, err = findPeripherals()
     if err then
-        print("Error: " .. err)
-        return
+        print("Fatal Error: " .. err); return
     end
 
     rednet.open(modem_side)
-    -- Host a protocol that the ATM can discover via broadcast
     rednet.host(protocol, "bank_turtle") 
-
     print("Vault Clerk Turtle online (ID " .. os.getComputerID() .. "). Waiting for commands...")
 
     while true do
