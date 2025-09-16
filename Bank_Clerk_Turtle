@@ -1,5 +1,5 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v4.2 - Definitive Diagnostics)
+    Drunken Beard Bank - Vault Clerk Turtle (v4.3 - Direct Peripheral Call)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -8,17 +8,19 @@
     movement of items between the deposit barrel and the vault.
 
     Changelog:
+    v4.3:
+    - Re-engineered 'handleDispense' to use a direct 'peripheral.call()'
+      instead of a wrapped peripheral method. This is the definitive fix for
+      the "source does not exist" bug, as it explicitly tells the vault to
+      push items into the turtle's inventory from a specific side.
     v4.2:
-    - Added a detailed diagnostic report on startup to help users verify
-      the turtle's physical setup and peripheral detection.
+    - Added a detailed diagnostic report on startup.
     v4.1:
     - Fixed a critical peripheral bug by dynamically determining the target
-      for 'pullItems' based on the vault's relative side.
+      for 'pullItems'.
     v4.0:
     - Re-engineered 'handleDispense' to pull from multiple stacks and rely
       on the server for transaction authorization.
-    v3.7:
-    - Initial stable version.
 ]]
 
 --==============================================================================
@@ -136,36 +138,51 @@ end
 
 -- (handleDispense is unchanged from v4.1)
 local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_side)
-    local vault = peripheral.wrap(vault_side)
-    if not vault then
-        rednet.send(atmId, { success = false, reason = "Clerk could not access vault." }, protocol); return
-    end
+    -- This function no longer needs the vault peripheral to be wrapped.
+    -- We will call it directly by its name (the value of vault_side).
+
+    -- Clear the turtle's inventory to make space.
     depositToVault(vault_side)
-    local pullTarget = opposite_sides[vault_side]
-    if not pullTarget then
-        logActivity("Cannot determine pull target for vault on side: " .. tostring(vault_side), true)
+
+    -- THE FIX: Determine the side of the TURTLE that the vault is on.
+    -- This is the direction from which the vault will PUSH items.
+    local push_direction = opposite_sides[vault_side]
+    if not push_direction then
+        logActivity("Cannot determine push direction for vault on side: " .. tostring(vault_side), true)
         rednet.send(atmId, { success = false, reason = "Clerk has invalid vault configuration." }, protocol); return
     end
+
     local remaining = count
-    local slots = vault.list()
+    -- We need to get the list of items using a direct peripheral call as well.
+    local slots = peripheral.call(vault_side, "list")
+
     for slot, item in pairs(slots) do
         if item.name == itemToDispense then
             local amountToPull = math.min(remaining, item.count)
-            local pulled, reason = vault.pullItems(pullTarget, slot, amountToPull)
+
+            -- Use a direct, unambiguous peripheral call:
+            -- peripheral.call( <name_of_peripheral>, <function_name>, <arg1>, <arg2>, ... )
+            -- This tells the 'vault_side' peripheral to run its "pushItems" function,
+            -- pushing towards the 'push_direction' where the turtle is located.
+            local pulled, reason = peripheral.call(vault_side, "pushItems", push_direction, slot, amountToPull)
+
             if not pulled or pulled < amountToPull then
                 logActivity("Failed to pull " .. amountToPull .. " of " .. itemToDispense .. ": " .. tostring(reason), true)
-                depositToVault(vault_side)
+                depositToVault(vault_side) -- Return any partially collected items.
                 rednet.send(atmId, { success = false, reason = "A vault hardware error occurred." }, protocol); return
             end
+
             remaining = remaining - pulled
             if remaining <= 0 then break end
         end
     end
+
     if remaining > 0 then
         logActivity("Could not find enough " .. itemToDispense .. " in the vault.", true)
         depositToVault(vault_side)
         rednet.send(atmId, { success = false, reason = "Vault stock count was incorrect." }, protocol); return
     end
+
     returnItemsToDeposit(deposit_side)
     rednet.send(atmId, { success = true }, protocol)
     logActivity("Successfully dispensed " .. count .. " of " .. itemToDispense)
