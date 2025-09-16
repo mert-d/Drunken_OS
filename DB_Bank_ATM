@@ -1,19 +1,19 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v5.4 - Type-Safe Login)
+    Drunken Beard Bank - ATM Terminal (v5.5 - Numeric Password Hotfix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version provides a hotfix to the login function to make it robust
-    against data type mismatches, ensuring passwords that look like numbers
-    are handled correctly.
+    This version provides a definitive hotfix to the login function,
+    ensuring it correctly handles numeric-only passwords by replicating the
+    hashing behavior of the main Drunken OS client.
 
     Changelog:
+    v5.5:
+    - Re-engineered the 'login' function to convert numeric-only password
+      input into a 'number' type before hashing. This resolves the hash
+      mismatch with bank cards created by the main OS client.
     v5.4:
-    - Hardened the 'login' function by converting both password hashes to strings
-      before comparison. This fixes a bug where numeric passwords would fail
-      due to type mismatches from the bank card's data file.
-    v5.3:
-    - Implemented a modular pairing and setup system.
+    - Added type-safe comparison to the login function.
 ]]
 
 --==============================================================================
@@ -192,18 +192,20 @@ local function login()
     term.setCursorPos(3, 6)
     write("> ")
     term.setCursorBlink(true)
-    local pass = read("*")
+    local pass_str = read("*") -- Read the password as a string
     term.setCursorBlink(false)
 
-    if not pass or pass == "" then return false end
+    if not pass_str or pass_str == "" then return false end
 
-    local pass_hash = crypto.hex(pass)
+    -- THE FIX: Check if the password is a number, and if so, use the number
+    -- type for hashing to match the behavior of the main OS client.
+    local password_to_hash = tonumber(pass_str) or pass_str
+    
+    local pass_hash = crypto.hex(password_to_hash)
 
-    -- THE FIX: Convert both hashes to strings before comparing them.
     if tostring(pass_hash) == tostring(card_data.pass_hash) then
         printCenteredWrapped(10, "Password verified. Contacting bank server...")
         
-        -- Send the verified hash (as a string) to the server.
         rednet.send(bankServerId, { type = "login", user = username, pass_hash = tostring(pass_hash) }, BANK_PROTOCOL)
         
         local _, response = rednet.receive(BANK_PROTOCOL, 10)
