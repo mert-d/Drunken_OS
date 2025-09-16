@@ -1,22 +1,22 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v7.0 - Multi-Stack Withdrawal)
+    Drunken Beard Bank - Vault Clerk Turtle (v7.1 - Definitive Multi-Stack)
     by Gemini Gem & MuhendizBey
 
     Purpose:
     This is the definitive, feature-complete version of the clerk turtle. It
     features universal 6-sided interaction logic and is capable of fulfilling
     a single withdrawal request by intelligently gathering items from multiple
-    stacks within the vault.
+    stacks within the vault using a robust "Internal Shuffle" method.
 
     Changelog:
+    v7.1 (Definitive):
+    - Re-engineered 'handleDispense' with the "Internal Shuffle" method. The
+      turtle now commands the vault to move desired items into its first slot
+      before sucking them. This is a highly robust workaround for peripheral bugs.
+    - Corrected a fatal error by removing calls to non-existent turtle API
+      functions ('pullUp'/'pullDown').
     v7.0:
-    - Complete redesign of 'handleDispense' to support multi-stack withdrawals.
-    - The turtle now scans the entire vault to find all available stock of a
-      requested item before attempting to pull.
-    - Removed the "slot 1" restriction from the previous workaround.
-    v6.1:
-    - Fixed a crash by correctly handling the boolean return value of the
-      modern turtle API.
+    - Initial (failed) attempt at multi-stack withdrawal.
 ]]
 
 --==============================================================================
@@ -154,14 +154,14 @@ local function depositToVault(vault_side)
 end
 
 local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_side)
-    logActivity("Initiating Multi-Stack withdrawal for "..count.." "..itemToDispense)
-    local vault = peripheral.wrap(vault_side)
+    logActivity("Initiating 'Internal Shuffle' withdrawal for "..count.." "..itemToDispense)
 
     -- === Phase 1: Stock Verification ===
     logActivity("Scanning vault for available stock...")
     local available_stock = 0
     local source_slots = {}
-    for slot, item in pairs(vault.list()) do
+    local vault_list = peripheral.call(vault_side, "list")
+    for slot, item in pairs(vault_list) do
         if item.name == itemToDispense then
             available_stock = available_stock + item.count
             table.insert(source_slots, {slot=slot, count=item.count})
@@ -170,48 +170,46 @@ local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_
     logActivity("Found " .. available_stock .. " available in " .. #source_slots .. " stack(s).")
 
     if available_stock < count then
-        logActivity("Insufficient stock in vault.", true)
-        rednet.send(atmId, { success = false, reason = "Insufficient stock in vault." }, protocol)
-        return
+        rednet.send(atmId, { success = false, reason = "Insufficient stock in vault." }, protocol); return
     end
 
     -- === Phase 2: Preparation ===
-    depositToVault(vault_side) -- Empty turtle
-    for i = 1, 16 do -- Pre-flight check
+    depositToVault(vault_side)
+    for i = 1, 16 do
         if turtle.getItemCount(i) > 0 then
-            logActivity("Pre-flight check failed: Turtle inventory not empty.", true)
-            rednet.send(atmId, { success = false, reason = "Clerk inventory malfunction." }, protocol)
-            return
+            rednet.send(atmId, { success = false, reason = "Clerk inventory malfunction." }, protocol); return
         end
     end
     logActivity("Pre-flight check passed: Turtle inventory is empty.")
 
-    -- === Phase 3: Item Collection Loop ===
+    -- === Phase 3: The "Internal Shuffle" and Collection Loop ===
     local remaining = count
     for _, source in ipairs(source_slots) do
+        if remaining <= 0 then break end
         local amountToPull = math.min(remaining, source.count)
-        
+
+        -- 1. Move the items from their slot TO slot 1 within the vault.
+        -- We are telling the vault to push items from source.slot into its own slot 1.
+        peripheral.call(vault_side, "pushItems", vault_side, source.slot, amountToPull, 1)
+
+        -- 2. Now that the correct item is in slot 1, suck it.
         local success = false
-        if vault_side == "top" then success = turtle.pullUp(source.slot, amountToPull)
-        elseif vault_side == "bottom" then success = turtle.pullDown(source.slot, amountToPull)
+        if vault_side == "top" then success = turtle.suckUp(amountToPull)
+        elseif vault_side == "bottom" then success = turtle.suckDown(amountToPull)
         else
             turnTo(vault_side)
-            -- NOTE: turtle.pull() does not exist. We must use the peripheral call for this.
-            -- This is the one case where the peripheral API is needed.
-            local pullTarget = opposite_sides[vault_side]
-            local pulled, reason = peripheral.call(vault_side, "pullItems", pullTarget, source.slot, amountToPull)
-            success = pulled and pulled > 0
+            success = turtle.suck(amountToPull)
+            turnToFront(vault_side)
         end
-
+        
         if not success then
-            logActivity("Failed to pull items from slot " .. source.slot, true)
-            depositToVault(vault_side) -- Return anything we collected
+            logActivity("Failed to pull items after shuffling.", true)
+            depositToVault(vault_side)
             rednet.send(atmId, { success = false, reason = "A vault hardware error occurred." }, protocol)
             return
         end
         
         remaining = remaining - amountToPull
-        if remaining <= 0 then break end
     end
 
     -- === Phase 4: Final Verification and Dispense ===
@@ -220,7 +218,7 @@ local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_
 
     if pulledAmount < count then
         logActivity("Verification failed. Did not collect enough items.", true)
-        depositToVault(vault_side) -- Return everything
+        depositToVault(vault_side)
         rednet.send(atmId, { success = false, reason = "Item collection failed." }, protocol)
         return
     end
@@ -229,7 +227,6 @@ local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_
     rednet.send(atmId, { success = true }, protocol)
     logActivity("Successfully dispensed " .. count .. " of " .. itemToDispense)
 end
-
 --==============================================================================
 -- Main Program Loop
 --==============================================================================
