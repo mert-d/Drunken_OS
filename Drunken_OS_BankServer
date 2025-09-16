@@ -1,15 +1,19 @@
 --[[
-    Drunken OS - Bank Server (v2.14 - Admin Command Hotfix)
+    Drunken OS - Bank Server (v2.15 - Admin Command Hardening)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version provides a critical hotfix to the 'setbalance' admin command,
-    preventing it from corrupting user account data.
+    This version provides a full security audit and hardening of all
+    account-related admin commands, ensuring they are safe from misuse and
+    preventing potential data corruption or server crashes.
 
     Key Changes:
-    - The 'setbalance' command now correctly modifies the '.balance' field of an
-      account instead of overwriting the entire account object.
-    - Added a check to ensure the account exists before attempting to modify it.
+    - Hardened the 'give' command to prevent it from creating malformed
+      accounts and to ensure it only operates on existing users.
+    - Hardened the 'balance' command to prevent server crashes when checking
+      the balance of a non-existent user.
+    - All account modification commands now provide clear error messages if the
+      target user does not exist.
 ]]
 
 
@@ -457,17 +461,19 @@ end
 function adminCommands.balance(args)
     local _, user = parseAdminArgs(args)
     if not user then print("Usage: balance <user>"); return end
-    print("Balance for " .. user .. ": " .. (accounts[user] or 0))
+    
+    -- THE FIX: Check if the account exists before trying to read from it.
+    if accounts[user] then
+        print("Balance for " .. user .. ": $" .. accounts[user].balance)
+    else
+        print("Error: Account for user '" .. user .. "' does not exist.")
+    end
 end
 
 function adminCommands.setbalance(args)
     local _, user, amount = parseAdminArgs(args)
-    if not user or not amount then
-        print("Usage: setbalance <user> <amount>")
-        return
-    end
+    if not user or not amount then print("Usage: setbalance <user> <amount>"); return end
 
-    -- THE FIX: Check for the account and only update the balance.
     if accounts[user] then
         accounts[user].balance = amount
         saveTableToFile(ACCOUNTS_DB, accounts)
@@ -480,8 +486,15 @@ end
 function adminCommands.give(args)
     local _, user, amount = parseAdminArgs(args)
     if not user or not amount then print("Usage: give <user> <amount>"); return end
-    accounts[user] = (accounts[user] or 0) + amount; saveTableToFile(ACCOUNTS_DB, accounts)
-    print("Gave " .. amount .. " to " .. user .. ". New balance: " .. accounts[user])
+
+    -- THE FIX: Check for the account and only update the balance.
+    if accounts[user] then
+        accounts[user].balance = accounts[user].balance + amount
+        saveTableToFile(ACCOUNTS_DB, accounts)
+        print("Gave $" .. amount .. " to " .. user .. ". New balance: $" .. accounts[user].balance)
+    else
+        print("Error: Account for user '" .. user .. "' does not exist.")
+    end
 end
 
 function adminCommands.makecard(args)
