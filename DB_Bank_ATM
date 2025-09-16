@@ -192,24 +192,20 @@ local function login()
     term.setCursorPos(3, 6)
     write("> ")
     term.setCursorBlink(true)
-    local pass_str = read("*") -- Read the password as a string
+    local pass = read("*") -- Read the password as a string
     term.setCursorBlink(false)
 
-    if not pass_str or pass_str == "" then return false end
+    if not pass or pass == "" then return false end
 
-    -- THE FIX: Check if the password is a number, and if so, use the number
-    -- type for hashing to match the behavior of the main OS client.
-    local password_to_hash = tonumber(pass_str) or pass_str
-    
-    local pass_hash = crypto.hex(password_to_hash)
+    -- This will now use the local, patched crypto library.
+    -- It safely passes the raw string, and the library handles any type issues.
+    local pass_hash = crypto.hex(pass)
 
     if tostring(pass_hash) == tostring(card_data.pass_hash) then
         printCenteredWrapped(10, "Password verified. Contacting bank server...")
-        
-        rednet.send(bankServerId, { type = "login", user = username, pass_hash = tostring(pass_hash) }, BANK_PROTOCOL)
+        rednet.send(bankServerId, { type = "login", user = username, pass_hash = pass_hash }, BANK_PROTOCOL)
         
         local _, response = rednet.receive(BANK_PROTOCOL, 10)
-        
         if response and response.success then
             balance = response.balance
             currencyRates = response.rates
