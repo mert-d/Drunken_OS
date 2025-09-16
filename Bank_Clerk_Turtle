@@ -1,21 +1,22 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v5.1 - Pre-flight Check)
+    Drunken Beard Bank - Vault Clerk Turtle (v6.0 - Universal Interaction)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version adds a rigorous pre-flight check to the withdrawal process,
-    ensuring the turtle's inventory is completely empty before attempting to
-    pull new items from the vault. This helps diagnose inventory-full errors.
+    This definitive version of the clerk turtle features completely re-engineered
+    interaction logic, allowing it to work reliably with inventories placed on
+    any of its six sides (top, bottom, front, back, left, or right).
 
     Changelog:
+    v6.0:
+    - Re-engineered all item transfer functions (depositToVault, handleDispense,
+      etc.) to use the correct vertical (suckUp/Down, dropUp/Down) or
+      horizontal (turn and suck/drop) turtle commands.
+    - This definitively fixes all previous withdrawal and deposit bugs related
+      to physical orientation and peripheral interaction.
     v5.1:
-    - Added a pre-flight check to 'handleDispense' that verifies the turtle's
-      inventory is empty before proceeding with a withdrawal.
-    v5.0:
-    - Complete redesign of 'handleDispense' to use 'turtle.suck()' as a
-      workaround for a persistent peripheral bug.
+    - Added a pre-flight check to diagnose inventory-full errors.
 ]]
-
 --==============================================================================
 -- Configuration
 --==============================================================================
