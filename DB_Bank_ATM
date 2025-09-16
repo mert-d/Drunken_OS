@@ -369,7 +369,6 @@ local function mainMenu()
 end
 
 local function runSession()
-    local function runSession()
     local modem = peripheral.find("modem")
     if not modem then error("No modem attached.", 0) end
     rednet.open(peripheral.getName(modem))
