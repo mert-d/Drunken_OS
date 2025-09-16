@@ -9,10 +9,9 @@
 
     Changelog:
     v4.3:
-    - Re-engineered 'handleDispense' to use a direct 'peripheral.call()'
-      instead of a wrapped peripheral method. This is the definitive fix for
-      the "source does not exist" bug, as it explicitly tells the vault to
-      push items into the turtle's inventory from a specific side.
+    - Corrected a critical bug in 'handleDispense' where "pushItems" was used
+      instead of "pullItems" in the direct peripheral call. The turtle now
+      correctly instructs the vault to send items.
     v4.2:
     - Added a detailed diagnostic report on startup.
     v4.1:
@@ -141,11 +140,8 @@ local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_
     -- This function no longer needs the vault peripheral to be wrapped.
     -- We will call it directly by its name (the value of vault_side).
 
-    -- Clear the turtle's inventory to make space.
     depositToVault(vault_side)
 
-    -- THE FIX: Determine the side of the TURTLE that the vault is on.
-    -- This is the direction from which the vault will PUSH items.
     local push_direction = opposite_sides[vault_side]
     if not push_direction then
         logActivity("Cannot determine push direction for vault on side: " .. tostring(vault_side), true)
@@ -153,18 +149,14 @@ local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_
     end
 
     local remaining = count
-    -- We need to get the list of items using a direct peripheral call as well.
     local slots = peripheral.call(vault_side, "list")
 
     for slot, item in pairs(slots) do
         if item.name == itemToDispense then
             local amountToPull = math.min(remaining, item.count)
 
-            -- Use a direct, unambiguous peripheral call:
-            -- peripheral.call( <name_of_peripheral>, <function_name>, <arg1>, <arg2>, ... )
-            -- This tells the 'vault_side' peripheral to run its "pushItems" function,
-            -- pushing towards the 'push_direction' where the turtle is located.
-            local pulled, reason = peripheral.call(vault_side, "pushItems", push_direction, slot, amountToPull)
+            -- THE FIX: Use "pullItems" to tell the vault to SEND items.
+            local pulled, reason = peripheral.call(vault_side, "pullItems", push_direction, slot, amountToPull)
 
             if not pulled or pulled < amountToPull then
                 logActivity("Failed to pull " .. amountToPull .. " of " .. itemToDispense .. ": " .. tostring(reason), true)
