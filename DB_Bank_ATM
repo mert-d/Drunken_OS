@@ -1,22 +1,20 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v5.2 - Universal Word Wrap)
+    Drunken Beard Bank - ATM Terminal (v5.3 - Modular Pairing & Setup)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This is the definitive, feature-complete ATM client. It provides a full
-    graphical user interface and implements the server's required three-phase
-    transactional protocols for both deposits and withdrawals, ensuring maximum
-    security and reliability.
+    This is the definitive, feature-complete ATM client. It is designed for
+    modular deployment and features a first-time setup process to pair it
+    with a specific Bank Clerk Turtle via its computer ID.
 
     Changelog:
+    v5.3:
+    - Replaced 'rednet.lookup()' with a config file system.
+    - Added a 'runFirstTimeSetup()' function that automatically runs if the
+      config file is missing, guiding the user through pairing.
+    - ATM now communicates directly with its paired turtle via ID.
     v5.2:
-    - Refactored word-wrapping logic into a reusable utility function.
-    - Upgraded 'showMessage' to use the new word-wrap function, preventing
-      broken words in long messages.
-    - Re-engineered the "Check Rates" screen with a robust two-column layout
-      to handle long item names gracefully.
-    v5.1:
-    - Implemented a "Drunken Bank" color theme and initial word-wrapping.
+    - Implemented universal word-wrapping and UI polish.
 ]]
 
 --==============================================================================
@@ -24,6 +22,8 @@
 --==============================================================================
 
 local crypto = require("lib.sha1_hmac")
+
+local CONFIG_PATH = "atm.conf" -- Define the config file path
 
 --==============================================================================
 -- Configuration & State
@@ -394,17 +394,73 @@ local function mainMenu()
     sleep(2)
 end
 
+local function runFirstTimeSetup()
+    drawFrame("First Time Setup")
+    printCenteredWrapped(4, "This ATM has not been configured.")
+    printCenteredWrapped(6, "Please start the Bank Clerk Turtle and enter its Computer ID below.")
+    
+    term.setCursorPos(3, 9)
+    term.write("Enter Turtle ID > ")
+    term.setCursorBlink(true)
+    local id_str = read()
+    term.setCursorBlink(false)
+    
+    local turtle_id = tonumber(id_str)
+    if not turtle_id then
+        showMessage("Setup Failed", "Invalid ID. The ID must be a number.", true)
+        return nil -- Return nil to signal setup failure
+    end
+
+    printCenteredWrapped(12, "Verifying connection to turtle ID " .. turtle_id .. "...")
+    if rednet.isOpen() then
+        -- Ping the turtle to make sure it's real
+        rednet.send(turtle_id, {type = "ping"}, TURTLE_CLERK_PROTOCOL)
+        local sender, msg = rednet.receive(TURTLE_CLERK_PROTOCOL, 5)
+        if sender == turtle_id and msg and msg.type == "pong" then
+            -- Success! Save the config.
+            local config = { turtleClerkId = turtle_id }
+            local file = fs.open(CONFIG_PATH, "w")
+            file.write(textutils.serialize(config))
+            file.close()
+            showMessage("Success", "ATM has been successfully paired with turtle " .. turtle_id .. ". The system will now restart.")
+            os.reboot()
+        else
+            showMessage("Setup Failed", "Could not communicate with a turtle at that ID. Please check the ID and that the turtle is running.", true)
+            return nil
+        end
+    else
+        showMessage("Setup Failed", "Modem is not open. Cannot verify turtle.", true)
+        return nil
+    end
+end
+
 local function runSession()
     local modem = peripheral.find("modem")
     if not modem then error("No modem attached.", 0) end
     rednet.open(peripheral.getName(modem))
 
+    -- THE FIX: Load the paired turtle ID from the config file.
+    if not fs.exists(CONFIG_PATH) then
+        runFirstTimeSetup()
+        -- After setup, the ATM reboots. If setup fails, we'll just error here.
+        error("Configuration not found. Please run setup.", 0)
+    end
+    
+    local file = fs.open(CONFIG_PATH, "r")
+    local data = textutils.unserialize(file.readAll())
+    file.close()
+    
+    if not data or not data.turtleClerkId then
+        fs.delete(CONFIG_PATH)
+        error("Configuration file is corrupt. Deleting and restarting.", 0)
+    end
+    
+    turtleClerkId = data.turtleClerkId
+    
+    -- The ATM no longer looks up the turtle, it knows its private ID.
     bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
     if not bankServerId then error("Could not find bank server.", 0) end
     
-    turtleClerkId = rednet.lookup(TURTLE_CLERK_PROTOCOL, "bank_turtle")
-    if not turtleClerkId then error("Could not find Vault Clerk turtle.", 0) end
-
     drawFrame("Welcome")
     -- THE FIX: Use the new word-wrapping function.
     printCenteredWrapped(8, "Welcome to Drunken Beard Bank")
