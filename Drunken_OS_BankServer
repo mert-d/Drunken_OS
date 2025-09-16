@@ -307,6 +307,22 @@ end
 
 ---
 -- Handles a deposit of items.
+That is very perplexing indeed. My apologies, it seems my last fix was addressing the symptom but not the absolute root cause. It's clear the server is receiving the deposit request but is still unable to find a value for the items you are depositing. When a robust fix doesn't work, it means we're missing a piece of data.
+
+This situation calls for better diagnostics. We need to see exactly what item names the Bank Server is receiving from the turtle, down to the exact character and capitalization. The best way to do this is to add more detailed logging to the server itself.
+
+Here is an updated deposit function for your Drunken_OS_BankServer script. This new version adds a logging step that will write the exact details of the rejected items to your log file. This will be our "smoking gun."
+
+Diagnostic Update for Drunken_OS_BankServer
+Please replace the bankHandlers.deposit function in your Drunken_OS_BankServer script with this new version.
+
+Lua
+
+-- In Drunken_OS_BankServer
+-- Replace the existing bankHandlers.deposit function with this one.
+
+---
+-- Handles a deposit of items with enhanced logging for debugging.
 function bankHandlers.deposit(senderId, message)
     local user, items = message.user, message.items
     local total_value = 0
@@ -314,12 +330,14 @@ function bankHandlers.deposit(senderId, message)
 
     for _, item in ipairs(items) do
         local rateInfo = nil
-        -- THE FIX: First, try to find the currency by its full name.
-        if currencyRates[item.name] then
-            rateInfo = currencyRates[item.name]
+        local itemName = item.name or "unknown" -- Safety check
+        
+        -- Try to find the currency by its full name.
+        if currencyRates[itemName] then
+            rateInfo = currencyRates[itemName]
         else
             -- If that fails, try looking for it without the "minecraft:" prefix.
-            local shortName = item.name:match("^minecraft:(.+)")
+            local shortName = itemName:match("^minecraft:(.+)")
             if shortName and currencyRates[shortName] then
                 rateInfo = currencyRates[shortName]
             end
@@ -328,7 +346,7 @@ function bankHandlers.deposit(senderId, message)
         if rateInfo then
             local value = item.count * rateInfo.current
             total_value = total_value + value
-            table.insert(transaction_summary, string.format("%d %s for $%d", item.count, item.name, value))
+            table.insert(transaction_summary, string.format("%d %s for $%d", item.count, itemName, value))
         end
     end
 
@@ -346,6 +364,12 @@ function bankHandlers.deposit(senderId, message)
             rednet.send(senderId, { success = false, reason = "Account not found for deposit." }, BANK_PROTOCOL)
         end
     else
+        -- THE FIX: Add detailed logging when a deposit fails.
+        logActivity(string.format("Deposit failed for user '%s': No valid currency detected.", user), true)
+        for i, item in ipairs(items) do
+            logActivity(string.format(" - Received item: '%s' (count: %d)", tostring(item.name), item.count), true)
+        end
+        
         rednet.send(senderId, { success = false, reason = "No valid currency detected." }, BANK_PROTOCOL)
     end
 end
