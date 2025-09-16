@@ -130,13 +130,34 @@ local function handleDeposit(atmId, deposit_side, vault_side)
     end
 end
 
-local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_side)
-    logActivity("Initiating 'Targeted Suck' withdrawal.")
+local function depositToVault(vault_side)
+    if vault_side == "top" then
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 then turtle.dropUp() end
+        end
+    elseif vault_side == "bottom" then
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 then turtle.dropDown() end
+        end
+    else -- Horizontal
+        turnTo(vault_side)
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 then turtle.drop() end
+        end
+        turnToFront(vault_side)
+    end
+end
 
-    -- 1. Empty the turtle's inventory.
+local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_side)
+    logActivity("Initiating Universal withdrawal for "..count.." "..itemToDispense)
+
+    -- 1. Empty the turtle's inventory into the vault.
     depositToVault(vault_side)
 
-    -- 2. THE FIX: Pre-flight Check - Verify the turtle is actually empty.
+    -- 2. Pre-flight Check
     for i = 1, 16 do
         if turtle.getItemCount(i) > 0 then
             logActivity("Pre-flight check failed: Turtle inventory not empty at slot " .. i, true)
@@ -146,38 +167,42 @@ local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_
     end
     logActivity("Pre-flight check passed: Turtle inventory is empty.")
 
-    -- 3. Proceed with the withdrawal logic from v5.0
-    turnTo(vault_side)
-
+    -- 3. Verify vault contents
     local vault = peripheral.wrap(vault_side)
     local first_slot_item = vault.getItemDetail(1)
 
     if not first_slot_item or first_slot_item.name ~= itemToDispense then
-        logActivity("Item in slot 1 does not match requested item.", true)
-        logActivity("Expected '"..itemToDispense.."' but found '"..(first_slot_item and first_slot_item.name or "nothing").."'", true)
+        logActivity("Incorrect item in vault slot 1.", true)
         rednet.send(atmId, { success = false, reason = "Incorrect item in vault slot 1." }, protocol)
-        turnToFront(vault_side)
         return
     end
 
     if first_slot_item.count < count then
-        logActivity("Item in slot 1 has insufficient stock.", true)
-        logActivity("Requested " .. count .. " but found " .. first_slot_item.count, true)
+        logActivity("Insufficient stock in vault slot 1.", true)
         rednet.send(atmId, { success = false, reason = "Insufficient stock in vault slot 1." }, protocol)
-        turnToFront(vault_side)
         return
     end
 
-    local pulled = turtle.suck(count)
-    turnToFront(vault_side)
+    -- 4. THE FIX: Use the correct interaction command based on the vault's side.
+    local pulled = false
+    if vault_side == "top" then
+        pulled = turtle.suckUp(count)
+    elseif vault_side == "bottom" then
+        pulled = turtle.suckDown(count)
+    else -- Horizontal
+        turnTo(vault_side)
+        pulled = turtle.suck(count)
+        turnToFront(vault_side)
+    end
 
     if not pulled or pulled < count then
-        logActivity("Failed to suck the required number of items.", true)
+        logActivity("Failed to pull the required number of items.", true)
         depositToVault(vault_side) -- Attempt to return whatever was pulled
         rednet.send(atmId, { success = false, reason = "A vault hardware error occurred." }, protocol)
         return
     end
     
+    -- 5. Dispense items to the user
     returnItemsToDeposit(deposit_side)
     rednet.send(atmId, { success = true }, protocol)
     logActivity("Successfully dispensed " .. count .. " of " .. itemToDispense)
