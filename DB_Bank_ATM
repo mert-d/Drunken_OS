@@ -420,7 +420,6 @@ local function runSession()
         sleep(2)
     end
 end
-end
 
 --==============================================================================
 -- Main Program Loop (Unchanged)
