@@ -1,5 +1,5 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v4.18  - Transactional Deposit Fix)
+    Drunken Beard Bank - ATM Terminal (v4.18  - Transactional Withdraw Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -237,30 +237,77 @@ local function withdraw()
         table.insert(item_names, name)
     end
     table.insert(options, "Cancel")
+    
     local choice = drawMenu("Select Item to Withdraw", options, "Your balance: $" .. balance)
     if choice == nil or choice > #item_names then return end
+    
     local item_name = item_names[choice]
     local rate = currencyRates[item_name].current
+
     drawFrame("Withdraw Amount")
     term.setCursorPos(3, 4); print("How many " .. item_name:gsub("minecraft:", ""):gsub("_", " ") .. " would you like?")
     term.setCursorPos(3, 5); print("(Cost: $"..rate.." each | Your balance: $"..balance..")")
-    term.setCursorPos(3, 7); write("> ")
-    term.setCursorBlink(true)
+    term.setCursorPos(3, 7); write("> "); term.setCursorBlink(true)
     local amount_str = read()
     term.setCursorBlink(false)
+    
     local amount = tonumber(amount_str)
-    if not amount or amount <= 0 or (amount * rate > balance) then
-        showMessage("Error", "Invalid amount or insufficient funds.", true)
+    if not amount or amount <= 0 then
+        showMessage("Error", "Invalid amount entered.", true)
         return
     end
-    printCentered(10, "Requesting withdrawal of " .. amount .. " " .. item_name .. "...")
-    rednet.send(turtleClerkId, {type = "request_dispense", item_name = item_name, count = amount}, TURTLE_CLERK_PROTOCOL)
-    local _, response = rednet.receive(TURTLE_CLERK_PROTOCOL, 30)
-    if response and response.success then
-        balance = response.new_balance
+
+    -- THE FIX: Implement the 3-phase withdrawal protocol.
+    
+    -- Phase 1: Authorize with the Bank Server
+    printCentered(10, "Contacting bank server for authorization...")
+    rednet.send(bankServerId, {
+        type = "withdraw_item",
+        user = username,
+        item_name = item_name,
+        count = amount
+    }, BANK_PROTOCOL)
+    
+    local _, server_response = rednet.receive(BANK_PROTOCOL, 15)
+    
+    if not server_response or not server_response.success then
+        showMessage("Withdrawal Failed", (server_response and server_response.reason) or "No response from server.", true)
+        return
+    end
+    
+    -- Phase 2: If authorized, request physical dispense from the Turtle
+    printCentered(12, "Authorization received. Requesting item dispense...")
+    rednet.send(turtleClerkId, {
+        type = "request_dispense",
+        item_name = item_name,
+        count = amount
+    }, TURTLE_CLERK_PROTOCOL)
+    
+    local _, turtle_response = rednet.receive(TURTLE_CLERK_PROTOCOL, 30)
+    
+    if not turtle_response or not turtle_response.success then
+        showMessage("Withdrawal Failed", (turtle_response and turtle_response.reason) or "Clerk turtle did not respond.", true)
+        -- NOTE: We do not contact the server here, as no items were dispensed and no funds should be deducted.
+        return
+    end
+    
+    -- Phase 3: If turtle succeeds, finalize the transaction with the Bank Server
+    printCentered(14, "Dispense successful. Finalizing transaction...")
+    rednet.send(bankServerId, {
+        type = "finalize_withdrawal",
+        user = username,
+        item_name = item_name,
+        count = amount
+    }, BANK_PROTOCOL)
+    
+    local _, final_response = rednet.receive(BANK_PROTOCOL, 15)
+    
+    if final_response and final_response.success then
+        balance = final_response.newBalance
         showMessage("Success", "Please collect your items. New balance: $" .. balance)
     else
-        showMessage("Withdrawal Failed", (response and response.reason) or "Turtle did not respond.", true)
+        -- This is a critical error state. The user has the items but their balance was not updated.
+        showMessage("CRITICAL ERROR", "Could not finalize transaction. Please contact an admin.", true)
     end
 end
 
