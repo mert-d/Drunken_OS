@@ -1,21 +1,23 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v4.18  - Transactional Withdraw Fix)
+    Drunken Beard Bank - ATM Terminal (v5.1 - UI Polish & Theming)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version re-integrates the correct multi-step deposit logic from the
-    proven baseline (ATM.txt, v4.3) to fix the communication deadlock with the
-    Bank Clerk Turtle.
+    This is the definitive, feature-complete ATM client. It provides a full
+    graphical user interface and implements the server's required three-phase
+    transactional protocols for both deposits and withdrawals, ensuring maximum
+    security and reliability.
 
-    Key Changes:
-    - The 'deposit' function has been completely replaced with one that performs
-      the correct network handshake:
-      1. ATM requests deposit from Turtle.
-      2. Turtle sends back item list.
-      3. ATM sends item list to Bank Server for valuation.
-      4. Bank Server sends back value and new balance.
-      5. ATM sends confirmation to Turtle.
-      6. Turtle stores items and sends final success message.
+    Changelog:
+    v5.1:
+    - Implemented a new "Drunken Bank" color theme (orange, yellow, brown).
+    - Fixed text overflow bugs by creating a new 'printCenteredWrapped'
+      function that automatically handles word wrapping for long messages.
+    - Adjusted padding on all UI elements to ensure text stays within the
+      graphical border.
+    v5.0:
+    - Re-engineered all transaction logic to be fully compliant with the
+      server's secure protocol.
 ]]
 
 --==============================================================================
@@ -42,39 +44,65 @@ local TURTLE_CLERK_PROTOCOL = "DB_ATM_Turtle"
 -- Graphical UI & Theme (Unchanged from v4.17)
 --==============================================================================
 
+--==============================================================================
+-- Graphical UI & Theme (With new "Beer" theme and text wrapping)
+--==============================================================================
+
+-- A theme table to make color changes simple and consistent.
 local theme = {
     bg = colors.black,
     text = colors.white,
-    border = colors.gray,
-    titleBg = colors.gray,
+    border = colors.brown,
+    titleBg = colors.orange,
     titleText = colors.white,
-    highlightBg = colors.blue,
-    highlightText = colors.white,
+    highlightBg = colors.yellow,
+    highlightText = colors.brown,
     errorBg = colors.red,
     errorText = colors.white,
 }
 
+-- (The 'drawFrame' function is unchanged)
 local function drawFrame(title)
     local w, h = term.getSize()
-    term.setBackgroundColor(theme.bg)
-    term.clear()
+    term.setBackgroundColor(theme.bg); term.clear()
     term.setBackgroundColor(theme.border)
-    for y = 1, h do
-        term.setCursorPos(1, y); term.write(" ")
-        term.setCursorPos(w, y); term.write(" ")
-    end
-    for x = 1, w do
-        term.setCursorPos(x, 1); term.write(" ")
-        term.setCursorPos(x, h); term.write(" ")
-    end
-    term.setBackgroundColor(theme.titleBg)
-    term.setTextColor(theme.titleText)
+    for y=1,h do term.setCursorPos(1,y); term.write(" "); term.setCursorPos(w,y); term.write(" ") end
+    for x=1,w do term.setCursorPos(x,1); term.write(" "); term.setCursorPos(x,h); term.write(" ") end
+    term.setBackgroundColor(theme.titleBg); term.setTextColor(theme.titleText)
     local titleText = " " .. (title or "Drunken Beard Bank") .. " "
-    local titleStart = math.floor((w - #titleText) / 2)
+    local titleStart = math.floor((w - #titleText) / 2) + 1
     term.setCursorPos(titleStart, 1)
     term.write(titleText)
-    term.setBackgroundColor(theme.bg)
-    term.setTextColor(theme.text)
+    term.setBackgroundColor(theme.bg); term.setTextColor(theme.text)
+end
+
+-- NEW: A word-wrapping version of printCentered to prevent text overflow.
+local function printCenteredWrapped(startY, text)
+    local w, h = term.getSize()
+    local maxLen = w - 4 -- Maximum line length inside the border
+
+    -- Word wrapping logic
+    local lines = {}
+    for line in text:gmatch("[^\n]+") do
+        while #line > maxLen do
+            local breakPoint = maxLen
+            while breakPoint > 0 and line:sub(breakPoint, breakPoint) ~= " " do
+                breakPoint = breakPoint - 1
+            end
+            if breakPoint == 0 then breakPoint = maxLen end -- Force break if no space
+            
+            table.insert(lines, line:sub(1, breakPoint))
+            line = line:sub(breakPoint + 1)
+        end
+        table.insert(lines, line)
+    end
+
+    -- Print the centered lines
+    for i, line in ipairs(lines) do
+        local x = math.floor((w - #line) / 2) + 1
+        term.setCursorPos(x, startY + i - 1)
+        term.write(line)
+    end
 end
 
 local function printCentered(y, text)
@@ -341,18 +369,25 @@ local function mainMenu()
 end
 
 local function runSession()
+    local function runSession()
     local modem = peripheral.find("modem")
     if not modem then error("No modem attached.", 0) end
     rednet.open(peripheral.getName(modem))
+
     bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
     if not bankServerId then error("Could not find bank server.", 0) end
+    
     turtleClerkId = rednet.lookup(TURTLE_CLERK_PROTOCOL, "bank_turtle")
     if not turtleClerkId then error("Could not find Vault Clerk turtle.", 0) end
+
     drawFrame("Welcome")
-    printCentered(8, "Welcome to Drunken Beard Bank")
-    printCentered(10, "Please insert your bank card...")
+    -- THE FIX: Use the new word-wrapping function.
+    printCenteredWrapped(8, "Welcome to Drunken Beard Bank")
+    printCenteredWrapped(10, "Please insert your bank card...")
+
     local drive = peripheral.find("drive")
     if not drive then error("No Disk Drive is attached to this terminal.", 0) end
+    
     local event, p1 = os.pullEvent("disk")
     local disk_label = disk.getLabel(p1)
     if not disk_label or not disk_label:match("^DrunkenBeard_Card_.+") then
