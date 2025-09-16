@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Bank Server (v2.13 - Stock Fix)
+    Drunken OS - Bank Server (v2.13 - Currency Data Fix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -218,9 +218,17 @@ local function loadAllData()
     currencyRates = {}
     if fs.exists(CURRENCIES_DIR) then
         for _, file in ipairs(fs.list(CURRENCIES_DIR)) do
-            local itemName = file:match("(.+)%.json$")
-            if itemName then
-                currencyRates[itemName] = loadTableFromFile(fs.combine(CURRENCIES_DIR, file))
+            -- The filename is now just for organization, we load the *real* name from inside the file.
+            local path = fs.combine(CURRENCIES_DIR, file)
+            if not fs.isDir(path) then
+                local data = loadTableFromFile(path)
+                -- THE FIX: The currency name is now stored *inside* the file.
+                if data and data.name then
+                    currencyRates[data.name] = data
+                    logActivity("Loaded currency: '" .. data.name .. "'")
+                else
+                    logActivity("Found a malformed currency file: " .. file, true)
+                end
             end
         end
     end
@@ -530,17 +538,29 @@ function adminCommands.makecard(args)
     end
 end
 
+-- NEW: Re-engineered to save the currency name inside the file.
 function adminCommands.addcurrency(args)
     local _, itemName, baseRate = parseAdminArgs(args)
     if not itemName or not baseRate then print("Usage: addcurrency <item_name> <base_rate>"); return end
     if currencyRates[itemName] then print("Currency '" .. itemName .. "' already exists."); return end
     if not fs.isDir(CURRENCIES_DIR) then fs.makeDir(CURRENCIES_DIR) end
 
-    currencyRates[itemName] = { base = baseRate, current = baseRate, target = nil }
-    if saveTableToFile(fs.combine(CURRENCIES_DIR, itemName .. ".json"), currencyRates[itemName]) then
+    -- THE FIX: We create a "safe" filename by replacing the colon,
+    -- but store the *real* name inside the file's data.
+    local safeFileName = itemName:gsub(":", "_") .. ".json"
+    
+    local newCurrency = {
+        name = itemName, -- The actual name with the colon
+        base = baseRate,
+        current = baseRate,
+        target = nil
+    }
+
+    if saveTableToFile(fs.combine(CURRENCIES_DIR, safeFileName), newCurrency) then
+        -- Also add it to our live currency table
+        currencyRates[itemName] = newCurrency
         print("Added new currency '" .. itemName .. "' with base rate $" .. baseRate)
     else
-        currencyRates[itemName] = nil -- Revert change if save failed
         print("Failed to save new currency.")
     end
 end
