@@ -1,22 +1,21 @@
 --[[
-    Drunken Beard Bank - Vault Clerk Turtle (v7.1 - Definitive Multi-Stack)
+    Drunken Beard Bank - Vault Clerk Turtle (v7.2 - Universal Deposit)
     by Gemini Gem & MuhendizBey
 
     Purpose:
     This is the definitive, feature-complete version of the clerk turtle. It
-    features universal 6-sided interaction logic and is capable of fulfilling
-    a single withdrawal request by intelligently gathering items from multiple
-    stacks within the vault using a robust "Internal Shuffle" method.
+    features universal 6-sided interaction logic for all inventory operations,
+    including deposits and multi-stack withdrawals.
 
     Changelog:
+    v7.2:
+    - Re-engineered all deposit-related functions ('collectFromDeposit',
+      'depositToVault', 'returnItemsToDeposit') to support 6-sided
+      interaction, matching the withdrawal function's capabilities. This
+      fixes items being dropped on the ground with vertical inventories.
     v7.1 (Definitive):
-    - Re-engineered 'handleDispense' with the "Internal Shuffle" method. The
-      turtle now commands the vault to move desired items into its first slot
-      before sucking them. This is a highly robust workaround for peripheral bugs.
-    - Corrected a fatal error by removing calls to non-existent turtle API
-      functions ('pullUp'/'pullDown').
-    v7.0:
-    - Initial (failed) attempt at multi-stack withdrawal.
+    - Implemented the "Internal Shuffle" method for robust multi-stack
+      withdrawals.
 ]]
 
 --==============================================================================
@@ -88,27 +87,66 @@ local function turnToFront(originalSide)
 end
 
 local function collectFromDeposit(deposit_side)
-    turnTo(deposit_side)
-    for i = 1, 16 do turtle.select(i); turtle.suck() end
-    turnToFront(deposit_side)
+    logActivity("Collecting items from " .. deposit_side .. "...")
+    if deposit_side == "top" then
+        for i = 1, 16 do turtle.select(i); turtle.suckUp() end
+    elseif deposit_side == "bottom" then
+        for i = 1, 16 do turtle.select(i); turtle.suckDown() end
+    else -- Horizontal
+        turnTo(deposit_side)
+        for i = 1, 16 do turtle.select(i); turtle.suck() end
+        turnToFront(deposit_side)
+    end
 end
 
 local function depositToVault(vault_side)
-    turnTo(vault_side)
-    for i = 1, 16 do
-        turtle.select(i)
-        if turtle.getItemCount(i) > 0 then turtle.drop() end
+    logActivity("Depositing items to " .. vault_side .. "...")
+    if vault_side == "top" then
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 and not turtle.dropUp() then
+                logActivity("Failed to drop item up into vault (is it full?)", true)
+            end
+        end
+    elseif vault_side == "bottom" then
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 and not turtle.dropDown() then
+                logActivity("Failed to drop item down into vault (is it full?)", true)
+            end
+        end
+    else -- Horizontal
+        turnTo(vault_side)
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 and not turtle.drop() then
+                logActivity("Failed to drop item into vault (is it full?)", true)
+            end
+        end
+        turnToFront(vault_side)
     end
-    turnToFront(vault_side)
 end
 
 local function returnItemsToDeposit(deposit_side)
-    turnTo(deposit_side)
-    for i = 1, 16 do
-        turtle.select(i)
-        if turtle.getItemCount(i) > 0 then turtle.drop() end
+    logActivity("Returning items to " .. deposit_side .. "...")
+    if deposit_side == "top" then
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 then turtle.dropUp() end
+        end
+    elseif deposit_side == "bottom" then
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 then turtle.dropDown() end
+        end
+    else -- Horizontal
+        turnTo(deposit_side)
+        for i = 1, 16 do
+            turtle.select(i)
+            if turtle.getItemCount(i) > 0 then turtle.drop() end
+        end
+        turnToFront(deposit_side)
     end
-    turnToFront(deposit_side)
 end
 
 -- (handleDeposit is unchanged)
