@@ -281,7 +281,6 @@ local function main()
     
     rednet.open(modem_side)
     
-    -- THE FIX: Announce ID instead of hosting a public name.
     term.setTextColor(colors.yellow)
     print("Vault Clerk Module Online.")
     print("My Computer ID is: " .. os.getComputerID())
@@ -295,6 +294,10 @@ local function main()
                 handleDeposit(senderId, deposit_side, vault_side)
             elseif message.type == "request_dispense" then
                 handleDispense(senderId, message.item_name, message.count, vault_side, deposit_side)
+            -- THE FIX: Respond to the ATM's setup ping.
+            elseif message.type == "ping" then
+                logActivity("Received setup ping from ID " .. senderId .. ". Responding.")
+                rednet.send(senderId, { type = "pong" }, protocol)
             end
         end
     end
