@@ -1,5 +1,5 @@
 --[[ 
-    Drunken OS - Bank Server (v3.0 - UI Library Refactor)
+    Drunken OS - Bank Server (v3.1 - UI Library Hotfix)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -7,10 +7,7 @@
     user interface rendering, improving consistency and maintainability.
 
     Key Changes:
-    - Removed all local UI functions and the local theme table.
-    - Added a `require()` call to the new `lib.ui_lib`.
-    - Set the theme to "bank".
-    - Updated all UI function calls to use the new `ui` library.
+    - Fixed a bug where the monitor UI was using a non-existent theme property.
 ]]
 
 
@@ -113,7 +110,7 @@ local function drawMainMenu()
     monitor.setBackgroundColor(theme.windowBg)
     monitor.clear()
     
-    monitor.setBackgroundColor(theme.title)
+    monitor.setBackgroundColor(theme.titleBg)
     monitor.setCursorPos(1, 1); monitor.write(string.rep(" ", w))
     monitor.setTextColor(colors.white)
     local titleText = " Drunken OS Bank Server "
@@ -159,7 +156,7 @@ local function drawLogScreen()
     local theme = ui.getTheme()
 
     monitor.setBackgroundColor(theme.windowBg); monitor.clear()
-    monitor.setBackgroundColor(theme.title); monitor.setCursorPos(1, 1); monitor.write(string.rep(" ", w))
+    monitor.setBackgroundColor(theme.titleBg); monitor.setCursorPos(1, 1); monitor.write(string.rep(" ", w))
     monitor.setTextColor(colors.white); local titleText = " Live Server Log "; monitor.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); monitor.write(titleText)
     
     local logAreaHeight = h - 2
