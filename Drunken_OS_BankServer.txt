@@ -1,19 +1,16 @@
---[[
-    Drunken OS - Bank Server (v2.15 - Admin Command Hardening)
+--[[ 
+    Drunken OS - Bank Server (v3.0 - UI Library Refactor)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version provides a full security audit and hardening of all
-    account-related admin commands, ensuring they are safe from misuse and
-    preventing potential data corruption or server crashes.
+    This version is refactored to use the centralized `ui_lib` for all
+    user interface rendering, improving consistency and maintainability.
 
     Key Changes:
-    - Hardened the 'give' command to prevent it from creating malformed
-      accounts and to ensure it only operates on existing users.
-    - Hardened the 'balance' command to prevent server crashes when checking
-      the balance of a non-existent user.
-    - All account modification commands now provide clear error messages if the
-      target user does not exist.
+    - Removed all local UI functions and the local theme table.
+    - Added a `require()` call to the new `lib.ui_lib`.
+    - Set the theme to "bank".
+    - Updated all UI function calls to use the new `ui` library.
 ]]
 
 
@@ -23,6 +20,8 @@
 
 -- Load our new, centralized cryptography library.
 local crypto = require("lib.sha1_hmac")
+local ui = require("lib.ui_lib")
+ui.setTheme("bank")
 
 --==============================================================================
 -- Configuration & State
@@ -56,24 +55,7 @@ local AUDIT_SECRET_KEY = "YourSecretAuditKeyHere"
 -- UI & Theme Configuration
 --==============================================================================
 
-local hasColor = term.isColor and term.isColor()
-local function safeColor(colorName, fallbackColor)
-    if hasColor and colors[colorName] ~= nil then return colors[colorName] end
-    return fallbackColor
-end
-
-local theme = {
-    bg = safeColor("black", colors.black),
-    text = safeColor("white", colors.white),
-    windowBg = safeColor("darkGray", colors.gray),
-    title = safeColor("lightBlue", colors.lightBlue),
-    prompt = safeColor("cyan", colors.cyan),
-    statusBarBg = safeColor("gray", colors.lightGray),
-    statusBarText = safeColor("white", colors.white),
-    highlightBg = safeColor("blue", colors.blue),
-    highlightText = safeColor("white", colors.white),
-    error = safeColor("red", colors.red),
-}
+-- All UI functions and themes are now in the 'ui' library.
 
 local currentScreen = "main"
 local selectedMenuItem = 1
@@ -124,7 +106,10 @@ end
 
 local function drawMainMenu()
     if not monitor then return end
+    
     local w, h = monitor.getSize()
+    local theme = ui.getTheme()
+    
     monitor.setBackgroundColor(theme.windowBg)
     monitor.clear()
     
@@ -171,6 +156,8 @@ end
 local function drawLogScreen()
     if not monitor then return end
     local w, h = monitor.getSize()
+    local theme = ui.getTheme()
+
     monitor.setBackgroundColor(theme.windowBg); monitor.clear()
     monitor.setBackgroundColor(theme.title); monitor.setCursorPos(1, 1); monitor.write(string.rep(" ", w))
     monitor.setTextColor(colors.white); local titleText = " Live Server Log "; monitor.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); monitor.write(titleText)

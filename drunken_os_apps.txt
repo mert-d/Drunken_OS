@@ -239,7 +239,7 @@ function apps.mailMenu(context)
     local selected = 1
     while true do
         context.drawWindow("Mail Menu")
-        context.drawMenu(options, selected, 2, 4)
+        context.drawMenu(options, selected, 2, 4, getParent(context).unreadCount)
         local event, key = os.pullEvent("key")
         if key == keys.up then
             selected = (selected == 1) and #options or selected - 1

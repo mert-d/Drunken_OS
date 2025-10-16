@@ -1,17 +1,17 @@
---[[
-    SimpleMail & Chat Client (v11.9 - Finalized Installer)
+--[[ 
+    SimpleMail & Chat Client (v12.0 - UI Library Refactor)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This definitive client version is fully compatible with the new unified
-    code distribution system of Server v10.6+.
+    This version has been refactored to use the new centralized `ui_lib`
+    for all user interface rendering, improving consistency and maintainability.
 
     Key Changes:
-    - Version number incremented to v11.9.
-    - Corrected the `autoUpdateCheck` to use the `programName` variable,
-      ensuring it correctly checks its own version against the server.
-    - No other functional changes needed; the installer logic from v11.7
-      is already compatible with the new server.
+    - Removed all local UI functions (drawWindow, showMessage, etc.).
+    - Removed local theme table.
+    - Added a `require()` call to the new `lib.ui_lib`.
+    - Updated all function calls to use the `ui` library.
+    - The context table passed to app modules now references the `ui` library.
 ]]
 
 --==============================================================================
@@ -25,13 +25,20 @@ local programDir = fs.getDir(shell.getRunningProgram())
 package.path = fs.combine(programDir, "lib/?.lua;") .. package.path
 
 --==============================================================================
+-- Library Initialization
+--==============================================================================
+
+local ui = require("lib.ui_lib")
+ui.setTheme("drunken_os")
+
+--==============================================================================
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 11.9
+local currentVersion = 12.0
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
-local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
+local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps", "ui_lib" }
 
 -- This table holds the program's state, which is passed to the app library.
 local state = {
@@ -43,89 +50,25 @@ local state = {
     session_token = nil,
     isAdmin = false,
     programDir = programDir,
-    -- Forward-declare functions so the app library can call them
-    showMessage = nil,
-    drawMenu = nil,
-    drawWindow = nil,
-    getSafeSize = nil,
-    wordWrap = nil
+    unreadCount = 0
 }
 
 --==============================================================================
 -- UI & Theme
 --==============================================================================
 
-local hasColor = term.isColor and term.isColor()
-local function safeColor(colorName, fallbackColor)
-    if hasColor and colors[colorName] ~= nil then
-        return colors[colorName]
-    end
-    return fallbackColor
-end
-
-local theme = {
-    bg = safeColor("black", colors.black),
-    text = safeColor("white", colors.white),
-    windowBg = safeColor("darkGray", colors.gray),
-    border = safeColor("lightGray", colors.white),
-    title = safeColor("green", colors.lime),
-    prompt = safeColor("cyan", colors.cyan),
-    highlightBg = safeColor("blue", colors.blue),
-    highlightText = safeColor("white", colors.white),
-    statusBarBg = safeColor("gray", colors.lightGray),
-    statusBarText = safeColor("white", colors.white),
-}
+-- All UI functions and themes are now in the 'ui' library.
 
 --==============================================================================
 -- Core Utility & UI Functions
 --==============================================================================
 
-local function getSafeSize()
-    local w, h = term.getSize()
-    while not w or not h do
-        sleep(0.05)
-        w, h = term.getSize()
-    end
-    return w, h
-end
-
-local function wordWrap(text, width)
-    local lines = {}
-    for line in text:gmatch("[^\r\n]+") do
-        while #line > width do
-            local space = line:sub(1, width + 1):match(".+ ")
-            local len = space and #space or width
-            table.insert(lines, line:sub(1, len - 1))
-            line = line:sub(len):match("^%s*(.*)")
-        end
-        table.insert(lines, line)
-    end
-    return lines
-end
-
-local function clear()
-    term.setBackgroundColor(theme.bg)
-    term.clear()
-    term.setCursorPos(1, 1)
-end
-
+-- A wrapper for the UI library's drawWindow to add the status bar.
 local function drawWindow(title)
-    clear()
-    local w, h = getSafeSize()
-    term.setBackgroundColor(theme.windowBg)
-    for y = 1, h - 1 do
-        term.setCursorPos(1, y)
-        term.write(string.rep(" ", w))
-    end
+    ui.drawWindow(title)
+    local w, h = ui.getSafeSize()
+    local theme = ui.getTheme()
 
-    term.setBackgroundColor(theme.title)
-    term.setCursorPos(1, 1)
-    term.write(string.rep(" ", w))
-    term.setTextColor(colors.white)
-    local titleText = " " .. title .. " "
-    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1)
-    term.write(titleText)
-    
     term.setBackgroundColor(theme.statusBarBg)
     term.setTextColor(theme.statusBarText)
     term.setCursorPos(1, h)
@@ -151,66 +94,18 @@ local function drawWindow(title)
     term.setTextColor(theme.text)
 end
 
-local function drawMenu(options, selectedIndex, startX, startY)
-    for i, option in ipairs(options) do
-        local text = option
-        if (option == "Mail" or option == "View Inbox") and state.unreadCount > 0 then
-            text = text .. " [" .. state.unreadCount .. "]"
-        end
-        term.setCursorPos(startX, startY + i - 1)
-        if i == selectedIndex then
-            term.setBackgroundColor(theme.highlightBg)
-            term.setTextColor(theme.highlightText)
-            term.write("> " .. text .. string.rep(" ", 25 - #text))
-        else
-            term.setBackgroundColor(theme.windowBg)
-            term.setTextColor(theme.text)
-            term.write("  " .. text .. string.rep(" ", 25 - #text))
-        end
-    end
-    term.setBackgroundColor(theme.windowBg)
-end
-
-local function showMessage(title, message)
-    drawWindow(title)
-    local w, h = getSafeSize()
-    local lines = wordWrap(message, w - 4)
-    for i, line in ipairs(lines) do
-        term.setCursorPos(3, 4 + i - 1)
-        term.write(line)
-    end
-    term.setCursorPos(3, 4 + #lines + 1)
-    term.setTextColor(theme.prompt)
-    term.write("Press any key to continue...")
-    os.pullEvent("key")
-    term.setTextColor(theme.text)
-end
-
-local function readInput(prompt, y, hideText)
-    local x = 2
-    term.setTextColor(theme.prompt)
-    term.setCursorPos(x, y)
-    term.write(prompt)
-    term.setTextColor(theme.text)
-    term.setCursorPos(x + #prompt, y)
-    term.setCursorBlink(true)
-    local input = hideText and read("*") or read()
-    term.setCursorBlink(false)
-    return input
-end
-
 -- Create the context table that will be passed to library functions
 local context = {
-    getSafeSize = getSafeSize,
-    wordWrap = wordWrap,
-    clear = clear,
-    drawWindow = drawWindow,
-    drawMenu = drawMenu,
-    showMessage = showMessage,
-    readInput = readInput,
-    theme = theme,
-    programDir = programDir, -- Pass the program's directory to the library
-    parent = state -- a reference to the main state table
+    getSafeSize = ui.getSafeSize,
+    wordWrap = ui.wordWrap,
+    clear = ui.clear,
+    drawWindow = drawWindow, -- Use our local wrapper
+    drawMenu = ui.drawMenu,
+    showMessage = ui.showMessage,
+    readInput = ui.readInput,
+    theme = ui.getTheme(),
+    programDir = programDir,
+    parent = state
 }
 
 --==============================================================================
@@ -233,10 +128,18 @@ end
 local function installDependencies()
     local needsReboot = false
     for _, libName in ipairs(REQUIRED_LIBS) do
-        local ok = pcall(require, "lib." .. libName)
+        -- We need to load ui_lib differently as it's already loaded
+        local ok
+        if libName == "ui_lib" then
+            ok = ui
+        else
+            ok = pcall(require, "lib." .. libName)
+        end
+
         if not ok then
-            needsReboot = true -- A reboot will be required if we install anything.
-            term.clear(); term.setCursorPos(1,1)
+            needsReboot = true
+            ui.clear()
+            term.setCursorPos(1,1)
             print("Missing required library: " .. libName)
             print("Attempting to download from server...")
 
@@ -244,18 +147,16 @@ local function installDependencies()
             if not server then
                 print("Error: Cannot find mail.server to download libraries.")
                 print("Please check server and network connection.")
-                return false -- Halt execution
+                return false
             end
 
-            -- Use the new, direct code transfer protocol.
             rednet.send(server, { type = "get_lib_code", lib = libName }, "SimpleMail")
-            local _, response = rednet.receive("SimpleMail", 10) -- Increased timeout for reliability
+            local _, response = rednet.receive("SimpleMail", 10)
             
             if response and response.success and response.code then
                 print("Download successful. Installing...")
                 local libPath = fs.combine(programDir, "lib/" .. libName .. ".lua")
                 
-                -- Ensure the /lib/ directory exists
                 if not fs.isDir(fs.combine(programDir, "lib")) then
                     fs.makeDir(fs.combine(programDir, "lib"))
                 end
@@ -265,17 +166,17 @@ local function installDependencies()
                     print("Error: Could not open file for writing at:")
                     print(libPath)
                     print("Reason: " .. tostring(err))
-                    return false -- Halt execution
+                    return false
                 end
                 
                 file.write(response.code)
                 file.close()
                 print("Library '" .. libName .. "' installed.")
-                sleep(1) -- Give fs time to process
+                sleep(1)
             else
                 print("Error: Could not download library.")
                 print("Reason: " .. (response and response.reason or "Timeout"))
-                return false -- Halt execution
+                return false
             end
         end
     end
@@ -284,19 +185,17 @@ local function installDependencies()
         print("All libraries installed. Rebooting...")
         sleep(2)
         os.reboot()
-        -- The program will not reach here, but we return true for logical consistency.
         return true 
     end
     
-    -- If we get here, no installation was needed.
-    return true -- Signal success
+    return true
 end
 
 local function autoUpdateCheck()
     rednet.send(state.mailServerId, { type = "get_version", program = programName }, "SimpleMail")
     local _, response = rednet.receive("SimpleMail", 3)
     if response and response.version and response.version > currentVersion then
-        term.clear(); term.setCursorPos(1, 1)
+        ui.clear(); term.setCursorPos(1, 1)
         print("New version available: " .. response.version)
         print("Downloading update...")
         rednet.send(state.mailServerId, { type = "get_update", program = programName }, "SimpleMail")
@@ -318,90 +217,23 @@ local function autoUpdateCheck()
     return false
 end
 
-function updateGames()
-    drawWindow("Game Updater")
-    local y = 4
-    term.setCursorPos(2, y); term.write("Fetching game list from server...")
-    y = y + 1
-
-    local gamesDir = fs.combine(programDir, "games")
-    if not fs.exists(gamesDir) then
-        term.setCursorPos(2, y); term.write("- Creating games directory...")
-        y = y + 1
-        fs.makeDir(gamesDir)
-    end
-    
-    rednet.send(state.mailServerId, { type = "get_all_game_versions" }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 10)
-
-    if not response or not response.versions then
-        term.setCursorPos(2, y); term.write("- Could not fetch server game versions.")
-        sleep(2)
-        return
-    end
-
-    for filename, serverVersion in pairs(response.versions) do
-        local localPath = fs.combine(gamesDir, filename)
-        term.setCursorPos(2, y)
-        term.clearLine()
-        term.write("- Checking " .. filename .. "...")
-        
-        local localVersion = 0
-        if fs.exists(localPath) then
-            local file = fs.open(localPath, "r")
-            if file then
-                local content = file.readAll()
-                file.close()
-                local foundVersion = string.match(content, "%-%-%s*Version:%s*([%d%.]+)")
-                if foundVersion then
-                    localVersion = tonumber(foundVersion)
-                end
-            end
-        end
-        
-        if serverVersion > localVersion then
-            term.setCursorPos(4, y + 1); term.write("-> New version found! Downloading...")
-            rednet.send(state.mailServerId, {type = "get_game_update", program = filename}, "SimpleMail")
-            local _, update = rednet.receive("SimpleMail", 10)
-            
-            if update and update.code then
-                local file = fs.open(localPath, "w")
-                if file then
-                    file.write(update.code)
-                    file.close()
-                    term.setCursorPos(4, y + 2); term.write("-> Update successful!")
-                else
-                    term.setCursorPos(4, y + 2); term.write("-> Error: Could not save file.")
-                end
-            else
-                term.setCursorPos(4, y + 2); term.write("-> Error: Download failed.")
-            end
-            y = y + 3
-        else
-            y = y + 1
-        end
-    end
-    term.setCursorPos(2, y + 1); term.write("Update check complete.")
-    sleep(2)
-end
-
 --==============================================================================
 -- Login & Main Menu Logic
 --==============================================================================
 
 local function completeAuthentication(user)
     drawWindow("Authentication Required")
-    local w, h = getSafeSize()
+    local w, h = ui.getSafeSize()
     local message = "A token has been sent to the Auth Server admin. Please ask them for your token and enter it below."
-    local lines = wordWrap(message, w - 4)
+    local lines = ui.wordWrap(message, w - 4)
     for i, line in ipairs(lines) do
         term.setCursorPos(3, 4 + i - 1)
         term.write(line)
     end
     
-    local token_raw = readInput("Auth Token: ", 4 + #lines + 2, false)
+    local token_raw = ui.readInput("Auth Token: ", 4 + #lines + 2, false)
     if not token_raw or token_raw == "" then
-        showMessage("Cancelled", "Authentication cancelled.")
+        ui.showMessage("Cancelled", "Authentication cancelled.")
         return false
     end
 
@@ -422,10 +254,10 @@ local function completeAuthentication(user)
                 file.close()
             end
         end
-        showMessage("Success", "Authentication successful!")
+        ui.showMessage("Success", "Authentication successful!")
         return true
     else
-        showMessage("Authentication Failed", response.reason or "No response from server.")
+        ui.showMessage("Authentication Failed", response.reason or "No response from server.")
         return false
     end
 end
@@ -435,7 +267,7 @@ function loginOrRegister()
     local selected = 1
     while not state.username do
         drawWindow("Welcome")
-        drawMenu(options, selected, 2, 5)
+        ui.drawMenu(options, selected, 2, 5)
         local event, key = os.pullEvent("key")
         if key == keys.up then
             selected = (selected == 1) and #options or selected - 1
@@ -444,9 +276,9 @@ function loginOrRegister()
         elseif key == keys.enter then
             if selected == 1 then -- Login
                 drawWindow("Login")
-                local user = readInput("Username: ", 5, false)
+                local user = ui.readInput("Username: ", 5, false)
                 if user and user ~= "" then
-                    local pass = readInput("Password: ", 7, true)
+                    local pass = ui.readInput("Password: ", 7, true)
                     if pass and pass ~= "" then
                         local session_token = nil
                         if fs.exists(SESSION_FILE) then
@@ -472,17 +304,17 @@ function loginOrRegister()
                                 state.isAdmin = response.isAdmin or false
                             end
                         else
-                            showMessage("Login Failed", response.reason or "No response.")
+                            ui.showMessage("Login Failed", response.reason or "No response.")
                         end
                     end
                 end
             elseif selected == 2 then -- Register
                 drawWindow("Register")
-                local user = readInput("Choose Username: ", 5, false)
+                local user = ui.readInput("Choose Username: ", 5, false)
                 if user and user ~= "" then
-                    local nick = readInput("Choose Nickname: ", 7, false)
+                    local nick = ui.readInput("Choose Nickname: ", 7, false)
                     if nick and nick ~= "" then
-                        local pass = readInput("Choose Password: ", 9, true)
+                        local pass = ui.readInput("Choose Password: ", 9, true)
                         if pass and pass ~= "" then
                             rednet.send(state.mailServerId, { type = "register", user = user, pass = pass, nickname = nick }, "SimpleMail")
                             local _, response = rednet.receive("SimpleMail", 5)
@@ -491,7 +323,7 @@ function loginOrRegister()
                                     state.username = nil
                                 end
                             else
-                                showMessage("Registration Failed", response.reason or "No response.")
+                                ui.showMessage("Registration Failed", response.reason or "No response.")
                             end
                         end
                     end
@@ -507,35 +339,49 @@ function loginOrRegister()
 end
 
 local function mainMenu()
+    local selected = 1
     while true do
         rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
         local _, response = rednet.receive("SimpleMail", 2)
-        local unreadCount = response and response.count or 0
+        state.unreadCount = response and response.count or 0
         
         local options = {
-            "Read Mail" .. (unreadCount > 0 and " (" .. unreadCount .. " unread)" or ""),
-            "Send Mail", "General Chat", "Mailing Lists", "Games", "System", "Help", "Logout"
+            "Mail",
+            "General Chat",
+            "Mailing Lists",
+            "Games",
+            "System",
+            "Help",
+            "Logout"
         }
         
-        -- THE FIX: Correctly check for admin status
         if state.isAdmin then
-            table.insert(options, 8, "Admin Console")
+            table.insert(options, 7, "Admin Console")
         end
         
-        local choice = state.apps.drawMenu(state, "Main Menu", options, "Welcome, " .. state.nickname)
-        
-        if not choice or options[choice] == "Logout" then break end
-        
-        local selection = options[choice]
-        -- THE FIX: All calls now correctly reference the 'apps' library
-        if selection:match("Read Mail") then state.apps.readMail(state)
-        elseif selection == "Send Mail" then state.apps.sendMail(state)
-        elseif selection == "General Chat" then state.apps.chat(state)
-        elseif selection == "Mailing Lists" then state.apps.manageLists(state)
-        elseif selection == "Games" then state.apps.gameMenu(state)
-        elseif selection == "System" then state.apps.systemMenu(state)
-        elseif selection == "Help" then state.apps.showHelpScreen(state)
-        elseif selection == "Admin Console" then state.apps.adminConsole(state)
+        drawWindow("Main Menu")
+        -- The drawMenu function from the UI lib needs the unread count passed to it
+        ui.drawMenu(options, selected, 2, 4, state.unreadCount)
+
+        local event, key = os.pullEvent("key")
+        if key == keys.up then
+            selected = (selected == 1) and #options or selected - 1
+        elseif key == keys.down then
+            selected = (selected == #options) and 1 or selected + 1
+        elseif key == keys.enter then
+            local choice = options[selected]
+            if choice == "Logout" then break end
+            
+            if choice:match("Mail") then context.parent.apps.mailMenu(context)
+            elseif choice == "General Chat" then context.parent.apps.startChat(context)
+            elseif choice == "Mailing Lists" then context.parent.apps.manageLists(context)
+            elseif choice == "Games" then context.parent.apps.enterArcade(context)
+            elseif choice == "System" then context.parent.apps.systemMenu(context)
+            elseif choice == "Help" then context.parent.apps.showHelpScreen(context)
+            elseif choice == "Admin Console" then context.parent.apps.adminConsole(context)
+            end
+        elseif key == keys.q or key == keys.tab then
+            break
         end
     end
     state.username = nil -- Signal logout
@@ -546,9 +392,9 @@ end
 --==============================================================================
 
 local function showSplashScreen()
-    clear()
+    ui.clear()
     term.setTextColor(colors.orange)
-    local w,h = getSafeSize()
+    local w,h = ui.getSafeSize()
     local art = {
         "         . .        ",
         "       .. . *.      ",
@@ -575,8 +421,7 @@ local function main()
         rednet.open("back")
         local connected, reason = findServers()
         if not connected then
-            local tempShowMessage = function(title, msg) term.clear(); print(title.."\n"..msg); sleep(3) end
-            tempShowMessage("Connection Error", reason or "Could not find servers. Retrying...")
+            ui.showMessage("Connection Error", reason or "Could not find servers. Retrying...")
             sleep(5)
         else
             if autoUpdateCheck() then return end
@@ -586,30 +431,35 @@ local function main()
             end
 
             -- Load libraries after ensuring they exist
-            if not crypto then crypto = require("lib.sha1_hmac") end
-            if not apps then apps = require("lib.drunken_os_apps") end
+            local crypto_ok, crypto = pcall(require, "lib.sha1_hmac")
+            local apps_ok, apps = pcall(require, "lib.drunken_os_apps")
+
+            if not crypto_ok or not apps_ok then
+                ui.showMessage("Fatal Error", "A required library failed to load. Please check for errors and restart.")
+                return
+            end
 
             state.crypto = crypto
             state.apps = apps
+            context.parent.apps = apps -- Ensure context has apps
 
             state.username = nil
             state.isAdmin = false
-            if not state.apps.loginOrRegister(state) then -- Hand off to the library for login UI
-                clear(); print("Goodbye!"); break
+            if not loginOrRegister() then
+                ui.clear(); print("Goodbye!"); break
             end
             
             rednet.send(state.mailServerId, {type = "get_motd"}, "SimpleMail")
             local _, motd_response = rednet.receive("SimpleMail", 3)
             if motd_response and motd_response.motd and motd_response.motd ~= "" then
-                state.apps.showMessage(state, "Message of the Day", motd_response.motd)
+                ui.showMessage("Message of the Day", motd_response.motd)
             end
             
-            -- Call the local mainMenu controller
             mainMenu() 
             
             rednet.close("back")
             if not state.username then
-                clear(); print("Goodbye!"); break
+                ui.clear(); print("Goodbye!"); break
             end
         end
     end

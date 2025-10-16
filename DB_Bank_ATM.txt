@@ -1,19 +1,17 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v5.5 - Numeric Password Hotfix)
+    Drunken Beard Bank - ATM Terminal (v6.0 - UI Library Refactor)
     by Gemini Gem & MuhendizBey
 
     Purpose:
-    This version provides a definitive hotfix to the login function,
-    ensuring it correctly handles numeric-only passwords by replicating the
-    hashing behavior of the main Drunken OS client.
+    This version is refactored to use the centralized `ui_lib` for all
+    user interface rendering, improving consistency and maintainability.
 
     Changelog:
-    v5.5:
-    - Re-engineered the 'login' function to convert numeric-only password
-      input into a 'number' type before hashing. This resolves the hash
-      mismatch with bank cards created by the main OS client.
-    v5.4:
-    - Added type-safe comparison to the login function.
+    v6.0:
+    - Removed all local UI functions and the local theme table.
+    - Added a `require()` call to the new `lib.ui_lib`.
+    - Set the theme to "bank".
+    - Updated all UI function calls to use the new `ui` library.
 ]]
 
 --==============================================================================
@@ -21,6 +19,8 @@
 --==============================================================================
 
 local crypto = require("lib.sha1_hmac")
+local ui = require("lib.ui_lib")
+ui.setTheme("bank")
 
 local CONFIG_PATH = "atm.conf" -- Define the config file path
 
@@ -39,120 +39,18 @@ local BANK_PROTOCOL = "DB_Bank"
 local TURTLE_CLERK_PROTOCOL = "DB_ATM_Turtle"
 
 --==============================================================================
--- Graphical UI & Theme (With new "Beer" theme and text wrapping)
+-- Graphical UI & Theme
 --==============================================================================
--- A new table for reusable utility functions.
-local utils = {}
 
--- A universal word-wrap function.
--- @param text The string to wrap.
--- @param maxWidth The maximum width of each line.
--- @return A table of strings, where each entry is a wrapped line.
-function utils.wordWrap(text, maxWidth)
-    local lines = {}
-    for line in text:gmatch("[^\n]+") do
-        while #line > maxWidth do
-            local breakPoint = maxWidth
-            -- Try to find a space to break at.
-            while breakPoint > 0 and line:sub(breakPoint, breakPoint) ~= " " do
-                breakPoint = breakPoint - 1
-            end
-            if breakPoint == 0 then breakPoint = maxWidth end -- Force break if no space
-            
-            table.insert(lines, line:sub(1, breakPoint))
-            line = line:sub(breakPoint + 1)
-        end
-        table.insert(lines, line)
-    end
-    return lines
-end
--- A theme table to make color changes simple and consistent.
-local theme = {
-    bg = colors.black,
-    text = colors.white,
-    border = colors.brown,
-    titleBg = colors.orange,
-    titleText = colors.white,
-    highlightBg = colors.yellow,
-    highlightText = colors.brown,
-    errorBg = colors.red,
-    errorText = colors.white,
-}
+-- All UI functions and themes are now in the 'ui' library.
 
--- (The 'drawFrame' function is unchanged)
-local function drawFrame(title)
-    local w, h = term.getSize()
-    term.setBackgroundColor(theme.bg); term.clear()
-    term.setBackgroundColor(theme.border)
-    for y=1,h do term.setCursorPos(1,y); term.write(" "); term.setCursorPos(w,y); term.write(" ") end
-    for x=1,w do term.setCursorPos(x,1); term.write(" "); term.setCursorPos(x,h); term.write(" ") end
-    term.setBackgroundColor(theme.titleBg); term.setTextColor(theme.titleText)
-    local titleText = " " .. (title or "Drunken Beard Bank") .. " "
-    local titleStart = math.floor((w - #titleText) / 2) + 1
-    term.setCursorPos(titleStart, 1)
-    term.write(titleText)
-    term.setBackgroundColor(theme.bg); term.setTextColor(theme.text)
-end
-
--- NEW: A word-wrapping version of printCentered to prevent text overflow.
-local function printCenteredWrapped(startY, text)
-    local w, h = term.getSize()
-    local lines = utils.wordWrap(text, w - 4)
-
-    for i, line in ipairs(lines) do
-        local x = math.floor((w - #line) / 2) + 1
-        term.setCursorPos(x, startY + i - 1)
-        term.write(line)
-    end
-end
-
-local function printCentered(startY, text)
-    local w, h = term.getSize()
-    local lines = utils.wordWrap(text, w - 4)
-
-    for i, line in ipairs(lines) do
-        local x = math.floor((w - #line) / 2) + 1
-        term.setCursorPos(x, startY + i - 1)
-        term.write(line)
-    end
-end
-
-local function showMessage(title, message, isError)
-    local w, h = term.getSize()
-    local boxBg = isError and theme.errorBg or theme.titleBg
-    local boxText = isError and theme.errorText or theme.titleText
-    local boxW, boxH = math.floor(w * 0.8), math.floor(h * 0.7)
-    local boxX, boxY = math.floor((w - boxW) / 2), math.floor((h - boxH) / 2)
-
-    term.setBackgroundColor(boxBg)
-    for y = boxY, boxY + boxH - 1 do
-        term.setCursorPos(boxX, y); term.write(string.rep(" ", boxW))
-    end
-    
-    term.setTextColor(boxText)
-    local titleText = " " .. title .. " ";
-    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, boxY + 1); term.write(titleText)
-    
-    -- THE FIX: Use the smart word-wrapper
-    local lines = utils.wordWrap(message, boxW - 4)
-
-    for i, line in ipairs(lines) do
-        term.setCursorPos(boxX + 2, boxY + 3 + i)
-        print(line)
-    end
-
-    local continueText = "Press any key to continue..."
-    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, boxY + boxH - 2)
-    print(continueText)
-    
-    os.pullEvent("key")
-end
-
+-- A custom drawMenu function for the ATM to handle the help text.
 local function drawMenu(title, options, help)
-    local w, h = term.getSize()
+    local w, h = ui.getSafeSize()
     local selected = 1
     while true do
-        drawFrame(title)
+        ui.drawFrame(title)
+        local theme = ui.getTheme()
         for i, opt in ipairs(options) do
             term.setCursorPos(4, 4 + i)
             if i == selected then
@@ -167,7 +65,7 @@ local function drawMenu(title, options, help)
         term.setBackgroundColor(theme.bg)
         term.setTextColor(colors.yellow)
         if help then
-            printCentered(h - 2, help)
+            ui.printCentered(h - 2, help)
         end
         local _, key = os.pullEvent("key")
         if key == keys.up then selected = (selected == 1) and #options or selected - 1
@@ -181,87 +79,80 @@ local function drawMenu(title, options, help)
     end
 end
 
+
 --==============================================================================
--- Core Application Logic (With Corrected 'deposit' function)
+-- Core Application Logic
 --==============================================================================
 
 local function login()
-    drawFrame("Login")
+    ui.drawFrame("Login")
     term.setCursorPos(3, 4)
     print("Please enter your Drunken OS password.")
+    
     term.setCursorPos(3, 6)
     write("> ")
     term.setCursorBlink(true)
-    local pass = read("*") -- Read the password as a string
+    local pass = read("*")
     term.setCursorBlink(false)
 
     if not pass or pass == "" then return false end
 
-    -- This will now use the local, patched crypto library.
-    -- It safely passes the raw string, and the library handles any type issues.
     local pass_hash = crypto.hex(pass)
 
     if tostring(pass_hash) == tostring(card_data.pass_hash) then
-        printCenteredWrapped(10, "Password verified. Contacting bank server...")
+        ui.printCentered(10, "Password verified. Contacting bank server...")
         rednet.send(bankServerId, { type = "login", user = username, pass_hash = pass_hash }, BANK_PROTOCOL)
         
         local _, response = rednet.receive(BANK_PROTOCOL, 10)
         if response and response.success then
             balance = response.balance
             currencyRates = response.rates
-            printCenteredWrapped(12, "Login successful!")
+            ui.printCentered(12, "Login successful!")
             sleep(1.5)
             return true
         else
-            showMessage("Login Failed", (response and response.reason) or "No response from server.", true)
+            ui.showMessage("Login Failed", (response and response.reason) or "No response from server.", true)
             return false
         end
     else
-        showMessage("Login Failed", "Invalid password.", true)
+        ui.showMessage("Login Failed", "Invalid password.", true)
         return false
     end
 end
 
--- NEW: Corrected deposit function with full handshake logic
 local function deposit()
-    drawFrame("Deposit")
-    printCentered(6, "Requesting deposit from Vault Clerk...")
-    printCentered(8, "Please place items in the deposit barrel.")
+    ui.drawFrame("Deposit")
+    ui.printCentered(6, "Requesting deposit from Vault Clerk...")
+    ui.printCentered(8, "Please place items in the deposit barrel.")
     
     rednet.send(turtleClerkId, {type = "request_deposit"}, TURTLE_CLERK_PROTOCOL)
 
-    -- 1. Wait for the turtle to report back with the items it collected.
-    printCentered(10, "Waiting for clerk to collect items...")
+    ui.printCentered(10, "Waiting for clerk to collect items...")
     local _, turtle_response = rednet.receive(TURTLE_CLERK_PROTOCOL, 30)
 
     if not turtle_response or turtle_response.type ~= "deposit_count" or not turtle_response.items or #turtle_response.items == 0 then
-        showMessage("Deposit Failed", (turtle_response and turtle_response.reason) or "No valid items were deposited.", true)
+        ui.showMessage("Deposit Failed", (turtle_response and turtle_response.reason) or "No valid items were deposited.", true)
         return
     end
 
-    -- 2. Send the collected items to the bank server for valuation.
-    printCentered(12, "Items collected. Contacting bank for valuation...")
+    ui.printCentered(12, "Items collected. Contacting bank for valuation...")
     rednet.send(bankServerId, {type = "deposit", user = username, items = turtle_response.items}, BANK_PROTOCOL)
     local _, server_response = rednet.receive(BANK_PROTOCOL, 15)
 
     if server_response and server_response.success then
-        -- 3. If server is happy, tell the turtle to confirm and store the items.
-        printCentered(14, "Valuation complete. Confirming with clerk...")
+        ui.printCentered(14, "Valuation complete. Confirming with clerk...")
         rednet.send(turtleClerkId, { type = "confirm_deposit", new_balance = server_response.newBalance }, TURTLE_CLERK_PROTOCOL)
 
-        -- 4. Wait for the turtle's final confirmation that items are stored.
         local _, final_response = rednet.receive(TURTLE_CLERK_PROTOCOL, 15)
         if final_response and final_response.success then
             balance = final_response.new_balance
-            showMessage("Success", "Deposit complete. Your new balance is $" .. balance)
+            ui.showMessage("Success", "Deposit complete. Your new balance is $" .. balance)
         else
-            -- This is a serious error state - the server gave value but turtle failed to store.
-            showMessage("CRITICAL ERROR", "Clerk failed to store items, but the transaction may have been partially processed. Please contact an admin.", true)
+            ui.showMessage("CRITICAL ERROR", "Clerk failed to store items, but the transaction may have been partially processed. Please contact an admin.", true)
         end
     else
-        -- 5. If server rejected the deposit, tell the turtle to return the items.
         rednet.send(turtleClerkId, {type = "cancel_deposit"}, TURTLE_CLERK_PROTOCOL)
-        showMessage("Deposit Failed", (server_response and server_response.reason) or "Bank server did not respond.", true)
+        ui.showMessage("Deposit Failed", (server_response and server_response.reason) or "Bank server did not respond.", true)
     end
 end
 
@@ -282,23 +173,21 @@ local function withdraw()
     local item_name = item_names[choice]
     local rate = currencyRates[item_name].current
 
-    drawFrame("Withdraw Amount")
+    ui.drawFrame("Withdraw Amount")
     term.setCursorPos(3, 4); print("How many " .. item_name:gsub("minecraft:", ""):gsub("_", " ") .. " would you like?")
     term.setCursorPos(3, 5); print("(Cost: $"..rate.." each | Your balance: $"..balance..")")
+    
     term.setCursorPos(3, 7); write("> "); term.setCursorBlink(true)
     local amount_str = read()
     term.setCursorBlink(false)
     
     local amount = tonumber(amount_str)
     if not amount or amount <= 0 then
-        showMessage("Error", "Invalid amount entered.", true)
+        ui.showMessage("Error", "Invalid amount entered.", true)
         return
     end
 
-    -- THE FIX: Implement the 3-phase withdrawal protocol.
-    
-    -- Phase 1: Authorize with the Bank Server
-    printCentered(10, "Contacting bank server for authorization...")
+    ui.printCentered(10, "Contacting bank server for authorization...")
     rednet.send(bankServerId, {
         type = "withdraw_item",
         user = username,
@@ -309,12 +198,11 @@ local function withdraw()
     local _, server_response = rednet.receive(BANK_PROTOCOL, 15)
     
     if not server_response or not server_response.success then
-        showMessage("Withdrawal Failed", (server_response and server_response.reason) or "No response from server.", true)
+        ui.showMessage("Withdrawal Failed", (server_response and server_response.reason) or "No response from server.", true)
         return
     end
     
-    -- Phase 2: If authorized, request physical dispense from the Turtle
-    printCentered(12, "Authorization received. Requesting item dispense...")
+    ui.printCentered(12, "Authorization received. Requesting item dispense...")
     rednet.send(turtleClerkId, {
         type = "request_dispense",
         item_name = item_name,
@@ -324,13 +212,11 @@ local function withdraw()
     local _, turtle_response = rednet.receive(TURTLE_CLERK_PROTOCOL, 30)
     
     if not turtle_response or not turtle_response.success then
-        showMessage("Withdrawal Failed", (turtle_response and turtle_response.reason) or "Clerk turtle did not respond.", true)
-        -- NOTE: We do not contact the server here, as no items were dispensed and no funds should be deducted.
+        ui.showMessage("Withdrawal Failed", (turtle_response and turtle_response.reason) or "Clerk turtle did not respond.", true)
         return
     end
     
-    -- Phase 3: If turtle succeeds, finalize the transaction with the Bank Server
-    printCentered(14, "Dispense successful. Finalizing transaction...")
+    ui.printCentered(14, "Dispense successful. Finalizing transaction...")
     rednet.send(bankServerId, {
         type = "finalize_withdrawal",
         user = username,
@@ -342,10 +228,9 @@ local function withdraw()
     
     if final_response and final_response.success then
         balance = final_response.newBalance
-        showMessage("Success", "Please collect your items. New balance: $" .. balance)
+        ui.showMessage("Success", "Please collect your items. New balance: $" .. balance)
     else
-        -- This is a critical error state. The user has the items but their balance was not updated.
-        showMessage("CRITICAL ERROR", "Could not finalize transaction. Please contact an admin.", true)
+        ui.showMessage("CRITICAL ERROR", "Could not finalize transaction. Please contact an admin.", true)
     end
 end
 
@@ -358,10 +243,9 @@ local function mainMenu()
         if not choice or choice == 4 then break end
         
         if choice == 1 then
-            drawFrame("Current Exchange Rates")
-            local w,h = term.getSize()
+            ui.drawFrame("Current Exchange Rates")
+            local w,h = ui.getSafeSize()
             
-            -- THE FIX: Create a two-column layout
             local itemColWidth = math.floor((w - 6) * 0.7)
             local rateColWidth = w - 6 - itemColWidth
             
@@ -375,7 +259,6 @@ local function mainMenu()
             local y = 6
             for name, data in pairs(currencyRates) do
                 local clean_name = name:gsub("minecraft:", ""):gsub("_", " ")
-                -- Truncate name if it's too long for the column
                 if #clean_name > itemColWidth - 1 then
                     clean_name = clean_name:sub(1, itemColWidth - 4) .. "..."
                 end
@@ -387,7 +270,7 @@ local function mainMenu()
                 y = y + 1
             end
             
-            printCenteredWrapped(h - 2, "Press any key to return...")
+            ui.printCentered(h - 2, "Press any key to return...")
             os.pullEvent("key")
         elseif choice == 2 then deposit()
         elseif choice == 3 then withdraw()
@@ -396,15 +279,15 @@ local function mainMenu()
 
     drive.ejectDisk()
     rednet.close(peripheral.getName(peripheral.find("modem")))
-    drawFrame("Goodbye")
-    printCenteredWrapped(8, "Thank you for banking with Drunken Beard Bank!")
+    ui.drawFrame("Goodbye")
+    ui.printCentered(8, "Thank you for banking with Drunken Beard Bank!")
     sleep(2)
 end
 
 local function runFirstTimeSetup()
-    drawFrame("First Time Setup")
-    printCenteredWrapped(4, "This ATM has not been configured.")
-    printCenteredWrapped(6, "Please start the Bank Clerk Turtle and enter its Computer ID below.")
+    ui.drawFrame("First Time Setup")
+    ui.printCentered(4, "This ATM has not been configured.")
+    ui.printCentered(6, "Please start the Bank Clerk Turtle and enter its Computer ID below.")
     
     term.setCursorPos(3, 9)
     term.write("Enter Turtle ID > ")
@@ -414,29 +297,27 @@ local function runFirstTimeSetup()
     
     local turtle_id = tonumber(id_str)
     if not turtle_id then
-        showMessage("Setup Failed", "Invalid ID. The ID must be a number.", true)
-        return nil -- Return nil to signal setup failure
+        ui.showMessage("Setup Failed", "Invalid ID. The ID must be a number.", true)
+        return nil
     end
 
-    printCenteredWrapped(12, "Verifying connection to turtle ID " .. turtle_id .. "...")
+    ui.printCentered(12, "Verifying connection to turtle ID " .. turtle_id .. "...")
     if rednet.isOpen() then
-        -- Ping the turtle to make sure it's real
         rednet.send(turtle_id, {type = "ping"}, TURTLE_CLERK_PROTOCOL)
         local sender, msg = rednet.receive(TURTLE_CLERK_PROTOCOL, 5)
         if sender == turtle_id and msg and msg.type == "pong" then
-            -- Success! Save the config.
             local config = { turtleClerkId = turtle_id }
             local file = fs.open(CONFIG_PATH, "w")
             file.write(textutils.serialize(config))
             file.close()
-            showMessage("Success", "ATM has been successfully paired with turtle " .. turtle_id .. ". The system will now restart.")
+            ui.showMessage("Success", "ATM has been successfully paired with turtle " .. turtle_id .. ". The system will now restart.")
             os.reboot()
         else
-            showMessage("Setup Failed", "Could not communicate with a turtle at that ID. Please check the ID and that the turtle is running.", true)
+            ui.showMessage("Setup Failed", "Could not communicate with a turtle at that ID. Please check the ID and that the turtle is running.", true)
             return nil
         end
     else
-        showMessage("Setup Failed", "Modem is not open. Cannot verify turtle.", true)
+        ui.showMessage("Setup Failed", "Modem is not open. Cannot verify turtle.", true)
         return nil
     end
 end
@@ -446,10 +327,8 @@ local function runSession()
     if not modem then error("No modem attached.", 0) end
     rednet.open(peripheral.getName(modem))
 
-    -- THE FIX: Load the paired turtle ID from the config file.
     if not fs.exists(CONFIG_PATH) then
         runFirstTimeSetup()
-        -- After setup, the ATM reboots. If setup fails, we'll just error here.
         error("Configuration not found. Please run setup.", 0)
     end
     
@@ -464,14 +343,12 @@ local function runSession()
     
     turtleClerkId = data.turtleClerkId
     
-    -- The ATM no longer looks up the turtle, it knows its private ID.
     bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
     if not bankServerId then error("Could not find bank server.", 0) end
     
-    drawFrame("Welcome")
-    -- THE FIX: Use the new word-wrapping function.
-    printCenteredWrapped(8, "Welcome to Drunken Beard Bank")
-    printCenteredWrapped(10, "Please insert your bank card...")
+    ui.drawFrame("Welcome")
+    ui.printCentered(8, "Welcome to Drunken Beard Bank")
+    ui.printCentered(10, "Please insert your bank card...")
 
     local drive = peripheral.find("drive")
     if not drive then error("No Disk Drive is attached to this terminal.", 0) end
@@ -479,14 +356,14 @@ local function runSession()
     local event, p1 = os.pullEvent("disk")
     local disk_label = disk.getLabel(p1)
     if not disk_label or not disk_label:match("^DrunkenBeard_Card_.+") then
-        showMessage("Card Error", "This is not a valid Drunken Beard Bank card.", true)
+        ui.showMessage("Card Error", "This is not a valid Drunken Beard Bank card.", true)
         disk.eject(p1)
         return
     end
     username = disk_label:match("^DrunkenBeard_Card_(.+)")
     local handle = fs.open(disk.getMountPath(p1) .. "/.card_data", "r")
     if not handle then
-        showMessage("Card Error", "Card is missing its data file.", true)
+        ui.showMessage("Card Error", "Card is missing its data file.", true)
         disk.eject(p1)
         return
     end
@@ -494,7 +371,7 @@ local function runSession()
     handle.close()
     local ok, data = pcall(textutils.unserialize, card_contents)
     if not ok or not data then
-        showMessage("Card Error", "Card data is corrupt.", true)
+        ui.showMessage("Card Error", "Card data is corrupt.", true)
         disk.eject(p1)
         return
     end
@@ -503,14 +380,14 @@ local function runSession()
         mainMenu()
     else
         disk.eject(p1)
-        drawFrame("Login Failed")
-        printCentered(8, "Card ejected.")
+        ui.drawFrame("Login Failed")
+        ui.printCentered(8, "Card ejected.")
         sleep(2)
     end
 end
 
 --==============================================================================
--- Main Program Loop (Unchanged)
+-- Main Program Loop
 --==============================================================================
 
 while true do
@@ -521,7 +398,7 @@ while true do
             file.writeLine(os.date() .. " - FATAL ERROR: " .. tostring(err))
             file.close()
         end
-        drawFrame("FATAL ERROR")
+        ui.drawFrame("FATAL ERROR")
         term.setBackgroundColor(colors.red)
         term.setTextColor(colors.white)
         term.setCursorPos(2, 4); print("A fatal error occurred. The ATM will now reboot.")
