@@ -530,6 +530,29 @@ function adminCommands.makecard(args)
         return
     end
 
+    -- If the user doesn't have a bank account, create one by fetching the hash from the Mainframe.
+    if not accounts[user] then
+        print("User does not have a bank account. Creating one...")
+        print("Requesting password hash from Mainframe...")
+        rednet.send(mainServerId, { type = "get_user_hash", user = user }, AUTH_INTERLINK_PROTOCOL)
+        local _, hash_response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
+
+        if hash_response and hash_response.success then
+            print("Hash received. Creating account.")
+            accounts[user] = {
+                pass_hash = hash_response.pass_hash,
+                balance = 0
+            }
+            if not saveTableToFile(ACCOUNTS_DB, accounts) then
+                print("CRITICAL: Failed to save new account to database!")
+                return
+            end
+        else
+            print("Error: Could not retrieve password hash from Mainframe. Cannot create account.")
+            return
+        end
+    end
+
     print("User verified. Please insert a blank disk.")
     local disk = peripheral.find("drive")
     if not disk then
@@ -548,24 +571,8 @@ function adminCommands.makecard(args)
         return
     end
 
-    -- FIX: Set the label to the format the ATM expects.
     disk.setDiskLabel("DrunkenBeard_Card_" .. user)
 
-    -- The rest of the function remains the same.
-    -- This creates the hidden data file on the card.
-    -- NOTE: This assumes you have a way to get the user's password hash.
-    -- For now, we'll create the card, but you may need a separate
-    -- "set password" step if the hash isn't available here.
-    if not accounts[user] then
-        print("Warning: User does not have a bank account yet. Creating one.")
-        accounts[user] = {
-            -- You need a secure way to get this hash. Placeholder for now.
-            pass_hash = "placeholder_hash_needs_to_be_set",
-            balance = 0
-        }
-        saveTableToFile(ACCOUNTS_DB, accounts)
-    end
-    
     local cardData = { pass_hash = accounts[user].pass_hash }
     local cardFile = fs.open(mount_path .. "/.card_data", "w")
     if cardFile then

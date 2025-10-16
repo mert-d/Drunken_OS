@@ -930,6 +930,13 @@ local function handleRednetMessage(senderId, message, protocol)
     elseif protocol == AUTH_INTERLINK_PROTOCOL and message.type == "user_exists_check" then
         local user = message.user
         rednet.send(senderId, { user = user, exists = (users[user] ~= nil) }, AUTH_INTERLINK_PROTOCOL)
+    elseif protocol == AUTH_INTERLINK_PROTOCOL and message.type == "get_user_hash" then
+        local user = message.user
+        if users[user] and users[user].password then
+            rednet.send(senderId, { success = true, pass_hash = users[user].password }, AUTH_INTERLINK_PROTOCOL)
+        else
+            rednet.send(senderId, { success = false, reason = "User or hash not found." }, AUTH_INTERLINK_PROTOCOL)
+        end
     elseif protocol == ADMIN_PROTOCOL and message.type == "execute_command" then
         if message.user and admins[message.user] then
             logActivity("Remote cmd from " .. message.user)
