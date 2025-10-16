@@ -1,5 +1,5 @@
 --[[ 
-    Drunken OS - Unified UI Library (v1.1) 
+    Drunken OS - Unified UI Library (v1.2) 
     by Gemini Gem
 
     Purpose:
@@ -8,6 +8,7 @@
     It supports theming to allow different visual styles.
 
     Changelog:
+    v1.2: Added windowBg to bank theme to fix a bug.
     v1.1: Added getTheme() function to expose the current theme table.
 ]]
 
@@ -40,6 +41,7 @@ local themes = {
         border = colors.brown,
         titleBg = colors.orange,
         titleText = colors.white,
+        windowBg = hasColor and colors.darkGray or colors.gray,
         highlightBg = colors.yellow,
         highlightText = colors.brown,
         errorBg = colors.red,
