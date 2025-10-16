@@ -195,34 +195,52 @@ end
 --==============================================================================
 
 ---
--- Saves a Lua table to a file using textutils.serialize.
+-- Saves a Lua table to a file using an atomic write pattern to prevent corruption.
 -- @param path The file path to save to.
 -- @param data The table to save.
 -- @return {boolean} True on success, false on failure.
 local function saveTableToFile(path, data)
-    local file = fs.open(path, "w")
+    local tempPath = path .. ".tmp"
+    local file, err_open = fs.open(tempPath, "w")
     if not file then
-        logActivity("Could not open " .. path, true)
+        logActivity("Could not open temporary file " .. tempPath .. ": " .. tostring(err_open), true)
         return false
     end
-    local success, err = pcall(function()
+
+    local success, err_write = pcall(function()
         file.write(textutils.serialize(data))
         file.close()
     end)
+
     if not success then
-        logActivity("Failed to write to " .. path .. ': ' .. tostring(err), true)
+        logActivity("Failed to write to temporary file " .. tempPath .. ': ' .. tostring(err_write), true)
+        fs.delete(tempPath) -- Clean up the failed temp file
         return false
     end
+
+    -- This section makes the write atomic.
+    if fs.exists(path) then
+        fs.delete(path)
+    end
+    fs.move(tempPath, path)
+    
     return true
 end
 
 ---
--- Loads a Lua table from a file.
+-- Loads a Lua table from a file, with recovery logic for interrupted saves.
 -- @param path The file path to load from.
 -- @return {table} The loaded table, or an empty table on failure.
 local function loadTableFromFile(path)
+    local tempPath = path .. ".tmp"
+    -- Recovery: If the main file is gone but the temp file exists, the last write was interrupted after delete but before move.
+    if not fs.exists(path) and fs.exists(tempPath) then
+        logActivity("Found incomplete save, restoring from " .. tempPath, false)
+        fs.move(tempPath, path)
+    end
+
     if fs.exists(path) then
-        local file = fs.open(path, "r")
+        local file, err_open = fs.open(path, "r")
         if file then
             local data = file.readAll()
             file.close()
@@ -230,8 +248,10 @@ local function loadTableFromFile(path)
             if success and type(result) == "table" then
                 return result
             else
-                logActivity("Corrupted data in " .. path, true)
+                logActivity("Corrupted data in " .. path .. ". A new file will be created.", true)
             end
+        else
+            logActivity("Could not open " .. path .. " for reading: " .. tostring(err_open), true)
         end
     end
     return {}

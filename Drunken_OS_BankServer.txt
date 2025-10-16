@@ -195,21 +195,54 @@ end
 --==============================================================================
 
 local function saveTableToFile(path, data)
-    local file = fs.open(path, "w")
-    if not file then logActivity("Could not open " .. path .. " for writing.", true); return false end
-    local success, err = pcall(function() file.write(textutils.serializeJSON(data)); file.close() end)
-    if not success then logActivity("Failed to write to " .. path .. ": " .. tostring(err), true); return false end
+    local tempPath = path .. ".tmp"
+    local file, err_open = fs.open(tempPath, "w")
+    if not file then
+        logActivity("Could not open temporary file " .. tempPath .. ": " .. tostring(err_open), true)
+        return false
+    end
+
+    local success, err_write = pcall(function()
+        file.write(textutils.serializeJSON(data))
+        file.close()
+    end)
+
+    if not success then
+        logActivity("Failed to write to temporary file " .. tempPath .. ': ' .. tostring(err_write), true)
+        fs.delete(tempPath) -- Clean up the failed temp file
+        return false
+    end
+
+    -- This section makes the write atomic.
+    if fs.exists(path) then
+        fs.delete(path)
+    end
+    fs.move(tempPath, path)
+    
     return true
 end
 
 local function loadTableFromFile(path)
+    local tempPath = path .. ".tmp"
+    -- Recovery: If the main file is gone but the temp file exists, the last write was interrupted after delete but before move.
+    if not fs.exists(path) and fs.exists(tempPath) then
+        logActivity("Found incomplete save, restoring from " .. tempPath, false)
+        fs.move(tempPath, path)
+    end
+
     if fs.exists(path) then
-        local file = fs.open(path, "r")
+        local file, err_open = fs.open(path, "r")
         if file then
-            local data = file.readAll(); file.close()
+            local data = file.readAll()
+            file.close()
             local success, result = pcall(textutils.unserializeJSON, data)
-            if success and type(result) == "table" then return result
-            else logActivity("Corrupted data in " .. path .. ". A new file will be created.", true) end
+            if success and type(result) == "table" then
+                return result
+            else
+                logActivity("Corrupted data in " .. path .. ". A new file will be created.", true)
+            end
+        else
+            logActivity("Could not open " .. path .. " for reading: " .. tostring(err_open), true)
         end
     end
     return {}
