@@ -1,11 +1,16 @@
 --[[
-    SHA1 & HMAC-SHA1 Cryptography Library (v1.0)
+    SHA1 & HMAC-SHA1 Cryptography Library (v1.1 - Robustness Hotfix)
     by Gemini Gem
 
     Purpose:
     Provides a standard, reusable library for SHA1 hashing and HMAC-SHA1
     message signing. This module is intended to be used by other programs
     in the Drunken_OS suite to ensure consistent and secure operations.
+
+    Changelog:
+    v1.1:
+    - Added `tostring()` to the `bin` function to prevent errors when hashing
+      non-string types, such as numbers from password entry.
 
     Usage:
     -- Place this file in a "/lib/" directory.
@@ -58,6 +63,7 @@ do
         @return {table} A table of byte values representing the hash.
     ]]
     function sha1_lib.bin(s)
+      s = tostring(s) -- Ensure input is a string
       local H0, H1, H2, H3, H4 = 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0
       local str = str_to_bin(s); local len = #str; str[len + 1] = 0x80
       for i = len + 2, (len + 64) - ((len + 8) % 64) do str[i] = 0 end
