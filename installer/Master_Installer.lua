@@ -178,11 +178,13 @@ local function createInstallDisk(program)
     end
 
     -- Clean the disk
+    print("Cleaning disk...")
     for _, file in ipairs(fs.list(mountPath)) do
         fs.delete(mountPath .. "/" .. file)
     end
 
     -- Write the program and its dependencies
+    print("Writing program files to disk...")
     local allFiles = { program.path }
     for _, dep in ipairs(program.dependencies) do
         table.insert(allFiles, dep)
@@ -196,8 +198,10 @@ local function createInstallDisk(program)
         file.write(fileCode)
         file.close()
     end
+    print("Program files written.")
 
     -- Write the installation script
+    print("Writing installation script...")
     local installScript = downloadFile("installer/install_template.lua")
     if not installScript then
         showMessage("Error", "Failed to download the installation script.", true)
@@ -206,8 +210,10 @@ local function createInstallDisk(program)
     local startupFile = fs.open(mountPath .. "/startup.lua", "w")
     startupFile.write(installScript)
     startupFile.close()
+    print("Installation script written.")
 
     -- Write the configuration file
+    print("Writing configuration file...")
     local config = {
         name = program.name,
         main_program = program.path,
@@ -218,8 +224,10 @@ local function createInstallDisk(program)
     local configFile = fs.open(mountPath .. "/install_config.lua", "w")
     configFile.write(textutils.serialize(config))
     configFile.close()
+    print("Configuration file written.")
 
     -- Set the disk label
+    print("Setting disk label...")
     drive.setDiskLabel(program.name .. " Installer")
 
     showMessage("Success", "Installation disk for " .. program.name .. " created successfully.", false)
