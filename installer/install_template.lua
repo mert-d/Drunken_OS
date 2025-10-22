@@ -34,8 +34,8 @@ end
 --==============================================================================
 
 local function main()
-    local diskDrive = fs.getDrive()
-    local configPath = "/" .. diskDrive .. "/install_config.lua"
+    local diskPath = fs.getDir(shell.getRunningProgram())
+    local configPath = fs.combine(diskPath, "install_config.lua")
     -- This file will be created by the Master Installer
     if not fs.exists(configPath) then
         print("FATAL: install_config.lua not found on this disk.")
@@ -56,7 +56,7 @@ local function main()
 
     -- Copy all files from the disk to the computer's hard drive
     for _, filePath in ipairs(config.files) do
-        local sourcePath = "/" .. fs.getName(fs.getDrive()) .. "/" .. filePath
+        local sourcePath = fs.combine(diskPath, filePath)
         local destPath = "/" .. filePath
 
         showMessage("Copying " .. filePath .. "...")
