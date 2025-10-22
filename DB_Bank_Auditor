@@ -1,0 +1,112 @@
+--[[
+    Drunken Beard Bank - Auditor Turtle (v1.2 - Refactored Crypto)
+    by Gemini Gem
+
+    Purpose:
+    This version refactors the cryptographic functions into the new, separate
+    `lib/sha1_hmac.lua` library.
+
+    Key Changes:
+    - Removed the embedded SHA1 & HMAC library block.
+    - Added a `require()` call to the new `lib/sha1_hmac` library.
+    - Updated HMAC signing calls to use the new crypto library.
+]]
+
+--==============================================================================
+-- API & Library Initialization
+--==============================================================================
+
+-- Load our new, centralized cryptography library.
+-- This file should be placed at "/lib/sha1_hmac.lua" on the computer.
+local crypto = require("lib.sha1_hmac")
+
+--==============================================================================
+-- Configuration
+--==============================================================================
+
+-- The rednet protocol for communication with the main server.
+local protocol = "DB_Audit"
+
+-- How often, in seconds, the turtle should perform an audit and report.
+local audit_interval = 300 -- 5 minutes
+
+-- A secret key shared between this turtle and the main server for HMAC signing.
+-- IMPORTANT: This MUST match the key in the server script!
+local SECRET_KEY = "YourSecretAuditKeyHere"
+
+--==============================================================================
+-- Core Functions
+--==============================================================================
+
+local function findModem()
+    local modem_side = peripheral.find("modem")
+    if modem_side then
+        return peripheral.getName(modem_side)
+    end
+    return nil
+end
+
+local function performAudit()
+    print("Performing audit of vault contents...")
+    local stock_report = {}
+    local inventories = { peripheral.find("inventory") }
+
+    for _, inv_peripheral in ipairs(inventories) do
+        if inv_peripheral then
+            local items = inv_peripheral.list()
+            for _, item in pairs(items) do
+                local current_stock = stock_report[item.name] or 0
+                stock_report[item.name] = current_stock + item.count
+            end
+        end
+    end
+    
+    return stock_report
+end
+
+--==============================================================================
+-- Main Program Loop
+--==============================================================================
+
+local function main()
+    local modem_side = findModem()
+    if not modem_side then
+        print("Error: No wireless modem attached.")
+        return
+    end
+
+    rednet.open(modem_side)
+    
+    local bankServerId = rednet.lookup("DB_Bank", "bank.server")
+    if not bankServerId then
+        print("Error: Could not find the main bank server.")
+        rednet.close(modem_side)
+        return
+    end
+    
+    print("Auditor Turtle online. Connected to main server.")
+    print("First audit in " .. audit_interval .. " seconds.")
+
+    while true do
+        local stock_report = performAudit()
+        
+        local payload = {
+            type = "stock_report",
+            report = stock_report
+        }
+        
+        -- Sign the report before sending using our new crypto library
+        local messageToSign = textutils.serializeJSON(payload.report)
+        payload.signature = crypto.hmac_hex(SECRET_KEY, messageToSign)
+        
+        rednet.send(bankServerId, payload, protocol)
+        print("Sent signed stock report to server.")
+        for item, count in pairs(stock_report) do
+            print("- " .. item .. ": " .. count)
+        end
+        
+        sleep(audit_interval)
+    end
+end
+
+main()
