@@ -1,6 +1,6 @@
 --[[
     Drunken OS - Generic Installation Script (v1.0)
-    by Gemini Gem & MuhendizBey
+    by MuhendizBey
 
     Purpose:
     This script is placed on every installation disk. When run, it performs

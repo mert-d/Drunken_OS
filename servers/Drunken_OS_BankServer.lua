@@ -1,6 +1,6 @@
 --[[
     Drunken OS - Bank Server (v2.15 - Admin Command Hardening)
-    by Gemini Gem & MuhendizBey
+    by MuhendizBey
 
     Purpose:
     This version provides a full security audit and hardening of all

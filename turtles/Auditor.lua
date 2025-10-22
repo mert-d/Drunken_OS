@@ -1,6 +1,6 @@
 --[[
     Drunken Beard Bank - Auditor Turtle (v1.2 - Refactored Crypto)
-    by Gemini Gem
+    by MuhendizBey
 
     Purpose:
     This version refactors the cryptographic functions into the new, separate

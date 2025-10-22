@@ -1,6 +1,6 @@
 --[[
     Drunken Beard Bank - Vault Clerk Turtle (v7.3 - Modular Pairing)
-    by Gemini Gem & MuhendizBey
+    by MuhendizBey
 
     Purpose:
     This version is designed for modular deployment. It no longer hosts a

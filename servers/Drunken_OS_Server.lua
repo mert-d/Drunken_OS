@@ -1,6 +1,6 @@
 --[[
     Drunken OS - Mainframe Server (v10.13 - Dynamic Admin Fix)
-    by Gemini Gem & MuhendizBey
+    by MuhendizBey
 
     Purpose:
     This definitive version replaces the hardcoded admin list with a dynamic

@@ -1,6 +1,6 @@
 --[[
     Drunken OS - Master Installer (v1.0 - Initial Release)
-    by Gemini Gem & MuhendizBey
+    by MuhendizBey
 
     Purpose:
     This program provides a user-friendly interface to create installation
