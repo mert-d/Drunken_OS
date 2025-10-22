@@ -34,14 +34,16 @@ end
 --==============================================================================
 
 local function main()
+    local diskDrive = fs.getDrive()
+    local configPath = "/" .. diskDrive .. "/install_config.lua"
     -- This file will be created by the Master Installer
-    if not fs.exists("install_config.lua") then
+    if not fs.exists(configPath) then
         print("FATAL: install_config.lua not found on this disk.")
         return
     end
 
     -- Load the configuration for this specific installation
-    local configFile = fs.open("install_config.lua", "r")
+    local configFile = fs.open(configPath, "r")
     local configData = configFile.readAll()
     configFile.close()
     local config = textutils.unserialize(configData)
