@@ -16,13 +16,13 @@
 local GITHUB_REPO_URL = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
 
 local INSTALLABLE_PROGRAMS = {
-    { name = "Drunken OS Server", path = "servers/Drunken_OS_Server.txt", dependencies = { "lib/sha1_hmac.lua" } },
-    { name = "Drunken OS Bank Server", path = "servers/Drunken_OS_BankServer.txt", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "bank_server" },
-    { name = "Drunken OS Client", path = "clients/Drunken_OS_Client.txt", dependencies = { "lib/sha1_hmac.lua" } },
-    { name = "DB Bank ATM", path = "clients/DB_Bank_ATM.txt", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "atm" },
-    { name = "DB Bank Clerk Terminal", path = "clients/DB_Bank_Clerk_Terminal.txt", dependencies = { "lib/sha1_hmac.lua" } },
-    { name = "DB Bank Clerk Turtle", path = "turtles/DB_Bank_Clerk.txt", dependencies = {} },
-    { name = "Auditor Turtle", path = "turtles/Auditor", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "auditor" },
+    { name = "Drunken OS Server", path = "servers/Drunken_OS_Server.lua", dependencies = { "lib/sha1_hmac.lua" } },
+    { name = "Drunken OS Bank Server", path = "servers/Drunken_OS_BankServer.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "bank_server" },
+    { name = "Drunken OS Client", path = "clients/Drunken_OS_Client.lua", dependencies = { "lib/sha1_hmac.lua" } },
+    { name = "DB Bank ATM", path = "clients/DB_Bank_ATM.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "atm" },
+    { name = "DB Bank Clerk Terminal", path = "clients/DB_Bank_Clerk_Terminal.lua", dependencies = { "lib/sha1_hmac.lua" } },
+    { name = "DB Bank Clerk Turtle", path = "turtles/DB_Bank_Clerk.lua", dependencies = {} },
+    { name = "Auditor Turtle", path = "turtles/Auditor.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "auditor" },
 }
 
 --==============================================================================
