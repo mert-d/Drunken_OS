@@ -106,14 +106,19 @@ local function logActivity(message, isError)
     end
 end
 
-local function logTransaction(username, message)
-    local logEntry = os.date("[%Y-%m-%d %H:%M:%S] ") .. message
+local function logTransaction(username, transaction_type, data)
+    local logEntry = {
+        timestamp = os.time(),
+        type = transaction_type,
+        user = username,
+        data = data
+    }
     if not fs.exists(LOGS_DIR) then fs.makeDir(LOGS_DIR) end
     if not fs.exists(TRANSACTIONS_DIR) then fs.makeDir(TRANSACTIONS_DIR) end
 
-    local file = fs.open(TRANSACTIONS_DIR .. "/" .. username .. ".log", "a")
+    local file = fs.open(TRANSACTIONS_DIR .. "/master.log", "a")
     if file then
-        file.writeLine(logEntry)
+        file.writeLine(textutils.serializeJSON(logEntry))
         file.close()
     end
 end
@@ -382,8 +387,14 @@ function bankHandlers.deposit(senderId, message)
             accounts[user].balance = accounts[user].balance + total_value
             if saveTableToFile(ACCOUNTS_DB, accounts) and saveTableToFile(STOCK_DB, currentStock) then
                 rednet.send(senderId, { success = true, newBalance = accounts[user].balance, deposited_value = total_value }, BANK_PROTOCOL)
-                local log_msg = string.format("DEPOSIT of $%d. Details: %s", total_value, table.concat(transaction_summary, ", "))
-                logTransaction(user, log_msg)
+                local transaction_data = {}
+                for _, item in ipairs(items) do
+                    local rateInfo = currencyRates[item.name or "unknown"] or currencyRates[item.name:match("^minecraft:(.+)") or ""]
+                    if rateInfo then
+                        transaction_data[item.name or "unknown"] = { count = item.count, value = item.count * rateInfo.current }
+                    end
+                end
+                logTransaction(user, "DEPOSIT", transaction_data)
                 logActivity(string.format("Stock updated for deposit: %s", table.concat(transaction_summary, ", ")))
                 needsRedraw = true -- Update the GUI
             else
@@ -448,7 +459,10 @@ function bankHandlers.finalize_withdrawal(senderId, message)
     end
     
     if saveTableToFile(ACCOUNTS_DB, accounts) and saveTableToFile(STOCK_DB, currentStock) then
-        logTransaction(user, string.format("WITHDRAW of $%d (%d x %s)", totalCost, count, itemName))
+        local transaction_data = {
+            [itemName] = { count = count, value = totalCost }
+        }
+        logTransaction(user, "WITHDRAW", transaction_data)
         logActivity(string.format("Finalized withdrawal for '%s'. New balance: $%d", user, account.balance))
         logActivity(string.format("Stock updated for withdrawal: %d %s", count, itemName))
         needsRedraw = true -- Update the GUI
@@ -703,6 +717,21 @@ local function networkListener()
                 needsRedraw = true -- Update dashboard stats
             else
                 logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
+            end
+        elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "get_transaction_log" then
+            local signature = crypto.hmac_hex(AUDIT_SECRET_KEY, message.timestamp)
+            if signature == message.signature then
+                local log_path = TRANSACTIONS_DIR .. "/master.log"
+                if fs.exists(log_path) then
+                    local file = fs.open(log_path, "r")
+                    local log_data = file.readAll()
+                    file.close()
+                    rednet.send(senderId, { success = true, log = log_data }, AUDIT_PROTOCOL)
+                else
+                    rednet.send(senderId, { success = false, reason = "No transaction log found." }, AUDIT_PROTOCOL)
+                end
+            else
+                logActivity("Received an INVALID or TAMPERED log request! Ignoring.", true)
             end
         end
     end
