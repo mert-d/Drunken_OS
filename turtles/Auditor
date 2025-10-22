@@ -32,7 +32,7 @@ local audit_interval = 300 -- 5 minutes
 
 -- A secret key shared between this turtle and the main server for HMAC signing.
 -- IMPORTANT: This MUST match the key in the server script!
-local SECRET_KEY = "YourSecretAuditKeyHere"
+local SECRET_KEY = nil
 
 --==============================================================================
 -- Core Functions
@@ -98,6 +98,15 @@ end
 --==============================================================================
 
 local function main()
+    if fs.exists("/auditor_key.conf") then
+        local file = fs.open("/auditor_key.conf", "r")
+        SECRET_KEY = file.readAll()
+        file.close()
+    else
+        print("FATAL: /auditor_key.conf not found. Please run the installer disk.")
+        return
+    end
+
     local modem_side = findModem()
     if not modem_side then
         print("Error: No wireless modem attached.")

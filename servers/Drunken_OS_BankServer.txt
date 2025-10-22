@@ -50,7 +50,7 @@ local AUDIT_PROTOCOL = "DB_Audit"
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 
 -- Auditor Turtle Configuration
-local AUDIT_SECRET_KEY = "YourSecretAuditKeyHere"
+local AUDIT_SECRET_KEY = nil
 
 --==============================================================================
 -- UI & Theme Configuration
@@ -791,6 +791,15 @@ local function main()
     computerTerm.setCursorPos(1,1)
     
     print("Drunken OS Bank Server Initializing...")
+
+    if fs.exists("/auditor_key.conf") then
+        local file = fs.open("/auditor_key.conf", "r")
+        AUDIT_SECRET_KEY = file.readAll()
+        file.close()
+    else
+        print("FATAL: /auditor_key.conf not found. Please run the installer disk.")
+        return
+    end
 
     monitor = peripheral.find("monitor")
     if not monitor then
