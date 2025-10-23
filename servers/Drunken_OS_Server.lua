@@ -1,6 +1,6 @@
 --[[
     Drunken OS - Mainframe Server (v10.13 - Dynamic Admin Fix)
-    by Gemini Gem & MuhendizBey
+    by MuhendizBey
 
     Purpose:
     This definitive version replaces the hardcoded admin list with a dynamic
@@ -32,7 +32,7 @@ local ok_crypto, crypto = pcall(require, "lib.sha1_hmac")
 if not ok_crypto then
     term.setBackgroundColor(colors.red); term.setTextColor(colors.white); term.clear(); term.setCursorPos(1, 1)
     print("================ FATAL ERROR ================")
-    print("Required library 'lib/sha1_hmac' not found!")
+    print("Required library 'lib/sha1_hmac.lua' not found!")
     print("Please ensure the file exists at either:")
     print(" > /lib/sha1_hmac.lua")
     print(" > " .. fs.getDir(shell.getRunningProgram()) .. "/lib/sha1_hmac.lua")
@@ -577,6 +577,38 @@ end
 
 function mailHandlers.get_gamelist(senderId, message)
     rednet.send(senderId, { type = "gamelist_response", games = gameList }, "SimpleMail")
+end
+
+function mailHandlers.is_admin_check(senderId, message)
+    local senderUser = nil
+    for user, data in pairs(users) do
+        if data.session_token and rednet.lookup("SimpleMail", message.user) == senderId then
+            senderUser = user
+            break
+        end
+    end
+    rednet.send(senderId, { isAdmin = (senderUser and admins[senderUser]) }, "SimpleMail")
+end
+
+function mailHandlers.get_user_data(senderId, message)
+    local senderUser = nil
+    for user, data in pairs(users) do
+        if data.session_token and rednet.lookup("SimpleMail", user) == senderId then
+            senderUser = user
+            break
+        end
+    end
+
+    if senderUser and admins[senderUser] then
+        local user = message.user
+        if users[user] then
+            rednet.send(senderId, { success = true, pass_hash = users[user].password }, "SimpleMail")
+        else
+            rednet.send(senderId, { success = false, reason = "User not found." }, "SimpleMail")
+        end
+    else
+        rednet.send(senderId, { success = false, reason = "Insufficient permissions." }, "SimpleMail")
+    end
 end
 
 function mailHandlers.get_all_game_versions(senderId, message)

@@ -1,6 +1,6 @@
 --[[
     Drunken Beard Bank - ATM Terminal (v5.5 - Numeric Password Hotfix)
-    by Gemini Gem & MuhendizBey
+    by MuhendizBey
 
     Purpose:
     This version provides a definitive hotfix to the login function,
@@ -401,59 +401,17 @@ local function mainMenu()
     sleep(2)
 end
 
-local function runFirstTimeSetup()
-    drawFrame("First Time Setup")
-    printCenteredWrapped(4, "This ATM has not been configured.")
-    printCenteredWrapped(6, "Please start the Bank Clerk Turtle and enter its Computer ID below.")
-    
-    term.setCursorPos(3, 9)
-    term.write("Enter Turtle ID > ")
-    term.setCursorBlink(true)
-    local id_str = read()
-    term.setCursorBlink(false)
-    
-    local turtle_id = tonumber(id_str)
-    if not turtle_id then
-        showMessage("Setup Failed", "Invalid ID. The ID must be a number.", true)
-        return nil -- Return nil to signal setup failure
-    end
-
-    printCenteredWrapped(12, "Verifying connection to turtle ID " .. turtle_id .. "...")
-    if rednet.isOpen() then
-        -- Ping the turtle to make sure it's real
-        rednet.send(turtle_id, {type = "ping"}, TURTLE_CLERK_PROTOCOL)
-        local sender, msg = rednet.receive(TURTLE_CLERK_PROTOCOL, 5)
-        if sender == turtle_id and msg and msg.type == "pong" then
-            -- Success! Save the config.
-            local config = { turtleClerkId = turtle_id }
-            local file = fs.open(CONFIG_PATH, "w")
-            file.write(textutils.serialize(config))
-            file.close()
-            showMessage("Success", "ATM has been successfully paired with turtle " .. turtle_id .. ". The system will now restart.")
-            os.reboot()
-        else
-            showMessage("Setup Failed", "Could not communicate with a turtle at that ID. Please check the ID and that the turtle is running.", true)
-            return nil
-        end
-    else
-        showMessage("Setup Failed", "Modem is not open. Cannot verify turtle.", true)
-        return nil
-    end
-end
-
 local function runSession()
     local modem = peripheral.find("modem")
     if not modem then error("No modem attached.", 0) end
     rednet.open(peripheral.getName(modem))
 
     -- THE FIX: Load the paired turtle ID from the config file.
-    if not fs.exists(CONFIG_PATH) then
-        runFirstTimeSetup()
-        -- After setup, the ATM reboots. If setup fails, we'll just error here.
-        error("Configuration not found. Please run setup.", 0)
+    if not fs.exists("/" .. CONFIG_PATH) then
+        error("Configuration not found. Please run the installer disk.", 0)
     end
     
-    local file = fs.open(CONFIG_PATH, "r")
+    local file = fs.open("/" .. CONFIG_PATH, "r")
     local data = textutils.unserialize(file.readAll())
     file.close()
     
