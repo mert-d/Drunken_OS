@@ -12,6 +12,11 @@
 
 local program_path = "{{PROGRAM_PATH}}"
 
+if program_path == "{{PROGRAM_PATH}}" then
+    print("ERROR: Program path not set in startup script.")
+    return
+end
+
 local monitor = peripheral.find("monitor")
 
 if monitor then
@@ -30,7 +35,7 @@ if monitor then
     local old_setBackgroundColor = native_term.setBackgroundColor
 
     -- Create a new terminal object for the monitor
-    local monitor_term = peripheral.wrap(monitor.getName())
+    local monitor_term = peripheral.wrap(monitor)
 
     -- Override the global term functions
     term.write = function(...) monitor_term.write(...) end

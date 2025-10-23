@@ -186,10 +186,6 @@ local function createInstallDisk(program)
     local peripheralType = peripheral.getType(peripheralName)
 
     if program.name == "Drunken OS Client" then
-        if peripheralType ~= "pocket_computer" then
-            showMessage("Error", "Please insert a Pocket Computer to install the Drunken OS Client.", true)
-            return
-        end
         installToPocketComputer(program, peripheral.wrap(peripheralName))
         return
     else
