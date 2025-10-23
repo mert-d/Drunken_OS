@@ -16,13 +16,17 @@
 local GITHUB_REPO_URL = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
 
 local INSTALLABLE_PROGRAMS = {
-    { name = "Drunken OS Server", path = "servers/Drunken_OS_Server.lua", dependencies = { "lib/sha1_hmac.lua" } },
-    { name = "Drunken OS Bank Server", path = "servers/Drunken_OS_BankServer.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "bank_server" },
-    { name = "Drunken OS Client", path = "clients/Drunken_OS_Client.lua", dependencies = { "lib/sha1_hmac.lua" } },
-    { name = "DB Bank ATM", path = "clients/DB_Bank_ATM.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "atm" },
-    { name = "DB Bank Clerk Terminal", path = "clients/DB_Bank_Clerk_Terminal.lua", dependencies = { "lib/sha1_hmac.lua" } },
-    { name = "DB Bank Clerk Turtle", path = "turtles/DB_Bank_Clerk.lua", dependencies = {} },
-    { name = "Auditor Turtle", path = "turtles/Auditor.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "auditor" },
+    { name = "Drunken OS Server", type = "server", path = "servers/Drunken_OS_Server.lua", dependencies = { "lib/sha1_hmac.lua" } },
+    { name = "Drunken OS Bank Server", type = "server", path = "servers/Drunken_OS_BankServer.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "bank_server" },
+    { name = "Drunken OS Client", type = "client", path = "clients/Drunken_OS_Client.lua", dependencies = { "lib/sha1_hmac.lua" } },
+    { name = "DB Bank ATM", type = "client", path = "clients/DB_Bank_ATM.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "atm" },
+    { name = "DB Bank Clerk Terminal", type = "client", path = "clients/DB_Bank_Clerk_Terminal.lua", dependencies = { "lib/sha1_hmac.lua" } },
+    { name = "DB Bank Clerk Turtle", type = "turtle", path = "turtles/DB_Bank_Clerk.lua", dependencies = {} },
+    { name = "Auditor Turtle", type = "turtle", path = "turtles/Auditor.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "auditor" },
+    { name = "Invaders", type = "game", path = "games/invaders.lua", dependencies = {} },
+    { name = "Floppa Bird", type = "game", path = "games/floppa_bird.lua", dependencies = {} },
+    { name = "Tetris", type = "game", path = "games/tetris.lua", dependencies = {} },
+    { name = "Snake", type = "game", path = "games/snake.lua", dependencies = {} },
 }
 
 --==============================================================================
@@ -166,8 +170,19 @@ local function createInstallDisk(program)
     end
 
     local drive = peripheral.find("drive")
-    if not drive or not drive.isDiskPresent() then
-        showMessage("Error", "No disk in the drive. Please insert a disk and try again.", true)
+    if not drive then
+        showMessage("Error", "No disk drive attached.", true)
+        return
+    end
+
+    if drive.isDiskPresent() then
+        local peripheralType = peripheral.getType(drive.getMountPath())
+        if peripheralType == "pocket_computer" then
+            installToPocketComputer(program, drive)
+            return
+        end
+    elseif peripheral.getType(drive.getMountPath()) == "pocket_computer" then
+        installToPocketComputer(program, drive)
         return
     end
 
@@ -202,11 +217,20 @@ local function createInstallDisk(program)
 
     -- Write the installation script
     print("Writing installation script...")
-    local installScript = downloadFile("installer/install_template.lua")
+    local installScriptPath = "installer/install_template.lua"
+    if program.type == "server" then
+        installScriptPath = "installer/server_startup_template.lua"
+    end
+    local installScript = downloadFile(installScriptPath)
     if not installScript then
         showMessage("Error", "Failed to download the installation script.", true)
         return
     end
+
+    if program.type == "server" then
+        installScript = installScript:gsub("{{PROGRAM_PATH}}", program.path)
+    end
+
     local startupFile = fs.open(mountPath .. "/startup.lua", "w")
     startupFile.write(installScript)
     startupFile.close()
@@ -233,11 +257,56 @@ local function createInstallDisk(program)
     showMessage("Success", "Installation disk for " .. program.name .. " created successfully.", false)
 end
 
+local function installToPocketComputer(program, drive)
+    if program.type ~= "client" then
+        showMessage("Error", "Only client programs can be installed to a Pocket Computer.", true)
+        return
+    end
+
+    showMessage("Pocket Computer detected.", "Starting direct installation...", false)
+
+    local computer = peripheral.wrap(drive.getMountPath())
+    computer.turnOn()
+
+    local allFiles = { program.path }
+    for _, dep in ipairs(program.dependencies) do
+        table.insert(allFiles, dep)
+    end
+
+    for _, filePath in ipairs(allFiles) do
+        local fileCode = downloadFile(filePath)
+        if not fileCode then
+            showMessage("Error", "Failed to download " .. filePath, true)
+            return
+        end
+        local tempPath = "/tmp/" .. fs.getName(filePath)
+        local file = fs.open(tempPath, "w")
+        file.write(fileCode)
+        file.close()
+
+        local destPath = "/" .. filePath
+        computer.runCommand("fs.makeDir('" .. fs.getDir(destPath) .. "')")
+        fs.copy(tempPath, drive.getMountPath() .. destPath)
+        fs.delete(tempPath)
+    end
+
+    -- Create startup file
+    local startupCode = "shell.run('" .. program.path .. "')"
+    local tempPath = "/tmp/startup.lua"
+    local file = fs.open(tempPath, "w")
+    file.write(startupCode)
+    file.close()
+    fs.copy(tempPath, drive.getMountPath() .. "/startup.lua")
+    fs.delete(tempPath)
+
+    showMessage("Success", "Installation to Pocket Computer complete.", false)
+end
+
 local function mainMenu()
     while true do
         local options = INSTALLABLE_PROGRAMS
         table.insert(options, { name = "Exit" })
-        local choice = drawMenu("Select a program to create an installation disk:", options, "Select a program and press Enter.")
+        local choice = drawMenu("Select a program to install:", options, "Insert a disk or Pocket Computer and press Enter.")
         table.remove(options) -- remove exit
 
         if not choice or choice == #options + 1 then break end
