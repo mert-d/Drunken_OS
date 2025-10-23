@@ -158,6 +158,57 @@ local function downloadFile(path)
     end
 end
 
+local function installToPocketComputer(program, pocket_computer)
+    if program.type ~= "client" then
+        showMessage("Error", "Only client programs can be installed to a Pocket Computer.", true)
+        return
+    end
+
+    showMessage("Pocket Computer detected.", "Starting direct installation...", false)
+
+    pocket_computer.turnOn()
+
+    -- Clean the pocket computer
+    pocket_computer.runCommand("rm /*")
+
+    local allFiles = { program.path }
+    for _, dep in ipairs(program.dependencies) do
+        table.insert(allFiles, dep)
+    end
+
+    for _, filePath in ipairs(allFiles) do
+        local fileCode = downloadFile(filePath)
+        if not fileCode then
+            showMessage("Error", "Failed to download " .. filePath, true)
+            return
+        end
+
+        local destPath = "/" .. filePath
+        pocket_computer.runCommand("fs.makeDir('" .. fs.getDir(destPath) .. "')")
+
+        -- Create a temporary local file
+        local tempPath = "/tmp/" .. fs.getName(filePath)
+        local file = fs.open(tempPath, "w")
+        file.write(fileCode)
+        file.close()
+
+        -- Copy the file to the pocket computer
+        fs.copy(tempPath, pocket_computer.getMountPath() .. destPath)
+        fs.delete(tempPath)
+    end
+
+    -- Create the startup file on the pocket computer
+    local startupCode = "shell.run('/" .. program.path .. "')"
+    local tempPath = "/tmp/startup.lua"
+    local file = fs.open(tempPath, "w")
+    file.write(startupCode)
+    file.close()
+    fs.copy(tempPath, pocket_computer.getMountPath() .. "/startup.lua")
+    fs.delete(tempPath)
+
+    showMessage("Success", "Installation to Pocket Computer complete.", false)
+end
+
 local function createInstallDisk(program)
     printCentered(10, "Downloading files...")
     local programCode = downloadFile(program.path)
@@ -237,7 +288,7 @@ local function createInstallDisk(program)
     end
 
     if program.type == "server" then
-        installScript = installScript:gsub("{{PROGRAM_PATH}}", program.path)
+        installScript = installScript:gsub("__PROGRAM_PATH__", program.path)
     end
 
     local startupFile = fs.open(mountPath .. "/startup.lua", "w")
@@ -264,57 +315,6 @@ local function createInstallDisk(program)
     drive.setDiskLabel(program.name .. " Installer")
 
     showMessage("Success", "Installation disk for " .. program.name .. " created successfully.", false)
-end
-
-local function installToPocketComputer(program, pocket_computer)
-    if program.type ~= "client" then
-        showMessage("Error", "Only client programs can be installed to a Pocket Computer.", true)
-        return
-    end
-
-    showMessage("Pocket Computer detected.", "Starting direct installation...", false)
-
-    pocket_computer.turnOn()
-
-    -- Clean the pocket computer
-    pocket_computer.runCommand("rm /*")
-
-    local allFiles = { program.path }
-    for _, dep in ipairs(program.dependencies) do
-        table.insert(allFiles, dep)
-    end
-
-    for _, filePath in ipairs(allFiles) do
-        local fileCode = downloadFile(filePath)
-        if not fileCode then
-            showMessage("Error", "Failed to download " .. filePath, true)
-            return
-        end
-
-        local destPath = "/" .. filePath
-        pocket_computer.runCommand("fs.makeDir('" .. fs.getDir(destPath) .. "')")
-
-        -- Create a temporary local file
-        local tempPath = "/tmp/" .. fs.getName(filePath)
-        local file = fs.open(tempPath, "w")
-        file.write(fileCode)
-        file.close()
-
-        -- Copy the file to the pocket computer
-        fs.copy(tempPath, pocket_computer.getMountPath() .. destPath)
-        fs.delete(tempPath)
-    end
-
-    -- Create the startup file on the pocket computer
-    local startupCode = "shell.run('/" .. program.path .. "')"
-    local tempPath = "/tmp/startup.lua"
-    local file = fs.open(tempPath, "w")
-    file.write(startupCode)
-    file.close()
-    fs.copy(tempPath, pocket_computer.getMountPath() .. "/startup.lua")
-    fs.delete(tempPath)
-
-    showMessage("Success", "Installation to Pocket Computer complete.", false)
 end
 
 local function mainMenu()

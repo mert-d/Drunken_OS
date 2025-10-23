@@ -10,9 +10,9 @@
     of their main command prompt.
 ]]
 
-local program_path = "{{PROGRAM_PATH}}"
+local program_path = "__PROGRAM_PATH__"
 
-if program_path == "{{PROGRAM_PATH}}" then
+if program_path == "__PROGRAM_PATH__" then
     print("ERROR: Program path not set in startup script.")
     return
 end
