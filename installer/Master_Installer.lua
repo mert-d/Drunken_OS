@@ -166,10 +166,8 @@ local function installToPocketComputer(program, pocket_computer, drive)
 
     showMessage("Pocket Computer detected.", "Starting direct installation...", false)
 
-    pocket_computer.turnOn()
-
     -- Clean the pocket computer
-    peripheral.call(peripheral.getName(pocket_computer), "run", "rm /*")
+    peripheral.call(peripheral.getName(drive), "run", "rm /*")
 
     local allFiles = { program.path }
     for _, dep in ipairs(program.dependencies) do
@@ -184,7 +182,7 @@ local function installToPocketComputer(program, pocket_computer, drive)
         end
 
         local destPath = "/" .. filePath
-        peripheral.call(peripheral.getName(pocket_computer), "run", "fs.makeDir('" .. fs.getDir(destPath) .. "')")
+        peripheral.call(peripheral.getName(drive), "run", "fs.makeDir('" .. fs.getDir(destPath) .. "')")
 
         -- Create a temporary local file
         local tempPath = "/tmp/" .. fs.getName(filePath)
