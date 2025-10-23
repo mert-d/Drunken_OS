@@ -158,7 +158,7 @@ local function downloadFile(path)
     end
 end
 
-local function installToPocketComputer(program, pocket_computer)
+local function installToPocketComputer(program, pocket_computer, drive)
     if program.type ~= "client" then
         showMessage("Error", "Only client programs can be installed to a Pocket Computer.", true)
         return
@@ -169,7 +169,7 @@ local function installToPocketComputer(program, pocket_computer)
     pocket_computer.turnOn()
 
     -- Clean the pocket computer
-    pocket_computer.runCommand("rm /*")
+    peripheral.call(peripheral.getName(pocket_computer), "run", "rm /*")
 
     local allFiles = { program.path }
     for _, dep in ipairs(program.dependencies) do
@@ -184,7 +184,7 @@ local function installToPocketComputer(program, pocket_computer)
         end
 
         local destPath = "/" .. filePath
-        pocket_computer.runCommand("fs.makeDir('" .. fs.getDir(destPath) .. "')")
+        peripheral.call(peripheral.getName(pocket_computer), "run", "fs.makeDir('" .. fs.getDir(destPath) .. "')")
 
         -- Create a temporary local file
         local tempPath = "/tmp/" .. fs.getName(filePath)
@@ -193,7 +193,7 @@ local function installToPocketComputer(program, pocket_computer)
         file.close()
 
         -- Copy the file to the pocket computer
-        fs.copy(tempPath, pocket_computer.getMountPath() .. destPath)
+        fs.copy(tempPath, drive.getMountPath() .. destPath)
         fs.delete(tempPath)
     end
 
@@ -203,7 +203,7 @@ local function installToPocketComputer(program, pocket_computer)
     local file = fs.open(tempPath, "w")
     file.write(startupCode)
     file.close()
-    fs.copy(tempPath, pocket_computer.getMountPath() .. "/startup.lua")
+    fs.copy(tempPath, drive.getMountPath() .. "/startup.lua")
     fs.delete(tempPath)
 
     showMessage("Success", "Installation to Pocket Computer complete.", false)
@@ -233,11 +233,10 @@ local function createInstallDisk(program)
         return
     end
 
-    local peripheralName = peripheral.getName(drive)
-    local peripheralType = peripheral.getType(peripheralName)
+    local peripheralType = peripheral.getType(drive)
 
     if program.name == "Drunken OS Client" then
-        installToPocketComputer(program, peripheral.wrap(peripheralName))
+        installToPocketComputer(program, peripheral.wrap(peripheral.getName(drive)), drive)
         return
     else
         if peripheralType == "pocket_computer" then
