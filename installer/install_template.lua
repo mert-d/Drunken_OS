@@ -33,7 +33,7 @@ end
 -- Main Installation Logic
 --==============================================================================
 
-local function main()
+local function doInstallation()
     local diskPath = fs.getDir(shell.getRunningProgram())
     local configPath = fs.combine(diskPath, "install_config.lua")
     -- This file will be created by the Master Installer
@@ -112,6 +112,18 @@ local function run_setup_wizard(setup_type)
     showMessage("Installation complete! Rebooting in 3 seconds...")
     sleep(3)
     os.reboot()
+end
+
+local function main()
+    local ok, err = pcall(doInstallation)
+    if not ok then
+        print("INSTALLATION FAILED:")
+        print(tostring(err))
+        print("Please take a screenshot and report this error.")
+        print("Press any key to reboot.")
+        os.pullEvent("key")
+        os.reboot()
+    end
 end
 
 main()

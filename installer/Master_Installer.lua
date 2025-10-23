@@ -265,8 +265,11 @@ local function installToPocketComputer(program, drive)
 
     showMessage("Pocket Computer detected.", "Starting direct installation...", false)
 
-    local computer = peripheral.wrap(drive.getMountPath())
-    computer.turnOn()
+    local pocket_computer = peripheral.wrap(drive.getMountPath())
+    pocket_computer.turnOn()
+
+    -- Clean the pocket computer
+    pocket_computer.runCommand("rm /*")
 
     local allFiles = { program.path }
     for _, dep in ipairs(program.dependencies) do
@@ -279,19 +282,23 @@ local function installToPocketComputer(program, drive)
             showMessage("Error", "Failed to download " .. filePath, true)
             return
         end
+
+        local destPath = "/" .. filePath
+        pocket_computer.runCommand("fs.makeDir('" .. fs.getDir(destPath) .. "')")
+
+        -- Create a temporary local file
         local tempPath = "/tmp/" .. fs.getName(filePath)
         local file = fs.open(tempPath, "w")
         file.write(fileCode)
         file.close()
 
-        local destPath = "/" .. filePath
-        computer.runCommand("fs.makeDir('" .. fs.getDir(destPath) .. "')")
+        -- Copy the file to the pocket computer
         fs.copy(tempPath, drive.getMountPath() .. destPath)
         fs.delete(tempPath)
     end
 
-    -- Create startup file
-    local startupCode = "shell.run('" .. program.path .. "')"
+    -- Create the startup file on the pocket computer
+    local startupCode = "shell.run('/" .. program.path .. "')"
     local tempPath = "/tmp/startup.lua"
     local file = fs.open(tempPath, "w")
     file.write(startupCode)
