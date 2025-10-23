@@ -121,9 +121,16 @@ local function drawMenu(title, options, help)
         end
         term.setBackgroundColor(theme.bg)
         term.setTextColor(colors.yellow)
-        if help then
-            printCentered(h - 2, help)
+
+        local current_selection = options[selected]
+        if current_selection.name == "Drunken OS Client" then
+            printCentered(h - 2, "Please insert a Pocket Computer and press Enter.")
+        elseif current_selection.name == "Exit" then
+            printCentered(h - 2, "Press Enter to exit the installer.")
+        else
+            printCentered(h - 2, "Please insert a blank disk and press Enter.")
         end
+
         local _, key = os.pullEvent("key")
         if key == keys.up then selected = (selected == 1) and #options or selected - 1
         elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
@@ -178,9 +185,18 @@ local function createInstallDisk(program)
     local peripheralName = peripheral.getName(drive)
     local peripheralType = peripheral.getType(peripheralName)
 
-    if peripheralType == "pocket_computer" then
+    if program.name == "Drunken OS Client" then
+        if peripheralType ~= "pocket_computer" then
+            showMessage("Error", "Please insert a Pocket Computer to install the Drunken OS Client.", true)
+            return
+        end
         installToPocketComputer(program, peripheral.wrap(peripheralName))
         return
+    else
+        if peripheralType == "pocket_computer" then
+            showMessage("Error", "This program cannot be installed on a Pocket Computer. Please insert a regular disk.", true)
+            return
+        end
     end
 
     local mountPath = drive.getMountPath()
