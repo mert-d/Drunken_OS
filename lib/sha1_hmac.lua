@@ -1,6 +1,6 @@
 --[[
     SHA1 & HMAC-SHA1 Cryptography Library (v2.0 - Unified Standard)
-    by Gemini Gem & MuhendizBey
+    by MuhendizBey
 
     Purpose:
     This version unifies the hashing algorithm with the one used by the

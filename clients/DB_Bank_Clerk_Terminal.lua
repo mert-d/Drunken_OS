@@ -1,6 +1,6 @@
 --[[
     Drunken Beard Bank - Clerk Terminal (v1.0 - Initial Release)
-    by Gemini Gem & MuhendizBey
+    by MuhendizBey
 
     Purpose:
     This program provides a secure, user-friendly interface for bank staff

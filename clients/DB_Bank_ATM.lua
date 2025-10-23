@@ -1,6 +1,6 @@
 --[[
     Drunken Beard Bank - ATM Terminal (v5.5 - Numeric Password Hotfix)
-    by Gemini Gem & MuhendizBey
+    by MuhendizBey
 
     Purpose:
     This version provides a definitive hotfix to the login function,
