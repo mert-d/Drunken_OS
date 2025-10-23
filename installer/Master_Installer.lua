@@ -175,14 +175,11 @@ local function createInstallDisk(program)
         return
     end
 
-    if drive.isDiskPresent() then
-        local peripheralType = peripheral.getType(drive.getMountPath())
-        if peripheralType == "pocket_computer" then
-            installToPocketComputer(program, drive)
-            return
-        end
-    elseif peripheral.getType(drive.getMountPath()) == "pocket_computer" then
-        installToPocketComputer(program, drive)
+    local peripheralName = peripheral.getName(drive)
+    local peripheralType = peripheral.getType(peripheralName)
+
+    if peripheralType == "pocket_computer" then
+        installToPocketComputer(program, peripheral.wrap(peripheralName))
         return
     end
 
@@ -257,7 +254,7 @@ local function createInstallDisk(program)
     showMessage("Success", "Installation disk for " .. program.name .. " created successfully.", false)
 end
 
-local function installToPocketComputer(program, drive)
+local function installToPocketComputer(program, pocket_computer)
     if program.type ~= "client" then
         showMessage("Error", "Only client programs can be installed to a Pocket Computer.", true)
         return
@@ -265,7 +262,6 @@ local function installToPocketComputer(program, drive)
 
     showMessage("Pocket Computer detected.", "Starting direct installation...", false)
 
-    local pocket_computer = peripheral.wrap(drive.getMountPath())
     pocket_computer.turnOn()
 
     -- Clean the pocket computer
@@ -293,7 +289,7 @@ local function installToPocketComputer(program, drive)
         file.close()
 
         -- Copy the file to the pocket computer
-        fs.copy(tempPath, drive.getMountPath() .. destPath)
+        fs.copy(tempPath, pocket_computer.getMountPath() .. destPath)
         fs.delete(tempPath)
     end
 
@@ -303,7 +299,7 @@ local function installToPocketComputer(program, drive)
     local file = fs.open(tempPath, "w")
     file.write(startupCode)
     file.close()
-    fs.copy(tempPath, drive.getMountPath() .. "/startup.lua")
+    fs.copy(tempPath, pocket_computer.getMountPath() .. "/startup.lua")
     fs.delete(tempPath)
 
     showMessage("Success", "Installation to Pocket Computer complete.", false)
