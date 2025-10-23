@@ -23,6 +23,10 @@ local INSTALLABLE_PROGRAMS = {
     { name = "DB Bank Clerk Terminal", type = "client", path = "clients/DB_Bank_Clerk_Terminal.lua", dependencies = { "lib/sha1_hmac.lua" } },
     { name = "DB Bank Clerk Turtle", type = "turtle", path = "turtles/DB_Bank_Clerk.lua", dependencies = {} },
     { name = "Auditor Turtle", type = "turtle", path = "turtles/Auditor.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "auditor" },
+    { name = "Invaders", type = "game", path = "games/invaders.lua", dependencies = {} },
+    { name = "Floppa Bird", type = "game", path = "games/floppa_bird.lua", dependencies = {} },
+    { name = "Tetris", type = "game", path = "games/tetris.lua", dependencies = {} },
+    { name = "Snake", type = "game", path = "games/snake.lua", dependencies = {} },
 }
 
 --==============================================================================

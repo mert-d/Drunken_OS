@@ -280,6 +280,18 @@ local function loadAllData()
         motd = file.readAll()
         file.close()
     end
+
+    if fs.exists("games") then
+        gameList = {}
+        for _, file in ipairs(fs.list("games")) do
+            local name = file:gsub(".lua", "")
+            name = name:gsub("_", " ")
+            name = name:gsub("^%l", string.upper)
+            table.insert(gameList, {name = name, file = "games/" .. file})
+        end
+        saveTableToFile(GAMELIST_DB, gameList)
+    end
+
     logActivity("Mainframe data loaded.")
 end
 
@@ -817,32 +829,11 @@ function adminCommands.setlibpaste(args)
     end
 end
 
-function adminCommands.addgame(a)
-    local n, f = a[2], a[3]
-    if not n or not f then
-        logActivity("Usage: addgame <DisplayName> <filename>")
-        return
+function adminCommands.games()
+    logActivity("Games:")
+    for _, g in ipairs(gameList) do
+        logActivity("- " .. g.name .. " (file: " .. g.file .. ")")
     end
-    table.insert(gameList, {name = n, file = f})
-    saveTableToFile(GAMELIST_DB, gameList)
-    logActivity("Added game '" .. n .. "'")
-end
-
-function adminCommands.delgame(a)
-    local n = a[2]
-    if not n then
-        logActivity("Usage: delgame <DisplayName>")
-        return
-    end
-    for i, g in ipairs(gameList) do
-        if g.name == n then
-            table.remove(gameList, i)
-            saveTableToFile(GAMELIST_DB, gameList)
-            logActivity("Removed game '" .. n .. "'")
-            return
-        end
-    end
-    logActivity("Game '" .. n .. "' not found.")
 end
 
 function adminCommands.games()
