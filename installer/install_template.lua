@@ -105,9 +105,17 @@ local function run_setup_wizard(setup_type)
 
     -- Create the startup file
     showMessage("Creating startup file...")
-    local startupFile = fs.open("/startup.lua", "w")
-    startupFile.write('shell.run("' .. config.main_program .. '")')
-    startupFile.close()
+    if config.type == "server" then
+        local serverStartupScript = http.get("https://raw.githubusercontent.com/mert-d/Drunken_OS/main/installer/server_startup_template.lua").readAll()
+        serverStartupScript = serverStartupScript:gsub("__PROGRAM_PATH__", config.main_program)
+        local startupFile = fs.open("/startup.lua", "w")
+        startupFile.write(serverStartupScript)
+        startupFile.close()
+    else
+        local startupFile = fs.open("/startup.lua", "w")
+        startupFile.write('shell.run("' .. config.main_program .. '")')
+        startupFile.close()
+    end
 
     showMessage("Installation complete! Rebooting in 3 seconds...")
     sleep(3)

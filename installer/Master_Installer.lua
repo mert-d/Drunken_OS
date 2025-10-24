@@ -167,7 +167,8 @@ local function installToPocketComputer(program, pocket_computer, drive)
     showMessage("Pocket Computer detected.", "Starting direct installation...", false)
 
     -- Clean the pocket computer
-    peripheral.call(peripheral.getName(drive), "run", "rm /*")
+    local computer_name = peripheral.getName(drive)
+    local computer = peripheral.wrap(computer_name)
 
     local allFiles = { program.path }
     for _, dep in ipairs(program.dependencies) do
@@ -182,7 +183,7 @@ local function installToPocketComputer(program, pocket_computer, drive)
         end
 
         local destPath = "/" .. filePath
-        peripheral.call(peripheral.getName(drive), "run", "fs.makeDir('" .. fs.getDir(destPath) .. "')")
+        fs.makeDir(drive.getMountPath() .. fs.getDir(destPath))
 
         -- Create a temporary local file
         local tempPath = "/tmp/" .. fs.getName(filePath)
@@ -274,11 +275,7 @@ local function createInstallDisk(program)
 
     -- Write the installation script
     print("Writing installation script...")
-    local installScriptPath = "installer/install_template.lua"
-    if program.type == "server" then
-        installScriptPath = "installer/server_startup_template.lua"
-    end
-    local installScript = downloadFile(installScriptPath)
+    local installScript = downloadFile("installer/install_template.lua")
     if not installScript then
         showMessage("Error", "Failed to download the installation script.", true)
         return
