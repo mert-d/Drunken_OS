@@ -158,7 +158,7 @@ local function downloadFile(path)
     end
 end
 
-local function installToPocketComputer(program, pocket_computer, drive)
+local function installToPocketComputer(program, drive)
     if program.type ~= "client" then
         showMessage("Error", "Only client programs can be installed to a Pocket Computer.", true)
         return
@@ -166,9 +166,16 @@ local function installToPocketComputer(program, pocket_computer, drive)
 
     showMessage("Pocket Computer detected.", "Starting direct installation...", false)
 
-    -- Clean the pocket computer
-    local computer_name = peripheral.getName(drive)
-    local computer = peripheral.wrap(computer_name)
+    local mountPath = drive.getMountPath()
+    if not mountPath then
+        showMessage("Error", "Could not get pocket computer mount path.", true)
+        return
+    end
+
+    print("Cleaning pocket computer...")
+    for _, file in ipairs(fs.list(mountPath)) do
+        fs.delete(mountPath .. "/" .. file)
+    end
 
     local allFiles = { program.path }
     for _, dep in ipairs(program.dependencies) do
@@ -182,28 +189,27 @@ local function installToPocketComputer(program, pocket_computer, drive)
             return
         end
 
-        local destPath = "/" .. filePath
-        fs.makeDir(drive.getMountPath() .. fs.getDir(destPath))
-
-        -- Create a temporary local file
-        local tempPath = "/tmp/" .. fs.getName(filePath)
-        local file = fs.open(tempPath, "w")
-        file.write(fileCode)
-        file.close()
-
-        -- Copy the file to the pocket computer
-        fs.copy(tempPath, drive.getMountPath() .. destPath)
-        fs.delete(tempPath)
+        local destPath = mountPath .. "/" .. filePath
+        fs.makeDir(fs.getDir(destPath))
+        local fileHandle, err = fs.open(destPath, "w")
+        if not fileHandle then
+            showMessage("Error", "Failed to write to pocket computer: " .. (err or "Unknown error"), true)
+            return
+        end
+        fileHandle.write(fileCode)
+        fileHandle.close()
     end
 
     -- Create the startup file on the pocket computer
     local startupCode = "shell.run('/" .. program.path .. "')"
-    local tempPath = "/tmp/startup.lua"
-    local file = fs.open(tempPath, "w")
-    file.write(startupCode)
-    file.close()
-    fs.copy(tempPath, drive.getMountPath() .. "/startup.lua")
-    fs.delete(tempPath)
+    local startupPath = mountPath .. "/startup.lua"
+    local startupFile, err = fs.open(startupPath, "w")
+    if not startupFile then
+        showMessage("Error", "Failed to write startup file: " .. (err or "Unknown error"), true)
+        return
+    end
+    startupFile.write(startupCode)
+    startupFile.close()
 
     showMessage("Success", "Installation to Pocket Computer complete.", false)
 end
@@ -235,7 +241,11 @@ local function createInstallDisk(program)
     local peripheralType = peripheral.getType(drive)
 
     if program.name == "Drunken OS Client" then
-        installToPocketComputer(program, peripheral.wrap(peripheral.getName(drive)), drive)
+        if peripheralType ~= "pocket_computer" then
+            showMessage("Error", "Drunken OS Client can only be installed on a Pocket Computer.", true)
+            return
+        end
+        installToPocketComputer(program, drive)
         return
     else
         if peripheralType == "pocket_computer" then
@@ -273,16 +283,23 @@ local function createInstallDisk(program)
     end
     print("Program files written.")
 
-    -- Write the installation script
-    print("Writing installation script...")
+    -- Write the installation script(s)
+    print("Writing installation script(s)...")
     local installScript = downloadFile("installer/install_template.lua")
     if not installScript then
-        showMessage("Error", "Failed to download the installation script.", true)
+        showMessage("Error", "Failed to download the main installation script.", true)
         return
     end
 
     if program.type == "server" then
-        installScript = installScript:gsub("__PROGRAM_PATH__", program.path)
+        local serverStartupScript = downloadFile("installer/server_startup_template.lua")
+        if not serverStartupScript then
+            showMessage("Error", "Failed to download the server startup script.", true)
+            return
+        end
+        local serverStartupFile = fs.open(mountPath .. "/server_startup.lua", "w")
+        serverStartupFile.write(serverStartupScript)
+        serverStartupFile.close()
     end
 
     local startupFile = fs.open(mountPath .. "/startup.lua", "w")

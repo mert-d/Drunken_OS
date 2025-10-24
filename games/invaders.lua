@@ -33,8 +33,7 @@ local function mainGame(...)
 
     local hasColor = term.isColor and term.isColor()
     local function safeColor(colorName, fallbackColor)
-        if hasColor and colors[colorName] ~= nil then return colors[colorName] e
-nd
+        if hasColor and colors[colorName] ~= nil then return colors[colorName] end
         return fallbackColor
     end
 
