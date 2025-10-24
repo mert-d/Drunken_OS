@@ -71,6 +71,28 @@ local function doInstallation()
     if config.needs_setup then
         run_setup_wizard(config.setup_type)
     end
+
+    -- Create the startup file
+    showMessage("Creating startup file...")
+    if config.type == "server" then
+        local serverStartupPath = fs.combine(diskPath, "server_startup.lua")
+        local serverStartupFile = fs.open(serverStartupPath, "r")
+        local serverStartupScript = serverStartupFile.readAll()
+        serverStartupFile.close()
+
+        serverStartupScript = serverStartupScript:gsub("__PROGRAM_PATH__", config.main_program)
+        local startupFile = fs.open("/startup.lua", "w")
+        startupFile.write(serverStartupScript)
+        startupFile.close()
+    else
+        local startupFile = fs.open("/startup.lua", "w")
+        startupFile.write('shell.run("' .. config.main_program .. '")')
+        startupFile.close()
+    end
+
+    showMessage("Installation complete! Rebooting in 3 seconds...")
+    sleep(3)
+    os.reboot()
 end
 
 local function run_setup_wizard(setup_type)
@@ -102,16 +124,6 @@ local function run_setup_wizard(setup_type)
         file.close()
         showMessage("Auditor configured successfully.")
     end
-
-    -- Create the startup file
-    showMessage("Creating startup file...")
-    local startupFile = fs.open("/startup.lua", "w")
-    startupFile.write('shell.run("' .. config.main_program .. '")')
-    startupFile.close()
-
-    showMessage("Installation complete! Rebooting in 3 seconds...")
-    sleep(3)
-    os.reboot()
 end
 
 local function main()
