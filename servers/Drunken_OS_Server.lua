@@ -19,9 +19,9 @@
 -- Environment Setup
 --==============================================================================
 
--- Add the current program's directory to the package path. This allows us to use
--- a local `lib` folder for our required modules.
-package.path = fs.getDir(shell.getRunningProgram()) .. "/?.lua;" .. package.path
+-- Set up the package path to correctly resolve libraries from the root.
+-- This ensures that `require("lib.sha1_hmac")` correctly maps to `/lib/sha1_hmac.lua`.
+package.path = "/?.lua;" .. package.path
 
 --==============================================================================
 -- API & Library Initialization
@@ -33,9 +33,8 @@ if not ok_crypto then
     term.setBackgroundColor(colors.red); term.setTextColor(colors.white); term.clear(); term.setCursorPos(1, 1)
     print("================ FATAL ERROR ================")
     print("Required library 'lib/sha1_hmac.lua' not found!")
-    print("Please ensure the file exists at either:")
+    print("Please ensure the file exists at:")
     print(" > /lib/sha1_hmac.lua")
-    print(" > " .. fs.getDir(shell.getRunningProgram()) .. "/lib/sha1_hmac.lua")
     print("=============================================")
     print("Server shutting down.")
     error("sha1_hmac library not found.", 0)
