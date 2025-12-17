@@ -843,11 +843,11 @@ function adminCommands.games()
 end
 
 function adminCommands.publishgame(a)
-    local f = a[2]
     if not f then
         logActivity("Usage: publishgame <filename>", true)
         return
     end
+    -- Legacy local file publish logic here...
     if not fs.exists(f) then
         logActivity("File not found: " .. f, true)
         return
@@ -869,6 +869,48 @@ function adminCommands.publishgame(a)
         logActivity("Published game '" .. f .. "' v" .. v)
     else
         logActivity("Failed to save game DB.", true)
+    end
+end
+
+function adminCommands.syncgames(a)
+    logActivity("Syncing games from GitHub...")
+    local baseUrl = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/games/"
+    -- We use the gameList DB to know what games to fetch. 
+    -- Alternatively, we could fetch a manifest, but using the existing gameList is safer for now.
+    
+    local updatedCount = 0
+    for _, game in ipairs(gameList) do
+        local filename = game.file:gsub("games/", "") -- Remove directory prefix for URL
+        local url = baseUrl .. filename
+        logActivity("Fetching " .. filename .. "...")
+        
+        local response = http.get(url)
+        if response then
+            local code = response.readAll()
+            response.close()
+            
+            local v = code:match("%-%-%s*Version:%s*([%d%.]+)")
+            if v then
+                local fullPath = game.file
+                gameCode[fullPath] = {code = code, version = tonumber(v)}
+                updatedCount = updatedCount + 1
+                logActivity("Updated " .. filename .. " to v" .. v)
+            else
+                logActivity("No version tag in " .. filename, true)
+            end
+        else
+            logActivity("Failed to download " .. filename, true)
+        end
+    end
+    
+    if updatedCount > 0 then
+        if saveTableToFile(GAMES_CODE_DB, gameCode) then
+            logActivity("Successfully synced " .. updatedCount .. " games.")
+        else
+            logActivity("Error saving game DB.", true)
+        end
+    else
+        logActivity("No games updated.")
     end
 end
 

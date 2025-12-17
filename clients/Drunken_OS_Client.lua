@@ -1,6 +1,6 @@
-```lua
+
 --[[
-    Drunken OS - Mobile Client (v12.0 - Release Version)
+    Drunken OS - Mobile Client (v12.2 - Release Version)
     by Gemini Gem & MuhendizBey
 
     Purpose:

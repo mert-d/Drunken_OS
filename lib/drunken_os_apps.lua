@@ -791,7 +791,24 @@ end
                     local game = games[selected]
                     local gameFile = fs.combine(context.programDir, "games/" .. game.file)
                     if not fs.exists(gameFile) then
-                        context.showMessage("Error", "Game file '"..game.file.."' not found! Please run the updater in the System menu.")
+                        term.setCursorPos(2, h-1)
+                        term.write("Downloading " .. game.name .. "...")
+                        rednet.send(getParent(context).mailServerId, {type = "get_game_update", filename = game.file}, "SimpleMail")
+                        local _, update = rednet.receive("SimpleMail", 5)
+                        
+                        if update and update.code then
+                            local file = fs.open(gameFile, "w")
+                            if file then
+                                file.write(update.code)
+                                file.close()
+                                context.clear()
+                                shell.run(gameFile, getParent(context).username)
+                            else
+                                context.showMessage("Error", "Could not save game file.")
+                            end
+                        else
+                            context.showMessage("Error", "Could not download game from server.")
+                        end
                     else
                         context.clear()
                         shell.run(gameFile, getParent(context).username)
