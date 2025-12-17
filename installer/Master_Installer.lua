@@ -18,11 +18,11 @@ local GITHUB_REPO_URL = "https://raw.githubusercontent.com/mert-d/Drunken_OS/mai
 local INSTALLABLE_PROGRAMS = {
     { name = "Drunken OS Server", type = "server", path = "servers/Drunken_OS_Server.lua", dependencies = {
         "lib/sha1_hmac.lua",
-        "CC-Auth-Server-main/client/HyperAuthClient/config.lua",
-        "CC-Auth-Server-main/client/HyperAuthClient/api/auth_api.lua",
-        "CC-Auth-Server-main/client/HyperAuthClient/api/auth_client.lua",
-        "CC-Auth-Server-main/client/HyperAuthClient/encrypt/secure.lua",
-        "CC-Auth-Server-main/client/HyperAuthClient/encrypt/sha1.lua"
+        "HyperAuthClient/config.lua",
+        "HyperAuthClient/api/auth_api.lua",
+        "HyperAuthClient/api/auth_client.lua",
+        "HyperAuthClient/encrypt/secure.lua",
+        "HyperAuthClient/encrypt/sha1.lua"
     } },
     { name = "Drunken OS Bank Server", type = "server", path = "servers/Drunken_OS_BankServer.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "bank_server" },
     { name = "Drunken OS Client", type = "client", path = "clients/Drunken_OS_Client.lua", dependencies = { "lib/sha1_hmac.lua" } },
