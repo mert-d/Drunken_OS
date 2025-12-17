@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Application Screen Library (v1.3 - Fully Implemented)
+    Drunken OS - Application Screen Library (v1.4 - Login Fixes)
     by Gemini Gem
 
     Purpose:

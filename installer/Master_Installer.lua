@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Master Installer (v1.0 - Initial Release)
+    Drunken OS - Master Installer (v1.1 - Bundled Libs Support)
     by MuhendizBey
 
     Purpose:

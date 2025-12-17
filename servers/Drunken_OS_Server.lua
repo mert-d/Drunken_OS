@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mainframe Server (v10.13 - Dynamic Admin Fix)
+    Drunken OS - Mainframe Server (v10.14 - Library Updates)
     by MuhendizBey
 
     Purpose:

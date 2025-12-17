@@ -1,5 +1,6 @@
+```lua
 --[[
-    SimpleMail & Chat Client (v11.9 - Finalized Installer)
+    Drunken OS - Mobile Client (v12.0 - Release Version)
     by Gemini Gem & MuhendizBey
 
     Purpose:
