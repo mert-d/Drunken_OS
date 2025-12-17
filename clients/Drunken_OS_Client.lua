@@ -409,8 +409,10 @@ local function mainMenu()
             table.insert(options, 8, "Admin Console")
         end
         
-        -- Use 'context' here as well
-        local choice = state.apps.drawMenu(context, "Main Menu", options, "Welcome, " .. state.nickname)
+        -- Use local drawMenu. The original library call had a 'Header' which local drawMenu doesn't support directly
+        -- So we draw the header manually.
+        drawWindow("Main Menu - Welcome " .. (state.nickname or "Guest"))
+        local choice = drawMenu(options, 1, 2, 4)
         
         if not choice or options[choice] == "Logout" then break end
         
