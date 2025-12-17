@@ -692,23 +692,26 @@ function apps.changeNickname(context)
     end
 end
 
-function apps.updateGames(context)
+    function apps.updateGames(context)
     context.drawWindow("Updating Arcade")
     local y = 4
     local gamesDir = fs.combine(context.programDir, "games")
     if not fs.exists(gamesDir) then
-        term.setCursorPos(2, y); term.write("- Creating games directory...")
         fs.makeDir(gamesDir)
-        y = y + 1
     end
 
-    rednet.send(getParent(context).mailServerId, { type = "get_gamelist" }, "SimpleMail")
-    local _, gameListResponse = rednet.receive("SimpleMail", 5)
-    if not gameListResponse or not gameListResponse.games then
-        context.showMessage("Error", "Could not fetch game list.")
+    -- Step 1: Get list of ALL game versions from server
+    term.setCursorPos(2, y); term.write("Checking for updates...")
+    rednet.send(getParent(context).mailServerId, { type = "get_all_game_versions" }, "SimpleMail")
+    local _, response = rednet.receive("SimpleMail", 5)
+
+    if not response or response.type ~= "game_versions_response" or not response.versions then
+        context.showMessage("Error", "Could not fetch updates from server.")
         return
     end
-    local games = gameListResponse.games
+
+    local serverVersions = response.versions
+    local _, gameListResponse = rednet.receive("SimpleMail", 1) -- Flush potential old messages
 
     local function getLocalVersion(filename)
         local path = fs.combine(gamesDir, filename)
@@ -717,25 +720,32 @@ function apps.updateGames(context)
             if file then
                 local content = file.readAll()
                 file.close()
-                local version = string.match(content, "%-%-%s*Version:%s*([%d%.]+)")
-                return tonumber(version) or 0
+                local v = content:match("%-%-%s*Version:%s*([%d%.]+)")
+                if not v then
+                    v = content:match("local%s+currentVersion%s*=%s*([%d%.]+)")
+                end
+                return tonumber(v) or 0
             end
         end
         return 0
     end
 
-    for i, game in ipairs(games) do
-        local filename = game.file
-        term.setCursorPos(2, y); term.write("Checking " .. game.name .. "...")
-        local localVersion = getLocalVersion(filename)
+    y = y + 1
+    local updatesFound = false
+
+    -- Step 2: Compare with local versions
+    for filename, serverVer in pairs(serverVersions) do
+        -- Only update if we have the game installed OR if it's a core game
+        local localVer = getLocalVersion(filename)
         
-        rednet.send(getParent(context).mailServerId, {type = "get_version", program = filename}, "SimpleMail")
-        local _, response = rednet.receive("SimpleMail", 3)
-        
-        if response and response.version and response.version > localVersion then
-            term.setCursorPos(2, y+1); term.write("  -> New version found! Downloading...")
-            rednet.send(getParent(context).mailServerId, {type = "get_update", program = filename}, "SimpleMail")
-            local _, update = rednet.receive("SimpleMail", 10)
+        if serverVer > localVer then
+            updatesFound = true
+            context.drawWindow("Updating Arcade") -- clear screen
+            term.setCursorPos(2, 4); term.write("Updating " .. filename .. "...")
+            term.setCursorPos(2, 5); term.write("v" .. localVer .. " -> v" .. serverVer)
+            
+            rednet.send(getParent(context).mailServerId, {type = "get_game_update", filename = filename}, "SimpleMail")
+            local _, update = rednet.receive("SimpleMail", 5)
             
             if update and update.code then
                 local path = fs.combine(gamesDir, filename)
@@ -743,20 +753,16 @@ function apps.updateGames(context)
                 if file then
                     file.write(update.code)
                     file.close()
-                    term.setCursorPos(2, y+2); term.write("  -> Update successful!")
-                else
-                    term.setCursorPos(2, y+2); term.write("  -> Error: Could not save file.")
                 end
-            else
-                term.setCursorPos(2, y+2); term.write("  -> Error: Download failed.")
             end
-            y = y + 3
-        else
-            y = y + 1
         end
     end
-    term.setCursorPos(2, y+1); term.write("Update check complete.")
-    sleep(1.5)
+
+    if updatesFound then
+        context.showMessage("Success", "All games updated successfully!")
+    else
+        context.showMessage("Info", "All games are up to date.")
+    end
 end
 	function apps.enterArcade(context)
     context.drawWindow("Arcade")
