@@ -896,18 +896,31 @@ function adminCommands.syncgames(a)
     
     local updatedCount = 0
     for filename, _ in pairs(gamesToCheck) do
-        local url = baseUrl .. filename
-        logActivity("Fetching " .. filename .. "...")
+        local code, v = nil, nil
+        local fullPath = "games/" .. filename
         
-        local response = http.get(url)
-        if response then
-            local code = response.readAll()
-            response.close()
-            
-            local v = code:match("%-%-%s*Version:%s*([%d%.]+)")
+        -- Strategy 1: Check Local File (Bundled)
+        if fs.exists(fullPath) then
+            logActivity("Found local copy of " .. filename .. ". Reading...")
+            local f = fs.open(fullPath, "r")
+            code = f.readAll()
+            f.close()
+        else
+            -- Strategy 2: Check GitHub (Remote)
+            local url = baseUrl .. filename
+            logActivity("Fetching " .. filename .. " from GitHub...")
+            local response = http.get(url)
+            if response then
+                code = response.readAll()
+                response.close()
+            else
+                logActivity("Failed to download " .. filename, true)
+            end
+        end
+
+        if code then
+            v = code:match("%-%-%s*Version:%s*([%d%.]+)")
             if v then
-                local fullPath = "games/" .. filename
-                
                 -- Update Code DB
                 gameCode[fullPath] = {code = code, version = tonumber(v)}
                 
@@ -929,10 +942,8 @@ function adminCommands.syncgames(a)
                 updatedCount = updatedCount + 1
                 logActivity("Updated " .. filename .. " to v" .. v)
             else
-                logActivity("No version tag in " .. filename, true)
+                logActivity("No version tag in " .. filename .. " (Local: " .. tostring(fs.exists(fullPath)) .. ")", true)
             end
-        else
-            logActivity("Failed to download " .. filename, true)
         end
     end
     
