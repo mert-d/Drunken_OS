@@ -1,10 +1,13 @@
 --[[
-    Snake (v1.0)
+    Snake (v1.1)
     by MuhendizBey
 
     Purpose:
     A classic snake game for the Drunken OS.
+    Updated for auto-updater compatibility.
 ]]
+
+local currentVersion = 1.1
 
 --==============================================================================
 -- Main Game Function (to be run inside pcall)

@@ -1,12 +1,12 @@
 --[[
-    Floppa Bird (Gem Standard v1.5)
+    Floppa Bird (Gem Standard v1.6)
     by Gemini Gem
 
     Purpose:
-    This version adds a version variable for the new auto-updater.
+    Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 1.5
+local currentVersion = 1.6
 -- ... rest of the floppa bird game code
 --==============================================================================
 -- Main Game Function (to be run inside pcall)

@@ -1,12 +1,12 @@
 --[[
-    Invaders (Gem Standard v1.6)
+    Invaders (Gem Standard v1.7)
     by Gemini Gem
 
     Purpose:
-    This version adds a version variable for the new auto-updater.
+    Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 1.6
+local currentVersion = 1.7
 -- ... rest of the floppa bird game code
 
 --==============================================================================
