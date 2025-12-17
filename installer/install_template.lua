@@ -12,6 +12,8 @@
 -- Helper Functions
 --==============================================================================
 
+local run_setup_wizard -- Forward declaration
+
 local function showMessage(message)
     term.clear()
     term.setCursorPos(1, 1)
@@ -98,7 +100,7 @@ local function doInstallation()
     os.reboot()
 end
 
-local function run_setup_wizard(setup_type)
+run_setup_wizard = function(setup_type)
     if setup_type == "atm" then
         showMessage("Running ATM setup wizard...")
         print("Please enter the ID of the Bank Clerk Turtle:")
