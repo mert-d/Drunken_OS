@@ -748,7 +748,7 @@ end
             local _, update = rednet.receive("SimpleMail", 5)
             
             if update and update.code then
-                local path = fs.combine(gamesDir, filename)
+                local path = fs.combine(context.programDir, filename)
                 local file = fs.open(path, "w")
                 if file then
                     file.write(update.code)
@@ -796,7 +796,7 @@ end
                 if selected <= #games then
                     local w, h = term.getSize()
                     local game = games[selected]
-                    local gameFile = fs.combine(context.programDir, "games/" .. game.file)
+                    local gameFile = fs.combine(context.programDir, game.file)
                     if not fs.exists(gameFile) then
                         term.setCursorPos(2, h-1)
                         term.write("Downloading " .. game.name .. "...")
