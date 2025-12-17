@@ -257,15 +257,16 @@ local function createInstallDisk(program)
 
     local peripheralType = peripheral.getType(drive)
 
-    if peripheralType == "pocket_computer" then
-        if program.type == "client" then
-            installToPocketComputer(program, drive)
-            return
-        else
-            showMessage("Error", "Only Clients can be installed to a Pocket Computer.", true)
-            return
-        end
+    if program.name == "Drunken OS Client" then
+        -- Force direct installation for client, as it's likely a pocket computer
+        -- or intended to become a bootable disk.
+        installToPocketComputer(program, drive)
+        return
     end
+
+    -- For other programs, we might want to prevent installation on pocket computers
+    -- but distinguishing them from disks is hard. For now, we assume if it's not
+    -- the client, we make an installer disk.
 
     local mountPath = drive.getMountPath()
     if not mountPath then
