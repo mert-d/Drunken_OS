@@ -69,6 +69,11 @@ local function doInstallation()
     end
 
     showMessage("Files copied successfully.")
+    
+    if config.install_hyperauth then
+         showMessage("Installing HyperAuthClient...")
+         shell.run("wget run https://raw.githubusercontent.com/HyperRaccoon13/CC-Auth-Server/main/tools/ghsub.lua HyperRaccoon13 CC-Auth-Server main client/HyperAuthClient client/")
+    end
 
     -- Run the setup wizard if needed
     if config.needs_setup then
