@@ -317,11 +317,19 @@ local function createInstallDisk(program)
             return
         end
         local serverStartupFile = fs.open(mountPath .. "/server_startup.lua", "w")
+        if not serverStartupFile then
+            showMessage("Error", "Could not write server startup script. Disk full?", true)
+            return
+        end
         serverStartupFile.write(serverStartupScript)
         serverStartupFile.close()
     end
 
     local startupFile = fs.open(mountPath .. "/startup.lua", "w")
+    if not startupFile then
+        showMessage("Error", "Could not write installer startup script. Disk full?", true)
+        return
+    end
     startupFile.write(installScript)
     startupFile.close()
     print("Installation script written.")
