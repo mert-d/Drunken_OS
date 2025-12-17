@@ -875,12 +875,27 @@ end
 function adminCommands.syncgames(a)
     logActivity("Syncing games from GitHub...")
     local baseUrl = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/games/"
-    -- We use the gameList DB to know what games to fetch. 
-    -- Alternatively, we could fetch a manifest, but using the existing gameList is safer for now.
+    
+    -- List of core games to always check/install
+    local coreGames = {
+        "snake.lua",
+        "tetris.lua",
+        "invaders.lua",
+        "floppa_bird.lua"
+    }
+
+    -- Create a set of games to check (merging core games with existing list)
+    local gamesToCheck = {}
+    for _, filename in ipairs(coreGames) do
+        gamesToCheck[filename] = true
+    end
+    for _, game in ipairs(gameList) do
+        local filename = game.file:gsub("games/", "")
+        gamesToCheck[filename] = true
+    end
     
     local updatedCount = 0
-    for _, game in ipairs(gameList) do
-        local filename = game.file:gsub("games/", "") -- Remove directory prefix for URL
+    for filename, _ in pairs(gamesToCheck) do
         local url = baseUrl .. filename
         logActivity("Fetching " .. filename .. "...")
         
@@ -891,8 +906,26 @@ function adminCommands.syncgames(a)
             
             local v = code:match("%-%-%s*Version:%s*([%d%.]+)")
             if v then
-                local fullPath = game.file
+                local fullPath = "games/" .. filename
+                
+                -- Update Code DB
                 gameCode[fullPath] = {code = code, version = tonumber(v)}
+                
+                -- Update Game List DB (if new)
+                local found = false
+                for _, g in ipairs(gameList) do
+                    if g.file == fullPath then found = true; break end
+                end
+                
+                if not found then
+                    local name = filename:gsub(".lua", "")
+                    name = name:gsub("_", " ")
+                    name = name:gsub("^%l", string.upper)
+                    table.insert(gameList, {name = name, file = fullPath})
+                    saveTableToFile(GAMELIST_DB, gameList)
+                    logActivity("Added new game: " .. name)
+                end
+                
                 updatedCount = updatedCount + 1
                 logActivity("Updated " .. filename .. " to v" .. v)
             else
