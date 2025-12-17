@@ -920,6 +920,10 @@ function adminCommands.syncgames(a)
 
         if code then
             v = code:match("%-%-%s*Version:%s*([%d%.]+)")
+            if not v then
+                v = code:match("local%s+currentVersion%s*=%s*([%d%.]+)")
+            end
+
             if v then
                 -- Update Code DB
                 gameCode[fullPath] = {code = code, version = tonumber(v)}
