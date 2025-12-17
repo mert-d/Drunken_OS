@@ -16,7 +16,14 @@
 local GITHUB_REPO_URL = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
 
 local INSTALLABLE_PROGRAMS = {
-    { name = "Drunken OS Server", type = "server", path = "servers/Drunken_OS_Server.lua", dependencies = { "lib/sha1_hmac.lua" }, install_hyperauth = true },
+    { name = "Drunken OS Server", type = "server", path = "servers/Drunken_OS_Server.lua", dependencies = {
+        "lib/sha1_hmac.lua",
+        "CC-Auth-Server-main/client/HyperAuthClient/config.lua",
+        "CC-Auth-Server-main/client/HyperAuthClient/api/auth_api.lua",
+        "CC-Auth-Server-main/client/HyperAuthClient/api/auth_client.lua",
+        "CC-Auth-Server-main/client/HyperAuthClient/encrypt/secure.lua",
+        "CC-Auth-Server-main/client/HyperAuthClient/encrypt/sha1.lua"
+    } },
     { name = "Drunken OS Bank Server", type = "server", path = "servers/Drunken_OS_BankServer.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "bank_server" },
     { name = "Drunken OS Client", type = "client", path = "clients/Drunken_OS_Client.lua", dependencies = { "lib/sha1_hmac.lua" } },
     { name = "DB Bank ATM", type = "client", path = "clients/DB_Bank_ATM.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "atm" },
@@ -314,8 +321,7 @@ local function createInstallDisk(program)
         main_program = program.path,
         files = allFiles,
         needs_setup = program.needs_setup or false,
-        setup_type = program.setup_type or nil,
-        install_hyperauth = program.install_hyperauth or false
+        setup_type = program.setup_type or nil
     }
     local configFile = fs.open(mountPath .. "/install_config.lua", "w")
     configFile.write(textutils.serialize(config))
