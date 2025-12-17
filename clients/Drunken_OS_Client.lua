@@ -22,7 +22,7 @@
 local programDir = fs.getDir(shell.getRunningProgram())
 
 -- Add the program's local library folder to the list of places Lua looks for modules.
-package.path = fs.combine(programDir, "lib/?.lua;") .. package.path
+package.path = "/?.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
 
 --==============================================================================
 -- Configuration & State
