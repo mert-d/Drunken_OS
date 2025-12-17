@@ -22,6 +22,7 @@
 --==============================================================================
 
 -- Load our new, centralized cryptography library.
+package.path = "/?.lua;" .. package.path
 local crypto = require("lib.sha1_hmac")
 
 --==============================================================================
