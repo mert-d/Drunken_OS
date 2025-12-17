@@ -409,10 +409,28 @@ local function mainMenu()
             table.insert(options, 8, "Admin Console")
         end
         
-        -- Use local drawMenu. The original library call had a 'Header' which local drawMenu doesn't support directly
-        -- So we draw the header manually.
-        drawWindow("Main Menu - Welcome " .. (state.nickname or "Guest"))
-        local choice = drawMenu(options, 1, 2, 4)
+        local selected = 1
+        local choice = nil
+        
+        while true do
+            -- Redraw menu
+            drawWindow("Main Menu - Welcome " .. (state.nickname or "Guest"))
+            drawMenu(options, selected, 2, 4)
+            
+            -- Handle Input
+            local event, key = os.pullEvent("key")
+            if key == keys.up then
+                selected = (selected == 1) and #options or selected - 1
+            elseif key == keys.down then
+                selected = (selected == #options) and 1 or selected + 1
+            elseif key == keys.enter then
+                choice = selected
+                break
+            elseif key == keys.q or key == keys.tab then
+                -- choice remains nil, signals exit
+                break
+            end
+        end
         
         if not choice or options[choice] == "Logout" then break end
         
