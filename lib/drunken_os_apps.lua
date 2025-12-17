@@ -788,6 +788,7 @@ end
             elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
             elseif key == keys.enter then
                 if selected <= #games then
+                    local w, h = term.getSize()
                     local game = games[selected]
                     local gameFile = fs.combine(context.programDir, "games/" .. game.file)
                     if not fs.exists(gameFile) then
