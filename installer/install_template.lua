@@ -62,6 +62,9 @@ local function doInstallation()
         showMessage("Copying " .. filePath .. "...")
 
         ensureDir(destPath)
+        if fs.exists(destPath) then
+            fs.delete(destPath)
+        end
         fs.copy(sourcePath, destPath)
     end
 
