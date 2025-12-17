@@ -29,7 +29,7 @@ package.path = "/?.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 11.9
+local currentVersion = 12.2
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
