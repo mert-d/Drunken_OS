@@ -389,122 +389,9 @@ end
 -- Login & Main Menu Logic
 --==============================================================================
 
-local function completeAuthentication(user)
-    drawWindow("Authentication Required")
-    local w, h = getSafeSize()
-    local message = "A token has been sent to the Auth Server admin. Please ask them for your token and enter it below."
-    local lines = wordWrap(message, w - 4)
-    for i, line in ipairs(lines) do
-        term.setCursorPos(3, 4 + i - 1)
-        term.write(line)
-    end
-    
-    local token_raw = readInput("Auth Token: ", 4 + #lines + 2, false)
-    if not token_raw or token_raw == "" then
-        showMessage("Cancelled", "Authentication cancelled.")
-        return false
-    end
+-- Legacy local implementation moved to lib/drunken_os_apps.lua
 
-    local token_clean = token_raw:gsub("%s+", "")
-    drawWindow("Verifying Token...")
-    rednet.send(state.mailServerId, { type = "submit_auth_token", user = user, token = token_clean }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 10)
-
-    if response and response.success then
-        state.username = user
-        state.nickname = response.nickname
-        state.unreadCount = response.unreadCount or 0
-        state.isAdmin = response.isAdmin or false
-        if response.session_token then
-            local file = fs.open(SESSION_FILE, "w")
-            if file then
-                file.write(response.session_token)
-                file.close()
-            end
-        end
-        showMessage("Success", "Authentication successful!")
-        return true
-    else
-        showMessage("Authentication Failed", response.reason or "No response from server.")
-        return false
-    end
-end
-
-function loginOrRegister()
-    local options = {"Login", "Register", "Exit"}
-    local selected = 1
-    while not state.username do
-        drawWindow("Welcome")
-        drawMenu(options, selected, 2, 5)
-        local event, key = os.pullEvent("key")
-        if key == keys.up then
-            selected = (selected == 1) and #options or selected - 1
-        elseif key == keys.down then
-            selected = (selected == #options) and 1 or selected + 1
-        elseif key == keys.enter then
-            if selected == 1 then -- Login
-                drawWindow("Login")
-                local user = readInput("Username: ", 5, false)
-                if user and user ~= "" then
-                    local pass = readInput("Password: ", 7, true)
-                    if pass and pass ~= "" then
-                        local session_token = nil
-                        if fs.exists(SESSION_FILE) then
-                            local file = fs.open(SESSION_FILE, "r")
-                            if file then
-                                session_token = file.readAll()
-                                file.close()
-                            end
-                        end
-                        
-                        rednet.send(state.mailServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "SimpleMail")
-                        local _, response = rednet.receive("SimpleMail", 10)
-
-                        if response and response.success then
-                            if response.needs_auth then
-                                if not completeAuthentication(user) then
-                                    state.username = nil
-                                end
-                            else
-                                state.username = user
-                                state.nickname = response.nickname
-                                state.unreadCount = response.unreadCount or 0
-                                state.isAdmin = response.isAdmin or false
-                            end
-                        else
-                            showMessage("Login Failed", response.reason or "No response.")
-                        end
-                    end
-                end
-            elseif selected == 2 then -- Register
-                drawWindow("Register")
-                local user = readInput("Choose Username: ", 5, false)
-                if user and user ~= "" then
-                    local nick = readInput("Choose Nickname: ", 7, false)
-                    if nick and nick ~= "" then
-                        local pass = readInput("Choose Password: ", 9, true)
-                        if pass and pass ~= "" then
-                            rednet.send(state.mailServerId, { type = "register", user = user, pass = pass, nickname = nick }, "SimpleMail")
-                            local _, response = rednet.receive("SimpleMail", 5)
-                            if response and response.success and response.needs_auth then
-                                if not completeAuthentication(user) then
-                                    state.username = nil
-                                end
-                            else
-                                showMessage("Registration Failed", response.reason or "No response.")
-                            end
-                        end
-                    end
-                end
-            elseif selected == 3 then
-                return false
-            end
-        elseif key == keys.tab then
-            return false
-        end
-    end
-    return true
-end
+-- Legacy loginOrRegister moved to lib/drunken_os_apps.lua
 
 local function mainMenu()
     while true do
@@ -522,20 +409,21 @@ local function mainMenu()
             table.insert(options, 8, "Admin Console")
         end
         
-        local choice = state.apps.drawMenu(state, "Main Menu", options, "Welcome, " .. state.nickname)
+        -- Use 'context' here as well
+        local choice = state.apps.drawMenu(context, "Main Menu", options, "Welcome, " .. state.nickname)
         
         if not choice or options[choice] == "Logout" then break end
         
         local selection = options[choice]
-        -- THE FIX: All calls now correctly reference the 'apps' library
-        if selection:match("Read Mail") then state.apps.readMail(state)
-        elseif selection == "Send Mail" then state.apps.sendMail(state)
-        elseif selection == "General Chat" then state.apps.chat(state)
-        elseif selection == "Mailing Lists" then state.apps.manageLists(state)
-        elseif selection == "Games" then state.apps.gameMenu(state)
-        elseif selection == "System" then state.apps.systemMenu(state)
-        elseif selection == "Help" then state.apps.showHelpScreen(state)
-        elseif selection == "Admin Console" then state.apps.adminConsole(state)
+        -- Use 'context' for all calls
+        if selection:match("Read Mail") then state.apps.readMail(context)
+        elseif selection == "Send Mail" then state.apps.sendMail(context)
+        elseif selection == "General Chat" then state.apps.startChat(context)
+        elseif selection == "Mailing Lists" then state.apps.manageLists(context)
+        elseif selection == "Games" then state.apps.enterArcade(context)
+        elseif selection == "System" then state.apps.systemMenu(context)
+        elseif selection == "Help" then state.apps.showHelpScreen(context)
+        elseif selection == "Admin Console" then state.apps.adminConsole(context)
         end
     end
     state.username = nil -- Signal logout
@@ -594,7 +482,8 @@ local function main()
 
             state.username = nil
             state.isAdmin = false
-            if not state.apps.loginOrRegister(state) then -- Hand off to the library for login UI
+            -- Pass 'context' so the library has access to UI functions
+            if not state.apps.loginOrRegister(context) then 
                 clear(); print("Goodbye!"); break
             end
             

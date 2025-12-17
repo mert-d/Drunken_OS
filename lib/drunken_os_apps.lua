@@ -25,6 +25,132 @@ local function getParent(context)
 end
 
 --==============================================================================
+-- Login & Main Menu Logic
+--==============================================================================
+
+local function completeAuthentication(context, user)
+    context.drawWindow("Authentication Required")
+    local w, h = context.getSafeSize()
+    local message = "A token has been sent to the Auth Server admin. Please ask them for your token and enter it below."
+    local lines = context.wordWrap(message, w - 4)
+    for i, line in ipairs(lines) do
+        term.setCursorPos(3, 4 + i - 1)
+        term.write(line)
+    end
+    
+    local token_raw = context.readInput("Auth Token: ", 4 + #lines + 2, false)
+    if not token_raw or token_raw == "" then
+        context.showMessage("Cancelled", "Authentication cancelled.")
+        return false
+    end
+
+    local token_clean = token_raw:gsub("%s+", "")
+    context.drawWindow("Verifying Token...")
+    rednet.send(getParent(context).mailServerId, { type = "submit_auth_token", user = user, token = token_clean }, "SimpleMail")
+    local _, response = rednet.receive("SimpleMail", 10)
+
+    if response and response.success then
+        getParent(context).username = user
+        getParent(context).nickname = response.nickname
+        getParent(context).unreadCount = response.unreadCount or 0
+        getParent(context).isAdmin = response.isAdmin or false
+        if response.session_token then
+            -- We can't easily write to a file in the program dir from here without the path
+            -- Luckily context has programDir
+            local sessionPath = fs.combine(context.programDir, ".session")
+            local file = fs.open(sessionPath, "w")
+            if file then
+                file.write(response.session_token)
+                file.close()
+            end
+        end
+        context.showMessage("Success", "Authentication successful!")
+        return true
+    else
+        context.showMessage("Authentication Failed", response.reason or "No response from server.")
+        return false
+    end
+end
+
+function apps.loginOrRegister(context)
+    local options = {"Login", "Register", "Exit"}
+    local selected = 1
+    while not getParent(context).username do
+        context.drawWindow("Welcome")
+        context.drawMenu(options, selected, 2, 5)
+        local event, key = os.pullEvent("key")
+        if key == keys.up then
+            selected = (selected == 1) and #options or selected - 1
+        elseif key == keys.down then
+            selected = (selected == #options) and 1 or selected + 1
+        elseif key == keys.enter then
+            if selected == 1 then -- Login
+                context.drawWindow("Login")
+                local user = context.readInput("Username: ", 5, false)
+                if user and user ~= "" then
+                    local pass = context.readInput("Password: ", 7, true)
+                    if pass and pass ~= "" then
+                        local session_token = nil
+                        local sessionPath = fs.combine(context.programDir, ".session")
+                        if fs.exists(sessionPath) then
+                            local file = fs.open(sessionPath, "r")
+                            if file then
+                                session_token = file.readAll()
+                                file.close()
+                            end
+                        end
+                        
+                        rednet.send(getParent(context).mailServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "SimpleMail")
+                        local _, response = rednet.receive("SimpleMail", 10)
+
+                        if response and response.success then
+                            if response.needs_auth then
+                                if not completeAuthentication(context, user) then
+                                    getParent(context).username = nil
+                                end
+                            else
+                                getParent(context).username = user
+                                getParent(context).nickname = response.nickname
+                                getParent(context).unreadCount = response.unreadCount or 0
+                                getParent(context).isAdmin = response.isAdmin or false
+                            end
+                        else
+                            context.showMessage("Login Failed", response.reason or "No response.")
+                        end
+                    end
+                end
+            elseif selected == 2 then -- Register
+                context.drawWindow("Register")
+                local user = context.readInput("Choose Username: ", 5, false)
+                if user and user ~= "" then
+                    local nick = context.readInput("Choose Nickname: ", 7, false)
+                    if nick and nick ~= "" then
+                        local pass = context.readInput("Choose Password: ", 9, true)
+                        if pass and pass ~= "" then
+                            rednet.send(getParent(context).mailServerId, { type = "register", user = user, pass = pass, nickname = nick }, "SimpleMail")
+                            local _, response = rednet.receive("SimpleMail", 5)
+                            if response and response.success and response.needs_auth then
+                                if not completeAuthentication(context, user) then
+                                    getParent(context).username = nil
+                                end
+                            else
+                                context.showMessage("Registration Failed", response.reason or "No response.")
+                            end
+                        end
+                    end
+                end
+            elseif selected == 3 then
+                return false
+            end
+        elseif key == keys.tab then
+            return false
+        end
+    end
+    return true
+end
+
+
+--==============================================================================
 -- Mail Application Screens
 --==============================================================================
 
