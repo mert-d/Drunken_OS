@@ -14,13 +14,7 @@ local currentVersion = 1.8
 --==============================================================================
 
 local args = {...}
-local username = args[1]
-if not username then
-    print("This game must be launched from the mail client.")
-    print("Please select 'Play Games' from the menu.")
-    sleep(4)
-    return
-end
+local username = args[1] or "Guest" -- Fallback to Guest
 
 local gameName = "Tetris" -- For the leaderboard
 local arcadeServerId = nil

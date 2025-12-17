@@ -15,13 +15,8 @@ local currentVersion = 1.7
 
 local function mainGame(...)
     local args = {...}
-    local username = args[1]
-    if not username then
-        print("This game must be launched from the mail client.")
-        print("Please select 'Play Games' from the menu.")
-        sleep(4)
-        return
-    end
+    local username = args[1] or "Guest" -- Fallback to Guest
+    -- if not username then ... (removed check)
 
     local gameName = "Invaders"
     local arcadeServerId = nil
