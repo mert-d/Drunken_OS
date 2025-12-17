@@ -1,6 +1,5 @@
-
 --[[
-    Drunken OS - Mobile Client (v12.2 - Release Version)
+    Drunken OS - Mobile Client (v12.3 - Release Version)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -8,11 +7,9 @@
     code distribution system of Server v10.6+.
 
     Key Changes:
-    - Version number incremented to v11.9.
-    - Corrected the `autoUpdateCheck` to use the `programName` variable,
-      ensuring it correctly checks its own version against the server.
-    - No other functional changes needed; the installer logic from v11.7
-      is already compatible with the new server.
+    - Version number incremented to v12.3.
+    - Added support for dynamic game installation (auto-download on first launch).
+    - Improved menu event loop.
 ]]
 
 --==============================================================================
