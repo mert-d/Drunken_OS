@@ -154,7 +154,17 @@ end
 -- Core Application Logic
 --==============================================================================
 
-local function downloadFile(path)
+local function getFileContent(path)
+    -- Try local file first (Bundling)
+    if fs.exists(path) then
+        print("Reading local file " .. path .. "...")
+        local file = fs.open(path, "r")
+        local content = file.readAll()
+        file.close()
+        return content
+    end
+
+    -- Fallback to remote download
     local url = GITHUB_REPO_URL .. path
     print("Downloading " .. path .. "...")
     local response = http.get(url)
@@ -190,9 +200,9 @@ local function installToPocketComputer(program, drive)
     end
 
     for _, filePath in ipairs(allFiles) do
-        local fileCode = downloadFile(filePath)
+        local fileCode = getFileContent(filePath)
         if not fileCode then
-            showMessage("Error", "Failed to download " .. filePath, true)
+            showMessage("Error", "Failed to get content for " .. filePath, true)
             return
         end
 
@@ -222,18 +232,18 @@ local function installToPocketComputer(program, drive)
 end
 
 local function createInstallDisk(program)
-    printCentered(10, "Downloading files...")
-    local programCode = downloadFile(program.path)
+    printCentered(10, "Gathering files...")
+    local programCode = getFileContent(program.path)
     if not programCode then
-        showMessage("Error", "Failed to download " .. program.path, true)
+        showMessage("Error", "Failed to get content for " .. program.path, true)
         return
     end
 
     local dependencies = {}
     for _, depPath in ipairs(program.dependencies) do
-        local depCode = downloadFile(depPath)
+        local depCode = getFileContent(depPath)
         if not depCode then
-            showMessage("Error", "Failed to download " .. depPath, true)
+            showMessage("Error", "Failed to get content for " .. depPath, true)
             return
         end
         dependencies[depPath] = depCode
@@ -247,7 +257,15 @@ local function createInstallDisk(program)
 
     local peripheralType = peripheral.getType(drive)
 
-    -- Device check removed to allow installation on any disk
+    if peripheralType == "pocket_computer" then
+        if program.type == "client" then
+            installToPocketComputer(program, drive)
+            return
+        else
+            showMessage("Error", "Only Clients can be installed to a Pocket Computer.", true)
+            return
+        end
+    end
 
     local mountPath = drive.getMountPath()
     if not mountPath then
@@ -280,14 +298,14 @@ local function createInstallDisk(program)
 
     -- Write the installation script(s)
     print("Writing installation script(s)...")
-    local installScript = downloadFile("installer/install_template.lua")
+    local installScript = getFileContent("installer/install_template.lua")
     if not installScript then
-        showMessage("Error", "Failed to download the main installation script.", true)
+        showMessage("Error", "Failed to get main installation script.", true)
         return
     end
 
     if program.type == "server" then
-        local serverStartupScript = downloadFile("installer/server_startup_template.lua")
+        local serverStartupScript = getFileContent("installer/server_startup_template.lua")
         if not serverStartupScript then
             showMessage("Error", "Failed to download the server startup script.", true)
             return

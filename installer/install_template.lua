@@ -63,6 +63,9 @@ local function doInstallation()
 
         showMessage("Copying " .. filePath .. "...")
 
+        print("Source: " .. sourcePath)
+        print("Source Exists: " .. tostring(fs.exists(sourcePath)))
+        print("Dest: " .. destPath)
         ensureDir(destPath)
         if fs.exists(destPath) then
             fs.delete(destPath)
