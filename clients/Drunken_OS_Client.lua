@@ -25,7 +25,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 12.8
+local currentVersion = 12.9
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -56,7 +56,10 @@ local state = {
     username = nil,
     isAdmin = false,
     apps = nil,
-    crypto = nil
+    crypto = nil,
+    chatServerId = nil,
+    nickname = nil,
+    unreadCount = 0
 }
 
 -- Universal word-wrap
@@ -155,6 +158,7 @@ end
 
 local function findServers()
     state.mailServerId = rednet.lookup("SimpleMail", "mail.server")
+    state.chatServerId = rednet.lookup("SimpleChat", "chat.server")
     state.adminServerId = state.mailServerId -- Often same server
     if not state.mailServerId then
         return false, "Mainframe (mail.server) not found."
