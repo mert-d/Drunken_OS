@@ -11,18 +11,21 @@
 -- API & Library Initialization
 --==============================================================================
 
-local version = 2.05
+local version = 2.06
 local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
 
-local ok_crypto, crypto = pcall(require, "lib.sha1_hmac")
-local ok_updater, updater = pcall(require, "lib.updater")
+local function safeRequire(mod)
+    local ok, res = pcall(require, mod)
+    return ok and res or nil
+end
 
-if not ok_crypto or not ok_updater then
+local crypto = safeRequire("lib.sha1_hmac") or safeRequire("sha1_hmac")
+local updater = safeRequire("lib.updater") or safeRequire("updater")
+
+if not crypto then
     term.clear(); term.setCursorPos(1,1)
-    print("Error: Missing libraries!")
-    print("Needed: lib/sha1_hmac.lua, lib/updater.lua")
-    print("Please run 'wget run https://raw.githubusercontent.com/mert-d/Drunken_OS/main/installer/install_template.lua' or use the Master Installer.")
+    print("Error: Missing library 'lib/sha1_hmac.lua'")
     return
 end
 

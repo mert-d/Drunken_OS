@@ -580,8 +580,8 @@ end
 -- Banking Applications
 --==============================================================================
 
-local BANK_PROTOCOL = "BANK_SERVICE_v1"
-local BANK_MERCHANT_PROTOCOL = "BANK_MERCHANT_PROTOCOL"
+local BANK_PROTOCOL = "DB_Bank"
+local BANK_MERCHANT_PROTOCOL = "DB_Bank" -- Server uses DB_Bank for payments too
 
 local function getBankSession(context)
     local bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")

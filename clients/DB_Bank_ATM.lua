@@ -20,7 +20,8 @@
 -- API & Library Initialization
 --==============================================================================
 
-package.path = "/?.lua;" .. package.path
+local programDir = fs.getDir(shell.getRunningProgram())
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
 local crypto = require("lib.sha1_hmac")
 
 local CONFIG_PATH = "atm.conf" -- Define the config file path

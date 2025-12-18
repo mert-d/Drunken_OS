@@ -18,9 +18,8 @@
 
 -- Get the directory where this program is running.
 local programDir = fs.getDir(shell.getRunningProgram())
-
--- Add the program's local library folder to the list of places Lua looks for modules.
-package.path = "/?.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
+local crypto = require("lib.sha1_hmac")
 
 --==============================================================================
 -- Configuration & State
@@ -161,6 +160,8 @@ local function findServers()
     end
     return true
 end
+
+state.crypto = crypto
 
 local context = {
     drawWindow = drawWindow,
