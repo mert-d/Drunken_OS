@@ -937,7 +937,7 @@ function adminCommands.sync(a)
     
     if target == "libs" or target == "all" then
         logActivity("Syncing Libraries...")
-        local libs = { "lib/drunken_os_apps.lua", "lib/sha1_hmac.lua" }
+        local libs = { "lib/drunken_os_apps.lua", "lib/sha1_hmac.lua", "lib/updater.lua" }
         for _, path in ipairs(libs) do
             if fs.exists(path) then
                 local f = fs.open(path, "r")
@@ -956,6 +956,21 @@ function adminCommands.sync(a)
     
     if target == "games" or target == "all" then
        adminCommands.syncgames(a)
+    end
+    
+    if target == "auditor" or target == "all" then
+        logActivity("Syncing Auditor...")
+        local path = "turtles/Auditor.lua"
+        if fs.exists(path) then
+            local f = fs.open(path, "r")
+            local code = f.readAll()
+            f.close()
+            programCode["Auditor"] = code
+            saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
+            logActivity("Published Auditor.")
+        else
+            logActivity("Auditor source not found at " .. path, true)
+        end
     end
 end
 

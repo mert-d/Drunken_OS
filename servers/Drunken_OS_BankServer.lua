@@ -353,6 +353,21 @@ function bankHandlers.login(senderId, message)
     end
 end
 
+-- New: Broadcast security events to the Auditor Turtle
+local function broadcastSecurityEvent(event, amount, isAlert)
+    if not AUDIT_SECRET_KEY then return end
+    local timestamp = os.time()
+    local signature = crypto.hmac_hex(AUDIT_SECRET_KEY, event .. timestamp)
+    rednet.broadcast({
+        type = "security_event",
+        event = event,
+        amount = amount,
+        isAlert = isAlert,
+        timestamp = timestamp,
+        signature = signature
+    }, "DB_Audit")
+end
+
 -- Sets the initial PIN for a new account.
 function bankHandlers.set_pin(senderId, message)
     local user, pin_hash = message.user, message.pin_hash
@@ -451,6 +466,7 @@ function bankHandlers.deposit(senderId, message)
                 end
                 logTransaction(user, "DEPOSIT", transaction_data)
                 logActivity(string.format("Stock updated for deposit: %s", table.concat(transaction_summary, ", ")))
+                broadcastSecurityEvent(string.format("DEP: %s +$%d", user, total_value), total_value)
                 needsRedraw = true -- Update the GUI
             else
                 rednet.send(senderId, { success = false, reason = "Server database error." }, BANK_PROTOCOL)
@@ -520,6 +536,7 @@ function bankHandlers.finalize_withdrawal(senderId, message)
         logTransaction(user, "WITHDRAW", transaction_data)
         logActivity(string.format("Finalized withdrawal for '%s'. New balance: $%d", user, account.balance))
         logActivity(string.format("Stock updated for withdrawal: %d %s", count, itemName))
+        broadcastSecurityEvent(string.format("WDR: %s -$%d", user, totalCost), totalCost)
         needsRedraw = true -- Update the GUI
         
         rednet.send(senderId, { success = true, newBalance = account.balance }, BANK_PROTOCOL)
@@ -577,6 +594,7 @@ function bankHandlers.transfer(senderId, message)
         logTransaction(sender, "TRANSFER_OUT", { recipient = recipient, amount = amount })
         logTransaction(recipient, "TRANSFER_IN", { sender = sender, amount = amount })
         logActivity(string.format("Transfer: $%d from '%s' to '%s'.", amount, sender, recipient))
+        broadcastSecurityEvent(string.format("XFER: %s->%s $%d", sender, recipient, amount), amount)
         rednet.send(senderId, { success = true, newBalance = senderAcc.balance }, BANK_PROTOCOL)
         needsRedraw = true
     else
@@ -634,6 +652,7 @@ function bankHandlers.process_payment(senderId, message)
         logTransaction(sender, "PAYMENT_OUT", { merchant = recipient, amount = amount, meta = metadata })
         logTransaction(recipient, "PAYMENT_IN", { customer = sender, amount = amount, meta = metadata })
         logActivity(string.format("Payment: $%d from '%s' to '%s' [%s].", amount, sender, recipient, metadata))
+        broadcastSecurityEvent(string.format("PAY: %s->%s $%d", sender, recipient, amount), amount)
         
         rednet.send(senderId, { success = true, newBalance = senderAcc.balance }, BANK_PROTOCOL)
         
