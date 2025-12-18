@@ -7,7 +7,7 @@
     Updated for auto-updater compatibility.
 ]]
 
-local currentVersion = 1.3
+local currentVersion = 5.0
 
 --==============================================================================
 -- Main Game Function (to be run inside pcall)

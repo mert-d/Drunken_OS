@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 2.2
+local currentVersion = 5.0
 -- ... rest of the tetris game code
 
 --==============================================================================
@@ -49,8 +49,7 @@ local theme = {
 
 -- Tetromino shapes and colors
 local pieces = {
-    { {{0,0,0,0}, {1,1,1,1}, {0,0,0,0}, {0,0,0,0}}, color = colors.cyan },   --
-I
+    { {{0,0,0,0}, {1,1,1,1}, {0,0,0,0}, {0,0,0,0}}, color = colors.cyan },   -- I
     { {{1,1}, {1,1}}, color = colors.yellow },                            -- O
     { {{0,1,0}, {1,1,1}, {0,0,0}}, color = colors.purple },                -- T
     { {{0,0,1}, {1,1,1}, {0,0,0}}, color = colors.blue },                  -- J
@@ -178,8 +177,7 @@ local function draw()
             for x = 1, boardWidth do
                 if board[y][x] then
                     term.setBackgroundColor(board[y][x])
-                    term.setCursorPos(boardXOffset + (x - 1) * 2, boardYOffset +
- y - 1)
+                    term.setCursorPos(boardXOffset + (x - 1) * 2, boardYOffset + y - 1)
                     term.write("  ")
                 end
             end
@@ -192,8 +190,7 @@ local function draw()
         for r = 1, #currentPiece[1] do
             for c = 1, #currentPiece[1][r] do
                 if currentPiece[1][r][c] == 1 then
-                    term.setCursorPos(boardXOffset + (currentPiece.x + c - 1) *
-2, boardYOffset + currentPiece.y + r - 1)
+                    term.setCursorPos(boardXOffset + (currentPiece.x + c - 1) * 2, boardYOffset + currentPiece.y + r - 1)
                     term.write("  ")
                 end
             end
@@ -251,34 +248,27 @@ local function showGameOverScreen()
     local boxY = math.floor((h - boxHeight) / 2)
 
     term.setBackgroundColor(theme.windowBg)
-    for y = 0, boxHeight - 1 do term.setCursorPos(boxX, boxY + y); term.write(st
-ring.rep(" ", boxWidth)) end
+    for y = 0, boxHeight - 1 do term.setCursorPos(boxX, boxY + y); term.write(string.rep(" ", boxWidth)) end
 
     local title = "Game Over"
-    term.setCursorPos(boxX + math.floor((boxWidth - #title) / 2), boxY + 1); ter
-m.setTextColor(colors.red); term.write(title)
+    term.setCursorPos(boxX + math.floor((boxWidth - #title) / 2), boxY + 1); term.setTextColor(colors.red); term.write(title)
 
     local scoreText = "Final Score: " .. score
-    term.setCursorPos(boxX + math.floor((boxWidth - #scoreText) / 2), boxY + 3);
- term.setTextColor(theme.text); term.write(scoreText)
+    term.setCursorPos(boxX + math.floor((boxWidth - #scoreText) / 2), boxY + 3); term.setTextColor(theme.text); term.write(scoreText)
 
     if arcadeServerId then
-        rednet.send(arcadeServerId, {type = "get_leaderboard", game = gameName},
- "ArcadeGames")
+        rednet.send(arcadeServerId, {type = "get_leaderboard", game = gameName}, "ArcadeGames")
         local _, response = rednet.receive("ArcadeGames", 3)
         if response and response.leaderboard then
-            local sortedScores = {}; for user, s in pairs(response.leaderboard)
-do table.insert(sortedScores, {user = user, score = s}) end
+            local sortedScores = {}; for user, s in pairs(response.leaderboard) do table.insert(sortedScores, {user = user, score = s}) end
             table.sort(sortedScores, function(a,b) return a.score > b.score end)
 
             local lbTitle = "--- Leaderboard ---"
-            term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2), boxY
- + 5); term.setTextColor(theme.title); term.write(lbTitle)
+            term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2), boxY + 5); term.setTextColor(theme.title); term.write(lbTitle)
 
             term.setTextColor(theme.text)
             for i = 1, math.min(10, #sortedScores) do
-                local entry = string.format("%2d. %-15s %d", i, sortedScores[i].
-user, sortedScores[i].score)
+                local entry = string.format("%2d. %-15s %d", i, sortedScores[i].user, sortedScores[i].score)
                 term.setCursorPos(boxX + 2, boxY + 6 + i)
                 term.write(entry)
             end
@@ -286,8 +276,7 @@ user, sortedScores[i].score)
     end
 
     local prompt = "Press any key to exit..."
-    term.setCursorPos(boxX + math.floor((boxWidth - #prompt) / 2), boxY + boxHei
-ght - 2); term.setTextColor(theme.prompt); term.write(prompt)
+    term.setCursorPos(boxX + math.floor((boxWidth - #prompt) / 2), boxY + boxHeight - 2); term.setTextColor(theme.prompt); term.write(prompt)
 
     os.pullEvent("key")
 end
@@ -311,24 +300,43 @@ local function mainGame()
         if event == "key" then
             if p1 == keys.left then
                 currentPiece.x = currentPiece.x - 1
-                if not isValid(currentPiece) then currentPiece.x = currentPiece.x +
-1 end
+                if not isValid(currentPiece) then currentPiece.x = currentPiece.x + 1 end
             elseif p1 == keys.right then
                 currentPiece.x = currentPiece.x + 1
-                if not isValid(currentPiece) then currentPiece.x = currentPiece.x -
-1 end
+                if not isValid(currentPiece) then currentPiece.x = currentPiece.x - 1 end
             elseif p1 == keys.up then
                 local originalShape = currentPiece[1]
                 currentPiece[1] = rotatePiece(currentPiece)
-                if not isValid(currentPiece) then currentPiece[1] = originalShape en
-d
-        break
-    end
+                if not isValid(currentPiece) then currentPiece[1] = originalShape end
+            elseif p1 == keys.down then
+                currentPiece.y = currentPiece.y + 1
+                if not isValid(currentPiece) then
+                    currentPiece.y = currentPiece.y - 1
+                    lockPiece()
+                    newPiece()
+                end
+            elseif p1 == keys.space then
+                while isValid(currentPiece) do currentPiece.y = currentPiece.y + 1 end
+                currentPiece.y = currentPiece.y - 1
+                lockPiece()
+                newPiece()
+            elseif p1 == keys.q then
+                gameOver = true
+            end
+        elseif event == "timer" and p1 == dropTimer then
+            currentPiece.y = currentPiece.y + 1
+            if not isValid(currentPiece) then
+                currentPiece.y = currentPiece.y - 1
+                lockPiece()
+                newPiece()
+            end
+            dropTimer = os.startTimer(math.max(0.1, 0.5 - (level * 0.05)))
+        elseif event == "terminate" then
+            break
+        end
 
-    draw()
-
-    if gameOver then
-        break
+        draw()
+        if gameOver then break end
     end
 end
 

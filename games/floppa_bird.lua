@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 2.0
+local currentVersion = 5.0
 -- ... rest of the floppa bird game code
 --==============================================================================
 -- Main Game Function (to be run inside pcall)
@@ -50,8 +50,7 @@ local function mainGame(...)
         local gapSize = 6
         local gapY = math.random(3, h - gapSize - 2)
 
-        table.insert(pipes, { x = w, y = gapY, width = 5, gap = gapSize, scored
-= false })
+        table.insert(pipes, { x = w, y = gapY, width = 5, gap = gapSize, scored = false })
     end
 
     local function updatePlayer()
@@ -137,22 +136,18 @@ local function mainGame(...)
             local _, response = rednet.receive("ArcadeGames", 3)
             if response and response.leaderboard then
                 local sortedScores = {}; for user, s in pairs(response.leaderboard) do table.insert(sortedScores, {user = user, score = s}) end
-                table.sort(sortedScores, function(a,b) return a.score > b.score
-end)
+                table.sort(sortedScores, function(a,b) return a.score > b.score end)
                 local lbTitle = "--- Leaderboard ---"
-                term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2),
-boxY + 5); term.setTextColor(theme.title); term.write(lbTitle)
+                term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2), boxY + 5); term.setTextColor(theme.title); term.write(lbTitle)
                 term.setTextColor(theme.text)
                 for i = 1, math.min(10, #sortedScores) do
-                    local entry = string.format("%2d. %-15s %d", i, sortedScores
-[i].user, sortedScores[i].score)
+                    local entry = string.format("%2d. %-15s %d", i, sortedScores[i].user, sortedScores[i].score)
                     term.setCursorPos(boxX + 2, boxY + 6 + i); term.write(entry)
                 end
             end
         end
         local prompt = "Press any key to exit..."
-        term.setCursorPos(boxX + math.floor((boxWidth - #prompt) / 2), boxY + bo
-xHeight - 2); term.setTextColor(theme.prompt); term.write(prompt)
+        term.setCursorPos(boxX + math.floor((boxWidth - #prompt) / 2), boxY + boxHeight - 2); term.setTextColor(theme.prompt); term.write(prompt)
 
         -- **NEW**: Add a delay before listening for the exit key.
         sleep(2)

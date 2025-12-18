@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 2.1
+local currentVersion = 5.0
 -- ... rest of the floppa bird game code
 
 --==============================================================================
@@ -185,52 +185,39 @@ local function mainGame(...)
         local levelText = "Level: " .. level
         term.setCursorPos(2, 1); term.write(scoreText)
         term.setCursorPos(w - #livesText, 1); term.write(livesText)
-        term.setCursorPos(math.floor(w/2 - #levelText/2), 1); term.write(levelTe
-xt)
+        term.setCursorPos(math.floor(w/2 - #levelText/2), 1); term.write(levelText)
     end
 
-    local function submitScore() if arcadeServerId then rednet.send(arcadeServer
-Id, {type = "submit_score", game = gameName, user = username, score = score}, "A
-rcadeGames") end end
+    local function submitScore() if arcadeServerId then rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames") end end
 
     local function showGameOverScreen()
         submitScore()
         local w, h = getSafeSize()
         term.setBackgroundColor(theme.windowBg); term.clear()
         local boxWidth = 32; local boxHeight = 18
-        local boxX = math.floor((w - boxWidth) / 2); local boxY = math.floor((h
-- boxHeight) / 2)
-        for y = 0, boxHeight - 1 do term.setCursorPos(boxX, boxY + y); term.writ
-e(string.rep(" ", boxWidth)) end
+        local boxX = math.floor((w - boxWidth) / 2); local boxY = math.floor((h - boxHeight) / 2)
+        for y = 0, boxHeight - 1 do term.setCursorPos(boxX, boxY + y); term.write(string.rep(" ", boxWidth)) end
         local title = "Game Over"
-        term.setCursorPos(boxX + math.floor((w - #title) / 2), boxY + 1); term.s
-etTextColor(colors.red); term.write(title)
+        term.setCursorPos(boxX + math.floor((w - #title) / 2), boxY + 1); term.setTextColor(colors.red); term.write(title)
         local scoreText = "Final Score: " .. score
-        term.setCursorPos(boxX + math.floor((w - #scoreText) / 2), boxY + 3); te
-rm.setTextColor(theme.text); term.write(scoreText)
+        term.setCursorPos(boxX + math.floor((w - #scoreText) / 2), boxY + 3); term.setTextColor(theme.text); term.write(scoreText)
         if arcadeServerId then
-            rednet.send(arcadeServerId, {type = "get_leaderboard", game = gameNa
-me}, "ArcadeGames")
+            rednet.send(arcadeServerId, {type = "get_leaderboard", game = gameName}, "ArcadeGames")
             local _, response = rednet.receive("ArcadeGames", 3)
             if response and response.leaderboard then
-                local sortedScores = {}; for user, s in pairs(response.leaderboa
-rd) do table.insert(sortedScores, {user = user, score = s}) end
-                table.sort(sortedScores, function(a,b) return a.score > b.score
-end)
+                local sortedScores = {}; for user, s in pairs(response.leaderboard) do table.insert(sortedScores, {user = user, score = s}) end
+                table.sort(sortedScores, function(a,b) return a.score > b.score end)
                 local lbTitle = "--- Leaderboard ---"
-                term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2),
-boxY + 5); term.setTextColor(theme.title); term.write(lbTitle)
+                term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2), boxY + 5); term.setTextColor(theme.title); term.write(lbTitle)
                 term.setTextColor(theme.text)
                 for i = 1, math.min(10, #sortedScores) do
-                    local entry = string.format("%2d. %-15s %d", i, sortedScores
-[i].user, sortedScores[i].score)
+                    local entry = string.format("%2d. %-15s %d", i, sortedScores[i].user, sortedScores[i].score)
                     term.setCursorPos(boxX + 2, boxY + 6 + i); term.write(entry)
                 end
             end
         end
         local prompt = "Press any key to exit..."
-        term.setCursorPos(boxX + math.floor((boxWidth - #prompt) / 2), boxY + bo
-xHeight - 2); term.setTextColor(theme.prompt); term.write(prompt)
+        term.setCursorPos(boxX + math.floor((boxWidth - #prompt) / 2), boxY + boxHeight - 2); term.setTextColor(theme.prompt); term.write(prompt)
 
         sleep(2)
         os.pullEvent("key")
@@ -282,8 +269,7 @@ xHeight - 2); term.setTextColor(theme.prompt); term.write(prompt)
                 createAliens()
                 term.setBackgroundColor(theme.windowBg); term.clear()
                 local levelMsg = "Level " .. level
-                term.setCursorPos(math.floor(w/2 - #levelMsg/2), math.floor(h/2)
-)
+                term.setCursorPos(math.floor(w/2 - #levelMsg/2), math.floor(h/2))
                 term.setTextColor(theme.title); term.write(levelMsg)
                 sleep(2)
             end
