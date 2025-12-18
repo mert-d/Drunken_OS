@@ -47,6 +47,7 @@ local theme = {
     highlightText = colors.black,
     errorBg = colors.red,
     errorText = colors.white,
+    windowBg = colors.black -- Alias for apps library
 }
 
 local state = {
@@ -172,7 +173,8 @@ local context = {
     parent = state,
     programDir = programDir,
     wordWrap = wordWrap,
-    getSafeSize = getSafeSize
+    getSafeSize = getSafeSize,
+    theme = theme
 }
 
 --==============================================================================
