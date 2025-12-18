@@ -26,7 +26,7 @@ package.path = "/?.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 12.5
+local currentVersion = 12.66
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -34,7 +34,141 @@ local REQUIRED_LIBS = {
     { name = "drunken_os_apps", version = 1.6 }
 }
 
--- ... (state table remains the same)
+--==============================================================================
+-- UI & Theme Helpers
+--==============================================================================
+
+local theme = {
+    bg = colors.black,
+    text = colors.white,
+    prompt = colors.cyan,
+    titleBg = colors.blue,
+    titleText = colors.white,
+    highlightBg = colors.cyan,
+    highlightText = colors.black,
+    errorBg = colors.red,
+    errorText = colors.white,
+}
+
+local state = {
+    mailServerId = nil,
+    adminServerId = nil,
+    username = nil,
+    isAdmin = false,
+    apps = nil,
+    crypto = nil
+}
+
+-- Universal word-wrap
+local function wordWrap(text, maxWidth)
+    local lines = {}
+    for line in text:gmatch("[^\n]+") do
+        while #line > maxWidth do
+            local breakPoint = maxWidth
+            while breakPoint > 0 and line:sub(breakPoint, breakPoint) ~= " " do
+                breakPoint = breakPoint - 1
+            end
+            if breakPoint == 0 then breakPoint = maxWidth end
+            table.insert(lines, line:sub(1, breakPoint))
+            line = line:sub(breakPoint + 1)
+        end
+        table.insert(lines, line)
+    end
+    return lines
+end
+
+local function clear()
+    term.clear()
+    term.setCursorPos(1,1)
+end
+
+local function drawWindow(title)
+    local w, h = term.getSize()
+    term.setBackgroundColor(theme.bg)
+    term.clear()
+    term.setBackgroundColor(theme.titleBg)
+    term.setCursorPos(1, 1)
+    term.write(string.rep(" ", w))
+    term.setTextColor(theme.titleText)
+    local titleText = " " .. (title or "Drunken Beard OS") .. " "
+    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1)
+    term.write(titleText)
+    term.setBackgroundColor(theme.bg)
+    term.setTextColor(theme.text)
+end
+
+local function printCentered(startY, text)
+    local w, h = term.getSize()
+    local lines = wordWrap(text, w - 4)
+    for i, line in ipairs(lines) do
+        term.setCursorPos(math.floor((w - #line) / 2) + 1, startY + i - 1)
+        term.write(line)
+    end
+end
+
+local function showMessage(title, message, isError)
+    drawWindow(title)
+    local w, h = term.getSize()
+    term.setTextColor(isError and theme.errorBg or theme.text)
+    printCentered(4, message)
+    term.setCursorPos(math.floor((w - 26) / 2) + 1, h - 1)
+    term.setTextColor(colors.gray)
+    term.write("Press any key to continue...")
+    os.pullEvent("key")
+end
+
+local function drawMenu(options, selected, startX, startY)
+    local w, h = term.getSize()
+    for i, opt in ipairs(options) do
+        term.setCursorPos(startX, startY + i - 1)
+        if i == selected then
+            term.setBackgroundColor(theme.highlightBg)
+            term.setTextColor(theme.highlightText)
+            term.write(" " .. opt .. string.rep(" ", w - startX - #opt - 1) .. " ")
+        else
+            term.setBackgroundColor(theme.bg)
+            term.setTextColor(theme.text)
+            term.write(" " .. opt .. " ")
+        end
+    end
+    term.setBackgroundColor(theme.bg)
+end
+
+local function readInput(prompt, y)
+    term.setCursorPos(2, y)
+    term.setTextColor(theme.prompt)
+    term.write(prompt)
+    term.setTextColor(theme.text)
+    term.setCursorBlink(true)
+    local input = read()
+    term.setCursorBlink(false)
+    return input
+end
+
+local function getSafeSize()
+    return term.getSize()
+end
+
+--==============================================================================
+-- Networking & Initialization
+--==============================================================================
+
+local function findServers()
+    state.mailServerId = rednet.lookup("SimpleMail", "mail.server")
+    state.adminServerId = state.mailServerId -- Often same server
+    if not state.mailServerId then
+        return false, "Mainframe (mail.server) not found."
+    end
+    return true
+end
+
+local context = {
+    drawWindow = drawWindow,
+    drawMenu = drawMenu,
+    readInput = readInput,
+    showMessage = showMessage,
+    clear = function() term.clear(); term.setCursorPos(1,1) end
+}
 
 --==============================================================================
 -- Installation & Update Functions
