@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 1.6
+local currentVersion = 1.7
 -- ... rest of the floppa bird game code
 --==============================================================================
 -- Main Game Function (to be run inside pcall)

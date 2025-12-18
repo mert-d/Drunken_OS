@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 1.7
+local currentVersion = 1.8
 -- ... rest of the floppa bird game code
 
 --==============================================================================

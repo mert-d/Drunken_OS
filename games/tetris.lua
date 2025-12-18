@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 1.8
+local currentVersion = 1.9
 -- ... rest of the tetris game code
 
 --==============================================================================
