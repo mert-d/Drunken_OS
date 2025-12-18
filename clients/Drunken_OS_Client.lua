@@ -26,7 +26,7 @@ package.path = "/?.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 12.4
+local currentVersion = 12.5
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -319,7 +319,7 @@ end
 --==============================================================================
 
 local function showSplashScreen()
-    clear()
+    term.clear(); term.setCursorPos(1,1)
     term.setTextColor(colors.orange)
     local w,h = getSafeSize()
     local art = {
