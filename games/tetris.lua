@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 5.0
+local currentVersion = 6.0
 -- ... rest of the tetris game code
 
 --==============================================================================
@@ -285,7 +285,7 @@ end
 -- Main Game Loop
 --==============================================================================
 
-local function mainGame()
+-- Main Game Logic Execution
     rednet.open("back")
     arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
 
@@ -338,7 +338,23 @@ local function mainGame()
         draw()
         if gameOver then break end
     end
+    showGameOverScreen()
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setCursorPos(1, 1)
 end
 
-showGameOverScreen()
-clear()
+--==============================================================================
+-- Protected Call Wrapper
+--==============================================================================
+
+local ok, err = pcall(mainGame, ...)
+
+if not ok then
+    term.clear()
+    term.setCursorPos(1, 1)
+    term.setTextColor(colors.red)
+    print("Tetris Error: " .. tostring(err))
+    print("\nPress any key to exit.")
+    os.pullEvent("key")
+end
