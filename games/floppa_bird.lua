@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 1.9
+local currentVersion = 2.0
 -- ... rest of the floppa bird game code
 --==============================================================================
 -- Main Game Function (to be run inside pcall)
@@ -126,22 +126,17 @@ local function mainGame(...)
         local w, h = getSafeSize()
         term.setBackgroundColor(theme.windowBg); term.clear()
         local boxWidth = 32; local boxHeight = 18
-        local boxX = math.floor((w - boxWidth) / 2); local boxY = math.floor((h
-- boxHeight) / 2)
+        local boxX = math.floor((w - boxWidth) / 2); local boxY = math.floor((h - boxHeight) / 2)
         for y = 0, boxHeight - 1 do term.setCursorPos(boxX, boxY + y); term.write(string.rep(" ", boxWidth)) end
         local title = "Game Over"
-        term.setCursorPos(boxX + math.floor((w - #title) / 2), boxY + 1); term.s
-etTextColor(colors.red); term.write(title)
+        term.setCursorPos(boxX + math.floor((w - #title) / 2), boxY + 1); term.setTextColor(colors.red); term.write(title)
         local scoreText = "Final Score: " .. score
-        term.setCursorPos(boxX + math.floor((w - #scoreText) / 2), boxY + 3); te
-rm.setTextColor(theme.text); term.write(scoreText)
+        term.setCursorPos(boxX + math.floor((w - #scoreText) / 2), boxY + 3); term.setTextColor(theme.text); term.write(scoreText)
         if arcadeServerId then
-            rednet.send(arcadeServerId, {type = "get_leaderboard", game = gameNa
-me}, "ArcadeGames")
+            rednet.send(arcadeServerId, {type = "get_leaderboard", game = gameName}, "ArcadeGames")
             local _, response = rednet.receive("ArcadeGames", 3)
             if response and response.leaderboard then
-                local sortedScores = {}; for user, s in pairs(response.leaderboa
-rd) do table.insert(sortedScores, {user = user, score = s}) end
+                local sortedScores = {}; for user, s in pairs(response.leaderboard) do table.insert(sortedScores, {user = user, score = s}) end
                 table.sort(sortedScores, function(a,b) return a.score > b.score
 end)
                 local lbTitle = "--- Leaderboard ---"

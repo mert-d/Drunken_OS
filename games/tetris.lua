@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 2.1
+local currentVersion = 2.2
 -- ... rest of the tetris game code
 
 --==============================================================================
@@ -228,8 +228,7 @@ local function draw()
         local levelText = "L:"..level
         local linesText = "N:"..linesCleared
         term.setCursorPos(2, 1); term.write(scoreText)
-        term.setCursorPos(math.floor(w/2 - #levelText/2), 1); term.write(levelTe
-xt)
+        term.setCursorPos(math.floor(w/2 - #levelText/2), 1); term.write(levelText)
         term.setCursorPos(w - #linesText, 1); term.write(linesText)
     end
 end
@@ -238,9 +237,7 @@ end
 -- Leaderboard & Game Over Functions
 --==============================================================================
 
-local function submitScore() if arcadeServerId then rednet.send(arcadeServerId,
-{type = "submit_score", game = gameName, user = username, score = score}, "Arcad
-eGames") end end
+local function submitScore() if arcadeServerId then rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames") end end
 
 local function showGameOverScreen()
     submitScore()

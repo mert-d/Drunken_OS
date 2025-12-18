@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 2.0
+local currentVersion = 2.1
 -- ... rest of the floppa bird game code
 
 --==============================================================================
@@ -101,8 +101,7 @@ local function mainGame(...)
                 table.remove(bullets, i)
             else
                 for j, alien in ipairs(aliens) do
-                    if alien.alive and bullet.x == alien.x and bullet.y == alien
-.y then
+                    if alien.alive and bullet.x == alien.x and bullet.y == alien.y then
                         alien.alive = false
                         score = score + 100
                         table.remove(bullets, i)

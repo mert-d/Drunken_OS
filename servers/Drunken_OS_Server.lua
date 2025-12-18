@@ -1024,6 +1024,8 @@ end
 local function executeAdminCommand(command)
     local output = {}
     local oldPrint = print
+    local oldLogActivity = logActivity
+
     _G.print = function(...)
         local args = {...}
         local line = ""
@@ -1032,6 +1034,13 @@ local function executeAdminCommand(command)
         end
         table.insert(output, line)
     end
+    
+    -- Capture logActivity calls too, since most commands use that
+    logActivity = function(msg, isErr)
+        oldLogActivity(msg, isErr) -- Do the actual logging
+        print(msg) -- Feed into our print capture
+    end
+
     local args = {}
     for arg in command:gmatch("[^%s]+") do
         table.insert(args, arg)
@@ -1042,7 +1051,9 @@ local function executeAdminCommand(command)
     else
         print("Unknown command.")
     end
+    
     _G.print = oldPrint
+    logActivity = oldLogActivity
     return table.concat(output, "\n")
 end
 
