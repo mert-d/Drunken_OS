@@ -16,7 +16,7 @@
 ]]
 
 local apps = {}
-apps._VERSION = 1.6
+apps._VERSION = 1.7
 
 --==============================================================================
 -- Helper function to access the parent's state
