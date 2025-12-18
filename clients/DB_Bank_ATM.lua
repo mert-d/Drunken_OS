@@ -349,13 +349,77 @@ local function withdraw()
     end
 end
 
+local function transferFunds()
+    drawFrame("Transfer Funds")
+    term.setCursorPos(3, 4)
+    print("Recipient Username:")
+    term.setCursorPos(3, 5)
+    write("> ")
+    term.setCursorBlink(true)
+    local recipient = read()
+    term.setCursorBlink(false)
+
+    if not recipient or recipient == "" then return end
+    if recipient == username then
+        showMessage("Error", "You cannot transfer money to yourself.", true)
+        return
+    end
+
+    drawFrame("Transfer Amount")
+    term.setCursorPos(3, 4)
+    print("Amount to transfer to " .. recipient .. ":")
+    term.setCursorPos(3, 5)
+    print("(Your balance: $" .. balance .. ")")
+    term.setCursorPos(3, 7)
+    write("> ")
+    term.setCursorBlink(true)
+    local amount_str = read()
+    term.setCursorBlink(false)
+
+    local amount = tonumber(amount_str)
+    if not amount or amount <= 0 then
+        showMessage("Error", "Invalid amount.", true)
+        return
+    end
+
+    if amount > balance then
+        showMessage("Error", "Insufficient funds.", true)
+        return
+    end
+
+    -- Confirmation
+    drawFrame("Confirm Transfer")
+    printCentered(6, "Transfer $" .. amount .. " to " .. recipient .. "?")
+    printCentered(8, "This action cannot be undone.")
+    
+    local confirm = drawMenu("Confirm Transaction", {"Confirm Transfer", "Cancel"}, "Recipient: " .. recipient)
+    if confirm ~= 1 then return end
+
+    printCentered(12, "Processing transfer...")
+    rednet.send(bankServerId, {
+        type = "transfer",
+        user = username,
+        recipient = recipient,
+        amount = amount
+    }, BANK_PROTOCOL)
+
+    local _, response = rednet.receive(BANK_PROTOCOL, 15)
+
+    if response and response.success then
+        balance = response.newBalance
+        showMessage("Success", "Transfer complete. Your new balance is $" .. balance)
+    else
+        showMessage("Transfer Failed", (response and response.reason) or "No response from server.", true)
+    end
+end
+
 local function mainMenu()
     local drive = peripheral.find("drive")
     while true do
-        local options = { "Check Balance / Rates", "Deposit Items", "Withdraw Items", "Exit" }
+        local options = { "Check Balance / Rates", "Deposit Items", "Withdraw Items", "Transfer Funds", "Exit" }
         local choice = drawMenu("ATM Main Menu", options, "Welcome, " .. username .. " | Balance: $" .. balance)
 
-        if not choice or choice == 4 then break end
+        if not choice or choice == 5 then break end
         
         if choice == 1 then
             drawFrame("Current Exchange Rates")
@@ -391,6 +455,7 @@ local function mainMenu()
             os.pullEvent("key")
         elseif choice == 2 then deposit()
         elseif choice == 3 then withdraw()
+        elseif choice == 4 then transferFunds()
         end
     end
 

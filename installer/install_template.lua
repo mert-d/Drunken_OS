@@ -99,6 +99,13 @@ local function doInstallation()
     end
 
     showMessage("Installation complete! Rebooting in 3 seconds...")
+    
+    -- Eject the disk if present
+    local drive = peripheral.find("drive")
+    if drive and drive.isDiskPresent() then
+        drive.ejectDisk()
+    end
+
     sleep(3)
     os.reboot()
 end

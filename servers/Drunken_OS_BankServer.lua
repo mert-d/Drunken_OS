@@ -318,6 +318,13 @@ function bankHandlers.login(senderId, message)
     local account = accounts[user]
 
     if account then
+        -- If it's an account created via transfer, update the placeholder hash.
+        if account.pass_hash == "EXTERNAL_TRANSFER" then
+            logActivity("Updating placeholder hash for user '" .. user .. "' on login.")
+            account.pass_hash = pass_hash
+            saveTableToFile(ACCOUNTS_DB, accounts)
+        end
+
         if account.pass_hash == pass_hash then
             logTransaction(user, "login", "SUCCESS")
             rednet.send(senderId, { success = true, balance = account.balance, rates = currencyRates }, BANK_PROTOCOL)
@@ -472,6 +479,64 @@ function bankHandlers.finalize_withdrawal(senderId, message)
     else
         logActivity("CRITICAL: FAILED TO SAVE DATABASE AFTER FINALIZATION FOR " .. user, true)
         -- This is a critical state that requires manual admin intervention.
+    end
+end
+
+-- Handles a peer-to-peer money transfer.
+function bankHandlers.transfer(senderId, message)
+    local sender = message.user
+    local recipient = message.recipient
+    local amount = tonumber(message.amount)
+
+    if not amount or amount <= 0 then
+        rednet.send(senderId, { success = false, reason = "Invalid amount." }, BANK_PROTOCOL)
+        return
+    end
+
+    if sender == recipient then
+        rednet.send(senderId, { success = false, reason = "Cannot transfer to yourself." }, BANK_PROTOCOL)
+        return
+    end
+
+    local senderAcc = accounts[sender]
+    if not senderAcc or senderAcc.balance < amount then
+        rednet.send(senderId, { success = false, reason = "Insufficient funds." }, BANK_PROTOCOL)
+        return
+    end
+
+    -- Check if recipient exists in bank
+    local recipientAcc = accounts[recipient]
+    if not recipientAcc then
+        -- Check with mainframe
+        logActivity("Transfer recipient '" .. recipient .. "' not found in bank. Verifying with Mainframe...")
+        rednet.send(mainServerId, { type = "user_exists_check", user = recipient }, AUTH_INTERLINK_PROTOCOL)
+        local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
+
+        if response and response.exists then
+            logActivity("Mainframe verified recipient. Creating bank account for '" .. recipient .. "'.")
+            accounts[recipient] = { pass_hash = "EXTERNAL_TRANSFER", balance = 0 }
+            recipientAcc = accounts[recipient]
+        else
+            rednet.send(senderId, { success = false, reason = "Recipient user does not exist." }, BANK_PROTOCOL)
+            return
+        end
+    end
+
+    -- Atomic transfer
+    senderAcc.balance = senderAcc.balance - amount
+    recipientAcc.balance = recipientAcc.balance + amount
+
+    if saveTableToFile(ACCOUNTS_DB, accounts) then
+        logTransaction(sender, "TRANSFER_OUT", { recipient = recipient, amount = amount })
+        logTransaction(recipient, "TRANSFER_IN", { sender = sender, amount = amount })
+        logActivity(string.format("Transfer: $%d from '%s' to '%s'.", amount, sender, recipient))
+        rednet.send(senderId, { success = true, newBalance = senderAcc.balance }, BANK_PROTOCOL)
+        needsRedraw = true
+    else
+        -- Rollback in memory
+        senderAcc.balance = senderAcc.balance + amount
+        recipientAcc.balance = recipientAcc.balance - amount
+        rednet.send(senderId, { success = false, reason = "Server database error." }, BANK_PROTOCOL)
     end
 end
 

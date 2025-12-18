@@ -350,6 +350,7 @@ local function createInstallDisk(program)
     drive.setDiskLabel(program.name .. " Installer")
 
     showMessage("Success", "Installation disk for " .. program.name .. " created successfully.", false)
+    drive.ejectDisk()
 end
 
 local function mainMenu()
