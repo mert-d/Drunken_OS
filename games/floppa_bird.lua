@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 1.8
+local currentVersion = 1.9
 -- ... rest of the floppa bird game code
 --==============================================================================
 -- Main Game Function (to be run inside pcall)
@@ -128,8 +128,7 @@ local function mainGame(...)
         local boxWidth = 32; local boxHeight = 18
         local boxX = math.floor((w - boxWidth) / 2); local boxY = math.floor((h
 - boxHeight) / 2)
-        for y = 0, boxHeight - 1 do term.setCursorPos(boxX, boxY + y); term.writ
-e(string.rep(" ", boxWidth)) end
+        for y = 0, boxHeight - 1 do term.setCursorPos(boxX, boxY + y); term.write(string.rep(" ", boxWidth)) end
         local title = "Game Over"
         term.setCursorPos(boxX + math.floor((w - #title) / 2), boxY + 1); term.s
 etTextColor(colors.red); term.write(title)

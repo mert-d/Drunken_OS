@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 1.9
+local currentVersion = 2.0
 -- ... rest of the floppa bird game code
 
 --==============================================================================
@@ -71,8 +71,7 @@ local function mainGame(...)
         local drop = false
         for _, alien in ipairs(aliens) do
             if alien.alive then
-                if (alien.x >= w and alienDirection == 1) or (alien.x <= 1 and a
-lienDirection == -1) then
+                if (alien.x >= w and alienDirection == 1) or (alien.x <= 1 and alienDirection == -1) then
                     drop = true
                     break
                 end

@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 2.0
+local currentVersion = 2.1
 -- ... rest of the tetris game code
 
 --==============================================================================
@@ -204,8 +204,7 @@ local function draw()
     term.setBackgroundColor(theme.windowBg)
     term.setTextColor(theme.text)
 
-    -- On narrow screens, draw UI at the top. On wide screens, draw it to the si
-de.
+    -- On narrow screens, draw UI at the top. On wide screens, draw it to the side.
     if w > boardPixelWidth + 15 then
         local uiX = boardXOffset + boardPixelWidth + 3
         local uiY = boardYOffset
