@@ -18,6 +18,7 @@
 
 -- Load our new, centralized cryptography library.
 -- This file should be placed at "/lib/sha1_hmac.lua" on the computer.
+package.path = "/?.lua;" .. package.path
 local crypto = require("lib.sha1_hmac")
 
 --==============================================================================

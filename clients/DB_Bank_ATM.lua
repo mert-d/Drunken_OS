@@ -20,6 +20,7 @@
 -- API & Library Initialization
 --==============================================================================
 
+package.path = "/?.lua;" .. package.path
 local crypto = require("lib.sha1_hmac")
 
 local CONFIG_PATH = "atm.conf" -- Define the config file path
