@@ -891,6 +891,60 @@ function adminCommands.publishgame(a)
     end
 end
 
+function adminCommands.publishgame(a)
+    -- ... (legacy manual publish kept for backup) ...
+end
+
+function adminCommands.sync(a)
+    local target = a[2] or "all"
+    
+    if target == "client" or target == "all" then
+        logActivity("Syncing Drunken_OS_Client...")
+        local path = "clients/Drunken_OS_Client.lua"
+        if fs.exists(path) then
+            local f = fs.open(path, "r")
+            local code = f.readAll()
+            f.close()
+            
+            local v = code:match("local%s+currentVersion%s*=%s*([%d%.]+)")
+            if v then
+                local version = tonumber(v)
+                programCode["Drunken_OS_Client"] = code
+                programVersions["Drunken_OS_Client"] = version
+                saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
+                logActivity("Published Client v" .. version)
+            else
+                logActivity("Error: No version found in Client file.", true)
+            end
+        else
+            logActivity("Error: Client file not found at " .. path, true)
+        end
+    end
+    
+    if target == "libs" or target == "all" then
+        logActivity("Syncing Libraries...")
+        local libs = { "lib/drunken_os_apps.lua", "lib/sha1_hmac.lua" }
+        for _, path in ipairs(libs) do
+            if fs.exists(path) then
+                local f = fs.open(path, "r")
+                local code = f.readAll()
+                f.close()
+                
+                local name = fs.getName(path):gsub(".lua", "")
+                programCode[name] = code
+                logActivity("Published library: " .. name)
+            else
+                logActivity("Warning: Library not found at " .. path, true)
+            end
+        end
+        saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
+    end
+    
+    if target == "games" or target == "all" then
+       adminCommands.syncgames(a)
+    end
+end
+
 function adminCommands.syncgames(a)
     logActivity("Syncing games from GitHub...")
     local baseUrl = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/games/"

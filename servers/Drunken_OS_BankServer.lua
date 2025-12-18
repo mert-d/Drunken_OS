@@ -587,6 +587,75 @@ function bankHandlers.transfer(senderId, message)
     end
 end
 
+-- Handles a merchant payment with metadata (e.g. Table Number) notification.
+function bankHandlers.process_payment(senderId, message)
+    local sender, recipient = message.user, message.recipient
+    local amount = tonumber(message.amount)
+    local pin_hash = message.pin_hash
+    local metadata = message.metadata or "No metadata"
+
+    local senderAcc = accounts[sender]
+    if not senderAcc then
+        rednet.send(senderId, { success = false, reason = "Account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    if senderAcc.pin_hash ~= pin_hash then
+        rednet.send(senderId, { success = false, reason = "Invalid PIN." }, BANK_PROTOCOL)
+        return
+    end
+
+    if not amount or amount <= 0 then
+        rednet.send(senderId, { success = false, reason = "Invalid amount." }, BANK_PROTOCOL)
+        return
+    end
+
+    if senderAcc.balance < amount then
+        rednet.send(senderId, { success = false, reason = "Insufficient funds." }, BANK_PROTOCOL)
+        return
+    end
+
+    local recipientAcc = accounts[recipient]
+    if not recipientAcc then
+        rednet.send(senderId, { success = false, reason = "Merchant account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    if not recipientAcc.is_merchant then
+        rednet.send(senderId, { success = false, reason = "Recipient is not a verified merchant." }, BANK_PROTOCOL)
+        return
+    end
+
+    -- Process Transaction
+    senderAcc.balance = senderAcc.balance - amount
+    recipientAcc.balance = recipientAcc.balance + amount
+
+    if saveTableToFile(ACCOUNTS_DB, accounts) then
+        logTransaction(sender, "PAYMENT_OUT", { merchant = recipient, amount = amount, meta = metadata })
+        logTransaction(recipient, "PAYMENT_IN", { customer = sender, amount = amount, meta = metadata })
+        logActivity(string.format("Payment: $%d from '%s' to '%s' [%s].", amount, sender, recipient, metadata))
+        
+        rednet.send(senderId, { success = true, newBalance = senderAcc.balance }, BANK_PROTOCOL)
+        
+        -- Real-time notification to merchant device
+        local merchantDeviceId = rednet.lookup("BANK_MERCHANT_PROTOCOL", recipient)
+        if merchantDeviceId then
+            rednet.send(merchantDeviceId, {
+                type = "payment_received",
+                customer = sender,
+                amount = amount,
+                metadata = metadata,
+                timestamp = os.time()
+            }, "BANK_MERCHANT_PROTOCOL")
+        end
+        needsRedraw = true
+    else
+        senderAcc.balance = senderAcc.balance + amount
+        recipientAcc.balance = recipientAcc.balance - amount
+        rednet.send(senderId, { success = false, reason = "Database error." }, BANK_PROTOCOL)
+    end
+end
+
 --==============================================================================
 -- Admin Command Handlers & Terminal
 --==============================================================================
@@ -778,6 +847,25 @@ function adminCommands.settarget(args)
         print("Set target stock for '" .. itemName .. "' to " .. targetAmount)
     else
         print("Failed to set target.")
+    end
+end
+
+function adminCommands.setmerchant(args)
+    local _, user, value = parseAdminArgs(args)
+    if not user or not value then print("Usage: setmerchant <user> <true/false>"); return end
+    
+    if not accounts[user] then
+        print("Error: Account for user '" .. user .. "' does not exist.")
+        return
+    end
+
+    local is_merchant = (value == "true")
+    accounts[user].is_merchant = is_merchant
+    
+    if saveTableToFile(ACCOUNTS_DB, accounts) then
+        print("User '" .. user .. "' merchant status set to: " .. tostring(is_merchant))
+    else
+        print("Error: Database write failed.")
     end
 end
 

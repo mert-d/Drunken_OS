@@ -16,6 +16,7 @@
 ]]
 
 local apps = {}
+apps._VERSION = 1.6
 
 --==============================================================================
 -- Helper function to access the parent's state
@@ -574,6 +575,164 @@ end
 
 -- Admin Console has been moved to a separate script (Admin_Console.lua)
 
+
+--==============================================================================
+-- Banking Applications
+--==============================================================================
+
+local BANK_PROTOCOL = "BANK_SERVICE_v1"
+local BANK_MERCHANT_PROTOCOL = "BANK_MERCHANT_PROTOCOL"
+
+local function getBankSession(context)
+    local bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
+    if not bankServerId then
+        context.showMessage("Error", "Could not contact Bank Server.")
+        return nil, nil
+    end
+
+    context.drawWindow("Bank Login")
+    local w, h = context.getSafeSize()
+    term.setCursorPos(2, 4); term.write("Enter your 6-Digit Bank PIN")
+    
+    local pin_str = context.readInput("PIN: ", 6, true)
+    if not pin_str or #pin_str ~= 6 or not tonumber(pin_str) then
+        context.showMessage("Error", "Invalid PIN format. Must be 6 digits.")
+        return nil, nil
+    end
+
+    -- Hash the PIN using the loaded crypto library
+    local pin_hash = getParent(context).crypto.hex(pin_str)
+    
+    -- Verify Login
+    context.drawWindow("Verifying...")
+    rednet.send(bankServerId, { type = "login", user = getParent(context).username, pin_hash = pin_hash }, BANK_PROTOCOL)
+    local _, response = rednet.receive(BANK_PROTOCOL, 5)
+
+    if response and response.success then
+        return bankServerId, pin_hash, response.balance, response.rates
+    elseif response and response.reason == "setup_required" then
+        context.showMessage("Setup Required", "Please visit an ATM to set up your PIN.")
+        return nil, nil
+    else
+        context.showMessage("Login Failed", (response and response.reason) or "No response.")
+        return nil, nil
+    end
+end
+
+function apps.bankApp(context)
+    local bankServerId, pin_hash, balance, rates = getBankSession(context)
+    if not bankServerId then return end
+
+    while true do
+        local options = {"Check Balance", "View Rates", "Transfer Funds", "Exit"}
+        local selected = 1
+        
+        while true do
+            context.drawWindow("Pocket Bank | $" .. balance)
+            context.drawMenu(options, selected, 2, 4)
+            local event, key = os.pullEvent("key")
+            if key == keys.up then selected = (selected == 1) and #options or selected - 1
+            elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+            elseif key == keys.enter then break
+            elseif key == keys.tab or key == keys.q then return end
+        end
+        
+        if selected == 4 then return end
+        
+        if selected == 1 then
+            context.showMessage("Balance", "Your current balance is:\n$" .. balance)
+        
+        elseif selected == 2 then
+            context.drawWindow("Exchange Rates")
+            local w,h = context.getSafeSize()
+            local y = 4
+            for name, data in pairs(rates) do
+                if y > h - 2 then break end
+                term.setCursorPos(2, y)
+                local clean = name:gsub("minecraft:", ""):gsub("_", " ")
+                term.write(string.format("%s: $%d", clean:sub(1,15), data.current))
+                y = y + 1
+            end
+            term.setCursorPos(2, h-1); term.setTextColor(context.theme.prompt); term.write("Press any key...")
+            os.pullEvent("key")
+            
+        elseif selected == 3 then
+            context.drawWindow("Transfer Funds")
+            local recipient = context.readInput("Recipient: ", 4)
+            if recipient and recipient ~= "" then
+                local amount = tonumber(context.readInput("Amount: ", 6))
+                if amount and amount > 0 then
+                    if amount <= balance then
+                        context.drawWindow("Processing...")
+                        rednet.send(bankServerId, {
+                            type = "transfer",
+                            user = getParent(context).username,
+                            pin_hash = pin_hash, -- Use PIN hash for auth (server supports this?)
+                            -- Note: Server 'transfer' handler currently doesn't check PIN hash explicitly in args 
+                            -- but 'login' does. For security, we should ideally send PIN hash with transfer,
+                            -- but based on current Server code (Step 1344), 'transfer' only checks balance.
+                            -- Ideally we upgrade server transfer to check PIN, but prompt didn't ask for that.
+                            -- We will proceed. Authentication implies session security via 'login' check earlier?
+                            -- No, 'transfer' is stateless. 
+                            -- Server logic at 550+ (Step 1344) uses 'senderId' for identifying rednet sender.
+                            -- It does NOT check PIN. This is a known pre-existing weak point, but we are adding infrastructure.
+                            -- 'process_payment' DOES check PIN.
+                            recipient = recipient,
+                            amount = amount
+                        }, BANK_PROTOCOL)
+                        
+                        local _, resp = rednet.receive(BANK_PROTOCOL, 5)
+                        if resp and resp.success then
+                            balance = resp.newBalance
+                            context.showMessage("Success", "Sent $" .. amount .. " to " .. recipient)
+                        else
+                            context.showMessage("Failed", (resp and resp.reason) or "Error")
+                        end
+                    else
+                        context.showMessage("Error", "Insufficient funds.")
+                    end
+                end
+            end
+        end
+    end
+end
+
+function apps.onlinePayment(context)
+    local bankServerId, pin_hash, balance = getBankSession(context)
+    if not bankServerId then return end
+
+    context.drawWindow("Pay Merchant")
+    local recipient = context.readInput("Merchant Name: ", 4)
+    if not recipient or recipient == "" then return end
+
+    local amount = tonumber(context.readInput("Amount: $", 6))
+    if not amount or amount <= 0 then return end
+    
+    if amount > balance then
+        context.showMessage("Error", "Insufficient funds.")
+        return
+    end
+
+    local metadata = context.readInput("Order Info (e.g. Table 5): ", 8) or "No Info"
+
+    context.drawWindow("Processing Payment...")
+    rednet.send(bankServerId, {
+        type = "process_payment",
+        user = getParent(context).username,
+        pin_hash = pin_hash,
+        recipient = recipient,
+        amount = amount,
+        metadata = metadata
+    }, BANK_PROTOCOL)
+
+    local _, resp = rednet.receive(BANK_PROTOCOL, 5)
+    if resp and resp.success then
+        balance = resp.newBalance
+        context.showMessage("Success", "Paid $" .. amount .. " to " .. recipient)
+    else
+        context.showMessage("Payment Failed", (resp and resp.reason) or "Error")
+    end
+end
 
 function apps.systemMenu(context)
     local options = {"Change Nickname", "Update Games", "Back"}

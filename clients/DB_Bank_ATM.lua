@@ -68,31 +68,38 @@ function utils.wordWrap(text, maxWidth)
     return lines
 end
 -- A theme table to make color changes simple and consistent.
+-- A theme table to make color changes simple and consistent.
 local theme = {
     bg = colors.black,
     text = colors.white,
-    border = colors.brown,
-    titleBg = colors.orange,
+    border = colors.cyan, -- matched to client
+    titleBg = colors.blue, -- matched to client
     titleText = colors.white,
-    highlightBg = colors.yellow,
-    highlightText = colors.brown,
+    highlightBg = colors.cyan, -- matched to client
+    highlightText = colors.black, -- matched to client
     errorBg = colors.red,
     errorText = colors.white,
 }
 
--- (The 'drawFrame' function is unchanged)
+-- (The 'drawFrame' function is unchanged) -> REPLACED with Premium Style
 local function drawFrame(title)
     local w, h = term.getSize()
-    term.setBackgroundColor(theme.bg); term.clear()
-    term.setBackgroundColor(theme.border)
-    for y=1,h do term.setCursorPos(1,y); term.write(" "); term.setCursorPos(w,y); term.write(" ") end
-    for x=1,w do term.setCursorPos(x,1); term.write(" "); term.setCursorPos(x,h); term.write(" ") end
-    term.setBackgroundColor(theme.titleBg); term.setTextColor(theme.titleText)
+    term.setBackgroundColor(theme.bg)
+    term.clear()
+    
+    -- Premium Header Logic (Same as Client)
+    term.setBackgroundColor(theme.titleBg)
+    term.setCursorPos(1, 1)
+    term.write(string.rep(" ", w))
+    term.setTextColor(theme.titleText)
     local titleText = " " .. (title or "Drunken Beard Bank") .. " "
     local titleStart = math.floor((w - #titleText) / 2) + 1
     term.setCursorPos(titleStart, 1)
     term.write(titleText)
-    term.setBackgroundColor(theme.bg); term.setTextColor(theme.text)
+    
+    -- Status Bar / Footer area (optional, maybe just cleared)
+    term.setBackgroundColor(theme.bg)
+    term.setTextColor(theme.text)
 end
 
 -- NEW: A word-wrapping version of printCentered to prevent text overflow.
@@ -119,34 +126,24 @@ local function printCentered(startY, text)
 end
 
 local function showMessage(title, message, isError)
+    drawFrame(title)
     local w, h = term.getSize()
-    local boxBg = isError and theme.errorBg or theme.titleBg
-    local boxText = isError and theme.errorText or theme.titleText
-    local boxW, boxH = math.floor(w * 0.8), math.floor(h * 0.7)
-    local boxX, boxY = math.floor((w - boxW) / 2), math.floor((h - boxH) / 2)
+    local lines = utils.wordWrap(message, w - 4)
 
-    term.setBackgroundColor(boxBg)
-    for y = boxY, boxY + boxH - 1 do
-        term.setCursorPos(boxX, y); term.write(string.rep(" ", boxW))
-    end
-    
-    term.setTextColor(boxText)
-    local titleText = " " .. title .. " ";
-    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, boxY + 1); term.write(titleText)
-    
-    -- THE FIX: Use the smart word-wrapper
-    local lines = utils.wordWrap(message, boxW - 4)
-
+    term.setTextColor(isError and theme.errorBg or theme.text)
     for i, line in ipairs(lines) do
-        term.setCursorPos(boxX + 2, boxY + 3 + i)
-        print(line)
+        local x = math.floor((w - #line) / 2) + 1
+        term.setCursorPos(x, 4 + i)
+        term.write(line)
     end
-
+    
     local continueText = "Press any key to continue..."
-    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, boxY + boxH - 2)
-    print(continueText)
+    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, h - 2)
+    term.setTextColor(colors.gray)
+    term.write(continueText)
     
     os.pullEvent("key")
+    term.setTextColor(theme.text)
 end
 
 local function drawMenu(title, options, help)
@@ -154,22 +151,37 @@ local function drawMenu(title, options, help)
     local selected = 1
     while true do
         drawFrame(title)
+        
+        -- Draw Help Text if present
+        if help then
+            term.setTextColor(colors.gray)
+            local helpLines = utils.wordWrap(help, w - 4)
+             for i, line in ipairs(helpLines) do
+                local x = math.floor((w - #line) / 2) + 1
+                term.setCursorPos(x, h - 2 - (#helpLines - i))
+                term.write(line)
+            end
+        end
+
+        -- Draw Options
         for i, opt in ipairs(options) do
-            term.setCursorPos(4, 4 + i)
-            if i == selected then
+            local y = 4 + i
+            if y >= h - 2 then break end -- prevent overlap
+            
+            term.setCursorPos(2, y)
+             if i == selected then
                 term.setBackgroundColor(theme.highlightBg)
                 term.setTextColor(theme.highlightText)
+                term.write(" " .. opt .. string.rep(" ", w - 4 - #opt) .. " ")
             else
                 term.setBackgroundColor(theme.bg)
                 term.setTextColor(theme.text)
+                term.write(" " .. opt .. " ")
             end
-            term.write(" " .. opt .. string.rep(" ", w - 6 - #opt) .. " ")
         end
+        
         term.setBackgroundColor(theme.bg)
-        term.setTextColor(colors.yellow)
-        if help then
-            printCentered(h - 2, help)
-        end
+        
         local _, key = os.pullEvent("key")
         if key == keys.up then selected = (selected == 1) and #options or selected - 1
         elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1

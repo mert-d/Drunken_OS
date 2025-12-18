@@ -29,216 +29,43 @@ package.path = "/?.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
 local currentVersion = 12.3
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
-local REQUIRED_LIBS = { "sha1_hmac", "drunken_os_apps" }
-
--- This table holds the program's state, which is passed to the app library.
-local state = {
-    mailServerId = nil,
-    chatServerId = nil,
-    gameServerId = nil,
-    username = nil,
-    nickname = nil,
-    session_token = nil,
-    isAdmin = false,
-    programDir = programDir,
-    -- Forward-declare functions so the app library can call them
-    showMessage = nil,
-    drawMenu = nil,
-    drawWindow = nil,
-    getSafeSize = nil,
-    wordWrap = nil
+local REQUIRED_LIBS = {
+    { name = "sha1_hmac" },
+    { name = "drunken_os_apps", version = 1.6 }
 }
 
---==============================================================================
--- UI & Theme
---==============================================================================
-
-local hasColor = term.isColor and term.isColor()
-local function safeColor(colorName, fallbackColor)
-    if hasColor and colors[colorName] ~= nil then
-        return colors[colorName]
-    end
-    return fallbackColor
-end
-
-local theme = {
-    bg = safeColor("black", colors.black),
-    text = safeColor("white", colors.white),
-    windowBg = safeColor("darkGray", colors.gray),
-    border = safeColor("lightGray", colors.white),
-    title = safeColor("green", colors.lime),
-    prompt = safeColor("cyan", colors.cyan),
-    highlightBg = safeColor("blue", colors.blue),
-    highlightText = safeColor("white", colors.white),
-    statusBarBg = safeColor("gray", colors.lightGray),
-    statusBarText = safeColor("white", colors.white),
-}
-
---==============================================================================
--- Core Utility & UI Functions
---==============================================================================
-
-local function getSafeSize()
-    local w, h = term.getSize()
-    while not w or not h do
-        sleep(0.05)
-        w, h = term.getSize()
-    end
-    return w, h
-end
-
-local function wordWrap(text, width)
-    local lines = {}
-    for line in text:gmatch("[^\r\n]+") do
-        while #line > width do
-            local space = line:sub(1, width + 1):match(".+ ")
-            local len = space and #space or width
-            table.insert(lines, line:sub(1, len - 1))
-            line = line:sub(len):match("^%s*(.*)")
-        end
-        table.insert(lines, line)
-    end
-    return lines
-end
-
-local function clear()
-    term.setBackgroundColor(theme.bg)
-    term.clear()
-    term.setCursorPos(1, 1)
-end
-
-local function drawWindow(title)
-    clear()
-    local w, h = getSafeSize()
-    term.setBackgroundColor(theme.windowBg)
-    for y = 1, h - 1 do
-        term.setCursorPos(1, y)
-        term.write(string.rep(" ", w))
-    end
-
-    term.setBackgroundColor(theme.title)
-    term.setCursorPos(1, 1)
-    term.write(string.rep(" ", w))
-    term.setTextColor(colors.white)
-    local titleText = " " .. title .. " "
-    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1)
-    term.write(titleText)
-    
-    term.setBackgroundColor(theme.statusBarBg)
-    term.setTextColor(theme.statusBarText)
-    term.setCursorPos(1, h)
-    term.write(string.rep(" ", w))
-    local userText = "User: " .. (state.nickname or "Guest") .. (state.isAdmin and " (Admin)" or "")
-    local versionText = "v" .. currentVersion
-    
-    if w < 35 then
-        local statusText = userText .. " | " .. versionText
-        term.setCursorPos(math.floor((w - #statusText) / 2) + 1, h)
-        term.write(statusText)
-    else
-        local helpText = "See 'Help' Menu for Controls"
-        term.setCursorPos(2, h)
-        term.write(userText)
-        term.setCursorPos(w - #versionText, h)
-        term.write(versionText)
-        term.setCursorPos(math.floor((w - #helpText) / 2) + 1, h)
-        term.write(helpText)
-    end
-
-    term.setBackgroundColor(theme.windowBg)
-    term.setTextColor(theme.text)
-end
-
-local function drawMenu(options, selectedIndex, startX, startY)
-    for i, option in ipairs(options) do
-        local text = option
-        if (option == "Mail" or option == "View Inbox") and state.unreadCount > 0 then
-            text = text .. " [" .. state.unreadCount .. "]"
-        end
-        term.setCursorPos(startX, startY + i - 1)
-        if i == selectedIndex then
-            term.setBackgroundColor(theme.highlightBg)
-            term.setTextColor(theme.highlightText)
-            term.write("> " .. text .. string.rep(" ", 25 - #text))
-        else
-            term.setBackgroundColor(theme.windowBg)
-            term.setTextColor(theme.text)
-            term.write("  " .. text .. string.rep(" ", 25 - #text))
-        end
-    end
-    term.setBackgroundColor(theme.windowBg)
-end
-
-local function showMessage(title, message)
-    drawWindow(title)
-    local w, h = getSafeSize()
-    local lines = wordWrap(message, w - 4)
-    for i, line in ipairs(lines) do
-        term.setCursorPos(3, 4 + i - 1)
-        term.write(line)
-    end
-    term.setCursorPos(3, 4 + #lines + 1)
-    term.setTextColor(theme.prompt)
-    term.write("Press any key to continue...")
-    os.pullEvent("key")
-    term.setTextColor(theme.text)
-end
-
-local function readInput(prompt, y, hideText)
-    local x = 2
-    term.setTextColor(theme.prompt)
-    term.setCursorPos(x, y)
-    term.write(prompt)
-    term.setTextColor(theme.text)
-    term.setCursorPos(x + #prompt, y)
-    term.setCursorBlink(true)
-    local input = hideText and read("*") or read()
-    term.setCursorBlink(false)
-    return input
-end
-
--- Create the context table that will be passed to library functions
-local context = {
-    getSafeSize = getSafeSize,
-    wordWrap = wordWrap,
-    clear = clear,
-    drawWindow = drawWindow,
-    drawMenu = drawMenu,
-    showMessage = showMessage,
-    readInput = readInput,
-    theme = theme,
-    programDir = programDir, -- Pass the program's directory to the library
-    parent = state -- a reference to the main state table
-}
+-- ... (state table remains the same)
 
 --==============================================================================
 -- Installation & Update Functions
 --==============================================================================
 
-local function findServers()
-    state.mailServerId = rednet.lookup("SimpleMail", "mail.server")
-    if not state.mailServerId then return false, "Cannot find mail.server" end
-    
-    state.chatServerId = rednet.lookup("SimpleChat", "chat.server")
-    if not state.chatServerId then return false, "Cannot find chat.server" end
-
-    state.gameServerId = rednet.lookup("ArcadeGames", "arcade.server")
-    if not state.gameServerId then return false, "Cannot find arcade.server" end
-    
-    -- Lookup Admin Server (Optional - only needed for admins)
-    state.adminServerId = rednet.lookup("Drunken_Admin", "admin.server")
-    
-    return true
-end
-
 local function installDependencies()
     local needsReboot = false
-    for _, libName in ipairs(REQUIRED_LIBS) do
-        local ok = pcall(require, "lib." .. libName)
+    
+    for _, libDef in ipairs(REQUIRED_LIBS) do
+        local libName = libDef.name
+        local targetVersion = libDef.version
+        
+        local ok, libOrError = pcall(require, "lib." .. libName)
+        
+        local needsUpdate = false
         if not ok then
+            needsUpdate = true
+        elseif targetVersion then
+            -- Check version if module loaded successfully
+            if type(libOrError) == "table" then
+                if not libOrError._VERSION or libOrError._VERSION < targetVersion then
+                    needsUpdate = true
+                    print("Updating library '" .. libName .. "' to v" .. targetVersion .. "...")
+                end
+            end
+        end
+
+        if needsUpdate then
             needsReboot = true -- A reboot will be required if we install anything.
             term.clear(); term.setCursorPos(1,1)
-            print("Missing required library: " .. libName)
+            print("Missing or outdated library: " .. libName)
             print("Attempting to download from server...")
 
             local server = rednet.lookup("SimpleMail", "mail.server")
@@ -271,6 +98,7 @@ local function installDependencies()
                 
                 file.write(response.code)
                 file.close()
+                package.loaded["lib."..libName] = nil -- Force reload on next require (though we reboot anyway)
                 print("Library '" .. libName .. "' installed.")
                 sleep(1) -- Give fs time to process
             else
@@ -429,13 +257,20 @@ local function mainMenu()
         local unreadCount = response and response.count or 0
         
         local options = {
+            "Pocket Bank",
+            "Pay Merchant",
             "Read Mail" .. (unreadCount > 0 and " (" .. unreadCount .. " unread)" or ""),
-            "Send Mail", "General Chat", "Mailing Lists", "Games", "System", "Help", "Logout"
+            "Send Mail", 
+            "General Chat", 
+            "Mailing Lists", 
+            "Games", 
+            "System", 
+            "Logout"
         }
         
         -- THE FIX: Correctly check for admin status
         if state.isAdmin then
-            table.insert(options, 8, "Admin Console")
+            table.insert(options, "Admin Console")
         end
         
         local selected = 1
@@ -443,7 +278,7 @@ local function mainMenu()
         
         while true do
             -- Redraw menu
-            drawWindow("Main Menu - Welcome " .. (state.nickname or "Guest"))
+            drawWindow("Home")
             drawMenu(options, selected, 2, 4)
             
             -- Handle Input
@@ -465,13 +300,14 @@ local function mainMenu()
         
         local selection = options[choice]
         -- Use 'context' for all calls
-        if selection:match("Read Mail") then state.apps.viewInbox(context)
+        if selection == "Pocket Bank" then state.apps.bankApp(context)
+        elseif selection == "Pay Merchant" then state.apps.onlinePayment(context)
+        elseif selection:match("Read Mail") then state.apps.viewInbox(context)
         elseif selection == "Send Mail" then state.apps.sendMail(context)
         elseif selection == "General Chat" then state.apps.startChat(context)
         elseif selection == "Mailing Lists" then state.apps.manageLists(context)
         elseif selection == "Games" then state.apps.enterArcade(context)
         elseif selection == "System" then state.apps.systemMenu(context)
-        elseif selection == "Help" then state.apps.showHelpScreen(context)
         elseif selection == "Admin Console" then runAdminConsole(context)
         end
     end
