@@ -901,6 +901,9 @@ function adminCommands.sync(a)
     if target == "client" or target == "all" then
         logActivity("Syncing Drunken_OS_Client...")
         local path = "clients/Drunken_OS_Client.lua"
+        local absPath = fs.combine("/", path)
+        logActivity("Checking local path: " .. absPath)
+        
         local code, v
         if fs.exists(path) then
             local f = fs.open(path, "r")

@@ -343,16 +343,26 @@ end
 
 
 local function main()
+    -- Safe Boot: Check for updates BEFORE any UI code runs
+    rednet.open("back")
+    local connected, reason = findServers()
+    
+    -- Try to update even if "findServers" failed (maybe we can reach mail server specifically?)
+    -- But findServers sets state.mailServerId, so we need it.
+    if connected then
+         if autoUpdateCheck() then return end
+    end
+
     showSplashScreen()
     while true do
         rednet.open("back")
-        local connected, reason = findServers()
+        connected, reason = findServers()
         if not connected then
-            local tempShowMessage = function(title, msg) term.clear(); print(title.."\n"..msg); sleep(3) end
+            local tempShowMessage = function(title, msg) term.clear(); term.setCursorPos(1,1); print(title.."\n"..msg); sleep(3) end
             tempShowMessage("Connection Error", reason or "Could not find servers. Retrying...")
             sleep(5)
         else
-            if autoUpdateCheck() then return end
+            -- Check again in loop, but strictly dependencies
             if not installDependencies() then
                 rednet.close("back")
                 return 
@@ -369,7 +379,7 @@ local function main()
             state.isAdmin = false
             -- Pass 'context' so the library has access to UI functions
             if not state.apps.loginOrRegister(context) then 
-                clear(); print("Goodbye!"); break
+                term.clear(); term.setCursorPos(1,1); print("Goodbye!"); break
             end
             
             rednet.send(state.mailServerId, {type = "get_motd"}, "SimpleMail")
