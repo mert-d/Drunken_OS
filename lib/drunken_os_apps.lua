@@ -571,93 +571,9 @@ function apps.sendFeedback(context)
     apps.composeAndSend(context, "MuhendizBey", "Feedback: " .. subject, nil)
 end
 
-function apps.adminConsole(context)
-    if not getParent(context).adminServerId then
-        context.showMessage("Error", "Admin server not found.")
-        return
-    end
 
-    context.drawWindow("Remote Admin Console")
-    local history = {}
-    local input = ""
-    local w, h = context.getSafeSize()
+-- Admin Console has been moved to a separate script (Admin_Console.lua)
 
-    local function redrawConsole()
-        context.drawWindow("Remote Admin Console")
-        local historyLines = {}
-        for _, item in ipairs(history) do
-            local prefix = item.type == "cmd" and "> " or ""
-            for _, line in ipairs(context.wordWrap(prefix .. item.text, w - 2)) do
-                table.insert(historyLines, line)
-            end
-        end
-
-        local displayHeight = h - 3
-        local startLine = math.max(1, #historyLines - displayHeight + 1)
-        for i = startLine, #historyLines do
-            term.setCursorPos(2, 2 + (i - startLine))
-            term.write(historyLines[i])
-        end
-    end
-
-    local function redrawInputLine()
-        local inputWidth = w - 4
-        term.setBackgroundColor(context.theme.windowBg)
-        term.setCursorPos(1, h - 1)
-        term.clearLine()
-        term.setCursorPos(2, h - 1)
-        term.setTextColor(context.theme.prompt)
-        term.write("> ")
-        term.setTextColor(context.theme.text)
-        
-        local textToDraw = #input > inputWidth and "..." .. string.sub(input, -inputWidth + 3) or input
-        term.write(textToDraw)
-    end
-    
-    redrawConsole()
-    while true do
-        redrawInputLine()
-        term.setCursorBlink(true)
-
-        local event, p1 = os.pullEvent()
-        term.setCursorBlink(false)
-
-        if event == "key" then
-            if p1 == keys.enter then
-                if input == "exit" or input == "quit" then break end
-                if input == "clear" then
-                    history = {}
-                elseif input ~= "" then
-                    table.insert(history, {type="cmd", text=input})
-                    rednet.send(getParent(context).adminServerId, {
-                        type = "execute_command",
-                        user = getParent(context).username,
-                        command = input
-                    }, "Drunken_Admin")
-                    
-                    redrawConsole()
-                    term.setCursorPos(1, h-1); term.clearLine()
-                    term.setCursorPos(2, h-1); term.write("Executing...")
-
-                    local _, response = rednet.receive("Drunken_Admin", 10)
-                    if response and response.output then
-                        table.insert(history, {type="resp", text=response.output})
-                    else
-                        table.insert(history, {type="resp", text="Error: Timed out or no response from server."})
-                    end
-                end
-                input = ""
-                redrawConsole()
-            elseif p1 == keys.backspace then
-                input = string.sub(input, 1, -2)
-            end
-        elseif event == "char" then
-            input = input .. p1
-        elseif event == "terminate" then
-            break
-        end
-    end
-end
 
 function apps.systemMenu(context)
     local options = {"Change Nickname", "Update Games", "Back"}

@@ -225,6 +225,9 @@ local function findServers()
     state.gameServerId = rednet.lookup("ArcadeGames", "arcade.server")
     if not state.gameServerId then return false, "Cannot find arcade.server" end
     
+    -- Lookup Admin Server (Optional - only needed for admins)
+    state.adminServerId = rednet.lookup("Drunken_Admin", "admin.server")
+    
     return true
 end
 
@@ -391,7 +394,35 @@ end
 
 -- Legacy loginOrRegister moved to lib/drunken_os_apps.lua
 
+local function runAdminConsole(context)
+    if not state.isAdmin or not state.adminServerId then return end
+    
+    local consolePath = "Admin_Console.lua"
+    if not fs.exists(consolePath) then
+        drawWindow("Downloading Admin Tools...")
+        rednet.send(state.mailServerId, { type = "get_admin_tool", user = state.username }, "SimpleMail")
+        local _, response = rednet.receive("SimpleMail", 5)
+        
+        if response and response.type == "admin_tool_response" and response.code then
+            local f = fs.open(consolePath, "w")
+            f.write(response.code)
+            f.close()
+        else
+            context.showMessage("Error", "Could not download Admin Console.")
+            return
+        end
+    end
+    
+    context.clear()
+    shell.run(consolePath, state.username, state.adminServerId)
+end
+
 local function mainMenu()
+    -- Security cleanup: If not admin, ensure tool is removed
+    if not state.isAdmin and fs.exists("Admin_Console.lua") then
+        fs.delete("Admin_Console.lua")
+    end
+
     while true do
         rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
         local _, response = rednet.receive("SimpleMail", 2)
@@ -441,7 +472,7 @@ local function mainMenu()
         elseif selection == "Games" then state.apps.enterArcade(context)
         elseif selection == "System" then state.apps.systemMenu(context)
         elseif selection == "Help" then state.apps.showHelpScreen(context)
-        elseif selection == "Admin Console" then state.apps.adminConsole(context)
+        elseif selection == "Admin Console" then runAdminConsole(context)
         end
     end
     state.username = nil -- Signal logout

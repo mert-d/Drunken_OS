@@ -23,7 +23,8 @@ local INSTALLABLE_PROGRAMS = {
         "HyperAuthClient/api/auth_api.lua",
         "HyperAuthClient/api/auth_client.lua",
         "HyperAuthClient/encrypt/secure.lua",
-        "HyperAuthClient/encrypt/sha1.lua"
+        "HyperAuthClient/encrypt/sha1.lua",
+        "clients/Admin_Console.lua"
     } },
     { name = "Drunken OS Bank Server", type = "server", path = "servers/Drunken_OS_BankServer.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "bank_server" },
     { name = "Drunken OS Client", type = "client", path = "clients/Drunken_OS_Client.lua", dependencies = { "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua" } },

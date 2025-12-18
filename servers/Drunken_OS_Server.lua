@@ -637,6 +637,25 @@ function mailHandlers.get_game_update(senderId, message)
     end
 end
 
+function mailHandlers.get_admin_tool(senderId, message)
+    -- Security Check: Only serve to admins
+    local user = message.user
+    if not user or not admins[user] then
+        rednet.send(senderId, { success = false, reason = "Unauthorized" }, "SimpleMail")
+        return
+    end
+
+    local path = "clients/Admin_Console.lua"
+    if fs.exists(path) then
+        local f = fs.open(path, "r")
+        local code = f.readAll()
+        f.close()
+        rednet.send(senderId, { type = "admin_tool_response", code = code }, "SimpleMail")
+    else
+        rednet.send(senderId, { success = false, reason = "File not found on server" }, "SimpleMail")
+    end
+end
+
 local gameHandlers = {}
 
 function gameHandlers.submit_score(senderId, message)
