@@ -186,41 +186,91 @@ end
 -- Core Application Logic (With Corrected 'deposit' function)
 --==============================================================================
 
-local function login()
-    drawFrame("Login")
-    term.setCursorPos(3, 4)
-    print("Please enter your Drunken OS password.")
-    term.setCursorPos(3, 6)
-    write("> ")
-    term.setCursorBlink(true)
-    local pass = read("*") -- Read the password as a string
-    term.setCursorBlink(false)
-
-    if not pass or pass == "" then return false end
-
-    -- This will now use the local, patched crypto library.
-    -- It safely passes the raw string, and the library handles any type issues.
-    local pass_hash = crypto.hex(pass)
-
-    if tostring(pass_hash) == tostring(card_data.pass_hash) then
-        printCenteredWrapped(10, "Password verified. Contacting bank server...")
-        rednet.send(bankServerId, { type = "login", user = username, pass_hash = pass_hash }, BANK_PROTOCOL)
+local function readPin(prompt)
+    while true do
+        drawFrame(prompt or "Enter 6-Digit PIN")
+        term.setCursorPos(3, 6)
+        write("PIN: ")
+        term.setCursorBlink(true)
+        local pin = read("*")
+        term.setCursorBlink(false)
         
-        local _, response = rednet.receive(BANK_PROTOCOL, 10)
-        if response and response.success then
-            balance = response.balance
-            currencyRates = response.rates
-            printCenteredWrapped(12, "Login successful!")
-            sleep(1.5)
-            return true
+        if #pin == 6 and tonumber(pin) then
+            return crypto.hex(pin)
+        elseif #pin == 0 then
+            return nil
         else
-            showMessage("Login Failed", (response and response.reason) or "No response from server.", true)
-            return false
+            showMessage("Error", "PIN must be exactly 6 digits.", true)
         end
+    end
+end
+
+local function setupPin()
+    drawFrame("PIN Setup Required")
+    printCenteredWrapped(6, "This card is new. Please set a 6-digit PIN.")
+    sleep(2)
+
+    local pin1 = readPin("Set New 6-Digit PIN")
+    if not pin1 then return false end
+
+    local pin2 = readPin("Confirm 6-Digit PIN")
+    if not pin2 then return false end
+
+    if pin1 ~= pin2 then
+        showMessage("Error", "PINs do not match. Restarting setup.", true)
+        return setupPin()
+    end
+
+    printCentered(12, "Registering PIN...")
+    rednet.send(bankServerId, {
+        type = "set_pin",
+        user = username,
+        pin_hash = pin1
+    }, BANK_PROTOCOL)
+
+    local _, response = rednet.receive(BANK_PROTOCOL, 10)
+    if response and response.success then
+        showMessage("Success", "PIN set successfully. You can now log in.")
+        return true
     else
-        showMessage("Login Failed", "Invalid password.", true)
+        showMessage("Error", (response and response.reason) or "Registration failed.", true)
         return false
     end
+end
+
+local function login()
+    local pin_hash = nil
+    local login_success = false
+    
+    while not login_success do
+        printCenteredWrapped(12, "Contacting Bank Server...")
+        rednet.send(bankServerId, { type = "login", user = username, pin_hash = pin_hash }, BANK_PROTOCOL)
+        local _, response = rednet.receive(BANK_PROTOCOL, 10)
+
+        if not response then
+            showMessage("Error", "No response from bank server.", true)
+            return false
+        end
+
+        if response.success then
+            balance = response.balance
+            currencyRates = response.rates
+            login_success = true
+            return true
+        elseif response.reason == "setup_required" then
+            if setupPin() then
+                pin_hash = nil -- Reset and try login again
+            else
+                return false
+            end
+        else
+            pin_hash = readPin("Enter 6-Digit PIN for " .. username)
+            if not pin_hash then
+                return false
+            end
+        end
+    end
+    return true
 end
 
 -- NEW: Corrected deposit function with full handshake logic
@@ -414,13 +464,96 @@ local function transferFunds()
     end
 end
 
+local function readPin(prompt)
+    while true do
+        drawFrame(prompt or "Enter 6-Digit PIN")
+        term.setCursorPos(3, 6)
+        write("PIN: ")
+        term.setCursorBlink(true)
+        local pin = read("*")
+        term.setCursorBlink(false)
+        
+        if #pin == 6 and tonumber(pin) then
+            return crypto.hex(pin)
+        elseif #pin == 0 then
+            return nil
+        else
+            showMessage("Error", "PIN must be exactly 6 digits.", true)
+        end
+    end
+end
+
+local function changePin()
+    local old_pin_hash = readPin("Current PIN")
+    if not old_pin_hash then return end
+
+    local new_pin1 = readPin("Enter New 6-Digit PIN")
+    if not new_pin1 then return end
+
+    local new_pin2 = readPin("Confirm New 6-Digit PIN")
+    if not new_pin2 then return end
+
+    if new_pin1 ~= new_pin2 then
+        showMessage("Error", "PINs do not match.", true)
+        return
+    end
+
+    printCentered(12, "Updating PIN...")
+    rednet.send(bankServerId, {
+        type = "change_pin",
+        user = username,
+        old_pin_hash = old_pin_hash,
+        new_pin_hash = new_pin1
+    }, BANK_PROTOCOL)
+
+    local _, response = rednet.receive(BANK_PROTOCOL, 10)
+    if response and response.success then
+        showMessage("Success", "PIN updated successfully.")
+    else
+        showMessage("Error", (response and response.reason) or "Update failed.", true)
+    end
+end
+
+local function setupPin()
+    drawFrame("PIN Setup Required")
+    printCenteredWrapped(6, "This card is new. Please set a 6-digit PIN.")
+    sleep(2)
+
+    local pin1 = readPin("Set New 6-Digit PIN")
+    if not pin1 then return false end
+
+    local pin2 = readPin("Confirm 6-Digit PIN")
+    if not pin2 then return false end
+
+    if pin1 ~= pin2 then
+        showMessage("Error", "PINs do not match. Restarting setup.", true)
+        return setupPin()
+    end
+
+    printCentered(12, "Registering PIN...")
+    rednet.send(bankServerId, {
+        type = "set_pin",
+        user = username,
+        pin_hash = pin1
+    }, BANK_PROTOCOL)
+
+    local _, response = rednet.receive(BANK_PROTOCOL, 10)
+    if response and response.success then
+        showMessage("Success", "PIN set successfully. You can now log in.")
+        return true
+    else
+        showMessage("Error", (response and response.reason) or "Registration failed.", true)
+        return false
+    end
+end
+
 local function mainMenu()
     local drive = peripheral.find("drive")
     while true do
-        local options = { "Check Balance / Rates", "Deposit Items", "Withdraw Items", "Transfer Funds", "Exit" }
+        local options = { "Check Balance / Rates", "Deposit Items", "Withdraw Items", "Transfer Funds", "Change PIN", "Exit" }
         local choice = drawMenu("ATM Main Menu", options, "Welcome, " .. username .. " | Balance: $" .. balance)
 
-        if not choice or choice == 5 then break end
+        if not choice or choice == 6 then break end
         
         if choice == 1 then
             drawFrame("Current Exchange Rates")
@@ -457,6 +590,7 @@ local function mainMenu()
         elseif choice == 2 then deposit()
         elseif choice == 3 then withdraw()
         elseif choice == 4 then transferFunds()
+        elseif choice == 5 then changePin()
         end
     end
 

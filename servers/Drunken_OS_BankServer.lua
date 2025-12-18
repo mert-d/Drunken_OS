@@ -312,25 +312,25 @@ end
 
 local bankHandlers = {}
 
--- THE FIX: The handler now correctly uses message.pass_hash.
+-- Handles user login with a dedicated bank PIN.
 function bankHandlers.login(senderId, message)
-    local user, pass_hash = message.user, message.pass_hash
+    local user, pin_hash = message.user, message.pin_hash
     local account = accounts[user]
 
     if account then
-        -- If it's an account created via transfer, update the placeholder hash.
-        if account.pass_hash == "EXTERNAL_TRANSFER" then
-            logActivity("Updating placeholder hash for user '" .. user .. "' on login.")
-            account.pass_hash = pass_hash
-            saveTableToFile(ACCOUNTS_DB, accounts)
+        -- If no PIN is set, indicate that setup is required.
+        if not account.pin_hash then
+            logActivity("User '"..user.."' needs to set up a bank PIN.")
+            rednet.send(senderId, { success = false, reason = "setup_required" }, BANK_PROTOCOL)
+            return
         end
 
-        if account.pass_hash == pass_hash then
+        if account.pin_hash == pin_hash then
             logTransaction(user, "login", "SUCCESS")
             rednet.send(senderId, { success = true, balance = account.balance, rates = currencyRates }, BANK_PROTOCOL)
         else
-            logTransaction(user, "login", "FAIL - Invalid Credentials")
-            rednet.send(senderId, { success = false, reason = "Invalid credentials." }, BANK_PROTOCOL)
+            logTransaction(user, "login", "FAIL - Invalid PIN")
+            rednet.send(senderId, { success = false, reason = "Invalid PIN." }, BANK_PROTOCOL)
         end
     else
         logActivity("New customer login attempt: '" .. user .. "'. Verifying with Mainframe...")
@@ -339,18 +339,65 @@ function bankHandlers.login(senderId, message)
 
         if response and response.exists then
             logActivity("Mainframe verified user. Creating new bank account for '" .. user .. "'.")
-            accounts[user] = { pass_hash = pass_hash, balance = 0 }
+            accounts[user] = { pin_hash = nil, balance = 0 }
             if saveTableToFile(ACCOUNTS_DB, accounts) then
-                rednet.send(senderId, { success = true, balance = 0, rates = currencyRates }, BANK_PROTOCOL)
-                logTransaction(user, "login", "SUCCESS - New account created")
+                rednet.send(senderId, { success = false, reason = "setup_required" }, BANK_PROTOCOL)
+                logTransaction(user, "account_created", "SUCCESS - Awaiting PIN setup")
             else
                 logActivity("Failed to save new account for " .. user, true)
                 rednet.send(senderId, { success = false, reason = "Bank database error." }, BANK_PROTOCOL)
             end
         else
-            logActivity("Mainframe verification failed for '" .. user .. "'.", true)
-            rednet.send(senderId, { success = false, reason = "User not registered in Mainframe." }, BANK_PROTOCOL)
+            rednet.send(senderId, { success = false, reason = "User does not exist in Drunken OS." }, BANK_PROTOCOL)
         end
+    end
+end
+
+-- Sets the initial PIN for a new account.
+function bankHandlers.set_pin(senderId, message)
+    local user, pin_hash = message.user, message.pin_hash
+    local account = accounts[user]
+
+    if not account then
+        rednet.send(senderId, { success = false, reason = "Account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    if account.pin_hash then
+        rednet.send(senderId, { success = false, reason = "PIN already set." }, BANK_PROTOCOL)
+        return
+    end
+
+    logActivity("Setting initial bank PIN for user '" .. user .. "'.")
+    account.pin_hash = pin_hash
+    if saveTableToFile(ACCOUNTS_DB, accounts) then
+        rednet.send(senderId, { success = true }, BANK_PROTOCOL)
+    else
+        rednet.send(senderId, { success = false, reason = "Database error." }, BANK_PROTOCOL)
+    end
+end
+
+-- Changes an existing PIN.
+function bankHandlers.change_pin(senderId, message)
+    local user, old_pin_hash, new_pin_hash = message.user, message.old_pin_hash, message.new_pin_hash
+    local account = accounts[user]
+
+    if not account or not account.pin_hash then
+        rednet.send(senderId, { success = false, reason = "Account not found or setup incomplete." }, BANK_PROTOCOL)
+        return
+    end
+
+    if account.pin_hash ~= old_pin_hash then
+        rednet.send(senderId, { success = false, reason = "Incorrect current PIN." }, BANK_PROTOCOL)
+        return
+    end
+
+    logActivity("Changing bank PIN for user '" .. user .. "'.")
+    account.pin_hash = new_pin_hash
+    if saveTableToFile(ACCOUNTS_DB, accounts) then
+        rednet.send(senderId, { success = true }, BANK_PROTOCOL)
+    else
+        rednet.send(senderId, { success = false, reason = "Database error." }, BANK_PROTOCOL)
     end
 end
 
@@ -514,7 +561,7 @@ function bankHandlers.transfer(senderId, message)
 
         if response and response.exists then
             logActivity("Mainframe verified recipient. Creating bank account for '" .. recipient .. "'.")
-            accounts[recipient] = { pass_hash = "EXTERNAL_TRANSFER", balance = 0 }
+            accounts[recipient] = { pin_hash = nil, balance = 0 }
             recipientAcc = accounts[recipient]
         else
             rednet.send(senderId, { success = false, reason = "Recipient user does not exist." }, BANK_PROTOCOL)

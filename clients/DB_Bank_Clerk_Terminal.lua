@@ -128,16 +128,7 @@ local function makeCard()
         return
     end
 
-    printCentered(10, "User verified. Requesting password hash from Mainframe...")
-    rednet.send(mainServerId, { type = "get_user_data", user = user }, AUTH_INTERLINK_PROTOCOL)
-    local _, userData = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
-
-    if not userData or not userData.success then
-        showMessage("Error", "Could not retrieve user data from Mainframe.", true)
-        return
-    end
-
-    printCentered(12, "Password hash received. Please insert a blank disk.")
+    printCentered(12, "User verified. Please insert a blank disk.")
     local drive = peripheral.find("drive")
     if not drive then
         showMessage("Error", "No disk drive attached to this terminal.", true)
@@ -157,7 +148,7 @@ local function makeCard()
 
     drive.setDiskLabel("DrunkenBeard_Card_" .. user)
 
-    local cardData = { pass_hash = userData.pass_hash }
+    local cardData = { username = user }
     local cardFile = fs.open(mount_path .. "/.card_data", "w")
     if cardFile then
         cardFile.write(textutils.serialize(cardData))
