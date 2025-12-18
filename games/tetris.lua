@@ -10,8 +10,10 @@ local currentVersion = 1.9
 -- ... rest of the tetris game code
 
 --==============================================================================
--- Configuration & State
+-- Main Game Function (to be run inside pcall)
 --==============================================================================
+
+local function mainGame(...)
 
 local args = {...}
 local username = args[1] or "Guest" -- Fallback to Guest
@@ -166,10 +168,8 @@ local function draw()
     -- Draw board border
     term.setTextColor(colors.gray)
     for y = 1, boardHeight do
-        term.setCursorPos(boardXOffset - 1, boardYOffset + y - 1); term.write("[
-")
-        term.setCursorPos(boardXOffset + boardPixelWidth, boardYOffset + y - 1);
- term.write("]")
+        term.setCursorPos(boardXOffset - 1, boardYOffset + y - 1); term.write("[")
+        term.setCursorPos(boardXOffset + boardPixelWidth, boardYOffset + y - 1); term.write("]")
     end
 
     -- Draw locked pieces
@@ -300,61 +300,32 @@ end
 -- Main Game Loop
 --==============================================================================
 
-rednet.open("back")
-arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
+local function mainGame()
+    rednet.open("back")
+    arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
 
-for y = 1, boardHeight do board[y] = {} end
-newPiece()
+    for y = 1, boardHeight do board[y] = {} end
+    newPiece()
 
-local dropTimer = os.startTimer(0.5)
+    local dropTimer = os.startTimer(0.5)
 
-while true do
-    local event, p1 = os.pullEvent()
+    while true do
+        local event, p1 = os.pullEvent()
 
-    if event == "key" then
-        if p1 == keys.left then
-            currentPiece.x = currentPiece.x - 1
-            if not isValid(currentPiece) then currentPiece.x = currentPiece.x +
+        if event == "key" then
+            if p1 == keys.left then
+                currentPiece.x = currentPiece.x - 1
+                if not isValid(currentPiece) then currentPiece.x = currentPiece.x +
 1 end
-        elseif p1 == keys.right then
-            currentPiece.x = currentPiece.x + 1
-            if not isValid(currentPiece) then currentPiece.x = currentPiece.x -
+            elseif p1 == keys.right then
+                currentPiece.x = currentPiece.x + 1
+                if not isValid(currentPiece) then currentPiece.x = currentPiece.x -
 1 end
-        elseif p1 == keys.up then
-            local originalShape = currentPiece[1]
-            currentPiece[1] = rotatePiece(currentPiece)
-            if not isValid(currentPiece) then currentPiece[1] = originalShape en
+            elseif p1 == keys.up then
+                local originalShape = currentPiece[1]
+                currentPiece[1] = rotatePiece(currentPiece)
+                if not isValid(currentPiece) then currentPiece[1] = originalShape en
 d
-        elseif p1 == keys.down then
-            currentPiece.y = currentPiece.y + 1
-            if not isValid(currentPiece) then
-                currentPiece.y = currentPiece.y - 1
-                lockPiece()
-                newPiece()
-            else
-                score = score + 1
-            end
-        elseif p1 == keys.space then
-             while isValid(currentPiece) do
-                currentPiece.y = currentPiece.y + 1
-                score = score + 2
-             end
-             currentPiece.y = currentPiece.y - 1
-             lockPiece()
-             newPiece()
-        elseif p1 == keys.q then
-            gameOver = true
-        end
-    elseif event == "timer" and p1 == dropTimer then
-        currentPiece.y = currentPiece.y + 1
-        if not isValid(currentPiece) then
-            currentPiece.y = currentPiece.y - 1
-            lockPiece()
-            newPiece()
-        end
-        local speed = math.max(0.1, 0.5 - (level - 1) * 0.05)
-        dropTimer = os.startTimer(speed)
-    elseif event == "terminate" then
         break
     end
 

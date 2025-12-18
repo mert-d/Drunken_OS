@@ -22,8 +22,7 @@ local function mainGame(...)
     local arcadeServerId = nil
 
     local player, aliens, bullets, bombs = {}, {}, {}, {}
-    local score, lives, gameOver, level = 0, 3, false, 1 -- **NEW**: Added level
- tracking
+    local score, lives, gameOver, level = 0, 3, false, 1 -- **NEW**: Added level tracking
     local alienDirection, alienMoveTimer, alienDropTimer = 1, 0, 0
 
     local hasColor = term.isColor and term.isColor()

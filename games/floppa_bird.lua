@@ -119,9 +119,7 @@ local function mainGame(...)
         term.write(scoreText)
     end
 
-    local function submitScore() if arcadeServerId then rednet.send(arcadeServer
-Id, {type = "submit_score", game = gameName, user = username, score = score}, "A
-rcadeGames") end end
+    local function submitScore() if arcadeServerId then rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames") end end
 
     local function showGameOverScreen()
         submitScore()

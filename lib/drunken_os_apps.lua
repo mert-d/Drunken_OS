@@ -734,7 +734,12 @@ end
                         end
                     else
                         context.clear()
-                        shell.run(gameFile, getParent(context).username)
+                        local ok = shell.run(gameFile, getParent(context).username)
+                        if not ok then
+                            print("\nGame exited with error.")
+                            print("Press any key to return.")
+                            os.pullEvent("key")
+                        end
                     end
                 else
                     break
