@@ -465,7 +465,7 @@ local function mainMenu()
         
         local selection = options[choice]
         -- Use 'context' for all calls
-        if selection:match("Read Mail") then state.apps.readMail(context)
+        if selection:match("Read Mail") then state.apps.viewInbox(context)
         elseif selection == "Send Mail" then state.apps.sendMail(context)
         elseif selection == "General Chat" then state.apps.startChat(context)
         elseif selection == "Mailing Lists" then state.apps.manageLists(context)
