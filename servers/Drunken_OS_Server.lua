@@ -901,23 +901,34 @@ function adminCommands.sync(a)
     if target == "client" or target == "all" then
         logActivity("Syncing Drunken_OS_Client...")
         local path = "clients/Drunken_OS_Client.lua"
+        local code, v
         if fs.exists(path) then
             local f = fs.open(path, "r")
-            local code = f.readAll()
+            code = f.readAll()
             f.close()
-            
-            local v = code:match("local%s+currentVersion%s*=%s*([%d%.]+)")
-            if v then
-                local version = tonumber(v)
-                programCode["Drunken_OS_Client"] = code
-                programVersions["Drunken_OS_Client"] = version
-                saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
-                logActivity("Published Client v" .. version)
-            else
-                logActivity("Error: No version found in Client file.", true)
-            end
+            v = code:match("local%s+currentVersion%s*=%s*([%d%.]+)")
         else
-            logActivity("Error: Client file not found at " .. path, true)
+            logActivity("Local file needed? No. Check GitHub...")
+            local url = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/clients/Drunken_OS_Client.lua"
+            local response = http.get(url)
+            if response then
+                code = response.readAll()
+                response.close()
+                v = code:match("local%s+currentVersion%s*=%s*([%d%.]+)")
+                logActivity("Fetched from GitHub.")
+            else
+                logActivity("Error: Could not fetch from GitHub.", true)
+            end
+        end
+
+        if code and v then
+            local version = tonumber(v)
+            programCode["Drunken_OS_Client"] = code
+            programVersions["Drunken_OS_Client"] = version
+            saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
+            logActivity("Published Client v" .. version)
+        else
+           logActivity("Error: Valid code/version not found.", true)
         end
     end
     
