@@ -563,6 +563,7 @@ function bankHandlers.deposit(senderId, message)
             accounts[user].balance = accounts[user].balance + total_value
             if saveTableToFile(ACCOUNTS_DB, accounts) and saveTableToFile(STOCK_DB, currentStock) then
                 rednet.send(senderId, { success = true, newBalance = accounts[user].balance, deposited_value = total_value }, BANK_PROTOCOL)
+                local transaction_data = {}
                 for _, item in ipairs(items) do
                     local rateInfo = currencyRates[item.name or "unknown"] or currencyRates[item.name:match("^minecraft:(.+)") or ""]
                     if rateInfo then
