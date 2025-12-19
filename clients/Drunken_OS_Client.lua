@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mobile Client (v12.3 - Release Version)
+    Drunken OS - Mobile Client (v13.0 - Sentinel Update)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -25,7 +25,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 12.9
+local currentVersion = 13.0
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
