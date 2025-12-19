@@ -41,57 +41,84 @@ local alerts = {}
 local max_alerts = 10
 local bankServerId = nil
 
+-- Display Abstraction
+local display = term
+local isMonitor = false
+
+local function initDisplay()
+    local monitor = peripheral.find("monitor")
+    if monitor then
+        display = monitor
+        isMonitor = true
+        monitor.setTextScale(0.5) -- Optional: allow more text on small monitors
+    else
+        display = term
+        isMonitor = false
+    end
+    
+    local w, h = display.getSize()
+    max_alerts = h - 5
+end
+
 --==============================================================================
 -- UI Functions
 --==============================================================================
 
 local function drawDashboard(status)
-    term.clear()
-    term.setCursorPos(1, 1)
+    display.setBackgroundColor(colors.black)
+    display.clear()
+    display.setCursorPos(1, 1)
+    
+    local w, h = display.getSize()
+    max_alerts = h - 4
+
     if status == "BREACH" then
-        term.setBackgroundColor(colors.red)
-        term.setTextColor(colors.white)
-        term.write("!!! SECURITY BREACH DETECTED !!!")
+        display.setBackgroundColor(colors.red)
+        display.setTextColor(colors.white)
+        display.write(string.format(" %-s ", "!!! SECURITY BREACH DETECTED !!!"):sub(1, w))
     elseif status == "VERIFYING" then
-        term.setBackgroundColor(colors.orange)
-        term.setTextColor(colors.white)
-        term.write("   Verifying Ledger Integrity...   ")
+        display.setBackgroundColor(colors.orange)
+        display.setTextColor(colors.white)
+        display.write(string.format(" %-s ", "   Verifying Ledger Integrity...   "):sub(1, w))
     else
-        term.setBackgroundColor(colors.blue)
-        term.setTextColor(colors.white)
-        term.write(" BANK SENTINEL v" .. version .. " - SECURE  ")
+        display.setBackgroundColor(colors.blue)
+        display.setTextColor(colors.white)
+        local title = " BANK SENTINEL v" .. version .. " - SECURE "
+        display.write(string.format(" %-s ", title):sub(1, w))
     end
     
-    term.setBackgroundColor(colors.black)
-    term.setCursorPos(1, 3)
-    term.setTextColor(colors.cyan)
-    term.write("--- Security Feed ---")
+    display.setBackgroundColor(colors.black)
+    display.setCursorPos(1, 3)
+    display.setTextColor(colors.cyan)
+    display.write("--- Security Feed (" .. #alerts .. " events) ---")
     
     for i, alert in ipairs(alerts) do
-        term.setCursorPos(1, 4 + i)
+        if i > max_alerts then break end
+        display.setCursorPos(1, 3 + i)
         if alert.isHighValue then
-            term.setTextColor(colors.red)
-            term.write("[!] ")
+            display.setTextColor(colors.red)
+            display.write("[!] ")
         else
-            term.setTextColor(colors.white)
-            term.write("[ ] ")
+            display.setTextColor(colors.white)
+            display.write("[ ] ")
         end
-        term.write(alert.msg)
+        display.write(alert.msg:sub(1, w - 4))
     end
 end
 
 local function addAlert(msg, isHighValue)
-    table.insert(alerts, 1, { msg = msg:sub(1, 30), isHighValue = isHighValue })
-    if #alerts > max_alerts then table.remove(alerts) end
+    local w, _ = display.getSize()
+    table.insert(alerts, 1, { msg = msg:sub(1, w - 4), isHighValue = isHighValue })
+    if #alerts > 50 then table.remove(alerts) end -- Keep a buffer larger than display
     drawDashboard()
     if isHighValue then
-        -- Blink shell
+        -- Blink display
         for i=1, 3 do
-            term.setBackgroundColor(colors.red)
-            term.clear()
+            display.setBackgroundColor(colors.red)
+            display.clear()
             sleep(0.1)
-            term.setBackgroundColor(colors.black)
-            term.clear()
+            display.setBackgroundColor(colors.black)
+            display.clear()
             drawDashboard("BREACH")
             sleep(0.1)
         end
@@ -251,7 +278,8 @@ local function main()
     if not modem then error("No modem attached.") end
     rednet.open(peripheral.getName(modem))
     
-    print("Sentinel Online. Initializing...")
+    initDisplay()
+    print("Sentinel Online. Initializing Display...")
     performAudit() -- Initial check
     
     parallel.waitForAny(monitorLoop, schedulerLoop)
