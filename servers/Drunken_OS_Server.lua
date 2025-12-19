@@ -62,6 +62,7 @@ local users, lists, games, chatHistory, gameList, pendingAuths = {}, {}, {}, {},
 local userLocations = {} -- Stores latest (x, y, z) for each user
 local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
+local monitor = nil
 local ADMINS_DB = "admins.db" -- New database file for admins
 local USERS_DB = "users.db"
 local LISTS_DB = "lists.db"
@@ -171,6 +172,48 @@ local function redrawAdminUI()
 end
 
 ---
+-- Redraws the log view on the external monitor.
+local function redrawMonitorUI()
+    if not monitor then return end
+    local w, h = monitor.getSize()
+    monitor.setBackgroundColor(colors.black)
+    monitor.clear()
+
+    -- Title Bar
+    monitor.setBackgroundColor(colors.gray)
+    monitor.setCursorPos(1, 1)
+    monitor.write(string.rep(" ", w))
+    monitor.setTextColor(colors.white)
+    local title = " MAINFRAME LIVE FEED "
+    monitor.setCursorPos(math.floor((w - #title) / 2) + 1, 1)
+    monitor.write(title)
+    
+    -- Log Area
+    monitor.setBackgroundColor(colors.black)
+    local logAreaHeight = h - 2
+    local displayLines = {}
+    
+    -- We use the same wordWrap as the admin UI
+    for i = #logHistory, 1, -1 do
+        local wrappedLines = wordWrap(logHistory[i], w - 2)
+        for j = #wrappedLines, 1, -1 do
+            table.insert(displayLines, 1, " " .. wrappedLines[j])
+            if #displayLines >= logAreaHeight then break end
+        end
+        if #displayLines >= logAreaHeight then break end
+    end
+    
+    for i = 1, math.min(#displayLines, logAreaHeight) do
+        monitor.setCursorPos(1, 1 + i)
+        local line = displayLines[i]
+        if line:find("%[ERROR%]") then monitor.setTextColor(colors.red)
+        elseif line:find("%[INFO%]") then monitor.setTextColor(colors.white)
+        else monitor.setTextColor(colors.lightGray) end
+        monitor.write(line)
+    end
+end
+
+---
 -- Logs a message to the admin console and a file.
 -- @param message The message to log.
 -- @param isError (Optional) True if the message is an error.
@@ -188,6 +231,7 @@ local function logActivity(message, isError)
     end
     
     redrawAdminUI()
+    if monitor then redrawMonitorUI() end
 end
 
 --==============================================================================
@@ -1225,6 +1269,14 @@ end
 
 local function main()
     loadAllData()
+    
+    -- Monitor Initialization
+    monitor = peripheral.find("monitor")
+    if monitor then
+        monitor.setTextScale(0.5)
+        redrawMonitorUI()
+    end
+
     for _, side in ipairs(rs.getSides()) do
         if peripheral.getType(side) == "modem" then
             rednet.open(side)
@@ -1234,7 +1286,7 @@ local function main()
     rednet.host("SimpleChat", "chat.server")
     rednet.host("ArcadeGames", "arcade.server")
     rednet.host(ADMIN_PROTOCOL, "admin.server")
-    logActivity("Mainframe Server v10.13 Initialized.")
+    logActivity("Mainframe Server v10.14 Initialized.")
     mainEventLoop()
 end
 

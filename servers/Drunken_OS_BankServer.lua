@@ -826,12 +826,18 @@ end
 
 function adminCommands.setbalance(args)
     local _, user, amount = parseAdminArgs(args)
+    amount = tonumber(amount)
     if not user or not amount then print("Usage: setbalance <user> <amount>"); return end
 
     if accounts[user] then
         accounts[user].balance = amount
-        saveTableToFile(ACCOUNTS_DB, accounts)
-        print("Set balance for " .. user .. " to $" .. amount)
+        if saveTableToFile(ACCOUNTS_DB, accounts) then
+            logTransaction(user, "ADMIN_SET", { note = "Administrative set" }, amount)
+            broadcastSecurityEvent(string.format("ADMIN: %s SET $%d", user, amount), amount)
+            print("Set balance for " .. user .. " to $" .. amount)
+        else
+            print("Error: Database write failed.")
+        end
     else
         print("Error: Account for user '" .. user .. "' does not exist.")
     end
@@ -839,15 +845,52 @@ end
 
 function adminCommands.give(args)
     local _, user, amount = parseAdminArgs(args)
+    amount = tonumber(amount)
     if not user or not amount then print("Usage: give <user> <amount>"); return end
 
-    -- THE FIX: Check for the account and only update the balance.
     if accounts[user] then
         accounts[user].balance = accounts[user].balance + amount
-        saveTableToFile(ACCOUNTS_DB, accounts)
-        print("Gave $" .. amount .. " to " .. user .. ". New balance: $" .. accounts[user].balance)
+        if saveTableToFile(ACCOUNTS_DB, accounts) then
+            logTransaction(user, "ADMIN_GIVE", { note = "Administrative give" }, amount)
+            broadcastSecurityEvent(string.format("ADMIN: %s +$%d", user, amount), amount)
+            print("Gave $" .. amount .. " to " .. user .. ". New balance: $" .. accounts[user].balance)
+        else
+            print("Error: Database write failed.")
+        end
     else
         print("Error: Account for user '" .. user .. "' does not exist.")
+    end
+end
+
+function adminCommands.adjust(args)
+    local _, user, action, amount = parseAdminArgs(args)
+    amount = tonumber(amount)
+    if not user or not action or not amount then 
+        print("Usage: adjust <user> <set|add|sub> <amount>")
+        return 
+    end
+
+    if not accounts[user] then
+        print("Error: Account for user '" .. user .. "' does not exist.")
+        return
+    end
+
+    local oldBalance = accounts[user].balance
+    local newBalance = oldBalance
+
+    if action == "set" then newBalance = amount
+    elseif action == "add" then newBalance = oldBalance + amount
+    elseif action == "sub" then newBalance = oldBalance - amount
+    else print("Invalid action. Use set, add, or sub."); return end
+
+    accounts[user].balance = newBalance
+    if saveTableToFile(ACCOUNTS_DB, accounts) then
+        local diff = newBalance - oldBalance
+        logTransaction(user, "ADMIN_ADJUST", { action = action, prev = oldBalance }, diff)
+        broadcastSecurityEvent(string.format("ADMIN: %s ADJ %s%d", user, (diff >= 0 and "+" or ""), diff), math.abs(diff))
+        print("Adjustment complete. New balance for " .. user .. ": $" .. newBalance)
+    else
+        print("Error: Database write failed.")
     end
 end
 
