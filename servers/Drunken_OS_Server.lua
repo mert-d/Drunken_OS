@@ -59,6 +59,7 @@ end
 
 local admins = {} -- This will now be loaded from a file
 local users, lists, games, chatHistory, gameList, pendingAuths = {}, {}, {}, {}, {}, {}
+local userLocations = {} -- Stores latest (x, y, z) for each user
 local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
 local ADMINS_DB = "admins.db" -- New database file for admins
@@ -584,6 +585,30 @@ end
 
 function mailHandlers.get_unread_count(senderId, message)
     rednet.send(senderId, { type = "unread_count_response", count = #loadMail(message.user) }, "SimpleMail")
+end
+
+function mailHandlers.report_location(senderId, message)
+    if message.user and message.x and message.y and message.z then
+        userLocations[message.user] = {
+            x = message.x,
+            y = message.y,
+            z = message.z,
+            dimension = message.dimension or "homeworld",
+            timestamp = os.time()
+        }
+        -- No response needed for heartbeat to reduce traffic
+    end
+end
+
+function mailHandlers.get_user_locations(senderId, message)
+    -- clean up old locations (> 5 mins in-game time)
+    local now = os.time()
+    for user, data in pairs(userLocations) do
+        if now - data.timestamp > 0.1 then -- 0.1 game days is roughly 2 mins real time
+            userLocations[user] = nil
+        end
+    end
+    rednet.send(senderId, { type = "user_locations_response", locations = userLocations }, "SimpleMail")
 end
 
 function mailHandlers.get_gamelist(senderId, message)

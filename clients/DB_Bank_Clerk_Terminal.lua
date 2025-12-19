@@ -1,246 +1,265 @@
 --[[
-    Drunken Beard Bank - Clerk Terminal (v1.0 - Initial Release)
+    Drunken Beard Bank - Clerk Terminal (v1.0)
     by MuhendizBey
 
     Purpose:
-    This program provides a secure, user-friendly interface for bank staff
-    to create bank cards. It replaces the old admin command and securely
-    fetches the correct user password hash from the main server to write
-    onto the card, fixing the placeholder issue.
+    Secured terminal for bank staff to manage customer accounts,
+    verify transactions, and monitor security events.
 ]]
 
 --==============================================================================
--- API & Library Initialization
+-- Configuration & Init
 --==============================================================================
 
+local version = 1.0
 local programDir = fs.getDir(shell.getRunningProgram())
 package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
-local crypto = require("lib.sha1_hmac")
 
---==============================================================================
--- Configuration & State
---==============================================================================
+local function safeRequire(mod)
+    local ok, res = pcall(require, mod)
+    return ok and res or nil
+end
 
-local mainServerId = nil
+local crypto = safeRequire("lib.sha1_hmac") or safeRequire("sha1_hmac")
+if not crypto then
+    print("Error: Missing 'sha1_hmac' library.")
+    return
+end
+
+local BANK_PROTOCOL = "DB_Bank"
+local AUDIT_PROTOCOL = "DB_Audit"
 local bankServerId = nil
 
-local CLERK_PROTOCOL = "DB_Clerk"
-local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
+-- Simple Clerk Auth (In production, use a peripheral Keycard)
+local CLERK_KEY_HASH = "5baa61e4c9b93f3f0682250b6cf8331b7ee68fd8" -- "password" (sha1)
 
 --==============================================================================
--- Graphical UI & Theme
+-- UI Helpers
 --==============================================================================
 
-local theme = {
-    bg = colors.black,
-    text = colors.white,
-    border = colors.blue,
-    titleBg = colors.lightBlue,
-    titleText = colors.white,
-    highlightBg = colors.yellow,
-    highlightText = colors.black,
-    errorBg = colors.red,
-    errorText = colors.white,
-}
-
-local function drawFrame(title)
-    local w, h = term.getSize()
-    term.setBackgroundColor(theme.bg); term.clear()
-    term.setBackgroundColor(theme.border)
-    for y=1,h do term.setCursorPos(1,y); term.write(" "); term.setCursorPos(w,y); term.write(" ") end
-    for x=1,w do term.setCursorPos(x,1); term.write(" "); term.setCursorPos(x,h); term.write(" ") end
-    term.setBackgroundColor(theme.titleBg); term.setTextColor(theme.titleText)
-    local titleText = " " .. (title or "Drunken Beard Bank - Clerk Terminal") .. " "
-    local titleStart = math.floor((w - #titleText) / 2) + 1
-    term.setCursorPos(titleStart, 1)
-    term.write(titleText)
-    term.setBackgroundColor(theme.bg); term.setTextColor(theme.text)
+local function clear()
+    term.clear()
+    term.setCursorPos(1,1)
 end
 
-local function printCentered(startY, text)
+local function drawHeader(title)
     local w, h = term.getSize()
-    local x = math.floor((w - #text) / 2) + 1
-    term.setCursorPos(x, startY)
-    term.write(text)
+    term.setBackgroundColor(colors.gray)
+    term.setTextColor(colors.white)
+    term.setCursorPos(1, 1)
+    term.write(string.rep(" ", w))
+    term.setCursorPos(math.floor((w - #title) / 2) + 1, 1)
+    term.write(title)
+    term.setBackgroundColor(colors.black)
 end
 
-local function showMessage(title, message, isError)
-    local w, h = term.getSize()
-    local boxBg = isError and theme.errorBg or theme.titleBg
-    local boxText = isError and theme.errorText or theme.titleText
-    local boxW, boxH = math.floor(w * 0.8), math.floor(h * 0.7)
-    local boxX, boxY = math.floor((w - boxW) / 2), math.floor((h - boxH) / 2)
-
-    term.setBackgroundColor(boxBg)
-    for y = boxY, boxY + boxH - 1 do
-        term.setCursorPos(boxX, y); term.write(string.rep(" ", boxW))
-    end
-
-    term.setTextColor(boxText)
-    local titleText = " " .. title .. " ";
-    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, boxY + 1); term.write(titleText)
-
-    local lines = {}
-    for line in message:gmatch("[^\n]+") do
-        while #line > boxW - 4 do
-            table.insert(lines, line:sub(1, boxW - 4))
-            line = line:sub(boxW - 3)
-        end
-        table.insert(lines, line)
-    end
-
-    for i, line in ipairs(lines) do
-        term.setCursorPos(boxX + 2, boxY + 3 + i)
-        print(line)
-    end
-
-    local continueText = "Press any key to continue..."
-    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, boxY + boxH - 2)
-    print(continueText)
-
+local function pause()
+    print("\nPress any key to continue...")
     os.pullEvent("key")
 end
 
 --==============================================================================
--- Core Application Logic
+-- Networking
 --==============================================================================
 
-local function makeCard()
-    drawFrame("Create Bank Card")
-    term.setCursorPos(3, 4)
-    print("Enter the username for the new bank card.")
-    term.setCursorPos(3, 6)
-    write("> ")
-    term.setCursorBlink(true)
+local function findServer()
+    print("Connecting to Mainframe...")
+    bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server") or rednet.lookup(BANK_PROTOCOL)
+    if not bankServerId then
+        print("Error: Bank Server unreachable.")
+        return false
+    end
+    print("Connected to Bank Server (ID: " .. bankServerId .. ")")
+    sleep(1)
+    return true
+end
+
+--==============================================================================
+-- Features
+--==============================================================================
+
+local function lookupAccount()
+    clear()
+    drawHeader("Clerk Terminal - Account Lookup")
+    term.setCursorPos(1, 4)
+    write("Enter Username: ")
     local user = read()
-    term.setCursorBlink(false)
-
-    if not user or user == "" then
-        showMessage("Error", "Username cannot be empty.", true)
-        return
-    end
-
-    printCentered(8, "Verifying user with Mainframe...")
-    rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
-    local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
-
-    if not response or not response.exists then
-        showMessage("Error", "Mainframe reports user '" .. user .. "' does not exist.", true)
-        return
-    end
-
-    printCentered(12, "User verified. Please insert a blank disk.")
-    local drive = peripheral.find("drive")
-    if not drive then
-        showMessage("Error", "No disk drive attached to this terminal.", true)
-        return
-    end
-
-    if not drive.isDiskPresent() then
-        showMessage("Error", "No disk in the drive.", true)
-        return
-    end
-
-    local mount_path = drive.getMountPath()
-    if not mount_path then
-        showMessage("Error", "Could not get disk mount path.", true)
-        return
-    end
-
-    drive.setDiskLabel("DrunkenBeard_Card_" .. user)
-
-    local cardData = { username = user }
-    local cardFile = fs.open(mount_path .. "/.card_data", "w")
-    if cardFile then
-        cardFile.write(textutils.serialize(cardData))
-        cardFile.close()
-        showMessage("Success", "Successfully created bank card for " .. user)
+    
+    rednet.send(bankServerId, { type = "clerk_get_account", user = user }, BANK_PROTOCOL)
+    local _, response = rednet.receive(BANK_PROTOCOL, 5)
+    
+    if response and response.success then
+        print("\n[Account Found]")
+        print("User: " .. user)
+        print("Balance: $" .. response.account.balance)
+        print("PIN Status: " .. (response.account.pin_hash and "SET" or "NOT SET"))
+        if response.account.is_merchant then
+            print("Type: Merchant")
+        else
+            print("Type: Personal")
+        end
     else
-        showMessage("Error", "Could not write data file to disk.", true)
+        print("\nError: " .. (response and response.reason or "Timeout/Not Found"))
     end
+    pause()
 end
 
-local function mainMenu()
-    while true do
-        drawFrame("Clerk Main Menu")
-        local options = { "Create Bank Card", "Exit" }
-        local choice = drawMenu("Select an option:", options, "Welcome, Clerk.")
-
-        if not choice or choice == 2 then break end
-
-        if choice == 1 then makeCard() end
-    end
-end
-
-local function drawMenu(title, options, help)
-    local w, h = term.getSize()
-    local selected = 1
-    while true do
-        drawFrame(title)
-        for i, opt in ipairs(options) do
-            term.setCursorPos(4, 4 + i)
-            if i == selected then
-                term.setBackgroundColor(theme.highlightBg)
-                term.setTextColor(theme.highlightText)
-            else
-                term.setBackgroundColor(theme.bg)
-                term.setTextColor(theme.text)
+local function viewHistory()
+    clear()
+    drawHeader("Clerk Terminal - Transaction History")
+    term.setCursorPos(1, 4)
+    write("Enter Username: ")
+    local user = read()
+    
+    print("\nFetching ledger...")
+    rednet.send(bankServerId, { type = "clerk_get_history", user = user }, BANK_PROTOCOL)
+    local _, response = rednet.receive(BANK_PROTOCOL, 5)
+    
+    if response and response.success then
+        if #response.history == 0 then
+            print("No transactions found.")
+        else
+            local w, h = term.getSize()
+            print(string.format("\n%-20s | %-10s | %s", "Type", "Amount", "Details"))
+            print(string.rep("-", w))
+            
+            for i, entry in ipairs(response.history) do
+                if i > (h - 8) then
+                    print("... (more entries hidden)")
+                    break
+                end
+                
+                local details = entry.details
+                local detailStr = ""
+                if type(details) == "table" then
+                    if details.recipient then detailStr = "-> " .. details.recipient 
+                    elseif details.sender then detailStr = "<- " .. details.sender
+                    elseif details.merchant then detailStr = "Pay " .. details.merchant
+                    else detailStr = "Complex" end
+                else
+                    detailStr = tostring(details or "")
+                end
+                
+                print(string.format("%-20s | %-10s | %s", 
+                    entry.type:sub(1,20), 
+                    tostring(entry.amount or 0), 
+                    detailStr
+                ))
             end
-            term.write(" " .. opt .. string.rep(" ", w - 6 - #opt) .. " ")
         end
-        term.setBackgroundColor(theme.bg)
-        term.setTextColor(colors.yellow)
-        if help then
-            printCentered(h - 2, help)
+    else
+        print("\nError: " .. (response and response.reason or "Timeout"))
+    end
+    pause()
+end
+
+local function liveMonitor()
+    clear()
+    drawHeader("Clerk Terminal - Live Security Monitor")
+    print("\nListening for Audit Events (Press 'q' to exit)...")
+    
+    while true do
+        local id, msg = rednet.receive(5)
+        if id then
+            if msg and msg.type == "security_event" then
+                local prefix = msg.isAlert and "[!]" or "[i]"
+                local color = msg.isAlert and colors.red or colors.white
+                term.setTextColor(color)
+                print(string.format("%s %s", prefix, msg.event))
+                term.setTextColor(colors.white)
+            end
         end
-        local _, key = os.pullEvent("key")
-        if key == keys.up then selected = (selected == 1) and #options or selected - 1
-        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-        elseif key == keys.enter then
-            term.setBackgroundColor(theme.bg)
-            term.setTextColor(theme.text)
-            return selected
-        elseif key == keys.q or key == keys.tab then return nil
+        
+        local event, key = os.queueEvent("dummy") -- Non-blocking check hack
+        os.pullEvent() -- Clear dummy
+        
+        -- Non-blocking input handling is hard without parallel API
+        -- We will rely on built-in event loop for simplicity
+        -- Actually, rednet.receive returns on keypress if we don't filter? No.
+    end
+end
+-- To fix Live Monitor, we need parallel
+local function runMonitor()
+    clear()
+    drawHeader("Live Security Monitor (Press 'Q' to quit)")
+    
+    local function listen()
+        while true do
+            local id, msg, proto = rednet.receive(AUDIT_PROTOCOL)
+            if msg and type(msg) == "table" and msg.type == "security_event" then
+                 local time = os.time()
+                 local timestamp = textutils.formatTime(time, true)
+                 local prefix = msg.isAlert and "[ALERT]" or "[INFO]"
+                 
+                 if msg.isAlert then term.setTextColor(colors.red) else term.setTextColor(colors.white) end
+                 print(string.format("[%s] %s %s", timestamp, prefix, msg.event))
+                 term.setTextColor(colors.white)
+            end
         end
     end
+    
+    local function waitExit()
+        while true do
+            local event, key = os.pullEvent("key")
+            if key == keys.q then return end
+        end
+    end
+    
+    parallel.waitForAny(listen, waitExit)
 end
 
 --==============================================================================
--- Main Program Loop
+-- Main Loop
 --==============================================================================
 
 local function main()
+    clear()
+    print("Initializing Clerk Terminal...")
+    
     local modem = peripheral.find("modem")
-    if not modem then error("No modem attached.", 0) end
-    rednet.open(peripheral.getName(modem))
-
-    mainServerId = rednet.lookup("SimpleMail", "mail.server")
-    if not mainServerId then error("Could not find main Drunken OS server.", 0) end
-
-    bankServerId = rednet.lookup("DB_Bank", "bank.server")
-    if not bankServerId then error("Could not find bank server.", 0) end
-
-    drawFrame("Login")
-    printCentered(4, "Please enter your Drunken OS username.")
-    term.setCursorPos(3, 6)
-    write("> ")
-    term.setCursorBlink(true)
-    local user = read()
-    term.setCursorBlink(false)
-
-    rednet.send(mainServerId, { type = "is_admin_check", user = user }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 5)
-
-    if response and response.isAdmin then
-        mainMenu()
-    else
-        showMessage("Access Denied", "You are not authorized to use this terminal.", true)
+    if not modem then
+        print("Error: No modem attached.")
+        return
     end
-
-    rednet.close(peripheral.getName(modem))
-    drawFrame("Goodbye")
-    printCentered(8, "Clerk terminal shutting down.")
-    sleep(2)
+    rednet.open(peripheral.getName(modem))
+    
+    if not findServer() then return end
+    
+    -- Auth
+    clear()
+    drawHeader("Security Check")
+    term.setCursorPos(1, 4)
+    write("Enter Clerk Password: ")
+    local input = read("*")
+    if crypto.sha1(input) ~= CLERK_KEY_HASH then
+        print("\nAccess Denied.")
+        sleep(2)
+        return
+    end
+    
+    while true do
+        clear()
+        drawHeader("Drunken Beard Bank - Clerk Dashboard")
+        
+        print("\nSelect Option:")
+        print("1. Lookup Account")
+        print("2. View Transaction History")
+        print("3. Live Security Monitor")
+        print("4. Exit")
+        
+        term.setCursorPos(1, 10)
+        write("> ")
+        local choice = read()
+        
+        if choice == "1" then lookupAccount()
+        elseif choice == "2" then viewHistory()
+        elseif choice == "3" then runMonitor()
+        elseif choice == "4" then 
+            clear()
+            print("Logging out...")
+            break 
+        end
+    end
 end
 
 main()

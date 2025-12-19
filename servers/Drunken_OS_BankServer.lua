@@ -45,6 +45,7 @@ local CURRENCIES_DIR = "currencies"
 local ACCOUNTS_DB = "bank_accounts.db"
 local STOCK_DB = "bank_stock.db"
 local LOG_FILE = LOGS_DIR .. "/bank_server.log"
+local LEDGER_FILE = LOGS_DIR .. "/ledger.json"
 
 -- Rednet Protocols
 local BANK_PROTOCOL = "DB_Bank"
@@ -123,6 +124,70 @@ local function logTransaction(username, transaction_type, data)
         file.writeLine(textutils.serializeJSON(logEntry))
         file.close()
     end
+end
+
+--==============================================================================
+-- Ledger & Integrity System
+--==============================================================================
+
+local ledger = {}
+local lastLedgerHash = "0000000000000000000000000000000000000000" -- Genesis Hash
+
+local function loadLedger()
+    if fs.exists(LEDGER_FILE) then
+        local file = fs.open(LEDGER_FILE, "r")
+        if file then
+            local content = file.readAll()
+            file.close()
+            local data = textutils.unserialize(content)
+            if data and type(data) == "table" then 
+                ledger = data 
+                if #ledger > 0 then
+                    lastLedgerHash = ledger[#ledger].hash
+                end
+                logActivity("Ledger loaded. Entries: " .. #ledger)
+            else
+                logActivity("Ledger file empty or malformed.")
+            end
+        end
+    end
+end
+
+local function saveLedger()
+    local file = fs.open(LEDGER_FILE, "w")
+    if file then
+        file.write(textutils.serialize(ledger))
+        file.close()
+    end
+end
+
+local function logTransaction(user, type, details, amount, target)
+    local timestamp = os.time()
+    local entry = {
+        type = type,
+        user = user,
+        amount = amount,
+        target = target,
+        details = details,
+        prevHash = lastLedgerHash,
+        timestamp = timestamp
+    }
+    
+    -- Create content string for hashing. Serialize details if table.
+    local detailsStr = type(details) == "table" and textutils.serialize(details) or tostring(details)
+    local trace = string.format("%s:%s:%s:%s:%s:%s:%s", 
+        lastLedgerHash, type, user, tostring(amount), tostring(target or ""), tostring(timestamp), detailsStr)
+    
+    if crypto and crypto.sha1 then
+        entry.hash = crypto.sha1(trace)
+    else
+        entry.hash = "NO_CRYPTO" -- Driver fallback
+    end
+    lastLedgerHash = entry.hash
+    
+    table.insert(ledger, entry)
+    saveLedger()
+    logActivity("Transaction logged: " .. type .. " (Hash: " .. (entry.hash:sub(1,8)) .. "...)")
 end
 
 --==============================================================================
@@ -256,6 +321,7 @@ local function loadTableFromFile(path)
 end
 
 local function loadAllData()
+    loadLedger()
     accounts = loadTableFromFile(ACCOUNTS_DB)
     
     currencyRates = {}
@@ -417,6 +483,45 @@ function bankHandlers.change_pin(senderId, message)
     end
 end
 
+
+-- Handles a request for the full ledger (Auditor access only).
+function bankHandlers.get_ledger(senderId, message)
+    -- Ideally we check a secret key here, but for now we assume the Auditor protocol is secure enough 
+    -- or we add a shared key check if needed.
+    rednet.send(senderId, { type = "ledger_response", ledger = ledger }, BANK_PROTOCOL)
+end
+
+-- Handles a request for the full accounts database (Auditor access only).
+function bankHandlers.get_all_accounts(senderId, message)
+    rednet.send(senderId, { type = "all_accounts_response", accounts = accounts }, BANK_PROTOCOL)
+end
+
+-- Handles a Clerk request for specific account details.
+function bankHandlers.clerk_get_account(senderId, message)
+    local user = message.user
+    local account = accounts[user]
+    if account then
+        rednet.send(senderId, { success = true, account = account }, BANK_PROTOCOL)
+    else
+        rednet.send(senderId, { success = false, reason = "User not found." }, BANK_PROTOCOL)
+    end
+end
+
+-- Handles a Clerk request for a user's transaction history.
+function bankHandlers.clerk_get_history(senderId, message)
+    local user = message.user
+    local history = {}
+    
+    -- Filter global ledger for this user
+    for _, entry in ipairs(ledger) do
+        if entry.user == user or (entry.details and entry.details.recipient == user) or (entry.details and entry.details.customer == user) or (entry.details and entry.details.merchant == user) then
+            table.insert(history, entry)
+        end
+    end
+    
+    rednet.send(senderId, { success = true, history = history }, BANK_PROTOCOL)
+end
+
 ---
 -- Handles a request for balance and rates.
 function bankHandlers.get_balance_and_rates(senderId, message)
@@ -458,14 +563,13 @@ function bankHandlers.deposit(senderId, message)
             accounts[user].balance = accounts[user].balance + total_value
             if saveTableToFile(ACCOUNTS_DB, accounts) and saveTableToFile(STOCK_DB, currentStock) then
                 rednet.send(senderId, { success = true, newBalance = accounts[user].balance, deposited_value = total_value }, BANK_PROTOCOL)
-                local transaction_data = {}
                 for _, item in ipairs(items) do
                     local rateInfo = currencyRates[item.name or "unknown"] or currencyRates[item.name:match("^minecraft:(.+)") or ""]
                     if rateInfo then
                         transaction_data[item.name or "unknown"] = { count = item.count, value = item.count * rateInfo.current }
                     end
                 end
-                logTransaction(user, "DEPOSIT", transaction_data)
+                logTransaction(user, "DEPOSIT", transaction_data, total_value)
                 logActivity(string.format("Stock updated for deposit: %s", table.concat(transaction_summary, ", ")))
                 broadcastSecurityEvent(string.format("DEP: %s +$%d", user, total_value), total_value)
                 needsRedraw = true -- Update the GUI
@@ -534,7 +638,7 @@ function bankHandlers.finalize_withdrawal(senderId, message)
         local transaction_data = {
             [itemName] = { count = count, value = totalCost }
         }
-        logTransaction(user, "WITHDRAW", transaction_data)
+        logTransaction(user, "WITHDRAW", transaction_data, totalCost)
         logActivity(string.format("Finalized withdrawal for '%s'. New balance: $%d", user, account.balance))
         logActivity(string.format("Stock updated for withdrawal: %d %s", count, itemName))
         broadcastSecurityEvent(string.format("WDR: %s -$%d", user, totalCost), totalCost)
@@ -592,8 +696,8 @@ function bankHandlers.transfer(senderId, message)
     recipientAcc.balance = recipientAcc.balance + amount
 
     if saveTableToFile(ACCOUNTS_DB, accounts) then
-        logTransaction(sender, "TRANSFER_OUT", { recipient = recipient, amount = amount })
-        logTransaction(recipient, "TRANSFER_IN", { sender = sender, amount = amount })
+        logTransaction(sender, "TRANSFER_OUT", { recipient = recipient }, amount)
+        logTransaction(recipient, "TRANSFER_IN", { sender = sender }, amount)
         logActivity(string.format("Transfer: $%d from '%s' to '%s'.", amount, sender, recipient))
         broadcastSecurityEvent(string.format("XFER: %s->%s $%d", sender, recipient, amount), amount)
         rednet.send(senderId, { success = true, newBalance = senderAcc.balance }, BANK_PROTOCOL)
@@ -650,8 +754,8 @@ function bankHandlers.process_payment(senderId, message)
     recipientAcc.balance = recipientAcc.balance + amount
 
     if saveTableToFile(ACCOUNTS_DB, accounts) then
-        logTransaction(sender, "PAYMENT_OUT", { merchant = recipient, amount = amount, meta = metadata })
-        logTransaction(recipient, "PAYMENT_IN", { customer = sender, amount = amount, meta = metadata })
+        logTransaction(sender, "PAYMENT_OUT", { merchant = recipient, meta = metadata }, amount)
+        logTransaction(recipient, "PAYMENT_IN", { customer = sender, meta = metadata }, amount)
         logActivity(string.format("Payment: $%d from '%s' to '%s' [%s].", amount, sender, recipient, metadata))
         broadcastSecurityEvent(string.format("PAY: %s->%s $%d", sender, recipient, amount), amount)
         

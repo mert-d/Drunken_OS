@@ -575,6 +575,51 @@ end
 
 -- Admin Console has been moved to a separate script (Admin_Console.lua)
 
+function apps.peopleTracker(context)
+    context.drawWindow("People Tracker")
+    term.setCursorPos(2, 4); term.write("Locating signals...")
+    
+    rednet.send(getParent(context).mailServerId, { type = "get_user_locations" }, "SimpleMail")
+    local _, response = rednet.receive("SimpleMail", 5)
+    
+    if not response or not response.locations then
+        context.showMessage("Error", "Could not fetch location data.")
+        return
+    end
+
+    local myLoc = getParent(context).location
+    local entries = {}
+    
+    for user, data in pairs(response.locations) do
+        local distStr = "?"
+        if myLoc and data.x then
+            local dist = math.sqrt((myLoc.x - data.x)^2 + (myLoc.y - data.y)^2 + (myLoc.z - data.z)^2)
+            distStr = string.format("%d m", math.floor(dist))
+        end
+        local entry = string.format("%s: %s", user, distStr)
+        if user == getParent(context).username then
+             entry = string.format("%s (You)", user)
+        end
+        table.insert(entries, entry)
+    end
+    
+    table.sort(entries)
+    
+    if #entries == 0 then
+        context.showMessage("People Tracker", "No active signals found.")
+        return
+    end
+    
+    local w, h = context.getSafeSize()
+    while true do
+        context.drawWindow("People Tracker")
+        context.drawMenu(entries, 1, 2, 4) -- We use drawMenu just to show the list, selection does nothing
+         -- Simple wait for exit
+        local event, key = os.pullEvent("key")
+        if key == keys.q or key == keys.enter or key == keys.tab then break end
+    end
+end
+
 
 --==============================================================================
 -- Banking Applications

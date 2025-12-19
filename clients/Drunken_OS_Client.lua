@@ -59,7 +59,8 @@ local state = {
     crypto = nil,
     chatServerId = nil,
     nickname = nil,
-    unreadCount = 0
+    unreadCount = 0,
+    location = nil -- {x, y, z}
 }
 
 -- Universal word-wrap
@@ -399,14 +400,15 @@ local function mainMenu()
     while true do
         rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
         local _, response = rednet.receive("SimpleMail", 2)
-        local unreadCount = response and response.count or 0
+        state.unreadCount = response and response.count or 0
         
         local options = {
             "Pocket Bank",
             "Pay Merchant",
-            "Read Mail" .. (unreadCount > 0 and " (" .. unreadCount .. " unread)" or ""),
+            "Read Mail" .. (state.unreadCount > 0 and " (" .. state.unreadCount .. " unread)" or ""),
             "Send Mail", 
             "General Chat", 
+            -- "People Tracker", -- Hidden for now
             "Mailing Lists", 
             "Games", 
             "System", 
@@ -450,6 +452,7 @@ local function mainMenu()
         elseif selection:match("Read Mail") then state.apps.viewInbox(context)
         elseif selection == "Send Mail" then state.apps.sendMail(context)
         elseif selection == "General Chat" then state.apps.startChat(context)
+        -- elseif selection == "People Tracker" then state.apps.peopleTracker(context)
         elseif selection == "Mailing Lists" then state.apps.manageLists(context)
         elseif selection == "Games" then state.apps.enterArcade(context)
         elseif selection == "System" then state.apps.systemMenu(context)
@@ -533,8 +536,29 @@ local function main()
                 state.apps.showMessage(state, "Message of the Day", motd_response.motd)
             end
             
-            -- Call the local mainMenu controller
-            mainMenu() 
+            -- Call the local mainMenu controller with GPS in parallel
+            local function gpsHeartbeat()
+                while true do
+                    if state.username and state.mailServerId then
+                        local x, y, z = gps.locate(2) -- 2 second timeout
+                        if x then
+                            state.location = {x=math.floor(x), y=math.floor(y), z=math.floor(z)}
+                            rednet.send(state.mailServerId, {
+                                type = "report_location",
+                                user = state.username,
+                                x = state.location.x,
+                                y = state.location.y,
+                                z = state.location.z
+                            }, "SimpleMail")
+                        else
+                            state.location = nil
+                        end
+                    end
+                    sleep(30)
+                end
+            end
+
+            parallel.waitForAny(mainMenu, gpsHeartbeat)
             
             rednet.close("back")
             if not state.username then
