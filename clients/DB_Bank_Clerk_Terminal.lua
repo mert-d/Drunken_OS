@@ -30,8 +30,27 @@ local BANK_PROTOCOL = "DB_Bank"
 local AUDIT_PROTOCOL = "DB_Audit"
 local bankServerId = nil
 
--- Simple Clerk Auth (In production, use a peripheral Keycard)
-local CLERK_KEY_HASH = "5baa61e4c9b93f3f0682250b6cf8331b7ee68fd8" -- "password" (sha1)
+-- Clerk Auth Configuration
+local CLERK_KEY_HASH = nil
+local CLERK_CONF = "/clerk_auth.conf"
+
+local function loadClerkAuth()
+    if fs.exists(CLERK_CONF) then
+        local file = fs.open(CLERK_CONF, "r")
+        CLERK_KEY_HASH = file.readAll()
+        file.close()
+        return true
+    end
+    return false
+end
+
+local function saveClerkAuth(password)
+    local hash = crypto.sha1(password)
+    local file = fs.open(CLERK_CONF, "w")
+    file.write(hash)
+    file.close()
+    CLERK_KEY_HASH = hash
+end
 
 --==============================================================================
 -- UI Helpers
@@ -226,6 +245,27 @@ local function main()
     if not findServer() then return end
     
     -- Auth
+    if not loadClerkAuth() then
+        clear()
+        drawHeader("First Time Setup")
+        term.setCursorPos(1, 4)
+        print("No Clerk Password set.")
+        write("Set New Clerk Password: ")
+        local p1 = read("*")
+        write("Confirm Password: ")
+        local p2 = read("*")
+        
+        if p1 == p2 and p1 ~= "" then
+            saveClerkAuth(p1)
+            print("\nPassword Set Successfully.")
+            sleep(1)
+        else
+            print("\nPasswords mismatch or empty. Exiting.")
+            sleep(2)
+            return
+        end
+    end
+
     clear()
     drawHeader("Security Check")
     term.setCursorPos(1, 4)
