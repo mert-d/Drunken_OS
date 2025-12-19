@@ -161,10 +161,10 @@ local function saveLedger()
     end
 end
 
-local function logTransaction(user, type, details, amount, target)
+local function logTransaction(user, txType, details, amount, target)
     local timestamp = os.time()
     local entry = {
-        type = type,
+        type = txType,
         user = user,
         amount = amount,
         target = target,
@@ -176,7 +176,7 @@ local function logTransaction(user, type, details, amount, target)
     -- Create content string for hashing. Serialize details if table.
     local detailsStr = type(details) == "table" and textutils.serialize(details) or tostring(details)
     local trace = string.format("%s:%s:%s:%s:%s:%s:%s", 
-        lastLedgerHash, type, user, tostring(amount), tostring(target or ""), tostring(timestamp), detailsStr)
+        lastLedgerHash, txType, user, tostring(amount), tostring(target or ""), tostring(timestamp), detailsStr)
     
     if crypto and crypto.sha1 then
         entry.hash = crypto.sha1(trace)
@@ -187,7 +187,7 @@ local function logTransaction(user, type, details, amount, target)
     
     table.insert(ledger, entry)
     saveLedger()
-    logActivity("Transaction logged: " .. type .. " (Hash: " .. (entry.hash:sub(1,8)) .. "...)")
+    logActivity("Transaction logged: " .. txType .. " (Hash: " .. (entry.hash:sub(1,8)) .. "...)")
 end
 
 --==============================================================================

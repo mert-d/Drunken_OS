@@ -72,8 +72,27 @@ local function drawHeader(title)
     term.setBackgroundColor(colors.black)
 end
 
+local function drawMenu(options, selected, startX, startY)
+    for i, option in ipairs(options) do
+        term.setCursorPos(startX, startY + i - 1)
+        if i == selected then
+            term.setTextColor(colors.black)
+            term.setBackgroundColor(colors.yellow)
+            term.write("> " .. option .. " ")
+        else
+            term.setTextColor(colors.white)
+            term.setBackgroundColor(colors.black)
+            term.write("  " .. option .. " ")
+        end
+    end
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+end
+
 local function pause()
-    print("\nPress any key to continue...")
+    term.setTextColor(colors.lightGray)
+    print("\n[ Press any key to continue ]")
+    term.setTextColor(colors.white)
     os.pullEvent("key")
 end
 
@@ -99,75 +118,90 @@ end
 
 local function lookupAccount()
     clear()
-    drawHeader("Clerk Terminal - Account Lookup")
+    drawHeader("Account Lookup")
     term.setCursorPos(1, 4)
-    write("Enter Username: ")
+    term.setTextColor(colors.yellow)
+    write(" > User: ")
+    term.setTextColor(colors.white)
     local user = read()
     
     rednet.send(bankServerId, { type = "clerk_get_account", user = user }, BANK_PROTOCOL)
     local _, response = rednet.receive(BANK_PROTOCOL, 5)
     
     if response and response.success then
-        print("\n[Account Found]")
-        print("User: " .. user)
-        print("Balance: $" .. response.account.balance)
-        print("PIN Status: " .. (response.account.pin_hash and "SET" or "NOT SET"))
-        if response.account.is_merchant then
-            print("Type: Merchant")
-        else
-            print("Type: Personal")
-        end
+        print("\n   [ ACCOUNT DETAILS ]")
+        term.setTextColor(colors.cyan)
+        print("   Username:   " .. user)
+        term.setTextColor(colors.white)
+        print("   Balance:    $" .. response.account.balance)
+        print("   PIN Status: " .. (response.account.pin_hash and "SET" or "NOT SET"))
+        print("   Account Type: " .. (response.account.is_merchant and "Merchant" or "Personal"))
     else
-        print("\nError: " .. (response and response.reason or "Timeout/Not Found"))
+        term.setTextColor(colors.red)
+        print("\n   Error: " .. (response and response.reason or "Record not found."))
+        term.setTextColor(colors.white)
     end
     pause()
 end
 
 local function viewHistory()
     clear()
-    drawHeader("Clerk Terminal - Transaction History")
+    drawHeader("Transaction History")
     term.setCursorPos(1, 4)
-    write("Enter Username: ")
+    term.setTextColor(colors.yellow)
+    write(" > User: ")
+    term.setTextColor(colors.white)
     local user = read()
     
-    print("\nFetching ledger...")
+    print("\n   Fetching ledger logs...")
     rednet.send(bankServerId, { type = "clerk_get_history", user = user }, BANK_PROTOCOL)
     local _, response = rednet.receive(BANK_PROTOCOL, 5)
     
     if response and response.success then
         if #response.history == 0 then
-            print("No transactions found.")
+            print("   No transactions recorded.")
         else
             local w, h = term.getSize()
-            print(string.format("\n%-20s | %-10s | %s", "Type", "Amount", "Details"))
-            print(string.rep("-", w))
+            term.setBackgroundColor(colors.gray)
+            term.setTextColor(colors.white)
+            print(string.format(" %-12s | %-8s | %-15s", "Type", "Amt", "Details "))
+            term.setBackgroundColor(colors.black)
             
             for i, entry in ipairs(response.history) do
                 if i > (h - 8) then
-                    print("... (more entries hidden)")
+                    term.setTextColor(colors.lightGray)
+                    print("   ... (history truncated)")
                     break
                 end
                 
                 local details = entry.details
                 local detailStr = ""
                 if type(details) == "table" then
-                    if details.recipient then detailStr = "-> " .. details.recipient 
-                    elseif details.sender then detailStr = "<- " .. details.sender
+                    if details.recipient then detailStr = "to " .. details.recipient 
+                    elseif details.sender then detailStr = "fm " .. details.sender
                     elseif details.merchant then detailStr = "Pay " .. details.merchant
-                    else detailStr = "Complex" end
+                    else detailStr = "Data" end
                 else
                     detailStr = tostring(details or "")
                 end
                 
-                print(string.format("%-20s | %-10s | %s", 
-                    entry.type:sub(1,20), 
+                local typeColor = colors.white
+                if entry.type:find("DEPOSIT") or entry.type:find("IN") then typeColor = colors.green
+                elseif entry.type:find("WITHDRAW") or entry.type:find("OUT") then typeColor = colors.red end
+                
+                term.setTextColor(typeColor)
+                write(string.format(" %-12s", entry.type:sub(1,12)))
+                term.setTextColor(colors.white)
+                print(string.format(" | %-8s | %-15s", 
                     tostring(entry.amount or 0), 
-                    detailStr
+                    detailStr:sub(1,15)
                 ))
             end
         end
     else
-        print("\nError: " .. (response and response.reason or "Timeout"))
+        term.setTextColor(colors.red)
+        print("\n   Error: " .. (response and response.reason or "No data."))
+        term.setTextColor(colors.white)
     end
     pause()
 end
@@ -281,20 +315,37 @@ local function main()
         clear()
         drawHeader("Drunken Beard Bank - Clerk Dashboard")
         
-        print("\nSelect Option:")
-        print("1. Lookup Account")
-        print("2. View Transaction History")
-        print("3. Live Security Monitor")
-        print("4. Exit")
+        local options = {
+            "Lookup Account",
+            "View Transaction History",
+            "Live Security Monitor",
+            "Logout"
+        }
         
-        term.setCursorPos(1, 10)
-        write("> ")
-        local choice = read()
+        local selected = 1
+        local choice = nil
         
-        if choice == "1" then lookupAccount()
-        elseif choice == "2" then viewHistory()
-        elseif choice == "3" then runMonitor()
-        elseif choice == "4" then 
+        while true do
+            drawMenu(options, selected, 2, 4)
+            
+            local event, key = os.pullEvent("key")
+            if key == keys.up then
+                selected = (selected == 1) and #options or selected - 1
+            elseif key == keys.down then
+                selected = (selected == #options) and 1 or selected + 1
+            elseif key == keys.enter then
+                choice = selected
+                break
+            elseif key == keys.q then
+                choice = 4 -- Logout
+                break
+            end
+        end
+        
+        if choice == 1 then lookupAccount()
+        elseif choice == 2 then viewHistory()
+        elseif choice == 3 then runMonitor()
+        elseif choice == 4 then 
             clear()
             print("Logging out...")
             break 
