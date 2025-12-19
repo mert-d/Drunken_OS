@@ -262,6 +262,193 @@ local function runMonitor()
 end
 
 --==============================================================================
+-- Management Functions
+--==============================================================================
+
+local function createBankCard()
+    clear()
+    drawHeader("Issue Bank Card")
+    term.setCursorPos(1, 4)
+    write("Enter Username for Card: ")
+    local user = read()
+    
+    -- Verify user exists in Bank (or Mainframe via Bank)
+    print("\nVerifying user...")
+    rednet.send(bankServerId, { type = "clerk_get_account", user = user }, BANK_PROTOCOL)
+    local _, response = rednet.receive(BANK_PROTOCOL, 5)
+    
+    if not response or not response.success then
+        term.setTextColor(colors.red)
+        print("Error: User not found or Bank Server unavailable.")
+        term.setTextColor(colors.white)
+        pause()
+        return
+    end
+
+    print("User verified.")
+    print("\nPlease insert a blank floppy disk into the drive...")
+    
+    while true do
+        local event, side = os.pullEvent("disk")
+        if side then break end
+    end
+    
+    local drive = peripheral.find("drive")
+    if not drive or not drive.isDiskPresent() then
+        print("Error: Disk not detected.")
+        pause()
+        return
+    end
+
+    print("Writing card data...")
+    drive.setDiskLabel("DrunkenBeard_Card_" .. user)
+    
+    local mountPath = drive.getMountPath()
+    local file = fs.open(mountPath .. "/.card_data", "w")
+    if file then
+        local cardData = { owner = user, issue_date = os.time(), issuer = "ClerkTerminal" }
+        file.write(textutils.serialize(cardData))
+        file.close()
+        term.setTextColor(colors.green)
+        print("\nSuccess! Bank Card created for " .. user)
+    else
+        term.setTextColor(colors.red)
+        print("\nError: Could not write to disk.")
+    end
+    term.setTextColor(colors.white)
+    
+    print("\nYou may remove the disk now.")
+    drive.ejectDisk()
+    pause()
+end
+
+local function openNewAccount()
+    clear()
+    drawHeader("Open New Bank Account")
+    term.setCursorPos(1, 4)
+    write("Enter Username for New Account: ")
+    local user = read()
+    
+    print("\nContacting Bank Server...")
+    rednet.send(bankServerId, { type = "clerk_create_account", user = user }, BANK_PROTOCOL)
+    local _, response = rednet.receive(BANK_PROTOCOL, 5)
+    
+    if response and response.success then
+        term.setTextColor(colors.green)
+        print("\nSuccess: Account created for '" .. user .. "'.")
+        print("Please issue a card or instruct user to use ATM setup.")
+    else
+        term.setTextColor(colors.red)
+        print("\nError: " .. (response and response.reason or "No response."))
+    end
+    term.setTextColor(colors.white)
+    pause()
+end
+
+local function resetUserPIN()
+    clear()
+    drawHeader("Reset User PIN")
+    term.setCursorPos(1, 4)
+    print("WARNING: This will clear the user's PIN.")
+    print("They will be prompted to set a new one on next login.")
+    print("")
+    write("Enter Username: ")
+    local user = read()
+    
+    write("Are you sure? (y/n): ")
+    if read():lower() ~= "y" then return end
+    
+    print("\nProcessing reset...")
+    rednet.send(bankServerId, { type = "clerk_reset_pin", user = user }, BANK_PROTOCOL)
+    local _, response = rednet.receive(BANK_PROTOCOL, 5)
+    
+    if response and response.success then
+        term.setTextColor(colors.green)
+        print("\nSuccess: PIN reset for '" .. user .. "'.")
+    else
+        term.setTextColor(colors.red)
+        print("\nError: " .. (response and response.reason or "No response."))
+    end
+    term.setTextColor(colors.white)
+    pause()
+end
+
+local function setMerchantStatus()
+    clear()
+    drawHeader("Manage Merchant Status")
+    term.setCursorPos(1, 4)
+    write("Enter Username: ")
+    local user = read()
+    
+    -- Get current status
+    rednet.send(bankServerId, { type = "clerk_get_account", user = user }, BANK_PROTOCOL)
+    local _, r = rednet.receive(BANK_PROTOCOL, 5)
+    
+    if r and r.success then
+        print("Current Status: " .. (r.account.is_merchant and "Merchant" or "Personal"))
+        print("")
+        print("1. Set as Merchant")
+        print("2. Set as Personal")
+        print("3. Cancel")
+        write("> ")
+        local choice = read()
+        
+        local newStatus = nil
+        if choice == "1" then newStatus = true
+        elseif choice == "2" then newStatus = false
+        else return end
+        
+        rednet.send(bankServerId, { type = "clerk_set_merchant", user = user, status = newStatus }, BANK_PROTOCOL)
+        local _, r2 = rednet.receive(BANK_PROTOCOL, 5)
+        
+        if r2 and r2.success then
+            term.setTextColor(colors.green)
+            print("\nSuccess: Status updated.")
+        else
+            term.setTextColor(colors.red)
+            print("\nError: " .. (r2 and r2.reason or "No response."))
+        end
+    else
+        term.setTextColor(colors.red)
+        print("\nError: User not found.")
+    end
+    term.setTextColor(colors.white)
+    pause()
+end
+
+local function runManagementMenu()
+    while true do
+        clear()
+        drawHeader("Clerk Management Suite")
+        local options = {
+            "Issue Bank Card",
+            "Open New Account",
+            "Reset User PIN",
+            "Set Merchant Status",
+            "Back"
+        }
+        
+        local selected = 1
+        local choice = 1
+        
+        while true do
+            drawMenu(options, selected, 2, 4)
+            local event, key = os.pullEvent("key")
+            if key == keys.up then selected = (selected == 1) and #options or selected - 1
+            elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+            elseif key == keys.enter then choice = selected; break
+            elseif key == keys.q then choice = 5; break end
+        end
+        
+        if choice == 1 then createBankCard()
+        elseif choice == 2 then openNewAccount()
+        elseif choice == 3 then resetUserPIN()
+        elseif choice == 4 then setMerchantStatus()
+        elseif choice == 5 then break end
+    end
+end
+
+--==============================================================================
 -- Main Loop
 --==============================================================================
 
@@ -318,6 +505,7 @@ local function main()
         local options = {
             "Lookup Account",
             "View Transaction History",
+            "Administrative Tools",
             "Live Security Monitor",
             "Logout"
         }
@@ -337,15 +525,16 @@ local function main()
                 choice = selected
                 break
             elseif key == keys.q then
-                choice = 4 -- Logout
+                choice = 5 -- Logout
                 break
             end
         end
         
         if choice == 1 then lookupAccount()
         elseif choice == 2 then viewHistory()
-        elseif choice == 3 then runMonitor()
-        elseif choice == 4 then 
+        elseif choice == 3 then runManagementMenu()
+        elseif choice == 4 then runMonitor()
+        elseif choice == 5 then 
             clear()
             print("Logging out...")
             break 

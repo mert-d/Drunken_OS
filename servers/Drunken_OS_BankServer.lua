@@ -522,6 +522,68 @@ function bankHandlers.clerk_get_history(senderId, message)
     rednet.send(senderId, { success = true, history = history }, BANK_PROTOCOL)
 end
 
+-- Handles a Clerk request to create a new account (if Mainframe verified).
+function bankHandlers.clerk_create_account(senderId, message)
+    local user = message.user
+    if accounts[user] then
+        rednet.send(senderId, { success = false, reason = "Account already exists." }, BANK_PROTOCOL)
+        return
+    end
+
+    -- Verify with Mainframe first
+    logActivity("Clerk requesting new account for '" .. user .. "'. Verifying...")
+    rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
+    local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
+
+    if response and response.exists then
+        accounts[user] = { pin_hash = nil, balance = 0 }
+        if saveTableToFile(ACCOUNTS_DB, accounts) then
+            logTransaction(user, "account_created", "SUCCESS - Via Clerk Terminal")
+            logActivity("Created new account for '" .. user .. "' via Clerk.")
+            rednet.send(senderId, { success = true }, BANK_PROTOCOL)
+        else
+            rednet.send(senderId, { success = false, reason = "Database error." }, BANK_PROTOCOL)
+        end
+    else
+        rednet.send(senderId, { success = false, reason = "User not found in Mainframe." }, BANK_PROTOCOL)
+    end
+end
+
+-- Handles a Clerk request to reset a user's PIN.
+function bankHandlers.clerk_reset_pin(senderId, message)
+    local user = message.user
+    if not accounts[user] then
+        rednet.send(senderId, { success = false, reason = "Account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    accounts[user].pin_hash = nil -- Reset to nil so they must setup again
+    if saveTableToFile(ACCOUNTS_DB, accounts) then
+        logActivity("PIN reset for '" .. user .. "' via Clerk.")
+        rednet.send(senderId, { success = true }, BANK_PROTOCOL)
+    else
+        rednet.send(senderId, { success = false, reason = "Database error." }, BANK_PROTOCOL)
+    end
+end
+
+-- Handles a Clerk request to toggle merchant status.
+function bankHandlers.clerk_set_merchant(senderId, message)
+    local user = message.user
+    local status = message.status
+    if not accounts[user] then
+        rednet.send(senderId, { success = false, reason = "Account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    accounts[user].is_merchant = status
+    if saveTableToFile(ACCOUNTS_DB, accounts) then
+        logActivity("Merchant status for '" .. user .. "' set to " .. tostring(status) .. " via Clerk.")
+        rednet.send(senderId, { success = true }, BANK_PROTOCOL)
+    else
+        rednet.send(senderId, { success = false, reason = "Database error." }, BANK_PROTOCOL)
+    end
+end
+
 ---
 -- Handles a request for balance and rates.
 function bankHandlers.get_balance_and_rates(senderId, message)
