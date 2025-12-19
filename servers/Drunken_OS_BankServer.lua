@@ -696,6 +696,41 @@ function bankHandlers.finalize_withdrawal(senderId, message)
         logActivity("CRITICAL: Stock for " .. itemName .. " went negative. Resetting to 0.", true)
         currentStock[itemName] = 0
     end
+
+-- Allows a user to fetch their own transaction history (for Merchant verification)
+function bankHandlers.get_transactions(senderId, message)
+    local user, pin_hash = message.user, message.pin_hash
+    local account = accounts[user]
+    
+    if not account or account.pin_hash ~= pin_hash then
+        rednet.send(senderId, { success = false, reason = "Auth failed" }, BANK_PROTOCOL)
+        return
+    end
+    
+    local history = {}
+    -- Return last 10 transactions involving this user
+    local count = 0
+    -- Iterate backwards
+    for i = #ledger, 1, -1 do
+        local entry = ledger[i]
+        if entry.user == user or (entry.details and entry.details.recipient == user) then
+            -- Sanitize entry (remove hash if needed? Nah)
+            table.insert(history, entry)
+            count = count + 1
+            if count >= 10 then break end
+        end
+    end
+    
+    rednet.send(senderId, { success = true, history = history }, BANK_PROTOCOL)
+end
+
+-- Allow saving/shutdown
+function bankHandlers.save_db(senderId, message)
+    -- Admin only check? For now open as driver handles it
+    saveLedger()
+    saveTableToFile(ACCOUNTS_DB, accounts)
+    saveTableToFile(STOCK_DB, currentStock)
+end
     
     if saveTableToFile(ACCOUNTS_DB, accounts) and saveTableToFile(STOCK_DB, currentStock) then
         local transaction_data = {

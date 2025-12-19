@@ -404,7 +404,12 @@ local function mainMenu()
         
         local options = {
             "Pocket Bank",
-            "Pay Merchant",
+        local invoiceCount = state.pendingInvoices and #state.pendingInvoices or 0
+        local payLabel = "Pay Merchant" .. (invoiceCount > 0 and " ("..invoiceCount.." pending)" or "")
+
+        local options = {
+            "Pocket Bank",
+            payLabel,
             "Read Mail" .. (state.unreadCount > 0 and " (" .. state.unreadCount .. " unread)" or ""),
             "Send Mail", 
             "General Chat", 
@@ -537,28 +542,44 @@ local function main()
             end
             
             -- Call the local mainMenu controller with GPS in parallel
-            local function gpsHeartbeat()
+                end
+            end
+            
+            -- Background Listener for Merchant Requests & Broadcasts
+            local function merchantListener()
                 while true do
-                    if state.username and state.mailServerId then
-                        local x, y, z = gps.locate(2) -- 2 second timeout
-                        if x then
-                            state.location = {x=math.floor(x), y=math.floor(y), z=math.floor(z)}
-                            rednet.send(state.mailServerId, {
-                                type = "report_location",
-                                user = state.username,
-                                x = state.location.x,
-                                y = state.location.y,
-                                z = state.location.z
-                            }, "SimpleMail")
-                        else
-                            state.location = nil
+                    -- Listen for Payment Requests (Targeted)
+                    local senderId, message, protocol = rednet.receive("DB_Merchant_Req")
+                    if senderId and message then
+                        -- Verify it's for us
+                        if message.type == "payment_request" and message.target == state.username then
+                             -- Add notification to a queue or just pop up if idle?
+                             -- For now, let's use a temporary HUD notification if possible.
+                             -- Or just rely on the user checking "Pay Merchant".
+                             -- Better: Add to a "Pending Invoices" list in state?
+                             if not state.pendingInvoices then state.pendingInvoices = {} end
+                             table.insert(state.pendingInvoices, message)
+                             
+                             -- Play sound
+                             local speaker = peripheral.find("speaker")
+                             if speaker then speaker.playNote("pling", 1, 2) end
                         end
                     end
-                    sleep(30)
+                    
+                    -- Listen for Shop Broadcasts (Public)
+                    -- We can use a short timeout since we're in parallel
+                    local b_sender, b_msg = rednet.receive("DB_Shop_Broadcast", 0.5)
+                    if b_sender and b_msg and b_msg.menu then
+                        -- Store the latest shop we saw
+                        state.nearbyShop = b_msg
+                    end
+                    
+                    -- Cleanup old nearbyShop if no signal?
+                    -- Simplified: Just overwrite whenever we see one.
                 end
             end
 
-            parallel.waitForAny(mainMenu, gpsHeartbeat)
+            parallel.waitForAny(mainMenu, gpsHeartbeat, merchantListener)
             
             rednet.close("back")
             if not state.username then
