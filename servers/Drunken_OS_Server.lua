@@ -396,6 +396,10 @@ local function requestAuthCode(username, password, nickname, senderId, purpose)
         extra = { purpose = purpose or "unknown" },
     })
     
+    if reply then
+        logActivity("HyperAuth raw reply: " .. textutils.serializeJSON(reply))
+    end
+
     if not reply or not reply.request_id then
         local detail = reply and (reply.reason or reply.error or "Field 'request_id' missing") or tostring(err)
         logActivity("HyperAuth error: " .. detail, true)
