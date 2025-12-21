@@ -8,7 +8,7 @@
 ]]
 
 local updater = {}
-updater._VERSION = 1.0
+updater._VERSION = 1.1
 
 function updater.check(programName, currentVersion, targetPath)
     if not rednet.isOpen() then

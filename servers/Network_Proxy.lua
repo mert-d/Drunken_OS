@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Network Proxy (v1.1)
+    Drunken OS - Network Proxy Server (v1.2 - Stability Sync)
     by Antigravity
 
     Purpose:

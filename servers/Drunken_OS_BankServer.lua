@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Bank Server (v2.15 - Admin Command Hardening)
+    Drunken OS - Bank Server (v2.16 - Stability Sync)
     by MuhendizBey
 
     Purpose:

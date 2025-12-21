@@ -1,5 +1,5 @@
 --[[
-    SHA1 & HMAC-SHA1 Cryptography Library (v2.0 - Unified Standard)
+    SHA1 & HMAC-SHA1 Cryptography Library (v2.1 - Unified Standard)
     by MuhendizBey
 
     Purpose:
@@ -70,7 +70,7 @@ local function hmac_sha1(key,msg) return to_hex(hmac_sha1_raw(key,msg)) end
 
 -- Expose the functions in a way that is compatible with the Drunken OS codebase.
 local lib = {
-    _VERSION = 2.0,
+    _VERSION = 2.1,
     hex = sha1,
     hmac_hex = hmac_sha1,
     sha1_raw=sha1_raw,
