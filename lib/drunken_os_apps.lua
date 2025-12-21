@@ -223,7 +223,7 @@ function apps.viewInbox(context)
     local _, response = rednet.receive("SimpleMail", 10)
     
     if not response or not response.mail then
-        context.showMessage("Error", "Could not retrieve mail.")
+        context.showMessage("Error", (response and (response.reason or "Mail data missing")) or "No response (Timeout).")
         return
     end
     
@@ -315,7 +315,7 @@ function apps.composeAndSend(context, to, subject, attachment)
     rednet.send(getParent(context).mailServerId, { type = "send", mail = mail }, "SimpleMail")
     context.drawWindow("Sending...")
     local _, confirm = rednet.receive("SimpleMail", 10)
-    context.showMessage("Server Response", confirm and confirm.status or "No response from server.")
+    context.showMessage("Server Response", (confirm and confirm.status) or "No response from server.")
 end
 
 function apps.sendMail(context)
@@ -325,7 +325,7 @@ function apps.sendMail(context)
     rednet.send(getParent(context).mailServerId, { type = "user_exists", user = to }, "SimpleMail")
     local _, response = rednet.receive("SimpleMail", 3)
     if not response or not response.exists then
-        context.showMessage("Error", "Recipient '"..to.."' not found.")
+        context.showMessage("Error", (response and "Recipient '"..to.."' not found.") or "Connection timeout.")
         return
     end
     local subject = context.readInput("Subject: ", 6)
@@ -580,7 +580,7 @@ function apps.peopleTracker(context)
     local _, response = rednet.receive("SimpleMail", 5)
     
     if not response or not response.locations then
-        context.showMessage("Error", "Could not fetch location data.")
+        context.showMessage("Error", (response and "Could not fetch location data.") or "Connection timeout.")
         return
     end
 
@@ -737,7 +737,7 @@ function apps.bankApp(context)
                             balance = resp.newBalance
                             context.showMessage("Success", "Sent $" .. amount .. " to " .. recipient)
                         else
-                            context.showMessage("Failed", (resp and resp.reason) or "Error")
+                            context.showMessage("Failed", (resp and (resp.reason or "Transfer failed")) or "Connection timeout.")
                         end
                     else
                         context.showMessage("Error", "Insufficient funds.")
@@ -874,7 +874,7 @@ function apps.changeNickname(context)
             getParent(context).nickname = response.new_nickname
             context.showMessage("Success", "Nickname updated!")
         else
-            context.showMessage("Error", "Could not update nickname.")
+            context.showMessage("Error", (response and (response.reason or "Update failed")) or "Connection timeout.")
         end
     end
 end
@@ -893,7 +893,7 @@ end
     local _, response = rednet.receive("SimpleMail", 5)
 
     if not response or response.type ~= "game_versions_response" or not response.versions then
-        context.showMessage("Error", "Could not fetch updates from server.")
+        context.showMessage("Error", (response and "Could not fetch updates from server.") or "Connection timeout.")
         return
     end
 
@@ -958,7 +958,7 @@ end
     local _, response = rednet.receive("SimpleMail", 10)
 
     if not response or not response.games then
-        context.showMessage("Error", "Could not get game list from server.")
+        context.showMessage("Error", (response and "Could not get game list from server.") or "Connection timeout.")
         return
     end
 

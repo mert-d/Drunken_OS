@@ -1223,10 +1223,12 @@ local function handleRednetMessage(senderId, message, protocol)
 
     local realRednetSend = rednet.send
     local function sendResponse(p_id, p_msg, p_proto)
+        -- Always use the original incoming protocol when proxied to ensure it hits the Proxy's relay logic
+        local responseProto = isProxied and protocol or (p_proto or protocol)
         if isProxied then
-            realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, p_proto)
+            realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, responseProto)
         else
-            realRednetSend(p_id, p_msg, p_proto)
+            realRednetSend(p_id, p_msg, responseProto)
         end
     end
 
