@@ -10,10 +10,15 @@
     of their main command prompt.
 ]]
 
-local program_path = "__PROGRAM_PATH__"
+local program_path = nil
+if fs.exists("/.program_path") then
+    local f = fs.open("/.program_path", "r")
+    program_path = f.readAll():gsub("%s+", "") -- Strip any whitespace/newlines
+    f.close()
+end
 
-if program_path == "__PROGRAM_PATH__" then
-    print("ERROR: Program path not set in startup script.")
+if not program_path or program_path == "" then
+    print("ERROR: Program path not found in /.program_path")
     return
 end
 

@@ -298,8 +298,9 @@ local function createInstallDisk(program)
     end
     
     local freeSpace = fs.getFreeSpace(mountPath)
-    if totalSize > freeSpace then
-        showMessage("Error", string.format("Disk full! Required: %d KB, Free: %d KB.\nPlease use a blank or larger disk.", math.ceil(totalSize/1024), math.ceil(freeSpace/1024)), true)
+    local safetyBuffer = 5120 -- 5 KB buffer for installer scripts
+    if (totalSize + safetyBuffer) > freeSpace then
+        showMessage("Error", string.format("Disk full! Required: %d KB, Free: %d KB.\nPlease use a blank or larger disk.", math.ceil((totalSize + safetyBuffer)/1024), math.ceil(freeSpace/1024)), true)
         return
     end
 
