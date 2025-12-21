@@ -1,22 +1,24 @@
 --[[
-    Drunken OS - Network Proxy (v1.0)
+    Drunken OS - Network Proxy (v1.1)
     by Antigravity
 
     Purpose:
     Acts as a secure gateway (firewall) between the external Wireless/Ender network
     and the internal Wired network. All server traffic must pass through this
     proxy, allowing for logging and filtering.
+
+    V1.1: Merged listeners into a single dispatcher to prevent race conditions.
 ]]
 
 --==============================================================================
 -- Configuration & State
 --==============================================================================
 
-local PROXY_VERSION = 1.0
+local PROXY_VERSION = 1.1
 local wireless_modem, wired_modem = nil, nil
 local logs = {}
 
--- Protocol Mappings: Public Protocol -> Internal Protocol
+-- Protocol Mappings: Public Protocol <-> Internal Protocol
 local PROTOCOL_MAP = {
     ["SimpleMail"] = "SimpleMail_Internal",
     ["SimpleChat"] = "SimpleChat_Internal",
@@ -34,6 +36,12 @@ local HOST_MAP = {
     ["bank.server"] = "DB_Bank",
 }
 
+-- Reversed Map for Internal -> Public relay
+local INTERNAL_TO_PUBLIC = {}
+for pub, priv in pairs(PROTOCOL_MAP) do
+    INTERNAL_TO_PUBLIC[priv] = pub
+end
+
 --==============================================================================
 -- UI & Logging
 --==============================================================================
@@ -42,6 +50,13 @@ local function log(msg, isError)
     local prefix = isError and "[ERROR] " or "[INFO] "
     local entry = os.date("[%H:%M:%S] ") .. prefix .. msg
     print(entry)
+    
+    if monitor then
+        local oldTerm = term.redirect(monitor)
+        print(entry)
+        term.redirect(oldTerm)
+    end
+
     table.insert(logs, entry)
     if #logs > 100 then table.remove(logs, 1) end
 end
@@ -64,44 +79,37 @@ local function forward(senderId, message, protocol)
     end
 
     -- Forward to internal server. 
-    -- We include the original senderId in the message wrapper for response tracking.
     rednet.send(internalId, { 
         proxy_orig_sender = senderId,
         proxy_orig_msg = message 
     }, internalProtocol)
 end
 
--- Listener for internal responses
-local function responseListener()
-    while true do
-        local id, msg, protocol = rednet.receive()
-        -- Internal protocols end with _Internal
-        local publicProtocol = nil
-        for pub, priv in pairs(PROTOCOL_MAP) do
-            if protocol == priv then
-                publicProtocol = pub
-                break
-            end
-        end
+local function relay(senderId, message, protocol)
+    local publicProtocol = INTERNAL_TO_PUBLIC[protocol]
+    if not publicProtocol then return end
 
-        if publicProtocol then
-            if type(msg) == "table" and msg.proxy_orig_sender then
-                log("RESP [" .. publicProtocol .. "] to " .. msg.proxy_orig_sender)
-                rednet.send(msg.proxy_orig_sender, msg.proxy_response, publicProtocol)
-            else
-                -- Relaying broadcast or server-initiated message
-                log("RELAY [" .. publicProtocol .. "] from server")
-                rednet.broadcast(msg, publicProtocol)
-            end
-        end
+    if type(message) == "table" and message.proxy_orig_sender then
+        -- This is a direct response to a previous request
+        log("RESP [" .. publicProtocol .. "] to " .. message.proxy_orig_sender)
+        rednet.send(message.proxy_orig_sender, message.proxy_response, publicProtocol)
+    else
+        -- This is a broadcast or server-initiated message
+        log("RELAY [" .. publicProtocol .. "] from internal")
+        rednet.broadcast(message, publicProtocol)
     end
 end
 
-local function mainListener()
+local function dispatcher()
     while true do
         local id, msg, protocol = rednet.receive()
+        
         if PROTOCOL_MAP[protocol] then
+            -- Traffic coming from Wireless -> Proxy (Target: Internal)
             forward(id, msg, protocol)
+        elseif INTERNAL_TO_PUBLIC[protocol] then
+            -- Traffic coming from Wired -> Proxy (Target: Public/Client)
+            relay(id, msg, protocol)
         end
     end
 end
@@ -128,8 +136,17 @@ local function main()
         end
     end
 
-    if not wireless_modem then print("Warning: No wireless modem found."); end
-    if not wired_modem then print("Warning: No wired modem found."); end
+    if not wireless_modem then log("Warning: No wireless modem found.", true); end
+    if not wired_modem then log("Warning: No wired modem found.", true); end
+
+    -- Monitor Initialization
+    monitor = peripheral.find("monitor")
+    if monitor then
+        monitor.setTextScale(0.5)
+        monitor.clear()
+        monitor.setCursorPos(1,1)
+        monitor.write("Drunken OS Proxy - Live Feed")
+    end
 
     -- Register hosts
     for host, proto in pairs(HOST_MAP) do
@@ -137,8 +154,8 @@ local function main()
         log("Hosting " .. host .. " (" .. proto .. ")")
     end
 
-    log("Proxy Online. Bridging Wireless <-> Wired.")
-    parallel.waitForAny(mainListener, responseListener)
+    log("Proxy Online. Dispatcher active.")
+    dispatcher()
 end
 
 main()

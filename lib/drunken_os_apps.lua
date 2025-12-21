@@ -65,7 +65,7 @@ local function completeAuthentication(context, user)
         context.showMessage("Success", "Authentication successful!")
         return true
     else
-        context.showMessage("Authentication Failed", response.reason or "No response from server.")
+        context.showMessage("Authentication Failed", (response and response.reason) or "No response from server.")
         return false
     end
 end

@@ -1246,7 +1246,7 @@ local function handleRednetMessage(senderId, message, protocol)
         table.insert(chatHistory, entry)
         if #chatHistory > 100 then table.remove(chatHistory, 1) end
         saveTableToFile(CHAT_DB, chatHistory)
-        rednet.broadcast({ from = nickname, text = actualMsg.text }, "SimpleChat") -- Broadcasts stay public/direct? 
+        rednet.broadcast({ from = nickname, text = actualMsg.text }, "SimpleChat_Internal") 
         -- Actually proxy should handle broadcasts too if we want full isolation.
 
     elseif protocol == "ArcadeGames_Internal" and actualMsg and actualMsg.type and gameHandlers[actualMsg.type] then
