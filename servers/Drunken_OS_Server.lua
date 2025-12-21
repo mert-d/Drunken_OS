@@ -1,4 +1,3 @@
-```lua
 --[[
     Drunken OS - Mainframe Server (v10.19 - HyperAuth Hardening)
     by MuhendizBey
