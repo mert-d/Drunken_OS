@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Bank Server (v2.18 - Proxy Response Fix)
+    Drunken OS - Bank Server (v2.19 - Hardened Handlers & Proxy Fix)
     by MuhendizBey
 
     Purpose:
@@ -381,6 +381,10 @@ local bankHandlers = {}
 
 -- Handles user login with a dedicated bank PIN.
 function bankHandlers.login(senderId, message)
+    if not message or type(message.user) ~= "string" then
+        rednet.send(senderId, { success = false, reason = "Invalid login payload." }, BANK_PROTOCOL)
+        return
+    end
     local user, pin_hash = message.user, message.pin_hash
     local account = accounts[user]
 
@@ -751,6 +755,10 @@ end
 
 -- Handles a peer-to-peer money transfer.
 function bankHandlers.transfer(senderId, message)
+    if not message or type(message.user) ~= "string" or type(message.recipient) ~= "string" then
+        rednet.send(senderId, { success = false, reason = "Invalid transfer payload." }, BANK_PROTOCOL)
+        return
+    end
     local sender = message.user
     local recipient = message.recipient
     local amount = tonumber(message.amount)
@@ -810,6 +818,10 @@ end
 
 -- Handles a merchant payment with metadata (e.g. Table Number) notification.
 function bankHandlers.process_payment(senderId, message)
+    if not message or type(message.user) ~= "string" or type(message.recipient) ~= "string" or not message.pin_hash then
+        rednet.send(senderId, { success = false, reason = "Invalid payment payload." }, BANK_PROTOCOL)
+        return
+    end
     local sender, recipient = message.user, message.recipient
     local amount = tonumber(message.amount)
     local pin_hash = message.pin_hash

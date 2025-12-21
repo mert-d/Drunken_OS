@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Application Screen Library (v1.10 - Stability Update)
+    Drunken OS - Application Screen Library (v1.11 - Stability Update)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -657,7 +657,7 @@ local function getBankSession(context)
     -- Verify Login
     context.drawWindow("Verifying...")
     rednet.send(bankServerId, { type = "login", user = getParent(context).username, pin_hash = pin_hash }, BANK_PROTOCOL)
-    local _, response = rednet.receive(BANK_PROTOCOL, 5)
+    local _, response = rednet.receive(BANK_PROTOCOL, 15)
 
     if response and response.success then
         return bankServerId, pin_hash, response.balance, response.rates
@@ -732,7 +732,7 @@ function apps.bankApp(context)
                             amount = amount
                         }, BANK_PROTOCOL)
                         
-                        local _, resp = rednet.receive(BANK_PROTOCOL, 5)
+                        local _, resp = rednet.receive(BANK_PROTOCOL, 15)
                         if resp and resp.success then
                             balance = resp.newBalance
                             context.showMessage("Success", "Sent $" .. amount .. " to " .. recipient)
@@ -824,7 +824,7 @@ function apps.onlinePayment(context)
                     metadata = metadata
                 }, BANK_PROTOCOL)
 
-                local _, resp = rednet.receive(BANK_PROTOCOL, 5)
+                local _, resp = rednet.receive(BANK_PROTOCOL, 15)
                 if resp and resp.success then
                     balance = resp.newBalance
                     context.showMessage("Success", "Paid $" .. amount .. " to " .. recipient)
@@ -869,7 +869,7 @@ function apps.changeNickname(context)
     if new_nick and new_nick ~= "" then
         rednet.send(getParent(context).mailServerId, { type = "set_nickname", user = getParent(context).username, new_nickname = new_nick }, "SimpleMail")
         context.drawWindow("Updating...")
-        local _, response = rednet.receive("SimpleMail", 5)
+        local _, response = rednet.receive("SimpleMail", 15)
         if response and response.success then
             getParent(context).nickname = response.new_nickname
             context.showMessage("Success", "Nickname updated!")

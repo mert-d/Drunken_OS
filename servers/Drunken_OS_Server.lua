@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mainframe Server (v10.21 - Auth Routing Fix & Protocol Isolation)
+    Drunken OS - Mainframe Server (v10.22 - Proxy Separation Update)
     by MuhendizBey
 
     Purpose:
@@ -1344,7 +1344,7 @@ local function main()
     rednet.host("ArcadeGames_Internal", "arcade.server.internal")
     rednet.host("Drunken_Admin_Internal", "admin.server.internal")
     rednet.host("auth.secure.v1_Internal", "auth.client.internal")
-    logActivity("Mainframe Server v10.21 (Internal Only) Initialized.")
+    logActivity("Mainframe Server v10.22 (Internal Only) Initialized.")
     mainEventLoop()
 end
 
