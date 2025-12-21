@@ -18,8 +18,6 @@ local GITHUB_REPO_URL = "https://raw.githubusercontent.com/mert-d/Drunken_OS/mai
 local INSTALLABLE_PROGRAMS = {
     { name = "Drunken OS Server", type = "server", path = "servers/Drunken_OS_Server.lua", dependencies = {
         "lib/sha1_hmac.lua",
-        "lib/updater.lua",
-        "lib/drunken_os_apps.lua",
         "HyperAuthClient/config.lua",
         "HyperAuthClient/api/auth_api.lua",
         "HyperAuthClient/api/auth_client.lua",
@@ -27,7 +25,7 @@ local INSTALLABLE_PROGRAMS = {
         "HyperAuthClient/encrypt/sha1.lua",
         "clients/Admin_Console.lua"
     } },
-    { name = "Drunken OS Bank Server", type = "server", path = "servers/Drunken_OS_BankServer.lua", dependencies = { "lib/sha1_hmac.lua", "lib/updater.lua" }, needs_setup = true, setup_type = "bank_server" },
+    { name = "Drunken OS Bank Server", type = "server", path = "servers/Drunken_OS_BankServer.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "bank_server" },
     { name = "Drunken OS Client", type = "client", path = "clients/Drunken_OS_Client.lua", dependencies = { "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua" } },
     { name = "DB Bank ATM", type = "client", path = "clients/DB_Bank_ATM.lua", dependencies = { "lib/sha1_hmac.lua", "lib/updater.lua" }, needs_setup = true, setup_type = "atm" },
     { name = "DB Bank Clerk Terminal", type = "client", path = "clients/DB_Bank_Clerk_Terminal.lua", dependencies = { "lib/sha1_hmac.lua", "lib/updater.lua" } },
@@ -290,6 +288,19 @@ local function createInstallDisk(program)
     local allFiles = { program.path }
     for _, dep in ipairs(program.dependencies) do
         table.insert(allFiles, dep)
+    end
+
+    -- Check total size
+    local totalSize = 0
+    for _, filePath in ipairs(allFiles) do
+        local content = dependencies[filePath] or programCode
+        totalSize = totalSize + #content
+    end
+    
+    local freeSpace = fs.getFreeSpace(mountPath)
+    if totalSize > freeSpace then
+        showMessage("Error", string.format("Disk full! Required: %d KB, Free: %d KB.\nPlease use a blank or larger disk.", math.ceil(totalSize/1024), math.ceil(freeSpace/1024)), true)
+        return
     end
 
     for _, filePath in ipairs(allFiles) do
