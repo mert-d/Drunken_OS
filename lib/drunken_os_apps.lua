@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Application Screen Library (v1.7 - Sentinel Update)
+    Drunken OS - Application Screen Library (v1.8 - Stability Update)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -7,13 +7,14 @@
     Drunken_OS_Client.
 
     Key Changes:
+    - Patched 15+ crash-points with robust network nil-checks.
+    - Improved Proxy compatibility for secure communication.
     - Added retry logic to bank session lookup.
     - Improved online payment with nearby shop detection.
-    - Cleaned up redundant code.
 ]]
 
 local apps = {}
-apps._VERSION = 1.7
+apps._VERSION = 1.8
 
 --==============================================================================
 -- Helper function to access the parent's state
