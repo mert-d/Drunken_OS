@@ -338,6 +338,7 @@ local function createInstallDisk(program)
     print("Writing configuration file...")
     local config = {
         name = program.name,
+        type = program.type, -- Added missing type
         main_program = program.path,
         files = allFiles,
         needs_setup = program.needs_setup or false,

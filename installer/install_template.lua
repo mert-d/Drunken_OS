@@ -17,10 +17,10 @@ local run_setup_wizard -- Forward declaration
 local function showMessage(message)
     term.clear()
     term.setCursorPos(1, 1)
-    print("Drunken OS Installer")
+    print("Drunken OS Installer v1.1")
     print("--------------------")
     print(message)
-    sleep(2)
+    sleep(1.5)
 end
 
 -- Ensures a directory exists, creating it if necessary.
@@ -37,10 +37,18 @@ end
 
 local function doInstallation()
     local diskPath = fs.getDir(shell.getRunningProgram())
+    if diskPath == "" or diskPath == "." then diskPath = "/" end
+    
     local configPath = fs.combine(diskPath, "install_config.lua")
+    
+    print("Installer path: " .. shell.getRunningProgram())
+    print("Disk path: " .. diskPath)
+    print("Config path: " .. configPath)
+    
     -- This file will be created by the Master Installer
     if not fs.exists(configPath) then
-        print("FATAL: install_config.lua not found on this disk.")
+        print("FATAL: install_config.lua not found.")
+        print("Search path: " .. configPath)
         return
     end
 
