@@ -524,10 +524,14 @@ local function main()
                 state.apps.showMessage(state, "Message of the Day", motd_response.motd)
             end
             
-            -- Call the local mainMenu controller with GPS in parallel
+            -- Helper to keep track of location (Stubbed for now)
+            local function gpsHeartbeat()
+                while true do
+                    -- Update state.location if/when needed
+                    sleep(60)
                 end
             end
-            
+
             -- Background Listener for Merchant Requests & Broadcasts
             local function merchantListener()
                 while true do
