@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Application Screen Library (v1.9 - Stability Update)
+    Drunken OS - Application Screen Library (v1.10 - Stability Update)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -99,7 +99,7 @@ function apps.loginOrRegister(context)
                         end
                         
                         rednet.send(getParent(context).mailServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "SimpleMail")
-                        local _, response = rednet.receive("SimpleMail", 10)
+                        local _, response = rednet.receive("SimpleMail", 15)
 
                         if response and response.success then
                             if response.needs_auth then
@@ -126,7 +126,7 @@ function apps.loginOrRegister(context)
                         local pass = context.readInput("Choose Password: ", 9, true)
                         if pass and pass ~= "" then
                             rednet.send(getParent(context).mailServerId, { type = "register", user = user, pass = pass, nickname = nick }, "SimpleMail")
-                            local _, response = rednet.receive("SimpleMail", 5)
+                            local _, response = rednet.receive("SimpleMail", 15)
                             if response and response.success and response.needs_auth then
                                 if not completeAuthentication(context, user) then
                                     getParent(context).username = nil

@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mainframe Server (v10.20 - Auth Routing Fix & Protocol Isolation)
+    Drunken OS - Mainframe Server (v10.21 - Auth Routing Fix & Protocol Isolation)
     by MuhendizBey
 
     Purpose:
@@ -1241,10 +1241,9 @@ local function handleRednetMessage(senderId, message, protocol)
     local realRednetSend = rednet.send
     local function sendResponse(p_id, p_msg, p_proto)
         -- Only wrap and change protocol if we are responding back to the original client.
-        -- If the server is talking to another system (like Auth Server), use standard delivery.
+        -- If we are proxied, we MUST use the internal protocol (protocol) so the Proxy recognizes it as a response.
         if isProxied and p_id == origSender then
-            local responseProto = p_proto or protocol
-            realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, responseProto)
+            realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, protocol)
         else
             realRednetSend(p_id, p_msg, p_proto or protocol)
         end
@@ -1345,7 +1344,7 @@ local function main()
     rednet.host("ArcadeGames_Internal", "arcade.server.internal")
     rednet.host("Drunken_Admin_Internal", "admin.server.internal")
     rednet.host("auth.secure.v1_Internal", "auth.client.internal")
-    logActivity("Mainframe Server v10.20 (Internal Only) Initialized.")
+    logActivity("Mainframe Server v10.21 (Internal Only) Initialized.")
     mainEventLoop()
 end
 

@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Bank Server (v2.17 - Auth Routing Fix)
+    Drunken OS - Bank Server (v2.18 - Proxy Response Fix)
     by MuhendizBey
 
     Purpose:
@@ -1183,10 +1183,9 @@ local function networkListener()
         local realRednetSend = rednet.send
         local function sendResponse(p_id, p_msg, p_proto)
             -- Only wrap and change protocol if we are responding back to the original client.
-            -- If the server is talking to another system (like the Mainframe), use standard delivery.
+            -- If we are proxied, we MUST use the internal protocol (protocolReceived) so the Proxy recognizes it as a response.
             if isProxied and p_id == origSender then
-                local responseProto = p_proto or protocolReceived
-                realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, responseProto)
+                realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, protocolReceived)
             else
                 realRednetSend(p_id, p_msg, p_proto or protocolReceived)
             end
