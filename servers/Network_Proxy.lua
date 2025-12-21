@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Network Proxy Server (v1.2 - Stability Sync)
+    Drunken OS - Network Proxy Server (v1.3 - Protocol Isolation)
     by Antigravity
 
     Purpose:
@@ -25,12 +25,13 @@ local PROTOCOL_MAP = {
     ["ArcadeGames"] = "ArcadeGames_Internal",
     ["Drunken_Admin"] = "Drunken_Admin_Internal",
     ["DB_Bank"] = "DB_Bank_Internal",
-    ["auth.secure.v1"] = "auth.secure.v1", -- Transparent relay for HyperAuth
+    ["auth.secure.v1"] = "auth.secure.v1_Internal", -- Isolated internal name to prevent loops
 }
 
 -- Protocols that should NOT be wrapped in proxy headers (3rd party/encrypted)
 local TRANSPARENT_PROTOCOLS = {
-    ["auth.secure.v1"] = true
+    ["auth.secure.v1"] = true,
+    ["auth.secure.v1_Internal"] = true
 }
 
 -- Host Mappings: Public Hostname -> Public Protocol

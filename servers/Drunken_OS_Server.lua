@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mainframe Server (v10.19 - HyperAuth Hardening)
+    Drunken OS - Mainframe Server (v10.20 - Auth Routing Fix & Protocol Isolation)
     by MuhendizBey
 
     Purpose:
@@ -73,7 +73,7 @@ local GAMELIST_DB = "gamelist.db"
 local MOTD_FILE = "motd.txt"
 local LOG_FILE = "server.log"
 local GAMES_CODE_DB = "games_code.db"
-local AUTH_SERVER_PROTOCOL = "auth.secure.v1"
+local AUTH_SERVER_PROTOCOL = "auth.secure.v1_Internal"
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 local ADMIN_PROTOCOL = "Drunken_Admin"
 
@@ -1344,8 +1344,8 @@ local function main()
     rednet.host("SimpleChat_Internal", "chat.server.internal")
     rednet.host("ArcadeGames_Internal", "arcade.server.internal")
     rednet.host("Drunken_Admin_Internal", "admin.server.internal")
-    rednet.host("auth.secure.v1", "auth.client.internal")
-    logActivity("Mainframe Server v10.19 (Internal Only) Initialized.")
+    rednet.host("auth.secure.v1_Internal", "auth.client.internal")
+    logActivity("Mainframe Server v10.20 (Internal Only) Initialized.")
     mainEventLoop()
 end
 
