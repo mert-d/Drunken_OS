@@ -1,4 +1,4 @@
--- Drunken OS - Merchant POS Launcher
+-- Drunken OS - Merchant POS (v1.1 - UI & Proxy Update)
 -- Wrapper for the Merchant POS application in drunken_os_apps library
 
 local programDir = fs.getDir(shell.getRunningProgram())
@@ -79,11 +79,28 @@ local theme = {
 }
 
 local function drawFrame(title)
-    term.setBackgroundColor(theme.bg); term.clear()
-    term.setCursorPos(1,1); term.setBackgroundColor(theme.titleBg); term.setTextColor(theme.titleText)
-    termin.clearLine()
-    term.write(" " .. title)
-    term.setBackgroundColor(theme.bg); term.setTextColor(theme.text)
+    local w, h = term.getSize()
+    term.setBackgroundColor(theme.bg)
+    term.clear()
+    
+    -- Draw subtle frame/border
+    term.setBackgroundColor(theme.titleBg)
+    term.setCursorPos(1, 1); term.write(string.rep(" ", w))
+    term.setCursorPos(1, h); term.write(string.rep(" ", w))
+    for i = 2, h - 1 do
+        term.setCursorPos(1, i); term.write(" ")
+        term.setCursorPos(w, i); term.write(" ")
+    end
+
+    term.setCursorPos(1, 1)
+    term.setTextColor(theme.titleText)
+    local titleText = " " .. (title or "Merchant POS") .. " "
+    local titleStart = math.floor((w - #titleText) / 2) + 1
+    term.setCursorPos(titleStart, 1)
+    term.write(titleText)
+    
+    term.setBackgroundColor(theme.bg)
+    term.setTextColor(theme.text)
 end
 
 local context = {}
@@ -98,10 +115,16 @@ end
 
 function context.showMessage(title, msg)
     context.drawWindow(title)
-    term.setCursorPos(2, 4)
-    print(msg)
-    term.setCursorPos(2, h-2)
-    print("Press any key...")
+    local w, h = term.getSize()
+    local lines = context.wordWrap(msg, w - 2)
+    for i, line in ipairs(lines) do
+        local x = math.floor((w - #line) / 2) + 1
+        term.setCursorPos(x, 4 + i - 1)
+        term.write(line)
+    end
+    term.setCursorPos(math.floor((w - 16) / 2) + 1, h - 1)
+    term.setTextColor(colors.gray)
+    term.write("Press any key...")
     os.pullEvent("key")
 end
 
@@ -132,14 +155,19 @@ context.parent = {
 }
 
 function context.wordWrap(text, width)
-    -- Simplified wrapper for textutils or manual split
-    -- ... (Omitting full implementation for brevity, relying on basic print/write where possible or simple implementation)
     local lines = {}
-    while #text > width do
-        table.insert(lines, text:sub(1, width))
-        text = text:sub(width + 1)
+    for line in text:gmatch("[^\n]+") do
+        while #line > width do
+            local breakPoint = width
+            while breakPoint > 0 and line:sub(breakPoint, breakPoint) ~= " " do
+                breakPoint = breakPoint - 1
+            end
+            if breakPoint == 0 then breakPoint = width end
+            table.insert(lines, line:sub(1, breakPoint))
+            line = line:sub(breakPoint + 1)
+        end
+        table.insert(lines, line)
     end
-    table.insert(lines, text)
     return lines
 end
 

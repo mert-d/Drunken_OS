@@ -13,7 +13,7 @@
 ]]
 
 local apps = {}
-apps._VERSION = 1.12
+apps._VERSION = 1.13
 
 --==============================================================================
 -- Helper function to access the parent's state
@@ -1211,7 +1211,7 @@ function apps.merchantCashier(context)
                                 
                                 if itemToDispense then
                                     rednet.send(turtleId, { cmd = "check_stock", slot = itemToDispense.slot }, "DB_Merchant_Turtle")
-                                    local _, tResp = rednet.receive("DB_Merchant_Turtle", 2)
+                                    local _, tResp = rednet.receive("DB_Merchant_Turtle", 15)
                                     if tResp and tResp.success then
                                         rednet.send(turtleId, { cmd = "dispense", slot = itemToDispense.slot }, "DB_Merchant_Turtle")
                                         term.setCursorPos(2, 5); term.write("Dispensing: " .. itemToDispense.name)
@@ -1330,7 +1330,7 @@ function apps.merchantPOS(context)
                 target = customer
              }, "DB_Merchant_Req")
              
-             context.showMessage("Sent", "Invoice sent to " .. customer .. "\nWaiting for payment...")
+             context.showMessage("Sent", "Invoice sent to " .. customer .. ". Waiting for payment...")
              
         elseif key == keys.two or key == keys.numPad2 then
              -- Quick Sell
