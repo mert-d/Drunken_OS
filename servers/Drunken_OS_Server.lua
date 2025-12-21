@@ -1,5 +1,6 @@
+```lua
 --[[
-    Drunken OS - Mainframe Server (v10.16 - Stability Sync)
+    Drunken OS - Mainframe Server (v10.17 - Auth Routing Fix)
     by MuhendizBey
 
     Purpose:
@@ -1235,12 +1236,13 @@ local function handleRednetMessage(senderId, message, protocol)
 
     local realRednetSend = rednet.send
     local function sendResponse(p_id, p_msg, p_proto)
-        -- Always use the original incoming protocol when proxied to ensure it hits the Proxy's relay logic
-        local responseProto = isProxied and protocol or (p_proto or protocol)
-        if isProxied then
+        -- Only wrap and change protocol if we are responding back to the original client.
+        -- If the server is talking to another system (like Auth Server), use standard delivery.
+        if isProxied and p_id == origSender then
+            local responseProto = p_proto or protocol
             realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, responseProto)
         else
-            realRednetSend(p_id, p_msg, responseProto)
+            realRednetSend(p_id, p_msg, p_proto or protocol)
         end
     end
 

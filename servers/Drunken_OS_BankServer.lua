@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Bank Server (v2.16 - Stability Sync)
+    Drunken OS - Bank Server (v2.17 - Auth Routing Fix)
     by MuhendizBey
 
     Purpose:
@@ -1182,12 +1182,13 @@ local function networkListener()
 
         local realRednetSend = rednet.send
         local function sendResponse(p_id, p_msg, p_proto)
-            -- Always use the original incoming protocol when proxied to ensure it hits the Proxy's relay logic
-            local responseProto = isProxied and protocolReceived or (p_proto or protocolReceived)
-            if isProxied then
+            -- Only wrap and change protocol if we are responding back to the original client.
+            -- If the server is talking to another system (like the Mainframe), use standard delivery.
+            if isProxied and p_id == origSender then
+                local responseProto = p_proto or protocolReceived
                 realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, responseProto)
             else
-                realRednetSend(p_id, p_msg, responseProto)
+                realRednetSend(p_id, p_msg, p_proto or protocolReceived)
             end
         end
 
