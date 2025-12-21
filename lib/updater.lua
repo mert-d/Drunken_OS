@@ -8,7 +8,7 @@
 ]]
 
 local updater = {}
-updater._VERSION = 1.1
+updater._VERSION = 1.2
 
 function updater.check(programName, currentVersion, targetPath)
     if not rednet.isOpen() then
@@ -25,7 +25,7 @@ function updater.check(programName, currentVersion, targetPath)
 
     -- print("Updater: Checking for " .. programName .. " updates...")
     rednet.send(server, { type = "get_version", program = programName }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 3)
+    local _, response = rednet.receive("SimpleMail", 15)
 
     if response and response.version and response.version > currentVersion then
         print("Updater: New version " .. response.version .. " found for " .. programName)

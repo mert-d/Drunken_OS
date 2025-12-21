@@ -25,7 +25,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 13.1
+local currentVersion = 13.2
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -197,7 +197,7 @@ local function installDependencies()
         local server = rednet.lookup("SimpleMail", "mail.server")
         if server then
             rednet.send(server, { type = "get_lib_code", lib = "updater" }, "SimpleMail")
-            local _, resp = rednet.receive("SimpleMail", 5)
+            local _, resp = rednet.receive("SimpleMail", 15)
             if resp and resp.success and resp.code then
                 if not fs.isDir(fs.combine(programDir, "lib")) then fs.makeDir(fs.combine(programDir, "lib")) end
                 local f = fs.open(updaterPath, "w")
@@ -254,7 +254,7 @@ end
 
 local function autoUpdateCheck()
     rednet.send(state.mailServerId, { type = "get_version", program = programName }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 3)
+    local _, response = rednet.receive("SimpleMail", 15)
     if response and response.version and response.version > currentVersion then
         term.clear(); term.setCursorPos(1, 1)
         print("New version available: " .. response.version)
