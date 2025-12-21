@@ -497,7 +497,7 @@ end
 
 local function main()
     -- Safe Boot: Check for updates BEFORE any UI code runs
-    rednet.open("back")
+    peripheral.find("modem", rednet.open)
     local connected, reason = findServers()
     
     -- Try to update even if "findServers" failed (maybe we can reach mail server specifically?)
@@ -508,7 +508,7 @@ local function main()
 
     showSplashScreen()
     while true do
-        rednet.open("back")
+        peripheral.find("modem", rednet.open)
         connected, reason = findServers()
         if not connected then
             local tempShowMessage = function(title, msg) term.clear(); term.setCursorPos(1,1); print(title.."\n"..msg); sleep(3) end
@@ -581,7 +581,7 @@ local function main()
 
             parallel.waitForAny(mainMenu, gpsHeartbeat, merchantListener)
             
-            rednet.close("back")
+            peripheral.find("modem", rednet.close)
             if not state.username then
                 clear(); print("Goodbye!"); break
             end

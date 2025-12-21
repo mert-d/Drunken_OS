@@ -1,145 +1,15 @@
 --[[
-    Drunken OS - Application Screen Library (v1.5 - Client Crash Fix)
-    by Gemini Gem
+    Drunken OS - Application Screen Library (v1.7 - Sentinel Update)
+    by Gemini Gem & MuhendizBey
 
     Purpose:
     This library contains all the major "application" functions for the
-    Drunken_OS_Client. This version restores the full, working implementations
-    for all menu options, including a robust game updater.
+    Drunken_OS_Client.
 
     Key Changes:
-    - All
--- Online Payment / Money Transfer App
-function apps.onlinePayment(context)
-    if not getBankSession(context) then return end
-    local bankServerId, pin_hash, balance = getBankSession(context) -- Refresh
-
-    while true do
-        context.drawWindow("Online Payment")
-        term.setCursorPos(2, 4); term.write("Balance: $" .. balance)
-        
-        -- Check for nearby shop (from broadcast)
-        local shop = getParent(context).nearbyShop
-        if shop then
-             term.setCursorPos(2, 6); term.setTextColor(colors.green)
-             term.write("Nearby: " .. shop.name)
-             term.setTextColor(context.theme.text)
-        else
-             term.setCursorPos(2, 6); term.setTextColor(colors.gray)
-             term.write("Searching for shops...")
-             term.setTextColor(context.theme.text)
-        end
-        
-        local options = {"Pay User", "History / Report", "Exit"}
-        if shop then table.insert(options, 1, "Pay " .. shop.name) end
-        
-
-        context.drawMenu(options, 1, 2, 8)
-        
-        -- Helper for Payment Flow
-        local function executePayment(recipient, amount, note)
-             if amount <= balance then
-                context.drawWindow("Processing...")
-                rednet.send(bankServerId, {
-                    type = "transfer",
-                    user = getParent(context).username,
-                    pin_hash = pin_hash, -- Use session hash
-                    recipient = recipient,
-                    amount = amount,
-                    details = { note = note }
-                }, "DB_Bank")
-                
-                local _, resp = rednet.receive("DB_Bank", 5)
-                if resp and resp.success then
-                    balance = resp.newBalance
-                    context.showMessage("Success", "Sent $" .. amount .. " to " .. recipient)
-                    
-                    -- P2P Proof Signal (Phase 19)
-                    -- We just paid. Now tell the merchant directly so they can dispense/verify.
-                    -- We need their ID. Since we paid by Username, we might not know ID.
-                    -- BUT if they are nearby (Shop Broadcast), we know their ID?
-                    -- Helper: Broadcast the proof on "DB_Merchant_Recv" targeted?
-                    -- Or just broadcast it generally signed?
-                    -- Let's broadcast "I paid User X". User X listens.
-                    
-                    local proof = {
-                        type = "payment_proof",
-                        from = getParent(context).username,
-                        amount = amount,
-                        timestamp = os.time()
-                    }
-                    rednet.broadcast(proof, "DB_Merchant_Recv")
-                    
-                else
-                    context.showMessage("Failed", (resp and resp.reason) or "Error")
-                end
-            else
-                context.showMessage("Error", "Insufficient funds.")
-            end
-        end
-
-        local event, key = os.pullEvent("key")
-        -- Manual selection logic since we aren't using the library's input loop
-        if key == keys.one or key == keys.numPad1 then
-            local actualIndex = 1
-            if shop then -- Option 1 is Pay Shop
-                local amount = context.readInput("Amount: $", 4)
-                if amount and tonumber(amount) then
-                     executePayment(shop.name:match("^(.-)'s Shop"), tonumber(amount), "Shop Purchase")
-                     -- Note: shop.name is "User's Shop", extract User
-                end
-            else -- Option 1 is Pay User
-                 local recipient = context.readInput("Recipient: ", 4)
-                 if recipient and recipient ~= "" then
-                      local amount = tonumber(context.readInput("Amount: $", 6))
-                      if amount then
-                           executePayment(recipient, amount, "Transfer")
-                      end
-                 end
-            end
-            
-        elseif key == keys.two or key == keys.numPad2 then
-            if shop then -- Option 2 is Pay User (since 1 was Shop)
-                 local recipient = context.readInput("Recipient: ", 4)
-                 if recipient and recipient ~= "" then
-                      local amount = tonumber(context.readInput("Amount: $", 6))
-                      if amount then executePayment(recipient, amount, "Transfer") end
-                 end
-            else -- Option 2 is History/Report
-                 -- Report Logic
-                 context.drawWindow("Report Transaction")
-                 local userToReport = context.readInput("User to Report: ", 4)
-                 if userToReport and userToReport ~= "" then
-                     local reason = context.readInput("Reason: ", 6)
-                     -- Send Report to Bank/Admin
-                     -- We use "report_scam" handler if we added it, or just Feedback mail.
-                     -- Let's use Feedback mail for now as universal.
-                     apps.composeAndSend(context, "MuhendizBey", "SCAM_REPORT: " .. userToReport, reason)
-                     context.showMessage("Report Sent", "Admin will review.")
-                 end
-            end
-        elseif key == keys.three or key == keys.numPad3 then
-             if shop then -- Option 3 is History/Report
-                 context.drawWindow("Report Transaction")
-                 local userToReport = context.readInput("User to Report: ", 4)
-                 if userToReport and userToReport ~= "" then
-                     local reason = context.readInput("Reason: ", 6)
-                     apps.composeAndSend(context, "MuhendizBey", "SCAM_REPORT: " .. userToReport, reason)
-                     context.showMessage("Report Sent", "Admin will review.")
-                 end
-             else
-                 break -- Exit
-             end
-        elseif key == keys.four or key == keys.numPad4 or key == keys.q then
-             break
-        end
-    end
-end
- "feature coming soon" messages have been replaced with
-      their full, original implementations.
-    - A new `systemMenu` provides access to settings and the game updater.
-    - The `updateGames` function is now fully implemented based on user-provided
-      working code, ensuring reliability.
+    - Added retry logic to bank session lookup.
+    - Improved online payment with nearby shop detection.
+    - Cleaned up redundant code.
 ]]
 
 local apps = {}
@@ -756,7 +626,16 @@ local BANK_PROTOCOL = "DB_Bank"
 local BANK_MERCHANT_PROTOCOL = "DB_Bank" -- Server uses DB_Bank for payments too
 
 local function getBankSession(context)
-    local bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
+    local bankServerId = nil
+    context.drawWindow("Connecting...")
+    term.setCursorPos(2, 4); term.write("Locating Bank Server...")
+    
+    for i = 1, 3 do
+        bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
+        if bankServerId then break end
+        sleep(1)
+    end
+
     if not bankServerId then
         context.showMessage("Error", "Could not contact Bank Server.")
         return nil, nil
@@ -873,36 +752,97 @@ function apps.onlinePayment(context)
     local bankServerId, pin_hash, balance = getBankSession(context)
     if not bankServerId then return end
 
-    context.drawWindow("Pay Merchant")
-    local recipient = context.readInput("Merchant Name: ", 4)
-    if not recipient or recipient == "" then return end
+    while true do
+        context.drawWindow("Pay Merchant")
+        term.setCursorPos(2, 4); term.write("Balance: $" .. balance)
+        
+        -- Check for nearby shop (from broadcast)
+        local shop = getParent(context).nearbyShop
+        if shop then
+             term.setCursorPos(2, 6); term.setTextColor(colors.green)
+             term.write("Nearby: " .. shop.name)
+             term.setTextColor(context.theme.text)
+        else
+             term.setCursorPos(2, 6); term.setTextColor(colors.gray)
+             term.write("Searching for shops...")
+             term.setTextColor(context.theme.text)
+        end
 
-    local amount = tonumber(context.readInput("Amount: $", 6))
-    if not amount or amount <= 0 then return end
-    
-    if amount > balance then
-        context.showMessage("Error", "Insufficient funds.")
-        return
-    end
+        local options = {"Pay User", "History / Report", "Exit"}
+        if shop then table.insert(options, 1, "Pay " .. shop.name) end
 
-    local metadata = context.readInput("Order Info (e.g. Table 5): ", 8) or "No Info"
+        local selected = 1
+        while true do
+            context.drawWindow("Pay Merchant")
+            term.setCursorPos(2, 4); term.write("Balance: $" .. balance)
+            if shop then
+                term.setCursorPos(2, 6); term.setTextColor(colors.green)
+                term.write("Nearby: " .. shop.name)
+                term.setTextColor(context.theme.text)
+            end
+            context.drawMenu(options, selected, 2, 8)
+            local event, key = os.pullEvent("key")
+            if key == keys.up then selected = (selected == 1) and #options or selected - 1
+            elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+            elseif key == keys.enter then break
+            elseif key == keys.tab or key == keys.q then return end
+        end
 
-    context.drawWindow("Processing Payment...")
-    rednet.send(bankServerId, {
-        type = "process_payment",
-        user = getParent(context).username,
-        pin_hash = pin_hash,
-        recipient = recipient,
-        amount = amount,
-        metadata = metadata
-    }, BANK_PROTOCOL)
+        local choice = options[selected]
+        if choice == "Exit" then break end
 
-    local _, resp = rednet.receive(BANK_PROTOCOL, 5)
-    if resp and resp.success then
-        balance = resp.newBalance
-        context.showMessage("Success", "Paid $" .. amount .. " to " .. recipient)
-    else
-        context.showMessage("Payment Failed", (resp and resp.reason) or "Error")
+        local recipient, amount, metadata
+        if choice == "Pay User" then
+            recipient = context.readInput("Recipient: ", 4)
+            if not recipient or recipient == "" then break end
+            amount = tonumber(context.readInput("Amount: $", 6))
+            metadata = context.readInput("Note: ", 8) or "Transfer"
+        elseif shop and choice == "Pay " .. shop.name then
+            recipient = shop.name:match("^(.-)'s Shop") or shop.name
+            amount = tonumber(context.readInput("Amount: $", 6))
+            metadata = context.readInput("Order Info: ", 8) or "Shop Purchase"
+        elseif choice == "History / Report" then
+            context.drawWindow("Report Transaction")
+            local userToReport = context.readInput("User: ", 4)
+            if userToReport and userToReport ~= "" then
+                local reason = context.readInput("Reason: ", 6)
+                apps.composeAndSend(context, "MuhendizBey", "REPORT: " .. userToReport, reason)
+                context.showMessage("Report Sent", "Admin will review.")
+            end
+            break
+        end
+
+        if amount and amount > 0 then
+            if amount <= balance then
+                context.drawWindow("Processing...")
+                rednet.send(bankServerId, {
+                    type = "process_payment",
+                    user = getParent(context).username,
+                    pin_hash = pin_hash,
+                    recipient = recipient,
+                    amount = amount,
+                    metadata = metadata
+                }, BANK_PROTOCOL)
+
+                local _, resp = rednet.receive(BANK_PROTOCOL, 5)
+                if resp and resp.success then
+                    balance = resp.newBalance
+                    context.showMessage("Success", "Paid $" .. amount .. " to " .. recipient)
+                    
+                    -- P2P Proof Signal
+                    rednet.broadcast({
+                        type = "payment_proof",
+                        from = getParent(context).username,
+                        amount = amount,
+                        timestamp = os.time()
+                    }, "DB_Merchant_Recv")
+                else
+                    context.showMessage("Payment Failed", (resp and resp.reason) or "Error")
+                end
+            else
+                context.showMessage("Error", "Insufficient funds.")
+            end
+        end
     end
 end
 

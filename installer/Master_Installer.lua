@@ -33,10 +33,12 @@ local INSTALLABLE_PROGRAMS = {
     { name = "DB Bank Clerk Terminal", type = "client", path = "clients/DB_Bank_Clerk_Terminal.lua", dependencies = { "lib/sha1_hmac.lua", "lib/updater.lua" } },
     { name = "DB Bank Clerk Turtle", type = "turtle", path = "turtles/DB_Bank_Clerk.lua", dependencies = {} },
     { name = "Auditor Turtle", type = "turtle", path = "turtles/Auditor.lua", dependencies = { "lib/sha1_hmac.lua", "lib/updater.lua" }, needs_setup = true, setup_type = "auditor" },
-    { name = "Invaders", type = "game", path = "games/invaders.lua", dependencies = {} },
-    { name = "Floppa Bird", type = "game", path = "games/floppa_bird.lua", dependencies = {} },
-    { name = "Tetris", type = "game", path = "games/tetris.lua", dependencies = {} },
-    { name = "Snake", type = "game", path = "games/snake.lua", dependencies = {} },
+    -- Merchant Business Suite
+    { name = "Merchant POS", type = "client", path = "clients/DB_Merchant_POS.lua", dependencies = { "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua" } },
+    { name = "Merchant Cashier PC", type = "client", path = "clients/DB_Merchant_Cashier.lua", dependencies = { "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua" } },
+    { name = "DB Merchant Turtle", type = "turtle", path = "clients/DB_Merchant_Turtle.lua", dependencies = {} },
+    -- Networking
+    { name = "Network Proxy", type = "server", path = "servers/Network_Proxy.lua", dependencies = { "lib/sha1_hmac.lua" } },
 }
 
 --==============================================================================

@@ -1210,28 +1210,61 @@ local function executeAdminCommand(command)
 end
 
 local function handleRednetMessage(senderId, message, protocol)
-    if protocol == "SimpleMail" and message and message.type and mailHandlers[message.type] then
-        mailHandlers[message.type](senderId, message)
-    elseif protocol == "SimpleChat" and message and message.from then
-        local nickname = users[message.from] and users[message.from].nickname or message.from
-        local entry = string.format("[%s]: %s", nickname, message.text)
+    -- Proxy Support: Extract original sender and message
+    local origSender = senderId
+    local actualMsg = message
+    local isProxied = false
+    
+    if type(message) == "table" and message.proxy_orig_sender then
+        origSender = message.proxy_orig_sender
+        actualMsg = message.proxy_orig_msg
+        isProxied = true
+    end
+
+    local function sendResponse(p_id, p_msg, p_proto)
+        if isProxied then
+            rednet.send(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, p_proto)
+        else
+            rednet.send(p_id, p_msg, p_proto)
+        end
+    end
+
+    if protocol == "SimpleMail_Internal" and actualMsg and actualMsg.type and mailHandlers[actualMsg.type] then
+        -- We need to modify mailHandlers to use sendResponse instead of rednet.send directly... 
+        -- OR we can just handle the most common ones here if we don't want to refactor all handlers.
+        -- For a clean architecture, we should override rednet.send temporarily or pass a responder.
+        -- Let's try to override rednet.send during the handler call.
+        local oldSend = rednet.send
+        rednet.send = sendResponse
+        mailHandlers[actualMsg.type](origSender, actualMsg)
+        rednet.send = oldSend
+
+    elseif protocol == "SimpleChat_Internal" and actualMsg and actualMsg.from then
+        local nickname = users[actualMsg.from] and users[actualMsg.from].nickname or actualMsg.from
+        local entry = string.format("[%s]: %s", nickname, actualMsg.text)
         table.insert(chatHistory, entry)
         if #chatHistory > 100 then table.remove(chatHistory, 1) end
         saveTableToFile(CHAT_DB, chatHistory)
-        rednet.broadcast({ from = nickname, text = message.text }, "SimpleChat")
-    elseif protocol == "ArcadeGames" and message and message.type and gameHandlers[message.type] then
-        gameHandlers[message.type](senderId, message)
-    elseif protocol == AUTH_INTERLINK_PROTOCOL and message.type == "user_exists_check" then
-        local user = message.user
-        rednet.send(senderId, { user = user, exists = (users[user] ~= nil) }, AUTH_INTERLINK_PROTOCOL)
-    elseif protocol == ADMIN_PROTOCOL and message.type == "execute_command" then
-        if message.user and admins[message.user] then
-            logActivity("Remote cmd from " .. message.user)
-            local output = executeAdminCommand(message.command)
-            rednet.send(senderId, { output = output }, ADMIN_PROTOCOL)
+        rednet.broadcast({ from = nickname, text = actualMsg.text }, "SimpleChat") -- Broadcasts stay public/direct? 
+        -- Actually proxy should handle broadcasts too if we want full isolation.
+
+    elseif protocol == "ArcadeGames_Internal" and actualMsg and actualMsg.type and gameHandlers[actualMsg.type] then
+        local oldSend = rednet.send
+        rednet.send = sendResponse
+        gameHandlers[actualMsg.type](origSender, actualMsg)
+        rednet.send = oldSend
+
+    elseif protocol == AUTH_INTERLINK_PROTOCOL and actualMsg.type == "user_exists_check" then
+        sendResponse(senderId, { user = actualMsg.user, exists = (users[actualMsg.user] ~= nil) }, AUTH_INTERLINK_PROTOCOL)
+
+    elseif protocol == "Drunken_Admin_Internal" and actualMsg.type == "execute_command" then
+        if actualMsg.user and admins[actualMsg.user] then
+            logActivity("Remote cmd from " .. actualMsg.user)
+            local output = executeAdminCommand(actualMsg.command)
+            sendResponse(senderId, { output = output }, "Drunken_Admin_Internal")
         else
-            logActivity("Unauthorized cmd from " .. (message.user or "unknown"), true)
-            rednet.send(senderId, { output = "Access denied." }, ADMIN_PROTOCOL)
+            logActivity("Unauthorized cmd from " .. (actualMsg.user or "unknown"), true)
+            sendResponse(senderId, { output = "Access denied." }, "Drunken_Admin_Internal")
         end
     end
 end
@@ -1279,14 +1312,18 @@ local function main()
 
     for _, side in ipairs(rs.getSides()) do
         if peripheral.getType(side) == "modem" then
-            rednet.open(side)
+            local m = peripheral.wrap(side)
+            if not m.isWireless() then
+                rednet.open(side)
+                logActivity("Wired modem opened on " .. side)
+            end
         end
     end
-    rednet.host("SimpleMail", "mail.server")
-    rednet.host("SimpleChat", "chat.server")
-    rednet.host("ArcadeGames", "arcade.server")
-    rednet.host(ADMIN_PROTOCOL, "admin.server")
-    logActivity("Mainframe Server v10.14 Initialized.")
+    rednet.host("SimpleMail_Internal", "mail.server.internal")
+    rednet.host("SimpleChat_Internal", "chat.server.internal")
+    rednet.host("ArcadeGames_Internal", "arcade.server.internal")
+    rednet.host("Drunken_Admin_Internal", "admin.server.internal")
+    logActivity("Mainframe Server v10.15 (Internal Only) Initialized.")
     mainEventLoop()
 end
 

@@ -860,7 +860,7 @@ function bankHandlers.process_payment(senderId, message)
         rednet.send(senderId, { success = true, newBalance = senderAcc.balance }, BANK_PROTOCOL)
         
         -- Real-time notification to merchant device
-        local merchantDeviceId = rednet.lookup("BANK_MERCHANT_PROTOCOL", recipient)
+        local merchantDeviceId = rednet.lookup(BANK_PROTOCOL, recipient)
         if merchantDeviceId then
             rednet.send(merchantDeviceId, {
                 type = "payment_received",
@@ -868,7 +868,7 @@ function bankHandlers.process_payment(senderId, message)
                 amount = amount,
                 metadata = metadata,
                 timestamp = os.time()
-            }, "BANK_MERCHANT_PROTOCOL")
+            }, BANK_PROTOCOL)
         end
         needsRedraw = true
     else
@@ -1169,8 +1169,31 @@ local function networkListener()
     while true do
         local senderId, message, protocolReceived = rednet.receive()
         
-        if protocolReceived == BANK_PROTOCOL and message and message.type and bankHandlers[message.type] then
-            bankHandlers[message.type](senderId, message)
+        -- Proxy Support: Extract original sender and message
+        local origSender = senderId
+        local actualMsg = message
+        local isProxied = false
+        
+        if type(message) == "table" and message.proxy_orig_sender then
+            origSender = message.proxy_orig_sender
+            actualMsg = message.proxy_orig_msg
+            isProxied = true
+        end
+
+        local function sendResponse(p_id, p_msg, p_proto)
+            if isProxied then
+                rednet.send(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, p_proto)
+            else
+                rednet.send(p_id, p_msg, p_proto)
+            end
+        end
+
+        if protocolReceived == "DB_Bank_Internal" and actualMsg and actualMsg.type and bankHandlers[actualMsg.type] then
+            -- Override rednet.send temporarily to handle proxied responses
+            local oldSend = rednet.send
+            rednet.send = sendResponse
+            bankHandlers[actualMsg.type](origSender, actualMsg)
+            rednet.send = oldSend
         
         elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "stock_report" then
             local messageToVerify = textutils.serializeJSON(message.report)
@@ -1306,11 +1329,10 @@ local function main()
     if not mainServerId then print("FATAL: No computer found on the other side of the wired modem."); return end
     print("Mainframe located via wired link at ID " .. mainServerId)
 
-    print("Opening modems...")
-    rednet.open(wireless_modem_name)
+    print("Opening wired modem...")
     rednet.open(wired_modem_name)
     
-    rednet.host(BANK_PROTOCOL, "bank.server")
+    rednet.host("DB_Bank_Internal", "bank.server.internal")
     
     startupComplete = true -- Stop logging to the physical terminal
     computerTerm.clear()
