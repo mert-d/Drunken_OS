@@ -1,6 +1,6 @@
 ```lua
 --[[
-    Drunken OS - Mainframe Server (v10.18 - Auth Routing Fix & Transparent Relay)
+    Drunken OS - Mainframe Server (v10.19 - HyperAuth Hardening)
     by MuhendizBey
 
     Purpose:
@@ -397,9 +397,10 @@ local function requestAuthCode(username, password, nickname, senderId, purpose)
         extra = { purpose = purpose or "unknown" },
     })
     
-    if not reply then
-        logActivity("HyperAuth error: " .. tostring(err), true)
-        rednet.send(senderId, { success = false, reason = "Auth service error." }, "SimpleMail")
+    if not reply or not reply.request_id then
+        local detail = reply and (reply.reason or reply.error or "Field 'request_id' missing") or tostring(err)
+        logActivity("HyperAuth error: " .. detail, true)
+        rednet.send(senderId, { success = false, reason = "Auth service error: " .. detail }, "SimpleMail")
         return nil
     end
     
@@ -1341,7 +1342,7 @@ local function main()
     rednet.host("ArcadeGames_Internal", "arcade.server.internal")
     rednet.host("Drunken_Admin_Internal", "admin.server.internal")
     rednet.host("auth.secure.v1", "auth.client.internal")
-    logActivity("Mainframe Server v10.18 (Internal Only) Initialized.")
+    logActivity("Mainframe Server v10.19 (Internal Only) Initialized.")
     mainEventLoop()
 end
 
