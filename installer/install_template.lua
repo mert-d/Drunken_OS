@@ -90,19 +90,35 @@ local function doInstallation()
 
     -- Create the startup file
     showMessage("Creating startup file...")
+    print("Config Type: " .. tostring(config.type))
+    print("Config Path: " .. tostring(config.main_program))
+    
     if config.type == "server" then
         local serverStartupPath = fs.combine(diskPath, "server_startup.lua")
+        if not fs.exists(serverStartupPath) then
+            print("FATAL: server_startup.lua missing on disk!")
+            return
+        end
+        
         local serverStartupFile = fs.open(serverStartupPath, "r")
         local serverStartupScript = serverStartupFile.readAll()
         serverStartupFile.close()
 
+        -- Robust replacement
+        local oldScript = serverStartupScript
         serverStartupScript = serverStartupScript:gsub("__PROGRAM_PATH__", config.main_program)
+        
+        if serverStartupScript == oldScript then
+            print("WARNING: Path replacement failed!")
+            print("Pattern '__PROGRAM_PATH__' not found in template.")
+        end
+
         local startupFile = fs.open("/startup.lua", "w")
         startupFile.write(serverStartupScript)
         startupFile.close()
     else
         local startupFile = fs.open("/startup.lua", "w")
-        startupFile.write('shell.run("' .. config.main_program .. '")')
+        startupFile.write('shell.run("' .. tostring(config.main_program) .. '")')
         startupFile.close()
     end
 
