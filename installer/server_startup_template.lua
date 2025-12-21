@@ -40,7 +40,7 @@ if monitor then
     local old_setBackgroundColor = native_term.setBackgroundColor
 
     -- Create a new terminal object for the monitor
-    local monitor_term = peripheral.wrap(monitor)
+    local monitor_term = monitor
 
     -- Override the global term functions
     term.write = function(...) monitor_term.write(...) end
