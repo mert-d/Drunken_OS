@@ -84,9 +84,15 @@ local function responseListener()
             end
         end
 
-        if publicProtocol and msg.proxy_orig_sender then
-            log("RESP [" .. publicProtocol .. "] to " .. msg.proxy_orig_sender)
-            rednet.send(msg.proxy_orig_sender, msg.proxy_response, publicProtocol)
+        if publicProtocol then
+            if type(msg) == "table" and msg.proxy_orig_sender then
+                log("RESP [" .. publicProtocol .. "] to " .. msg.proxy_orig_sender)
+                rednet.send(msg.proxy_orig_sender, msg.proxy_response, publicProtocol)
+            else
+                -- Relaying broadcast or server-initiated message
+                log("RELAY [" .. publicProtocol .. "] from server")
+                rednet.broadcast(msg, publicProtocol)
+            end
         end
     end
 end

@@ -113,7 +113,7 @@ function apps.loginOrRegister(context)
                                 getParent(context).isAdmin = response.isAdmin or false
                             end
                         else
-                            context.showMessage("Login Failed", response.reason or "No response.")
+                            context.showMessage("Login Failed", (response and response.reason) or "No response (Timeout).")
                         end
                     end
                 end
@@ -132,7 +132,7 @@ function apps.loginOrRegister(context)
                                     getParent(context).username = nil
                                 end
                             else
-                                context.showMessage("Registration Failed", response.reason or "No response.")
+                                context.showMessage("Registration Failed", (response and response.reason) or "No response (Timeout).")
                             end
                         end
                     end

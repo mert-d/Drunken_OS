@@ -1221,11 +1221,12 @@ local function handleRednetMessage(senderId, message, protocol)
         isProxied = true
     end
 
+    local realRednetSend = rednet.send
     local function sendResponse(p_id, p_msg, p_proto)
         if isProxied then
-            rednet.send(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, p_proto)
+            realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, p_proto)
         else
-            rednet.send(p_id, p_msg, p_proto)
+            realRednetSend(p_id, p_msg, p_proto)
         end
     end
 
