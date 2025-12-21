@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mobile Client (v13.0 - Sentinel Update)
+    Drunken OS - Mobile Client (v13.3 - UI Polish Update)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -91,34 +91,47 @@ local function drawWindow(title)
     local w, h = term.getSize()
     term.setBackgroundColor(theme.bg)
     term.clear()
+    
+    -- Draw subtle frame/border
     term.setBackgroundColor(theme.titleBg)
+    term.setCursorPos(1, 1); term.write(string.rep(" ", w))
+    term.setCursorPos(1, h); term.write(string.rep(" ", w))
+    for i = 2, h - 1 do
+        term.setCursorPos(1, i); term.write(" ")
+        term.setCursorPos(w, i); term.write(" ")
+    end
+
     term.setCursorPos(1, 1)
-    term.write(string.rep(" ", w))
     term.setTextColor(theme.titleText)
-    local titleText = " " .. (title or "Drunken Beard OS") .. " "
-    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1)
+    local titleText = " " .. (title or "Drunken OS") .. " "
+    local titleStart = math.floor((w - #titleText) / 2) + 1
+    term.setCursorPos(titleStart, 1)
     term.write(titleText)
+    
     term.setBackgroundColor(theme.bg)
     term.setTextColor(theme.text)
 end
 
-local function printCentered(startY, text)
+local function printCentered(startY, message)
     local w, h = term.getSize()
-    local lines = wordWrap(text, w - 4)
+    -- USE W-2 to maximize space, and 3 column/row padding for frame
+    local lines = wordWrap(message, w - 2)
     for i, line in ipairs(lines) do
-        term.setCursorPos(math.floor((w - #line) / 2) + 1, startY + i - 1)
+        local x = math.floor((w - #line) / 2) + 1
+        term.setCursorPos(x, startY + i - 1)
         term.write(line)
     end
 end
 
-local function showMessage(title, message, isError)
+local function showMessage(title, message)
     drawWindow(title)
     local w, h = term.getSize()
-    term.setTextColor(isError and theme.errorBg or theme.text)
     printCentered(4, message)
-    term.setCursorPos(math.floor((w - 26) / 2) + 1, h - 1)
+    
+    local continueText = "Press any key to continue..."
+    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, h - 1)
     term.setTextColor(colors.gray)
-    term.write("Press any key to continue...")
+    term.write(continueText)
     os.pullEvent("key")
 end
 

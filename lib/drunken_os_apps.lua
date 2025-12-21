@@ -13,7 +13,7 @@
 ]]
 
 local apps = {}
-apps._VERSION = 1.9
+apps._VERSION = 1.12
 
 --==============================================================================
 -- Helper function to access the parent's state
@@ -691,7 +691,7 @@ function apps.bankApp(context)
         if selected == 4 then return end
         
         if selected == 1 then
-            context.showMessage("Balance", "Your current balance is:\n$" .. balance)
+            context.showMessage("Balance", "Your current balance is: $" .. balance)
         
         elseif selected == 2 then
             context.drawWindow("Exchange Rates")

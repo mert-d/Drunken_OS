@@ -1,5 +1,5 @@
 --[[
-    Drunken Beard Bank - ATM Terminal (v5.5 - Numeric Password Hotfix)
+    Drunken Beard Bank - ATM Terminal (v5.6 - Proxy & UI Update)
     by MuhendizBey
 
     Purpose:
@@ -88,17 +88,22 @@ local function drawFrame(title)
     term.setBackgroundColor(theme.bg)
     term.clear()
     
-    -- Premium Header Logic (Same as Client)
+    -- Draw subtle frame/border
     term.setBackgroundColor(theme.titleBg)
+    term.setCursorPos(1, 1); term.write(string.rep(" ", w))
+    term.setCursorPos(1, h); term.write(string.rep(" ", w))
+    for i = 2, h - 1 do
+        term.setCursorPos(1, i); term.write(" ")
+        term.setCursorPos(w, i); term.write(" ")
+    end
+
     term.setCursorPos(1, 1)
-    term.write(string.rep(" ", w))
     term.setTextColor(theme.titleText)
     local titleText = " " .. (title or "Drunken Beard Bank") .. " "
     local titleStart = math.floor((w - #titleText) / 2) + 1
     term.setCursorPos(titleStart, 1)
     term.write(titleText)
     
-    -- Status Bar / Footer area (optional, maybe just cleared)
     term.setBackgroundColor(theme.bg)
     term.setTextColor(theme.text)
 end
@@ -117,7 +122,7 @@ end
 
 local function printCentered(startY, text)
     local w, h = term.getSize()
-    local lines = utils.wordWrap(text, w - 4)
+    local lines = utils.wordWrap(text, w - 2)
 
     for i, line in ipairs(lines) do
         local x = math.floor((w - #line) / 2) + 1
@@ -129,7 +134,7 @@ end
 local function showMessage(title, message, isError)
     drawFrame(title)
     local w, h = term.getSize()
-    local lines = utils.wordWrap(message, w - 4)
+    local lines = utils.wordWrap(message, w - 2)
 
     term.setTextColor(isError and theme.errorBg or theme.text)
     for i, line in ipairs(lines) do
@@ -139,7 +144,7 @@ local function showMessage(title, message, isError)
     end
     
     local continueText = "Press any key to continue..."
-    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, h - 2)
+    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, h - 1)
     term.setTextColor(colors.gray)
     term.write(continueText)
     
@@ -241,7 +246,7 @@ local function setupPin()
         pin_hash = pin1
     }, BANK_PROTOCOL)
 
-    local _, response = rednet.receive(BANK_PROTOCOL, 10)
+    local _, response = rednet.receive(BANK_PROTOCOL, 15)
     if response and response.success then
         showMessage("Success", "PIN set successfully. You can now log in.")
         return true
@@ -258,7 +263,7 @@ local function login()
     while not login_success do
         printCenteredWrapped(12, "Contacting Bank Server...")
         rednet.send(bankServerId, { type = "login", user = username, pin_hash = pin_hash }, BANK_PROTOCOL)
-        local _, response = rednet.receive(BANK_PROTOCOL, 10)
+        local _, response = rednet.receive(BANK_PROTOCOL, 15)
 
         if not response then
             showMessage("Error", "No response from bank server.", true)
