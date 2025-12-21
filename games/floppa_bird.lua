@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 6.0
+local currentVersion = 7.0
 -- ... rest of the floppa bird game code
 --==============================================================================
 -- Main Game Function (to be run inside pcall)
@@ -91,19 +91,31 @@ local function mainGame(...)
     end
 
     local function draw()
+        local w, h = getSafeSize()
         term.setBackgroundColor(theme.windowBg)
         term.clear()
-        local w, h = getSafeSize()
+        
+        -- Draw subtle frame/border
+        term.setBackgroundColor(colors.cyan)
+        term.setCursorPos(1, 1); term.write(string.rep(" ", w))
+        term.setCursorPos(1, h); term.write(string.rep(" ", w))
+        for i = 2, h - 1 do
+            term.setCursorPos(1, i); term.write(" ")
+            term.setCursorPos(w, i); term.write(" ")
+        end
 
-        term.setBackgroundColor(theme.player)
-        term.setCursorPos(player.x, math.floor(player.y))
-        term.write(" ")
+        term.setCursorPos(1, 1)
+        term.setTextColor(theme.text)
+        local titleText = " " .. (gameName or "Drunken OS Game") .. " "
+        local titleStart = math.floor((w - #titleText) / 2) + 1
+        term.setCursorPos(titleStart, 1)
+        term.write(titleText)
 
         term.setBackgroundColor(theme.pipe)
         for _, pipe in ipairs(pipes) do
-            for y = 1, h do
+            for y = 2, h - 1 do -- Limit to inside frame
                 if y < pipe.y or y > pipe.y + pipe.gap then
-                    if pipe.x > 0 and pipe.x + pipe.width -1 <= w then
+                    if pipe.x > 1 and pipe.x + pipe.width - 1 < w then
                         term.setCursorPos(pipe.x, y)
                         term.write(string.rep(" ", pipe.width))
                     end
@@ -111,11 +123,16 @@ local function mainGame(...)
             end
         end
 
+        term.setBackgroundColor(theme.player)
+        term.setCursorPos(player.x, math.floor(player.y))
+        term.write(" ")
+
         term.setBackgroundColor(theme.windowBg)
         term.setTextColor(theme.text)
         local scoreText = "Score: " .. score
-        term.setCursorPos(math.floor(w / 2 - #scoreText / 2), 1)
-        term.write(scoreText)
+        term.setCursorPos(math.floor(w / 2 - #scoreText / 2), h)
+        term.setBackgroundColor(colors.cyan)
+        term.write(" " .. scoreText .. " ")
     end
 
     local function submitScore() if arcadeServerId then rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames") end end
@@ -154,7 +171,8 @@ local function mainGame(...)
         os.pullEvent("key")
     end
 
-    rednet.open("back")
+    local modem = peripheral.find("modem")
+    if modem then rednet.open(peripheral.getName(modem)) end
     arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
 
     local w, h = getSafeSize()

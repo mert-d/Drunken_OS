@@ -7,7 +7,7 @@
     Updated for auto-updater compatibility.
 ]]
 
-local currentVersion = 6.0
+local currentVersion = 7.0
 
 --==============================================================================
 -- Main Game Function (to be run inside pcall)
@@ -84,23 +84,43 @@ local function mainGame(...)
     end
 
     local function draw()
+        local w, h = getSafeSize()
         term.setBackgroundColor(theme.windowBg)
         term.clear()
-        local w, h = getSafeSize()
+        
+        -- Draw subtle frame/border
+        term.setBackgroundColor(colors.cyan)
+        term.setCursorPos(1, 1); term.write(string.rep(" ", w))
+        term.setCursorPos(1, h); term.write(string.rep(" ", w))
+        for i = 2, h - 1 do
+            term.setCursorPos(1, i); term.write(" ")
+            term.setCursorPos(w, i); term.write(" ")
+        end
 
+        term.setCursorPos(1, 1)
+        term.setTextColor(theme.text)
+        local titleText = " " .. (gameName or "Drunken OS Game") .. " "
+        local titleStart = math.floor((w - #titleText) / 2) + 1
+        term.setCursorPos(titleStart, 1)
+        term.write(titleText)
+
+        term.setBackgroundColor(theme.windowBg)
+        term.setCursorPos(fruit.x, fruit.y)
         term.setBackgroundColor(theme.fruit)
-        term.setCursorPos(fruit.x, fruit.y); term.write(" ")
+        term.write(" ")
 
-        term.setBackgroundColor(theme.snake)
         for _, segment in ipairs(snake) do
-            term.setCursorPos(segment.x, segment.y); term.write(" ")
+            term.setCursorPos(segment.x, segment.y)
+            term.setBackgroundColor(theme.snake)
+            term.write(" ")
         end
 
         term.setBackgroundColor(theme.windowBg)
         term.setTextColor(theme.text)
         local scoreText = "Score: " .. score
-        term.setCursorPos(math.floor(w / 2 - #scoreText / 2), 1)
-        term.write(scoreText)
+        term.setCursorPos(math.floor(w / 2 - #scoreText / 2), h)
+        term.setBackgroundColor(colors.cyan)
+        term.write(" " .. scoreText .. " ")
     end
 
     local function submitScore() if arcadeServerId then rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames") end end
@@ -115,7 +135,8 @@ local function mainGame(...)
         sleep(3)
     end
 
-    rednet.open("back")
+    local modem = peripheral.find("modem")
+    if modem then rednet.open(peripheral.getName(modem)) end
     arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
 
     newGame()

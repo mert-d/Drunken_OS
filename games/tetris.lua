@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 6.0
+local currentVersion = 7.0
 -- ... rest of the tetris game code
 
 --==============================================================================
@@ -156,15 +156,32 @@ end
 
 -- **FIXED**: The draw function now uses a superior adaptive layout.
 local function draw()
+    local w, h = getSafeSize()
     term.setBackgroundColor(theme.windowBg)
     term.clear()
-    local w, h = getSafeSize()
+
+    -- Draw subtle frame/border
+    term.setBackgroundColor(colors.cyan)
+    term.setCursorPos(1, 1); term.write(string.rep(" ", w))
+    term.setCursorPos(1, h); term.write(string.rep(" ", w))
+    for i = 2, h - 1 do
+        term.setCursorPos(1, i); term.write(" ")
+        term.setCursorPos(w, i); term.write(" ")
+    end
+
+    term.setCursorPos(1, 1)
+    term.setTextColor(theme.text)
+    local titleText = " " .. (gameName or "Drunken OS Game") .. " "
+    local titleStart = math.floor((w - #titleText) / 2) + 1
+    term.setCursorPos(titleStart, 1)
+    term.write(titleText)
 
     local boardPixelWidth = boardWidth * 2
     local boardXOffset = math.floor((w - boardPixelWidth) / 2)
-    local boardYOffset = 3 -- Pushed down to make space for top UI
+    local boardYOffset = 3
 
-    -- Draw board border
+    -- Draw board border (inner)
+    term.setBackgroundColor(theme.windowBg)
     term.setTextColor(colors.gray)
     for y = 1, boardHeight do
         term.setCursorPos(boardXOffset - 1, boardYOffset + y - 1); term.write("[")
@@ -197,11 +214,10 @@ local function draw()
         end
     end
 
-    -- Draw UI text and next piece preview
+    -- Draw UI text
     term.setBackgroundColor(theme.windowBg)
     term.setTextColor(theme.text)
 
-    -- On narrow screens, draw UI at the top. On wide screens, draw it to the side.
     if w > boardPixelWidth + 15 then
         local uiX = boardXOffset + boardPixelWidth + 3
         local uiY = boardYOffset
@@ -221,12 +237,9 @@ local function draw()
             end
         end
     else
-        local scoreText = "S:"..score
-        local levelText = "L:"..level
-        local linesText = "N:"..linesCleared
-        term.setCursorPos(2, 1); term.write(scoreText)
-        term.setCursorPos(math.floor(w/2 - #levelText/2), 1); term.write(levelText)
-        term.setCursorPos(w - #linesText, 1); term.write(linesText)
+        term.setBackgroundColor(colors.cyan)
+        local scoreText = "S:"..score .. " L:"..level
+        term.setCursorPos(math.floor(w/2 - #scoreText/2), h); term.write(" " .. scoreText .. " ")
     end
 end
 
@@ -286,7 +299,8 @@ end
 --==============================================================================
 
 -- Main Game Logic Execution
-    rednet.open("back")
+    local modem = peripheral.find("modem")
+    if modem then rednet.open(peripheral.getName(modem)) end
     arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
 
     for y = 1, boardHeight do board[y] = {} end

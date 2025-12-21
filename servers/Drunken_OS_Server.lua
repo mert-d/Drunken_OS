@@ -1069,7 +1069,8 @@ function adminCommands.syncgames(a)
         "snake.lua",
         "tetris.lua",
         "invaders.lua",
-        "floppa_bird.lua"
+        "floppa_bird.lua",
+        "Drunken_Dungeons.lua"
     }
 
     -- Create a set of games to check (merging core games with existing list)
