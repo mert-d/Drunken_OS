@@ -1,6 +1,6 @@
 ```lua
 --[[
-    Drunken OS - Mainframe Server (v10.17 - Auth Routing Fix)
+    Drunken OS - Mainframe Server (v10.18 - Auth Routing Fix & Transparent Relay)
     by MuhendizBey
 
     Purpose:
@@ -1340,7 +1340,8 @@ local function main()
     rednet.host("SimpleChat_Internal", "chat.server.internal")
     rednet.host("ArcadeGames_Internal", "arcade.server.internal")
     rednet.host("Drunken_Admin_Internal", "admin.server.internal")
-    logActivity("Mainframe Server v10.15 (Internal Only) Initialized.")
+    rednet.host("auth.secure.v1", "auth.client.internal")
+    logActivity("Mainframe Server v10.18 (Internal Only) Initialized.")
     mainEventLoop()
 end
 

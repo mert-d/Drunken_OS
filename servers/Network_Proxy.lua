@@ -25,6 +25,12 @@ local PROTOCOL_MAP = {
     ["ArcadeGames"] = "ArcadeGames_Internal",
     ["Drunken_Admin"] = "Drunken_Admin_Internal",
     ["DB_Bank"] = "DB_Bank_Internal",
+    ["auth.secure.v1"] = "auth.secure.v1", -- Transparent relay for HyperAuth
+}
+
+-- Protocols that should NOT be wrapped in proxy headers (3rd party/encrypted)
+local TRANSPARENT_PROTOCOLS = {
+    ["auth.secure.v1"] = true
 }
 
 -- Host Mappings: Public Hostname -> Public Protocol
@@ -78,11 +84,17 @@ local function forward(senderId, message, protocol)
         return
     end
 
-    -- Forward to internal server. 
-    rednet.send(internalId, { 
-        proxy_orig_sender = senderId,
-        proxy_orig_msg = message 
-    }, internalProtocol)
+    -- Forward to internal server.
+    if TRANSPARENT_PROTOCOLS[protocol] then
+        -- Forward RAW message for sensitive/encrypted protocols
+        rednet.send(internalId, message, internalProtocol)
+    else
+        -- Standard Drunken OS wrapping
+        rednet.send(internalId, { 
+            proxy_orig_sender = senderId,
+            proxy_orig_msg = message 
+        }, internalProtocol)
+    end
 end
 
 local function relay(senderId, message, protocol)
