@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Universal Updater Library (v1.0)
+    Drunken OS - Universal Updater Library (v1.2)
     by Gemini Gem
 
     Purpose:

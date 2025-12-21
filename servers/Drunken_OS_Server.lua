@@ -1022,7 +1022,7 @@ function adminCommands.sync(a)
                 programCode[name] = code
                 
                 -- Attempt to extract version
-                local v = code:match("%.?_VERSION%s*=%s*([%d%.]+)")
+                local v = code:match("[%w%.]*_VERSION%s*=%s*([%d%.]+)")
                 if not v then
                     v = code:match("%(v([%d%.]+)%)") -- Matches (v1.0)
                 end
