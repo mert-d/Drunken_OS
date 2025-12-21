@@ -387,8 +387,6 @@ local function mainMenu()
         local _, response = rednet.receive("SimpleMail", 2)
         state.unreadCount = response and response.count or 0
         
-        local options = {
-            "Pocket Bank",
         local invoiceCount = state.pendingInvoices and #state.pendingInvoices or 0
         local payLabel = "Pay Merchant" .. (invoiceCount > 0 and " ("..invoiceCount.." pending)" or "")
 
