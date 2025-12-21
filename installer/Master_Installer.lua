@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Master Installer (v1.1 - Bundled Libs Support)
+    Drunken OS - Master Installer (v1.2 - Specialized Proxies)
     by MuhendizBey
 
     Purpose:
@@ -35,8 +35,9 @@ local INSTALLABLE_PROGRAMS = {
     { name = "Merchant POS", type = "client", path = "clients/DB_Merchant_POS.lua", dependencies = { "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua" } },
     { name = "Merchant Cashier PC", type = "client", path = "clients/DB_Merchant_Cashier.lua", dependencies = { "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua" } },
     { name = "DB Merchant Turtle", type = "turtle", path = "clients/DB_Merchant_Turtle.lua", dependencies = {} },
-    -- Networking
-    { name = "Network Proxy", type = "server", path = "servers/Network_Proxy.lua", dependencies = { "lib/sha1_hmac.lua" } },
+    -- Specialized Networking
+    { name = "Mainframe Proxy", type = "server", path = "servers/Proxy_Mainframe.lua", dependencies = { "lib/sha1_hmac.lua" } },
+    { name = "Bank Proxy", type = "server", path = "servers/Proxy_Bank.lua", dependencies = { "lib/sha1_hmac.lua" } },
 }
 
 --==============================================================================
