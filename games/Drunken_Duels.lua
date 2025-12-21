@@ -1,0 +1,264 @@
+--[[
+    Drunken Duels (v1.0)
+    by Gemini Gem
+
+    Purpose:
+    A 1v1 P2P combat game for Drunken OS.
+    Challenge a friend over Rednet and battle for dominance!
+]]
+
+local gameVersion = 1.0
+
+local function mainGame(...)
+    local args = {...}
+    local username = args[1] or "Guest"
+
+    local gameName = "DrunkenDuels"
+    local arcadeServerId = nil
+    local opponentId = nil
+    local isHost = false
+
+    -- Theme & Colors
+    local hasColor = term.isColor and term.isColor()
+    local function safeColor(c, f) return (hasColor and colors[c]) and colors[c] or f end
+
+    local theme = {
+        bg = colors.black,
+        text = colors.white,
+        border = colors.cyan,
+        player = safeColor("lime", colors.white),
+        opponent = safeColor("red", colors.white),
+        header = safeColor("blue", colors.gray),
+    }
+
+    -- Game State
+    local myStats = { hp = 100, maxHp = 100, energy = 10, charge = 0 }
+    local oppStats = { hp = 100, maxHp = 100, energy = 10, charge = 0 }
+    local logs = {"Welcome to the Arena!"}
+    local turn = 0 -- 1 = My Turn, 2 = Opponent Turn, 0 = Waiting/Sync
+    local myMove = nil
+    local oppMove = nil
+
+    local function getSafeSize()
+        local w, h = term.getSize()
+        while not w or not h do sleep(0.05); w, h = term.getSize() end
+        return w, h
+    end
+
+    local function addLog(msg)
+        table.insert(logs, msg)
+        if #logs > 4 then table.remove(logs, 1) end
+    end
+
+    local function drawFrame()
+        local w, h = getSafeSize()
+        term.setBackgroundColor(theme.bg); term.clear()
+        
+        -- Draw Border
+        term.setBackgroundColor(theme.border)
+        term.setCursorPos(1, 1); term.write(string.rep(" ", w))
+        term.setCursorPos(1, h); term.write(string.rep(" ", w))
+        for i = 2, h - 1 do
+            term.setCursorPos(1, i); term.write(" ")
+            term.setCursorPos(w, i); term.write(" ")
+        end
+
+        term.setCursorPos(1, 1)
+        term.setTextColor(theme.text)
+        local titleText = " Drunken Duels v" .. gameVersion .. " "
+        term.setCursorPos(math.floor((w - #titleText)/2), 1); term.write(titleText)
+    end
+
+    local function drawLobby()
+        drawFrame()
+        local w, h = getSafeSize()
+        term.setBackgroundColor(theme.bg)
+        term.setTextColor(theme.text)
+        
+        local msg = isHost and "Waiting for a Challenger..." or "Searching for a Match..."
+        term.setCursorPos(math.floor(w/2 - #msg/2), math.floor(h/2))
+        term.write(msg)
+        
+        term.setCursorPos(math.floor(w/2 - 10), h)
+        term.setBackgroundColor(theme.border); term.write(" Q: Quit Lobby ")
+    end
+
+    local function drawStats()
+        local w, h = getSafeSize()
+        -- Split Screen Stats
+        local half = math.floor(w / 2)
+        
+        -- My Stats (Left)
+        term.setBackgroundColor(theme.bg)
+        term.setTextColor(theme.player)
+        term.setCursorPos(3, 3); term.write("YOU (" .. username .. ")")
+        term.setCursorPos(3, 4); term.write("HP: " .. myStats.hp .. "/" .. myStats.maxHp)
+        term.setCursorPos(3, 5); term.write("EN: " .. myStats.energy)
+        
+        -- Opponent Stats (Right)
+        term.setTextColor(theme.opponent)
+        local oppLabel = "OPPONENT"
+        term.setCursorPos(w - #oppLabel - 2, 3); term.write(oppLabel)
+        local hpLabel = "HP: " .. oppStats.hp .. "/" .. oppStats.maxHp
+        term.setCursorPos(w - #hpLabel - 2, 4); term.write(hpLabel)
+        local enLabel = "EN: " .. oppStats.energy
+        term.setCursorPos(w - #enLabel - 2, 5); term.write(enLabel)
+        
+        -- Logs
+        term.setTextColor(theme.text)
+        for i, log in ipairs(logs) do
+            term.setCursorPos(3, h - 6 + i)
+            term.write("> " .. log)
+        end
+    end
+
+    local function drawGame()
+        drawFrame()
+        drawStats()
+        local w, h = getSafeSize()
+        
+        if turn == 1 then
+            term.setCursorPos(2, h)
+            term.setBackgroundColor(theme.border)
+            term.write(" [1] Atk (2e) | [2] Def (1e) | [3] Heal (5e) | [4] Rest (+3e) | [Q] Quit ")
+        elseif turn == 2 then
+            term.setCursorPos(math.floor(w/2 - 10), h)
+            term.setBackgroundColor(theme.border)
+            term.write(" Waiting for Opponent... ")
+        end
+    end
+
+    -- Networking
+    local modem = peripheral.find("modem")
+    if not modem then
+        error("Drunken Duels requires a Modem to play!")
+    end
+    rednet.open(peripheral.getName(modem))
+    
+    -- Negotiation
+    local function findMatch()
+        drawLobby()
+        local protocol = "DrunkenDuels_Lobby"
+        rednet.broadcast({type="match_request", user=username}, protocol)
+        
+        local timer = os.startTimer(1)
+        while true do
+            local id, msg = rednet.receive(protocol, 2)
+            if id and msg.type == "match_request" and id ~= os.getComputerID() then
+                opponentId = id
+                addLog("Opponent Found! Connecting...")
+                rednet.send(id, {type="match_accept", user=username}, protocol)
+                isHost = os.getComputerID() > id -- Higher ID is host
+                return true
+            elseif id and msg.type == "match_accept" then
+                opponentId = id
+                addLog("Match Accepted! Starting...")
+                isHost = os.getComputerID() > id
+                return true
+            end
+            
+            local event, p1 = os.pullEvent()
+            if event == "key" and p1 == keys.q then return false
+            elseif event == "timer" and p1 == timer then
+                rednet.broadcast({type="match_request", user=username}, protocol)
+                timer = os.startTimer(1)
+                drawLobby()
+            end
+        end
+    end
+
+    if not findMatch() then return end
+    
+    -- Start Match
+    turn = isHost and 1 or 2
+    local matchActive = true
+    
+    while matchActive do
+        drawGame()
+        
+        if turn == 1 then
+            local event, key = os.pullEvent("key")
+            local move = nil
+            if key == keys.one then move = "attack"
+            elseif key == keys.two then move = "defend"
+            elseif key == keys.three then move = "heal"
+            elseif key == keys.four then move = "rest"
+            elseif key == keys.q then move = "forfeit" end
+            
+            if move then
+                local cost = {attack=2, defend=1, heal=5, rest=0, forfeit=0}
+                if myStats.energy < (cost[move] or 0) then
+                    addLog("Not enough energy for " .. move .. "!")
+                else
+                    rednet.send(opponentId, {type="move", move=move}, "DrunkenDuels_Game")
+                    myMove = move
+                    turn = 0
+                end
+            end
+        elseif turn == 2 or turn == 0 then
+            local id, msg = rednet.receive("DrunkenDuels_Game", 5)
+            if id == opponentId and msg.type == "move" then
+                oppMove = msg.move
+                
+                -- Resolve (Simple for now)
+                if myMove == "attack" then
+                    if oppMove == "defend" then
+                        oppStats.hp = oppStats.hp - 5
+                        myStats.energy = myStats.energy - 2
+                        addLog("You attacked, but they defended (-5 HP)")
+                    elseif oppMove == "rest" then
+                        oppStats.hp = oppStats.hp - 20
+                        myStats.energy = myStats.energy - 2
+                        addLog("Critical Hit! They were resting (-20 HP)")
+                    else
+                        oppStats.hp = oppStats.hp - 15
+                        myStats.energy = myStats.energy - 2
+                        addLog("You landed a solid hit! (-15 HP)")
+                    end
+                elseif myMove == "heal" then
+                    myStats.hp = math.min(myStats.maxHp, myStats.hp + 25)
+                    myStats.energy = myStats.energy - 5
+                    addLog("You focused and healed +25 HP.")
+                elseif myMove == "rest" then
+                    myStats.energy = myStats.energy + 3
+                    addLog("You rested and gained energy.")
+                end
+                
+                -- Opponent attacks me?
+                if oppMove == "attack" then
+                    if myMove == "defend" then
+                        myStats.hp = myStats.hp - 5
+                        addLog("Opponent attacked! You blocked (-5 HP)")
+                    elseif myMove == "rest" then
+                        myStats.hp = myStats.hp - 20
+                        addLog("Ouch! You were caught resting (-20 HP)")
+                    else
+                        myStats.hp = myStats.hp - 15
+                        addLog("Opponent hit you! (-15 HP)")
+                    end
+                end
+
+                if myMove == "forfeit" or oppMove == "forfeit" then
+                    addLog("A player forfeited.")
+                    matchActive = false
+                end
+
+                turn = isHost and 1 or 2
+                if turn == 1 then turn = 2 else turn = 1 end -- Swap
+                myMove = nil
+                oppMove = nil
+            end
+        end
+        
+        if myStats.hp <= 0 or oppStats.hp <= 0 then
+            addLog("Match Ended!")
+            matchActive = false
+        end
+    end
+    
+    drawGame()
+    print("\nPress any key to return.")
+    os.pullEvent("key")
+end
+
+mainGame(...)

@@ -7,7 +7,24 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 1.0
+local gameVersion = 1.1
+local saveFile = ".dungeon_save"
+
+local function saveGame(data)
+    local f = fs.open(saveFile, "w")
+    f.write(textutils.serialize(data))
+    f.close()
+end
+
+local function loadGame()
+    if not fs.exists(saveFile) then
+        return { gold = 0, upgrades = { hp = 0, dmg = 0, luck = 0 } }
+    end
+    local f = fs.open(saveFile, "r")
+    local data = textutils.unserialize(f.readAll())
+    f.close()
+    return data
+end
 
 local function mainGame(...)
     local args = {...}
@@ -15,6 +32,9 @@ local function mainGame(...)
 
     local gameName = "DrunkenDungeons"
     local arcadeServerId = nil
+    local opponentId = nil
+    local isMultiplayer = false
+    local sharedSeed = os.time()
 
     -- Theme & Colors
     local hasColor = term.isColor and term.isColor()
@@ -40,13 +60,23 @@ local function mainGame(...)
     local TILE_ENEMY = "E"
     local TILE_GOLD = "$"
 
+    -- Load Persistent Data
+    local persist = loadGame()
+
     -- Game State
-    local player = { x = 2, y = 2, hp = 10, maxHp = 10, gold = 0, level = 1, xp = 0 }
+    local player = { x = 2, y = 2, hp = 10, maxHp = 10, gold = 0, level = 1, xp = 0, dmg = 1 }
     local map = {}
     local entities = {}
     local dungeonLevel = 1
     local gameOver = false
     local logs = {"Welcome to Drunken Dungeons!"}
+    local class = "Brawler"
+    local otherPlayer = { x = 0, y = 0, hp = 10, active = false }
+
+    -- Apply Upgrades
+    player.maxHp = player.maxHp + (persist.upgrades.hp * 5)
+    player.hp = player.maxHp
+    player.dmg = player.dmg + persist.upgrades.dmg
 
     local function getSafeSize()
         local w, h = term.getSize()
@@ -59,8 +89,9 @@ local function mainGame(...)
         if #logs > 3 then table.remove(logs, 1) end
     end
 
-    -- Procedural Generation (Simple Random Walk for now)
+    -- Procedural Generation
     local function generateMap()
+        math.randomseed(sharedSeed)
         map = {}
         for y = 1, MAP_H do
             map[y] = {}
@@ -115,6 +146,8 @@ local function mainGame(...)
                 local t = map[y][x]
                 if x == player.x and y == player.y then
                     term.setTextColor(theme.player); term.write(TILE_PLAYER)
+                elseif otherPlayer.active and x == otherPlayer.x and y == otherPlayer.y then
+                    term.setTextColor(colors.purple); term.write(TILE_PLAYER)
                 else
                     local entFound = false
                     for _, ent in ipairs(entities) do
@@ -166,15 +199,26 @@ local function mainGame(...)
                     addLog("Found " .. amt .. " gold!")
                     table.remove(entities, i)
                 elseif ent.type == "enemy" then
-                    ent.hp = ent.hp - 1
-                    addLog("You hit the enemy!")
+                    local damage = player.dmg + (class == "Brawler" and 1 or 0)
+                    if math.random(1, 100) <= (5 + persist.upgrades.luck) then
+                        damage = damage * 2
+                        addLog("CRITICAL HIT!")
+                    end
+                    ent.hp = ent.hp - damage
+                    addLog("You hit the enemy for " .. damage .. "!")
                     if ent.hp <= 0 then
                         addLog("Enemy defeated!")
-                        player.xp = player.xp + 20
+                        local xpGain = 20 + (class == "Nerd" and 10 or 0)
+                        player.xp = player.xp + xpGain
                         table.remove(entities, i)
                     else
-                        player.hp = player.hp - 1
-                        addLog("Enemy hits back!")
+                        local edmg = 1
+                        if class == "Rogue" and math.random(1, 10) <= 3 then
+                            addLog("You dodged the attack!")
+                        else
+                            player.hp = player.hp - edmg
+                            addLog("Enemy hits back!")
+                        end
                     end
                     return -- Don't move into enemy tile
                 end
@@ -182,6 +226,9 @@ local function mainGame(...)
         end
 
         player.x, player.y = nx, ny
+        if isMultiplayer then
+            rednet.send(opponentId, {type="pos", x=player.x, y=player.y, hp=player.hp}, "Dungeon_Coop")
+        end
         
         -- Enemies move? (Simple)
         for _, ent in ipairs(entities) do
@@ -195,7 +242,94 @@ local function mainGame(...)
         end
     end
 
-    -- Initialize Network
+    -- Menu Logic
+    local function drawMenu()
+        local w, h = getSafeSize()
+        term.setBackgroundColor(colors.black); term.clear()
+        term.setTextColor(colors.cyan)
+        print("=== DRUNKEN DUNGEONS ===")
+        term.setTextColor(colors.white)
+        print("\nPersistent Gold: " .. persist.gold)
+        print("\n[1] Start Game")
+        print("[2] Upgrades Shop")
+        print("[3] Multiplayer Co-op")
+        print("[Q] Quit")
+    end
+
+    local function upgradeShop()
+        while true do
+            local w, h = getSafeSize()
+            term.setBackgroundColor(colors.black); term.clear()
+            print("=== UPGRADES SHOP ===")
+            print("Gold: " .. persist.gold)
+            print("\n[1] Vitality (HP) - Lvl " .. persist.upgrades.hp .. " ($100)")
+            print("[2] Sharpness (DMG) - Lvl " .. persist.upgrades.dmg .. " ($250)")
+            print("[3] Luck (Crit/Loot) - Lvl " .. persist.upgrades.luck .. " ($150)")
+            print("[Q] Back")
+            
+            local _, k = os.pullEvent("key")
+            if k == keys.one and persist.gold >= 100 then
+                persist.gold = persist.gold - 100
+                persist.upgrades.hp = persist.upgrades.hp + 1
+            elseif k == keys.two and persist.gold >= 250 then
+                persist.gold = persist.gold - 250
+                persist.upgrades.dmg = persist.upgrades.dmg + 1
+            elseif k == keys.three and persist.gold >= 150 then
+                persist.gold = persist.gold - 150
+                persist.upgrades.luck = persist.upgrades.luck + 1
+            elseif k == keys.q then return end
+            saveGame(persist)
+        end
+    end
+
+    local function selectClass()
+        term.clear(); term.setCursorPos(1,1)
+        print("Select Class:")
+        print("[1] Brawler (+HP, +DMG)")
+        print("[2] Rogue (High Dodge, More Gold)")
+        print("[3] Nerd (Faster XP)")
+        while true do
+            local _, k = os.pullEvent("key")
+            if k == keys.one then class = "Brawler"; break
+            elseif k == keys.two then class = "Rogue"; break
+            elseif k == keys.three then class = "Nerd"; break end
+        end
+    end
+
+    while true do
+        drawMenu()
+        local _, k = os.pullEvent("key")
+        if k == keys.one then
+            selectClass()
+            break
+        elseif k == keys.two then
+            upgradeShop()
+        elseif k == keys.three then
+            term.clear(); term.setCursorPos(1,1)
+            print("Multiplayer Lobby...")
+            rednet.broadcast({type="coop_request", seed=sharedSeed}, "Dungeon_Coop")
+            local id, msg = rednet.receive("Dungeon_Coop", 3)
+            if id then
+                opponentId = id
+                isMultiplayer = true
+                if msg.type == "coop_request" then
+                    rednet.send(id, {type="coop_accept", seed=sharedSeed}, "Dungeon_Coop")
+                else
+                    sharedSeed = msg.seed
+                end
+                addLog("Partner Joined!")
+                selectClass()
+                break
+            else
+                print("No partners found. Press any key.")
+                os.pullEvent("key")
+            end
+        elseif k == keys.q then
+            return
+        end
+    end
+
+    -- Initialize Network (Existing)
     local modem = peripheral.find("modem")
     if modem then rednet.open(peripheral.getName(modem)) end
     arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
@@ -204,13 +338,20 @@ local function mainGame(...)
 
     while not gameOver do
         draw()
-        local _, key = os.pullEvent("key")
+        local event, p1, p2, p3 = os.pullEvent()
 
-        if key == keys.w or key == keys.up then movePlayer(0, -1)
-        elseif key == keys.s or key == keys.down then movePlayer(0, 1)
-        elseif key == keys.a or key == keys.left then movePlayer(-1, 0)
-        elseif key == keys.d or key == keys.right then movePlayer(1, 0)
-        elseif key == keys.q then gameOver = true end
+        if event == "key" then
+            if p1 == keys.w or p1 == keys.up then movePlayer(0, -1)
+            elseif p1 == keys.s or p1 == keys.down then movePlayer(0, 1)
+            elseif p1 == keys.a or p1 == keys.left then movePlayer(-1, 0)
+            elseif p1 == keys.d or p1 == keys.right then movePlayer(1, 0)
+            elseif p1 == keys.q then gameOver = true end
+        elseif event == "rednet_message" and p3 == "Dungeon_Coop" then
+            if p2.type == "pos" then
+                otherPlayer.x, otherPlayer.y, otherPlayer.hp = p2.x, p2.y, p2.hp
+                otherPlayer.active = true
+            end
+        end
 
         if player.hp <= 0 then
             addLog("You died...")
@@ -218,11 +359,16 @@ local function mainGame(...)
         end
     end
 
+    -- Update persistent gold
+    persist.gold = persist.gold + player.gold
+    saveGame(persist)
+
     -- High Score Submit
     if arcadeServerId then rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = player.gold + player.xp}, "ArcadeGames") end
     
     term.setBackgroundColor(colors.black); term.clear(); term.setCursorPos(1,1)
     print("Game Over. Final Score: " .. (player.gold + player.xp))
+    print("Persistent Gold Earned: " .. player.gold)
     sleep(2)
 end
 
