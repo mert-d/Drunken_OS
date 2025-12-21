@@ -30,7 +30,8 @@ local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
     { name = "sha1_hmac" },
-    { name = "drunken_os_apps", version = 1.6 }
+    { name = "updater" },
+    { name = "drunken_os_apps" }
 }
 
 --==============================================================================
@@ -189,82 +190,66 @@ local context = {
 local function installDependencies()
     local needsReboot = false
     
+    -- Ensure updater exists first (bootstrap)
+    local updaterPath = fs.combine(programDir, "lib/updater.lua")
+    if not fs.exists(updaterPath) then
+        print("Bootstrap: Downloading updater...")
+        local server = rednet.lookup("SimpleMail", "mail.server")
+        if server then
+            rednet.send(server, { type = "get_lib_code", lib = "updater" }, "SimpleMail")
+            local _, resp = rednet.receive("SimpleMail", 5)
+            if resp and resp.success and resp.code then
+                if not fs.isDir(fs.combine(programDir, "lib")) then fs.makeDir(fs.combine(programDir, "lib")) end
+                local f = fs.open(updaterPath, "w")
+                f.write(resp.code)
+                f.close()
+                print("Updater installed.")
+            end
+        end
+    end
+
+    local ok_upd, updater = pcall(require, "lib.updater")
+    if not ok_upd then
+        print("Error: Could not load updater library.")
+        return false
+    end
+    
     for _, libDef in ipairs(REQUIRED_LIBS) do
         local libName = libDef.name
-        local targetVersion = libDef.version
+        local libPath = fs.combine(programDir, "lib/" .. libName .. ".lua")
         
-        local ok, libOrError = pcall(require, "lib." .. libName)
-        
-        local needsUpdate = false
-        if not ok then
-            needsUpdate = true
-        elseif targetVersion then
-            -- Check version if module loaded successfully
-            if type(libOrError) == "table" then
-                if not libOrError._VERSION or libOrError._VERSION < targetVersion then
-                    needsUpdate = true
-                    print("Updating library '" .. libName .. "' to v" .. targetVersion .. "...")
+        local currentVer = 0
+        if fs.exists(libPath) then
+            local ok, libOrError = pcall(require, "lib." .. libName)
+            if ok and type(libOrError) == "table" then
+                currentVer = libOrError._VERSION or 0
+                if currentVer == 0 then
+                    -- Fallback to header extraction
+                    local f = fs.open(libPath, "r")
+                    if f then
+                        local content = f.readAll()
+                        f.close()
+                        local v = content:match("%.?_VERSION%s*=%s*([%d%.]+)")
+                        if not v then v = content:match("%(v([%d%.]+)%)") end
+                        currentVer = tonumber(v) or 0
+                    end
                 end
             end
         end
 
-        if needsUpdate then
-            needsReboot = true -- A reboot will be required if we install anything.
-            term.clear(); term.setCursorPos(1,1)
-            print("Missing or outdated library: " .. libName)
-            print("Attempting to download from server...")
-
-            local server = rednet.lookup("SimpleMail", "mail.server")
-            if not server then
-                print("Error: Cannot find mail.server to download libraries.")
-                print("Please check server and network connection.")
-                return false -- Halt execution
-            end
-
-            -- Use the new, direct code transfer protocol.
-            rednet.send(server, { type = "get_lib_code", lib = libName }, "SimpleMail")
-            local _, response = rednet.receive("SimpleMail", 10) -- Increased timeout for reliability
-            
-            if response and response.success and response.code then
-                print("Download successful. Installing...")
-                local libPath = fs.combine(programDir, "lib/" .. libName .. ".lua")
-                
-                -- Ensure the /lib/ directory exists
-                if not fs.isDir(fs.combine(programDir, "lib")) then
-                    fs.makeDir(fs.combine(programDir, "lib"))
-                end
-
-                local file, err = fs.open(libPath, "w")
-                if not file then
-                    print("Error: Could not open file for writing at:")
-                    print(libPath)
-                    print("Reason: " .. tostring(err))
-                    return false -- Halt execution
-                end
-                
-                file.write(response.code)
-                file.close()
-                package.loaded["lib."..libName] = nil -- Force reload on next require (though we reboot anyway)
-                print("Library '" .. libName .. "' installed.")
-                sleep(1) -- Give fs time to process
-            else
-                print("Error: Could not download library.")
-                print("Reason: " .. (response and response.reason or "Timeout"))
-                return false -- Halt execution
-            end
+        if updater.check(libName, currentVer, libPath) then
+            needsReboot = true
         end
     end
     
     if needsReboot then
-        print("All libraries installed. Rebooting...")
+        print("System components updated. Rebooting...")
         sleep(2)
         os.reboot()
-        -- The program will not reach here, but we return true for logical consistency.
         return true 
     end
     
-    -- If we get here, no installation was needed.
-    return true -- Signal success
+    return true
 end
 
 local function autoUpdateCheck()

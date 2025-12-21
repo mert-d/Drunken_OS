@@ -8,8 +8,9 @@
 ]]
 
 local updater = {}
+updater._VERSION = 1.0
 
-function updater.check(programName, currentVersion)
+function updater.check(programName, currentVersion, targetPath)
     if not rednet.isOpen() then
         -- Try to open modem on back or any side
         local modem = peripheral.find("modem")
@@ -18,37 +19,35 @@ function updater.check(programName, currentVersion)
 
     local server = rednet.lookup("SimpleMail", "mail.server")
     if not server then
-        print("Updater: Mainframe not detected. Skipping.")
+        -- print("Updater: Mainframe not detected. Skipping.")
         return false
     end
 
-    print("Updater: Checking for " .. programName .. " updates...")
+    -- print("Updater: Checking for " .. programName .. " updates...")
     rednet.send(server, { type = "get_version", program = programName }, "SimpleMail")
     local _, response = rednet.receive("SimpleMail", 3)
 
     if response and response.version and response.version > currentVersion then
-        print("Updater: New version " .. response.version .. " found!")
+        print("Updater: New version " .. response.version .. " found for " .. programName)
         print("Updater: Downloading...")
         
         rednet.send(server, { type = "get_update", program = programName }, "SimpleMail")
         local _, update = rednet.receive("SimpleMail", 10)
         
         if update and update.code then
-            local path = shell.getRunningProgram()
+            local path = targetPath or shell.getRunningProgram()
             local file = fs.open(path, "w")
             if file then
                 file.write(update.code)
                 file.close()
-                print("Updater: Update installed successfully!")
-                return true -- Signal that a reboot is recommended
+                print("Updater: " .. programName .. " updated successfully!")
+                return true -- Signal that a reboot/reload is recommended
             else
-                print("Updater: Error! Could not write file.")
+                print("Updater: Error! Could not write " .. path)
             end
         else
-            print("Updater: Error! Download failed.")
+            print("Updater: Error! Download failed for " .. programName)
         end
-    else
-        print("Updater: System is up to date.")
     end
 
     return false

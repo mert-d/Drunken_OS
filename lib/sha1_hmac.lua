@@ -69,7 +69,8 @@ end
 local function hmac_sha1(key,msg) return to_hex(hmac_sha1_raw(key,msg)) end
 
 -- Expose the functions in a way that is compatible with the Drunken OS codebase.
-return {
+local lib = {
+    _VERSION = 2.0,
     hex = sha1,
     hmac_hex = hmac_sha1,
     sha1_raw=sha1_raw,
@@ -79,3 +80,4 @@ return {
     to_hex=to_hex,
     from_hex=from_hex
 }
+return lib

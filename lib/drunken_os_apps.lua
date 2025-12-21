@@ -1351,5 +1351,46 @@ function apps.merchantPOS(context)
     end
 end
 
+function apps.systemUpdate(context)
+    local ok, updater = pcall(require, "lib.updater")
+    if not ok then
+        -- If updater is missing, we can't do much automatically yet.
+        -- But installDependencies in the client should handle the first-time fetch.
+        return false
+    end
+
+    local libs = {
+        { name = "drunken_os_apps", path = "lib/drunken_os_apps.lua" },
+        { name = "sha1_hmac", path = "lib/sha1_hmac.lua" },
+        { name = "updater", path = "lib/updater.lua" }
+    }
+
+    local anyUpdated = false
+    for _, lib in ipairs(libs) do
+        local libObj = package.loaded["lib." .. lib.name]
+        local currentVer = 0
+        if libObj then
+            currentVer = libObj._VERSION or 0
+            if currentVer == 0 then
+                -- Try to extract from file if not in table
+                local f = fs.open(lib.path, "r")
+                if f then
+                    local content = f.readAll()
+                    f.close()
+                    local v = content:match("%.?_VERSION%s*=%s*([%d%.]+)")
+                    if not v then v = content:match("%(v([%d%.]+)%)") end
+                    currentVer = tonumber(v) or 0
+                end
+            end
+        end
+
+        if updater.check(lib.name, currentVer, lib.path) then
+            anyUpdated = true
+        end
+    end
+
+    return anyUpdated
+end
+
 return apps
 

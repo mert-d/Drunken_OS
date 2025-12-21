@@ -1013,9 +1013,21 @@ function adminCommands.sync(a)
                 local code = f.readAll()
                 f.close()
                 
-                local name = fs.getName(path):gsub(".lua", "")
+                local name = fs.getName(path):gsub("%.lua$", "")
                 programCode[name] = code
-                logActivity("Published library: " .. name)
+                
+                -- Attempt to extract version
+                local v = code:match("%.?_VERSION%s*=%s*([%d%.]+)")
+                if not v then
+                    v = code:match("%(v([%d%.]+)%)") -- Matches (v1.0)
+                end
+                
+                if v then
+                    programVersions[name] = tonumber(v)
+                    logActivity("Published library: " .. name .. " (v" .. v .. ")")
+                else
+                    logActivity("Warning: No version found for library " .. name, true)
+                end
             else
                 logActivity("Warning: Library not found at " .. path, true)
             end
