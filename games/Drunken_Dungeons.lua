@@ -7,7 +7,7 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 1.5
+local gameVersion = 1.6
 local saveFile = ".dungeon_save"
 
 ---
@@ -384,8 +384,8 @@ end
                             selectClass()
                             break
                         end
-                        local tevt, tk = os.pullEventRaw()
-                    if isMultiplayer then break end
+                        if isMultiplayer then break end
+                    end
                 elseif lobbyKey == keys.tab or lobbyKey == keys.q then
                     rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
                     return
