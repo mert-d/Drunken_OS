@@ -226,7 +226,17 @@ local function installToPocketComputer(program, drive)
             return
         end
 
-        local destPath = mountPath .. "/" .. filePath
+        -- Determine the destination path:
+        -- 1. If it's the main program, put it in the root.
+        -- 2. If it's a library or app, keep its relative structure (lib/, apps/).
+        local destPath
+        if filePath == program.path then
+            destPath = mountPath .. "/" .. fs.getName(filePath)
+        else
+            -- We want to preserve the 'lib/' or 'apps/' folder structure
+            destPath = mountPath .. "/" .. filePath
+        end
+
         fs.makeDir(fs.getDir(destPath))
         local fileHandle, err = fs.open(destPath, "w")
         if not fileHandle then
@@ -238,7 +248,8 @@ local function installToPocketComputer(program, drive)
     end
 
     -- Create the startup file on the pocket computer
-    local startupCode = "shell.run('/" .. program.path .. "')"
+    local mainProgramName = fs.getName(program.path)
+    local startupCode = "shell.run('/" .. mainProgramName .. "')"
     local startupPath = mountPath .. "/startup.lua"
     local startupFile, err = fs.open(startupPath, "w")
     if not startupFile then

@@ -9,15 +9,12 @@
 
 local programDir = fs.getDir(shell.getRunningProgram())
 -- Construct a clean, predictable package search path
+-- We use full module names (e.g. require("lib.sha1_hmac")), so we only need ?.lua
 local paths = {
     "?.lua",
     "?/init.lua",
-    "lib/?.lua",
-    "lib/?/init.lua",
-    "/lib/?.lua",
-    "/lib/?/init.lua",
     fs.combine(programDir, "?.lua"),
-    fs.combine(programDir, "lib/?.lua")
+    fs.combine(programDir, "?/init.lua")
 }
 package.path = table.concat(paths, ";") .. ";" .. package.path
 local crypto = require("lib.sha1_hmac")
