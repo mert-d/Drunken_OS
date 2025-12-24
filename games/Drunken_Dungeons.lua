@@ -7,7 +7,7 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 1.6
+local gameVersion = 1.7
 local saveFile = ".dungeon_save"
 
 ---
@@ -414,9 +414,9 @@ end
                             print("No Co-op hosts online.")
                         end
                     end
-                    if isMultiplayer then break end
-                    sleep(1)
                 end
+                if isMultiplayer then break end
+            end
             end
         elseif k == keys.q or k == keys.tab then
             return
