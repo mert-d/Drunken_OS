@@ -458,11 +458,34 @@ end
 local mailHandlers = {}
 
 function mailHandlers.get_version(senderId, message)
-    rednet.send(senderId, { version = programVersions[message.program] or 0 }, "SimpleMail")
+    local prog = message.program
+    if prog:match("^app%.") then
+        local appName = prog:gsub("^app%.", "")
+        if fs.exists("apps/" .. appName .. ".lua") then
+            rednet.send(senderId, { version = 1.0 }, "SimpleMail") -- Apps default to v1.0
+        else
+            rednet.send(senderId, { version = 0 }, "SimpleMail")
+        end
+    else
+        rednet.send(senderId, { version = programVersions[prog] or 0 }, "SimpleMail")
+    end
 end
 
 function mailHandlers.get_update(senderId, message)
-    rednet.send(senderId, { code = programCode[message.program] }, "SimpleMail")
+    local prog = message.program
+    if prog:match("^app%.") then
+        local appName = prog:gsub("^app%.", "")
+        local appPath = "apps/" .. appName .. ".lua"
+        if fs.exists(appPath) then
+            local f = fs.open(appPath, "r")
+            local code = f.readAll(); f.close()
+            rednet.send(senderId, { code = code }, "SimpleMail")
+        else
+            rednet.send(senderId, { code = nil }, "SimpleMail")
+        end
+    else
+        rednet.send(senderId, { code = programCode[prog] }, "SimpleMail")
+    end
 end
 
 -- UNIFIED LIBRARY HANDLER: Serves code directly from the programCode database.
@@ -862,8 +885,14 @@ local adminCommands = {}
 -- Displays a list of available admin commands.
 function adminCommands.help()
     logActivity("--- Mainframe Admin Commands ---")
-    logActivity("users, deluser, addadmin, deladmin, lists, dellist, board, delscore")
-    logActivity("motd, broadcast, publish, addgame, delgame, games, publishgame")
+    logActivity(" [User Management] ")
+    logActivity("   users, deluser <name>, addadmin <name>, deladmin <name>")
+    logActivity(" [Communication] ")
+    logActivity("   lists, dellist <name>, motd <msg>, broadcast <msg>")
+    logActivity(" [Arcade & Stats] ")
+    logActivity("   games, board <game>, delscore <game> <user>")
+    logActivity(" [Distribution] ")
+    logActivity("   sync [all|client|libs|games|auditor]")
 end
 
 ---
@@ -961,126 +990,13 @@ function adminCommands.broadcast(a)
     logActivity("Broadcast: " .. t)
 end
 
----
--- Publishes a program or library to the update server.
--- If the second argument is an existing path, it treats it as a library and
--- saves the code directly. Otherwise, it waits for a 'Publication' rednet message
--- containing the program's source code.
--- @param a {table} Arguments: { "publish", <program_name>, <version_or_path> }
-function adminCommands.publish(a)
-    local progName, versionOrPath = a[2], a[3]
-    if not progName or not versionOrPath then
-        logActivity("Usage: publish <name> <version_or_path>")
-        logActivity("For programs: publish Drunken_OS_Client 11.9")
-        logActivity("For libraries: publish sha1_hmac /lib/sha1_hmac.lua")
-        return
-    end
-
-    local isLibrary = fs.exists(versionOrPath)
-
-    if isLibrary then
-        -- Library logic: Read file content directly and store it in the database
-        local filePath = versionOrPath
-        local file, err = fs.open(filePath, "r")
-        if not file then
-            logActivity("Error opening file: " .. tostring(err), true)
-            return
-        end
-
-        local code = file.readAll()
-        file.close()
-
-        programCode[progName] = code
-        -- Save the code and version databases simultaneously
-        if saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode}) then
-            logActivity("Published library '" .. progName .. "' to code database.")
-        else
-            logActivity("Error: Could not save updater database.", true)
-            programCode[progName] = nil -- Revert memory state on failure
-        end
-    else
-        -- Program logic: Listen for rednet broadcast containing the new code
-        local n = tonumber(versionOrPath)
-        if not n then
-            logActivity("Version must be a number for programs.", true)
-            return
-        end
-        logActivity("Waiting for '" .. progName .. "' v" .. n .. " publication...")
-        local _, m = rednet.receive("Publication", 15)
-        if m and m.code then
-            programCode[progName] = m.code
-            programVersions[progName] = n
-            saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
-            logActivity("Published " .. progName .. " v" .. n)
-        else
-            logActivity("Publish timed out.")
-        end
-    end
-end
-
-function adminCommands.setlibpaste(args)
-    local libName = args[2]
-    local pasteCode = args[3]
-    if not libName or not pasteCode then
-        logActivity("Usage: setlibpaste <lib_name> <pastebin_code>", true)
-        logActivity("Example: setlibpaste sha1_hmac aBcDeFgH", true)
-        return
-    end
-    libraryPastes[libName] = pasteCode
-    if saveTableToFile(LIB_PASTES_DB, libraryPastes) then
-        logActivity("Set pastebin code for '"..libName.."' to "..pasteCode)
-    else
-        logActivity("Error: Could not save library paste database.", true)
-        libraryPastes[libName] = nil -- Revert change on failure
-    end
-end
+-- All publication is now handled via the 'sync' command for safety.
 
 function adminCommands.games()
-    logActivity("Games:")
-    for _, g in ipairs(gameList) do
-        logActivity("- " .. g.name .. " (file: " .. g.file .. ")")
+    logActivity("Registered Games:")
+    for _, g in ipairs(gameList or {}) do
+        logActivity("- " .. (g.name or "Unknown") .. " (file: " .. (g.file or "N/A") .. ")")
     end
-end
-
-function adminCommands.games()
-    logActivity("Games:")
-    for _, g in ipairs(gameList) do
-        logActivity("- " .. g.name .. " (file: " .. g.file .. ")")
-    end
-end
-
-function adminCommands.publishgame(a)
-    if not f then
-        logActivity("Usage: publishgame <filename>", true)
-        return
-    end
-    -- Legacy local file publish logic here...
-    if not fs.exists(f) then
-        logActivity("File not found: " .. f, true)
-        return
-    end
-    local h = fs.open(f, "r")
-    if not h then
-        logActivity("Cannot open file.", true)
-        return
-    end
-    local c = h.readAll()
-    h.close()
-    local v = c:match("%-%-%s*Version:%s*([%d%.]+)")
-    if not v then
-        logActivity("No version comment in file.", true)
-        return
-    end
-    gameCode[f] = {code = c, version = tonumber(v)}
-    if saveTableToFile(GAMES_CODE_DB, gameCode) then
-        logActivity("Published game '" .. f .. "' v" .. v)
-    else
-        logActivity("Failed to save game DB.", true)
-    end
-end
-
-function adminCommands.publishgame(a)
-    -- ... (legacy manual publish kept for backup) ...
 end
 
 function adminCommands.sync(a)
@@ -1125,7 +1041,7 @@ function adminCommands.sync(a)
     
     if target == "libs" or target == "all" then
         logActivity("Syncing Libraries...")
-        local libs = { "lib/drunken_os_apps.lua", "lib/sha1_hmac.lua", "lib/updater.lua" }
+        local libs = { "lib/drunken_os_apps.lua", "lib/sha1_hmac.lua", "lib/updater.lua", "lib/app_loader.lua" }
         for _, path in ipairs(libs) do
             if fs.exists(path) then
                 local f = fs.open(path, "r")

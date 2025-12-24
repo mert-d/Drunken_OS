@@ -123,4 +123,44 @@ function apps.showHelpScreen(context)
     os.pullEvent("key")
 end
 
+--==============================================================================
+-- Backwards Compatibility Bridge (Legacy -> Modular)
+--==============================================================================
+
+setmetatable(apps, {
+    __index = function(t, key)
+        -- Map of legacy functions to modular applets and entry points
+        local legacyMapping = {
+            viewInbox     = {"mail", "viewInbox"},
+            sendMail      = {"mail", "sendMail"},
+            mailMenu      = {"mail", "run"},
+            manageLists   = {"mail", "manageLists"},
+            bankApp       = {"bank", "run"},
+            onlinePayment = {"bank", "pay"},
+            startChat     = {"chat", "run"},
+            enterArcade   = {"arcade", "run"},
+            systemMenu    = {"system", "run"},
+            fileCommander = {"files", "run"}
+        }
+
+        local map = legacyMapping[key]
+        if map then
+            return function(context)
+                -- Try to load the dynamic app loader
+                local ok, loader = pcall(require, "lib.app_loader")
+                if not ok then
+                    -- Crucial: If loader is missing, we are likely mid-update
+                    context.showMessage("Migration", "Updating system core...")
+                    -- Wait a moment for other libraries to finish syncing if possible
+                    return false
+                end
+                
+                -- Execute the modular applet
+                return loader.run(map[1], context, map[2])
+            end
+        end
+        return nil
+    end
+})
+
 return apps

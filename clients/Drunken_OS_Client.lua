@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mobile Client (v13.3 - UI Polish Update)
+    Drunken OS - Mobile Client (v14.0 - Modular Refactor)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -25,7 +25,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 13.2
+local currentVersion = 14.0
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
