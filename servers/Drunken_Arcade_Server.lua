@@ -261,7 +261,8 @@ function gameHandlers.get_all_game_versions(senderId, message)
             local f = fs.open(path, "r")
             if f then
                 local content = f.readAll(); f.close()
-                local v = content:match("%-%-%s*Version:%s*([%d%.]+)") or content:match("local%s+currentVersion%s*=%s*([%d%.]+)")
+                local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") 
+                       or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
                 versions["games/" .. file] = tonumber(v) or 1.0
             end
         end
@@ -283,31 +284,48 @@ local function syncGames()
     
     for _, filename in ipairs(coreGames) do
         local url = GITHUB_GAMES_URL .. filename
-        logActivity("Requesting: " .. filename)
-        local ok, response = pcall(http.get, url)
+        local success = false
+        local retries = 3
         
-        if ok and response then
-            local code = response.readAll()
-            response.close()
-            if code and #code > 0 then
-                local f = fs.open("games/" .. filename, "w")
-                if f then
-                    f.write(code)
-                    f.close()
-                    updated = updated + 1
-                    logActivity("Synced: " .. filename)
+        while retries > 0 and not success do
+            logActivity("Pulling: " .. filename .. (retries < 3 and " (Retry " .. (3 - retries) .. ")" or ""))
+            local ok, response = pcall(http.get, url)
+            
+            if ok and response then
+                local code = response.readAll()
+                response.close()
+                if code and #code > 0 then
+                    local f = fs.open("games/" .. filename, "w")
+                    if f then
+                        f.write(code)
+                        f.close()
+                        
+                        -- Extract version for logging
+                        local v = code:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") 
+                               or code:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+                        local verStr = v and (" (v" .. v .. ")") or ""
+                        
+                        updated = updated + 1
+                        logActivity("Synced: " .. filename .. verStr)
+                        success = true
+                    else
+                        logActivity("FS Error: " .. filename, true)
+                        retries = 0 -- Fatal FS error
+                    end
                 else
-                    failed = failed + 1
-                    logActivity("Failed to write: " .. filename, true)
+                    logActivity("Empty Res: " .. filename, true)
                 end
             else
-                failed = failed + 1
-                logActivity("Empty response: " .. filename, true)
+                logActivity("Net Error: " .. filename, true)
             end
-        else
-            failed = failed + 1
-            logActivity("Failed to sync: " .. filename .. " (HTTP Error)", true)
+            
+            if not success then
+                retries = retries - 1
+                if retries > 0 then sleep(0.5) end
+            end
         end
+        if not success then failed = failed + 1 end
+        sleep(0.05) -- Graceful pacing
     end
     logActivity(string.format("Sync complete. %d updated, %d failed.", updated, failed))
 end
