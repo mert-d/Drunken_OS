@@ -145,8 +145,12 @@ local function main()
 
     -- Register hosts
     for host, proto in pairs(HOST_MAP) do
-        rednet.host(proto, host)
-        log("Hosting " .. host .. " (" .. proto .. ")")
+        local ok, err = pcall(rednet.host, proto, host)
+        if ok then
+            log("Hosting " .. host .. " (" .. proto .. ")")
+        else
+            log("Failed to host " .. host .. ": " .. tostring(err), true)
+        end
     end
 
     log("Bank Proxy Online. Dispatcher active.")
