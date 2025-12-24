@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Master Installer (v1.3 - Arcade Server Update)
+    Drunken OS - Master Installer (v1.4 - Modular OS Update)
     by MuhendizBey
 
     Purpose:
@@ -26,14 +26,29 @@ local INSTALLABLE_PROGRAMS = {
         "clients/Admin_Console.lua"
     } },
     { name = "Drunken OS Bank Server", type = "server", path = "servers/Drunken_OS_BankServer.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "bank_server" },
-    { name = "Drunken OS Client", type = "client", path = "clients/Drunken_OS_Client.lua", dependencies = { "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua" } },
-    { name = "DB Bank ATM", type = "client", path = "clients/DB_Bank_ATM.lua", dependencies = { "lib/sha1_hmac.lua", "lib/updater.lua" }, needs_setup = true, setup_type = "atm" },
-    { name = "DB Bank Clerk Terminal", type = "client", path = "clients/DB_Bank_Clerk_Terminal.lua", dependencies = { "lib/sha1_hmac.lua", "lib/updater.lua" } },
+    { name = "Drunken OS Client", type = "client", path = "clients/Drunken_OS_Client.lua", dependencies = { 
+        "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua", "lib/app_loader.lua",
+        "apps/mail.lua", "apps/bank.lua", "apps/files.lua", "apps/chat.lua", "apps/arcade.lua", "apps/system.lua", "apps/merchant.lua"
+    } },
+    { name = "DB Bank ATM", type = "client", path = "clients/DB_Bank_ATM.lua", dependencies = { 
+        "lib/sha1_hmac.lua", "lib/updater.lua", "lib/app_loader.lua", "lib/drunken_os_apps.lua",
+        "apps/bank.lua"
+    }, needs_setup = true, setup_type = "atm" },
+    { name = "DB Bank Clerk Terminal", type = "client", path = "clients/DB_Bank_Clerk_Terminal.lua", dependencies = { 
+        "lib/sha1_hmac.lua", "lib/updater.lua", "lib/app_loader.lua", "lib/drunken_os_apps.lua",
+        "apps/bank.lua"
+    } },
     { name = "DB Bank Clerk Turtle", type = "turtle", path = "turtles/DB_Bank_Clerk.lua", dependencies = {} },
     { name = "Auditor Turtle", type = "turtle", path = "turtles/Auditor.lua", dependencies = { "lib/sha1_hmac.lua", "lib/updater.lua" }, needs_setup = true, setup_type = "auditor" },
     -- Merchant Business Suite
-    { name = "Merchant POS", type = "client", path = "clients/DB_Merchant_POS.lua", dependencies = { "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua" } },
-    { name = "Merchant Cashier PC", type = "client", path = "clients/DB_Merchant_Cashier.lua", dependencies = { "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua" } },
+    { name = "Merchant POS", type = "client", path = "clients/DB_Merchant_POS.lua", dependencies = { 
+        "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua", "lib/app_loader.lua",
+        "apps/merchant.lua", "apps/bank.lua"
+    } },
+    { name = "Merchant Cashier PC", type = "client", path = "clients/DB_Merchant_Cashier.lua", dependencies = { 
+        "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua", "lib/app_loader.lua",
+        "apps/merchant.lua", "apps/bank.lua"
+    } },
     { name = "DB Merchant Turtle", type = "turtle", path = "clients/DB_Merchant_Turtle.lua", dependencies = {} },
     -- Specialized Networking
     { name = "Mainframe Proxy", type = "server", path = "servers/Proxy_Mainframe.lua", dependencies = { "lib/sha1_hmac.lua" } },

@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Generic Installation Script (v1.0)
+    Drunken OS - Generic Installation Script (v1.2 - Modular Sync)
     by MuhendizBey
 
     Purpose:
