@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mainframe Server (v10.22 - Proxy Separation Update)
+    Drunken OS - Mainframe Server (v10.23 - Arcade Lobby Update)
     by MuhendizBey
 
     Purpose:
@@ -763,25 +763,6 @@ function mailHandlers.get_admin_tool(senderId, message)
     end
 end
 
-local gameHandlers = {}
-
-function gameHandlers.submit_score(senderId, message)
-    local game, user, score = message.game, message.user, message.score
-    if not games[game] then games[game] = {} end
-    if not games[game][user] or score > games[game][user] then
-        games[game][user] = score
-        if saveTableToFile(GAMES_DB, games) then
-            logActivity(string.format("New score for '%s' in '%s': %d", user, game, score))
-        end
-    end
-end
-
-function gameHandlers.get_leaderboard(senderId, message)
-    local game = message.game
-    local leaderboard = (games[game]) or {}
-    rednet.send(senderId, { leaderboard = leaderboard }, "ArcadeGames")
-end
-
 --==============================================================================
 -- Admin Command Handlers & Main Loops (REPAIRED)
 --==============================================================================
@@ -1124,7 +1105,10 @@ function adminCommands.syncgames(a)
         "invaders.lua",
         "floppa_bird.lua",
         "Drunken_Dungeons.lua",
-        "Drunken_Duels.lua"
+        "Drunken_Duels.lua",
+        "Drunken_Pong.lua",
+        "Drunken_Sweeper.lua",
+        "Drunken_Sokoban.lua"
     }
 
     -- Create a set of games to check (merging core games with existing list)
@@ -1330,12 +1314,6 @@ local function handleRednetMessage(senderId, message, protocol)
         -- Relay message to all clients on the internal network
         rednet.broadcast({ from = nickname, text = actualMsg.text }, "SimpleChat_Internal") 
 
-    elseif protocol == "ArcadeGames_Internal" and actualMsg and actualMsg.type and gameHandlers[actualMsg.type] then
-        local oldSend = rednet.send
-        rednet.send = sendResponse
-        gameHandlers[actualMsg.type](origSender, actualMsg)
-        rednet.send = oldSend
-
     elseif protocol == AUTH_INTERLINK_PROTOCOL and actualMsg.type == "user_exists_check" then
         -- Cross-service communication for checking existence
         sendResponse(senderId, { user = actualMsg.user, exists = (users[actualMsg.user] ~= nil) }, AUTH_INTERLINK_PROTOCOL)
@@ -1405,10 +1383,9 @@ local function main()
     end
     rednet.host("SimpleMail_Internal", "mail.server.internal")
     rednet.host("SimpleChat_Internal", "chat.server.internal")
-    rednet.host("ArcadeGames_Internal", "arcade.server.internal")
     rednet.host("Drunken_Admin_Internal", "admin.server.internal")
     rednet.host("auth.secure.v1_Internal", "auth.client.internal")
-    logActivity("Mainframe Server v10.22 (Internal Only) Initialized.")
+    logActivity("Mainframe Server v10.23 (Internal Only) Initialized.")
     mainEventLoop()
 end
 

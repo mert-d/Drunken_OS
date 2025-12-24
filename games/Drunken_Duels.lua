@@ -7,7 +7,7 @@
     Challenge a friend over Rednet and battle for dominance!
 ]]
 
-local gameVersion = 1.0
+local gameVersion = 1.1
 
 local function mainGame(...)
     local args = {...}
@@ -69,13 +69,13 @@ local function mainGame(...)
         term.setCursorPos(math.floor((w - #titleText)/2), 1); term.write(titleText)
     end
 
-    local function drawLobby()
+    local function drawLobby(msg)
         drawFrame()
         local w, h = getSafeSize()
         term.setBackgroundColor(theme.bg)
         term.setTextColor(theme.text)
         
-        local msg = isHost and "Waiting for a Challenger..." or "Searching for a Match..."
+        msg = msg or (isHost and "Waiting for a Challenger..." or "Searching for a Match...")
         term.setCursorPos(math.floor(w/2 - #msg/2), math.floor(h/2))
         term.write(msg)
         
@@ -142,36 +142,76 @@ local function mainGame(...)
 -- Determines host status based on Computer ID.
 -- @return {boolean} True if a match was successfully found.
 local function findMatch()
-    drawLobby()
-    local protocol = "DrunkenDuels_Lobby"
-    -- Broadcast presence to all players on the network
-    rednet.broadcast({type="match_request", user=username}, protocol)
-    
-    local timer = os.startTimer(1)
-    while true do
-        local id, msg = rednet.receive(protocol, 2)
-        if id and msg.type == "match_request" and id ~= os.getComputerID() then
-            -- Someone else is looking for a match; challenge them!
-            opponentId = id
-            addLog("Opponent Found! Connecting...")
-            rednet.send(id, {type="match_accept", user=username}, protocol)
-            isHost = os.getComputerID() > id -- Higher ID is the host for synchronization
-            return true
-        elseif id and msg.type == "match_accept" then
-            -- Someone accepted our broadcasted request
-            opponentId = id
-            addLog("Match Accepted! Starting...")
-            isHost = os.getComputerID() > id
-            return true
-        end
+    local arcadeId = rednet.lookup("ArcadeGames_Internal", "arcade.server.internal")
+    if not arcadeId then 
+        drawLobby("Mainframe Arcade Server Offline!")
+        sleep(2)
+        return false
+    end
+
+    drawLobby("1: Host Match | 2: Join Match")
+    local event, key
+    repeat
+        event, key = os.pullEvent("key")
+    until key == keys.one or key == keys.two or key == keys.q
+
+    if key == keys.q then return false end
+
+    if key == keys.one then
+        -- HOSTING
+        isHost = true
+        rednet.send(arcadeId, {type="host_game", user=username, game=gameName}, "ArcadeGames")
+        drawLobby("Hosting... Waiting for Player...")
         
-        -- Handle lobby UI and retry logic
-        local event, p1 = os.pullEvent()
-        if event == "key" and p1 == keys.q then return false
-        elseif event == "timer" and p1 == timer then
-            rednet.broadcast({type="match_request", user=username}, protocol)
-            timer = os.startTimer(1)
-            drawLobby()
+        while true do
+            local id, msg = rednet.receive("DrunkenDuels_Lobby", 2)
+            if id and msg.type == "match_join" then
+                opponentId = id
+                rednet.send(id, {type="match_accept", user=username}, "DrunkenDuels_Lobby")
+                rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
+                return true
+            end
+            local tevt, tk = os.pullEventRaw()
+            if tevt == "key" and tk == keys.q then 
+                rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
+                return false 
+            end
+        end
+    else
+        -- JOINING
+        rednet.send(arcadeId, {type="list_lobbies"}, "ArcadeGames")
+        local _, reply = rednet.receive("ArcadeGames", 3)
+        if not reply or not reply.lobbies then
+            drawLobby("No Lobbies Found.")
+            sleep(1)
+            return false
+        end
+
+        local options = {}
+        for id, lob in pairs(reply.lobbies) do
+            if lob.game == gameName then table.insert(options, {id=id, user=lob.user}) end
+        end
+
+        if #options == 0 then
+            drawLobby("No " .. gameName .. " hosts online.")
+            sleep(1)
+            return false
+        end
+
+        -- Pick the first available host for now (can expand to a menu later)
+        local target = options[1]
+        opponentId = target.id
+        drawLobby("Joining " .. target.user .. "...")
+        rednet.send(target.id, {type="match_join", user=username}, "DrunkenDuels_Lobby")
+        
+        local sid, smsg = rednet.receive("DrunkenDuels_Lobby", 5)
+        if sid == opponentId and smsg.type == "match_accept" then
+            isHost = false
+            return true
+        else
+            drawLobby("Join Failed/Timed Out.")
+            sleep(1)
+            return false
         end
     end
 end

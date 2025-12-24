@@ -7,7 +7,7 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 1.3
+local gameVersion = 1.4
 local saveFile = ".dungeon_save"
 
 ---
@@ -363,23 +363,62 @@ end
             upgradeShop()
         elseif k == keys.three then
             term.clear(); term.setCursorPos(1,1)
-            print("Multiplayer Lobby...")
-            rednet.broadcast({type="coop_request", seed=sharedSeed}, "Dungeon_Coop")
-            local id, msg = rednet.receive("Dungeon_Coop", 3)
-            if id then
-                opponentId = id
-                isMultiplayer = true
-                if msg.type == "coop_request" then
-                    rednet.send(id, {type="coop_accept", seed=sharedSeed}, "Dungeon_Coop")
-                else
-                    sharedSeed = msg.seed
-                end
-                addLog("Partner Joined!")
-                selectClass()
-                break
+            local arcadeId = rednet.lookup("ArcadeGames_Internal", "arcade.server.internal")
+            if not arcadeId then 
+                print("Mainframe Arcade Server Offline!")
+                sleep(2)
             else
-                print("No partners found. Press any key.")
-                os.pullEvent("key")
+                print("1: Host Co-op | 2: Join Co-op")
+                local _, lobbyKey = os.pullEvent("key")
+                if lobbyKey == keys.one then
+                    rednet.send(arcadeId, {type="host_game", user=username, game=gameName}, "ArcadeGames")
+                    print("Hosting... Waiting for Partner...")
+                    while true do
+                        local id, msg = rednet.receive("Dungeon_Coop", 2)
+                        if id and msg.type == "match_join" then
+                            opponentId = id
+                            isMultiplayer = true
+                            rednet.send(id, {type="match_accept", user=username, seed=sharedSeed}, "Dungeon_Coop")
+                            rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
+                            addLog("Partner Joined!")
+                            selectClass()
+                            break
+                        end
+                        local tevt, tk = os.pullEventRaw()
+                        if tevt == "key" and tk == keys.q then 
+                           rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
+                           break 
+                        end
+                    end
+                    if isMultiplayer then break end
+                elseif lobbyKey == keys.two then
+                    rednet.send(arcadeId, {type="list_lobbies"}, "ArcadeGames")
+                    local _, reply = rednet.receive("ArcadeGames", 3)
+                    if reply and reply.lobbies then
+                        local options = {}
+                        for id, lob in pairs(reply.lobbies) do
+                            if lob.game == gameName then table.insert(options, {id=id, user=lob.user}) end
+                        end
+                        if #options > 0 then
+                            local target = options[1]
+                            print("Joining " .. target.user .. "...")
+                            rednet.send(target.id, {type="match_join", user=username}, "Dungeon_Coop")
+                            local sid, smsg = rednet.receive("Dungeon_Coop", 5)
+                            if sid == target.id and smsg.type == "match_accept" then
+                                opponentId = target.id
+                                isMultiplayer = true
+                                sharedSeed = smsg.seed
+                                addLog("Joined " .. target.user)
+                                selectClass()
+                                break
+                            end
+                        else
+                            print("No Co-op hosts online.")
+                        end
+                    end
+                    if isMultiplayer then break end
+                    sleep(1)
+                end
             end
         elseif k == keys.q then
             return

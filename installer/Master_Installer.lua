@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Master Installer (v1.2 - Specialized Proxies)
+    Drunken OS - Master Installer (v1.3 - Arcade Server Update)
     by MuhendizBey
 
     Purpose:
@@ -38,6 +38,7 @@ local INSTALLABLE_PROGRAMS = {
     -- Specialized Networking
     { name = "Mainframe Proxy", type = "server", path = "servers/Proxy_Mainframe.lua", dependencies = { "lib/sha1_hmac.lua" } },
     { name = "Bank Proxy", type = "server", path = "servers/Proxy_Bank.lua", dependencies = { "lib/sha1_hmac.lua" } },
+    { name = "Drunken Arcade Server", type = "server", path = "servers/Drunken_Arcade_Server.lua", dependencies = { "lib/sha1_hmac.lua" } },
 }
 
 --==============================================================================
