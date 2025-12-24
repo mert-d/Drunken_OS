@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mainframe Server (v10.23 - Arcade Lobby Update)
+    Drunken OS - Mainframe Server (v10.24 - App Sync Update)
     by MuhendizBey
 
     Purpose:
@@ -461,8 +461,20 @@ function mailHandlers.get_version(senderId, message)
     local prog = message.program
     if prog:match("^app%.") then
         local appName = prog:gsub("^app%.", "")
-        if fs.exists("apps/" .. appName .. ".lua") then
-            rednet.send(senderId, { version = 1.0 }, "SimpleMail") -- Apps default to v1.0
+        local appPath = "apps/" .. appName .. ".lua"
+        if fs.exists(appPath) then
+            local f = fs.open(appPath, "r")
+            if f then
+                local content = f.readAll(); f.close()
+                -- Extract version using multiple patterns
+                local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or
+                          content:match("local%s+appVersion%s*=%s*([%d%.]+)") or
+                          content:match("%(v([%d%.]+)%)") or
+                          content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+                rednet.send(senderId, { version = tonumber(v) or 1.0 }, "SimpleMail")
+            else
+                rednet.send(senderId, { version = 0 }, "SimpleMail")
+            end
         else
             rednet.send(senderId, { version = 0 }, "SimpleMail")
         end
@@ -877,7 +889,7 @@ function adminCommands.help()
     logActivity(" [Arcade & Stats] ")
     logActivity("   games, board <game>, delscore <game> <user>")
     logActivity(" [Distribution] ")
-    logActivity("   sync [all|client|libs|games|auditor]")
+    logActivity("   sync [all|client|libs|apps|games|auditor]")
 end
 
 ---
@@ -1020,8 +1032,45 @@ function adminCommands.sync(a)
             saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
             logActivity("Published Client v" .. version)
         else
-           logActivity("Error: Valid code/version not found.", true)
+            logActivity("Error: Valid code/version not found.", true)
         end
+    end
+    
+    if target == "apps" or target == "all" then
+        logActivity("Syncing Applets...")
+        local appsList = { "arcade.lua", "bank.lua", "chat.lua", "files.lua", "mail.lua", "merchant.lua", "system.lua" }
+        local baseUrl = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/apps/"
+        
+        if not fs.exists("apps") then fs.makeDir("apps") end
+        local appUpdated = 0
+        
+        for _, filename in ipairs(appsList) do
+            local url = baseUrl .. filename
+            logActivity("Pulling: " .. filename)
+            local response = http.get(url)
+            if response then
+                local code = response.readAll()
+                response.close()
+                if code and #code > 0 then
+                    local f = fs.open("apps/" .. filename, "w")
+                    if f then
+                        f.write(code)
+                        f.close()
+                        appUpdated = appUpdated + 1
+                        
+                        -- Extract version for logging
+                        local v = code:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or
+                                  code:match("local%s+appVersion%s*=%s*([%d%.]+)") or
+                                  code:match("%(v([%d%.]+)%)") or
+                                  code:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+                        logActivity("Synced " .. filename .. (v and (" (v" .. v .. ")") or ""))
+                    end
+                end
+            else
+                logActivity("Failed to pull " .. filename, true)
+            end
+        end
+        logActivity("App sync complete. " .. appUpdated .. " apps updated.")
     end
     
     if target == "libs" or target == "all" then
@@ -1305,7 +1354,7 @@ local function main()
     rednet.host("SimpleChat_Internal", "chat.server.internal")
     rednet.host("Drunken_Admin_Internal", "admin.server.internal")
     rednet.host("auth.secure.v1_Internal", "auth.client.internal")
-    logActivity("Mainframe Server v10.23 (Internal Only) Initialized.")
+    logActivity("Mainframe Server v10.24 (Internal Only) Initialized.")
     mainEventLoop()
 end
 

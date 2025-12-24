@@ -4,6 +4,7 @@
 ]]
 
 local merchant = {}
+local appVersion = 1.1
 local MERCHANT_CATALOG_FILE = "merchant_catalog.json"
 local MERCHANT_TURTLE_ID_FILE = "merchant_turtle.id"
 local MERCHANT_BROADCAST_PROTOCOL = "DB_Shop_Broadcast"

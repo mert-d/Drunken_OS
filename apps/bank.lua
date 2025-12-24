@@ -4,6 +4,7 @@
 ]]
 
 local bank = {}
+local appVersion = 1.1
 local BANK_PROTOCOL = "DB_Bank"
 
 local function getParent(context)

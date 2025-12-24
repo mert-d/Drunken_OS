@@ -3,6 +3,7 @@
 ]]
 
 local arcade = {}
+local appVersion = 1.2
 
 local function getParent(context)
     return context.parent
