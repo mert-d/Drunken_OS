@@ -245,11 +245,12 @@ local function installDependencies()
     end
 
     -- Load the updater to manage remaining dependencies
-    local ok_upd, updater = pcall(require, "lib.updater")
+    local ok_upd, updaterOrError = pcall(require, "lib.updater")
     if not ok_upd then
-        print("Error: Could not load updater library.")
+        print("Error: Could not load updater library: " .. tostring(updaterOrError))
         return false
     end
+    local updater = updaterOrError
     
     -- Sync essential libraries defined in REQUIRED_LIBS
     for _, libDef in ipairs(REQUIRED_LIBS) do
