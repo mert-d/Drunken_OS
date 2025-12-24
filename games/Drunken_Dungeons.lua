@@ -7,7 +7,7 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 1.1
+local gameVersion = 1.3
 local saveFile = ".dungeon_save"
 
 ---
@@ -44,6 +44,10 @@ local function mainGame(...)
     local isMultiplayer = false
     local sharedSeed = os.time()
 
+    local w, h = getSafeSize()
+    local MAP_W = math.min(w - 6, 40)
+    local MAP_H = math.min(h - 9, 15)
+
     -- Theme & Colors
     local hasColor = term.isColor and term.isColor()
     local function safeColor(c, f) return (hasColor and colors[c]) and colors[c] or f end
@@ -60,13 +64,12 @@ local function mainGame(...)
     }
 
     -- Game Constants
-    local MAP_W = 40
-    local MAP_H = 15
     local TILE_WALL = "#"
     local TILE_FLOOR = "."
     local TILE_PLAYER = "@"
     local TILE_ENEMY = "E"
     local TILE_GOLD = "$"
+    local TILE_STAIRS = ">"
 
     -- Load Persistent Data
     local persist = loadGame()
@@ -102,7 +105,7 @@ local function mainGame(...)
 -- Generates floor tiles from a central point and populates the level
 -- with gold and enemies based on the current shared seed.
 local function generateMap()
-    math.randomseed(sharedSeed)
+    math.randomseed(sharedSeed + dungeonLevel)
     -- Initialize the map with solid walls
     map = {}
     for y = 1, MAP_H do
@@ -126,12 +129,35 @@ local function generateMap()
     
     -- Populate the level with interactable entities
     entities = {}
-    for i = 1, 5 do
+    local count = 0
+    local target = 5 + (dungeonLevel * 2)
+    while count < target do
         local sx, sy = math.random(2, MAP_W-1), math.random(2, MAP_H-1)
-        if map[sy][sx] == TILE_FLOOR then
-            table.insert(entities, {x = sx, y = sy, type = math.random(1,2) == 1 and "gold" or "enemy", hp = 3})
+        if map[sy][sx] == TILE_FLOOR and (sx ~= player.x or sy ~= player.y) then
+            local isOccupied = false
+            for _, e in ipairs(entities) do
+                if e.x == sx and e.y == sy then isOccupied = true; break end
+            end
+            
+            if not isOccupied then
+                local eType = (count % 2 == 0) and "gold" or "enemy"
+                table.insert(entities, {
+                    x = sx, 
+                    y = sy, 
+                    type = eType, 
+                    hp = 2 + math.floor(dungeonLevel / 2)
+                })
+                count = count + 1
+            end
         end
     end
+
+    -- Spawn Stairs (always at least one)
+    local sx, sy = math.random(2, MAP_W-1), math.random(2, MAP_H-1)
+    while map[sy][sx] ~= TILE_FLOOR or (sx == player.x and sy == player.y) do
+        sx, sy = math.random(2, MAP_W-1), math.random(2, MAP_H-1)
+    end
+    table.insert(entities, {x = sx, y = sy, type = "stairs", hp = 0})
 end
 
     local function draw()
@@ -166,8 +192,8 @@ end
                     local entFound = false
                     for _, ent in ipairs(entities) do
                         if ent.x == x and ent.y == y then
-                            term.setTextColor(ent.type == "gold" and theme.gold or theme.enemy)
-                            term.write(ent.type == "gold" and TILE_GOLD or TILE_ENEMY)
+                            term.setTextColor(ent.type == "gold" and theme.gold or (ent.type == "stairs" and colors.white or theme.enemy))
+                            term.write(ent.type == "gold" and TILE_GOLD or (ent.type == "stairs" and TILE_STAIRS or TILE_ENEMY))
                             entFound = true; break
                         end
                     end
@@ -246,6 +272,11 @@ local function movePlayer(dx, dy)
                     end
                 end
                 return -- Attack ends the movement sequence for this turn
+            elseif ent.type == "stairs" then
+                dungeonLevel = dungeonLevel + 1
+                addLog("You descend to level " .. dungeonLevel .. "!")
+                generateMap()
+                return
             end
         end
     end
