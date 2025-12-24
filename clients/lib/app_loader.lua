@@ -7,7 +7,6 @@ local loader = {}
 
 function loader.run(appName, context, entryPoint)
     entryPoint = entryPoint or "run"
-    -- Try both root apps/ and programDir/apps/
     local paths = {
         fs.combine(context.programDir or "", "apps/" .. appName .. ".lua"),
         "/apps/" .. appName .. ".lua"

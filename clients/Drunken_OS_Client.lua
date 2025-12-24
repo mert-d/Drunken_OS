@@ -8,8 +8,18 @@
 --==============================================================================
 
 local programDir = fs.getDir(shell.getRunningProgram())
--- Update package.path to look for modules relative to both root and programDir
-package.path = package.path .. ";/?.lua;?/init.lua;" .. fs.combine(programDir, "?.lua") .. ";" .. fs.combine(programDir, "?/init.lua")
+-- Construct a clean, predictable package search path
+local paths = {
+    "?.lua",
+    "?/init.lua",
+    "lib/?.lua",
+    "lib/?/init.lua",
+    "/lib/?.lua",
+    "/lib/?/init.lua",
+    fs.combine(programDir, "?.lua"),
+    fs.combine(programDir, "lib/?.lua")
+}
+package.path = table.concat(paths, ";") .. ";" .. package.path
 local crypto = require("lib.sha1_hmac")
 
 --==============================================================================
