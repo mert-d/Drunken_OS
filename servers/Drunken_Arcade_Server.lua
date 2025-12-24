@@ -1,6 +1,6 @@
 --[[
     Drunken Arcade Server (v1.1 - Premium UI)
-    by Gemini Gem
+    by MuhendizBey
 
     Purpose:
     Dedicated hardware offload for Drunken OS Arcade operations.
@@ -90,7 +90,7 @@ local function drawWindow(title)
     term.setBackgroundColor(theme.statusBarBg)
     term.setCursorPos(1, h); term.write(string.rep(" ", w))
     term.setTextColor(theme.statusBarText)
-    local footer = "[D] Dashboard | [L] Logs | [ESC] Exit"
+    local footer = "[D] Dash | [L] Logs | [S] Sync | [ENTER] Cmd"
     term.setCursorPos(math.floor((w - #footer) / 2) + 1, h); term.write(footer)
 
     term.setBackgroundColor(theme.bg)
@@ -368,6 +368,9 @@ local function main()
                         needsRedraw = true
                     elseif p1 == keys.l then
                         currentScreen = "logs"
+                        needsRedraw = true
+                    elseif p1 == keys.s then
+                        syncGames()
                         needsRedraw = true
                     elseif p1 == keys.enter then
                         -- Enter command mode

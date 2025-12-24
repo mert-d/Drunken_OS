@@ -22,7 +22,6 @@ local logs = {}
 local PROTOCOL_MAP = {
     ["SimpleMail"] = "SimpleMail_Internal",
     ["SimpleChat"] = "SimpleChat_Internal",
-    ["ArcadeGames"] = "ArcadeGames_Internal",
     ["Drunken_Admin"] = "Drunken_Admin_Internal",
     ["DB_Bank"] = "DB_Bank_Internal",
     ["auth.secure.v1"] = "auth.secure.v1_Internal", -- Isolated internal name to prevent loops
@@ -38,7 +37,6 @@ local TRANSPARENT_PROTOCOLS = {
 local HOST_MAP = {
     ["mail.server"] = "SimpleMail",
     ["chat.server"] = "SimpleChat",
-    ["arcade.server"] = "ArcadeGames",
     ["admin.server"] = "Drunken_Admin",
     ["bank.server"] = "DB_Bank",
 }
