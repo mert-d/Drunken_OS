@@ -26,66 +26,96 @@ function system.changeNickname(context)
     end
 end
 
-function system.updateGames(context)
-    context.drawWindow("Updating Arcade")
+function system.updateAll(context)
+    context.drawWindow("System Update")
     local y = 4
-    local gamesDir = fs.combine(context.programDir, "games")
-    if not fs.exists(gamesDir) then fs.makeDir(gamesDir) end
-
-    term.setCursorPos(2, y); term.write("Checking for updates...")
-    local arcadeServer = rednet.lookup("ArcadeGames", "arcade.server")
-    if not arcadeServer then
-        context.showMessage("Error", "Arcade Server not found.")
-        return
-    end
-
-    rednet.send(arcadeServer, { type = "get_all_game_versions" }, "ArcadeGames")
-    local _, response = rednet.receive("ArcadeGames", 5)
-
-    if not response or response.type ~= "game_versions_response" or not response.versions then
-        context.showMessage("Error", (response and "Could not fetch updates.") or "Connection timeout.")
-        return
-    end
-
-    local serverVersions = response.versions
-    local function getLocalVersion(filename)
-        local path = fs.combine(gamesDir, filename)
-        if fs.exists(path) then
-            local file = fs.open(path, "r")
-            if file then
-                local content = file.readAll()
-                file.close()
-                local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") 
-                       or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
-                return tonumber(v) or 0
-            end
-        end
-        return 0
-    end
-
     local updatesFound = false
-    for filename, serverVer in pairs(serverVersions) do
-        local localVer = getLocalVersion(filename)
-        if serverVer > localVer then
-            updatesFound = true
-            local cleanFilename = filename:gsub("^games/", "")
-            context.drawWindow("Updating Arcade")
-            term.setCursorPos(2, 4); term.write("Updating " .. cleanFilename .. "...")
-            rednet.send(arcadeServer, {type = "get_game_update", filename = filename}, "ArcadeGames")
-            local _, update = rednet.receive("ArcadeGames", 5)
-            if update and update.code then
-                local path = fs.combine(gamesDir, cleanFilename)
-                local file = fs.open(path, "w")
-                if file then file.write(update.code); file.close() end
+    
+    -- 1. Check for Arcade Game Updates
+    term.setCursorPos(2, y); term.write("Checking Arcade Server...")
+    local arcadeServer = rednet.lookup("ArcadeGames", "arcade.server")
+    if arcadeServer then
+        rednet.send(arcadeServer, { type = "get_all_game_versions" }, "ArcadeGames")
+        local _, response = rednet.receive("ArcadeGames", 5)
+        if response and response.type == "game_versions_response" and response.versions then
+            local gamesDir = fs.combine(context.programDir, "games")
+            if not fs.exists(gamesDir) then fs.makeDir(gamesDir) end
+            
+            for filename, serverVer in pairs(response.versions) do
+                local cleanName = filename:gsub("^games/", "")
+                local path = fs.combine(gamesDir, cleanName)
+                local localVer = 0
+                if fs.exists(path) then
+                    local f = fs.open(path, "r")
+                    if f then
+                        local content = f.readAll(); f.close()
+                        local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+                        localVer = tonumber(v) or 0
+                    end
+                end
+                
+                if serverVer > localVer then
+                    updatesFound = true
+                    term.setCursorPos(2, y + 1); term.clearLine(); term.write("Updating Game: " .. cleanName)
+                    rednet.send(arcadeServer, {type = "get_game_update", filename = filename}, "ArcadeGames")
+                    local _, update = rednet.receive("ArcadeGames", 5)
+                    if update and update.code then
+                        local file = fs.open(path, "w")
+                        if file then file.write(update.code); file.close() end
+                    end
+                end
             end
         end
+    else
+        term.setCursorPos(2, y); term.setTextColor(colors.red); term.write("Arcade Server offline.")
+        term.setTextColor(theme.text); y = y + 1
     end
 
-    context.showMessage("Update Status", updatesFound and "All games updated!" or "All games are up to date.")
+    -- 2. Check for Applet Updates (Mainframe)
+    y = y + 1
+    term.setCursorPos(2, y); term.write("Checking Mainframe Apps...")
+    local mainframe = rednet.lookup("SimpleMail", "mail.server")
+    if mainframe then
+        local appsDir = fs.combine(context.programDir, "apps")
+        if fs.exists(appsDir) then
+            local files = fs.list(appsDir)
+            for _, filename in ipairs(files) do
+                if filename:match("%.lua$") then
+                    local appName = filename:gsub("%.lua$", "")
+                    local path = fs.combine(appsDir, filename)
+                    local localVer = 0
+                    local f = fs.open(path, "r")
+                    if f then
+                        local content = f.readAll(); f.close()
+                        local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+                        localVer = tonumber(v) or 0
+                    end
+                    
+                    rednet.send(mainframe, { type = "get_version", program = "app." .. appName }, "SimpleMail")
+                    local _, resp = rednet.receive("SimpleMail", 3)
+                    if resp and resp.version and resp.version > localVer then
+                        updatesFound = true
+                        term.setCursorPos(2, y + 1); term.clearLine(); term.write("Updating App: " .. filename)
+                        rednet.send(mainframe, { type = "get_update", program = "app." .. appName }, "SimpleMail")
+                        local _, update = rednet.receive("SimpleMail", 5)
+                        if update and update.code then
+                            local file = fs.open(path, "w")
+                            if file then file.write(update.code); file.close() end
+                        end
+                    end
+                end
+            end
+        end
+    else
+        term.setCursorPos(2, y); term.setTextColor(colors.red); term.write("Mainframe offline.")
+        term.setTextColor(theme.text)
+    end
+
+    context.showMessage("Update Status", updatesFound and "System successfully updated!" or "All components are up to date.")
 end
 
 function system.run(context)
-    local options = {"Change Nickname", "Update Games", "Back"}
+    local options = {"Change Nickname", "Check for Updates", "Back"}
     local selected = 1
     while true do
         context.drawWindow("System")
@@ -95,7 +125,7 @@ function system.run(context)
         elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
         elseif key == keys.enter then
             if selected == 1 then system.changeNickname(context)
-            elseif selected == 2 then system.updateGames(context)
+            elseif selected == 2 then system.updateAll(context)
             elseif selected == 3 then break end
         elseif key == keys.tab then break end
     end
