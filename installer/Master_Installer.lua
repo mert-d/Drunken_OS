@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Master Installer (v1.4 - Modular OS Update)
+    Drunken OS - Master Installer (v1.5 - UI Overhaul)
     by MuhendizBey
 
     Purpose:
@@ -63,27 +63,67 @@ local INSTALLABLE_PROGRAMS = {
 local theme = {
     bg = colors.black,
     text = colors.white,
-    border = colors.purple,
-    titleBg = colors.magenta,
+    prompt = colors.yellow,
+    titleBg = colors.blue,
     titleText = colors.white,
-    highlightBg = colors.yellow,
+    highlightBg = colors.cyan,
     highlightText = colors.black,
     errorBg = colors.red,
     errorText = colors.white,
 }
 
-local function drawFrame(title)
+local function showSplashScreen()
     local w, h = term.getSize()
-    term.setBackgroundColor(theme.bg); term.clear()
-    term.setBackgroundColor(theme.border)
-    for y=1,h do term.setCursorPos(1,y); term.write(" "); term.setCursorPos(w,y); term.write(" ") end
-    for x=1,w do term.setCursorPos(x,1); term.write(" "); term.setCursorPos(x,h); term.write(" ") end
-    term.setBackgroundColor(theme.titleBg); term.setTextColor(theme.titleText)
-    local titleText = " " .. (title or "Drunken OS - Master Installer") .. " "
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setTextColor(colors.yellow)
+    local art = {
+        "      _-_          ",
+        "    /~~   ~~\\      ",
+        " /~~         ~~\\   ",
+        "{               }  ",
+        " \\  _-     -_  /   ",
+        "   ~  \\\\ //  ~     ",
+        "_- -   | | _- _    ",
+        "  _ -  | |   -_    ",
+        "      // \\\\        "
+    }
+    local title = "Drunken Master Installer"
+    local startY = math.floor(h / 2) - math.floor(#art / 2) - 1
+    for i, line in ipairs(art) do
+        term.setCursorPos(math.floor(w / 2 - #line / 2), startY + i)
+        term.write(line)
+    end
+    term.setCursorPos(math.floor(w / 2 - #title / 2), startY + #art + 2)
+    term.write(title)
+    sleep(1)
+end
+
+local function drawWindow(title)
+    local w, h = term.getSize()
+    term.setBackgroundColor(theme.bg)
+    term.clear()
+    
+    -- Draw title and bottom borders
+    term.setBackgroundColor(theme.titleBg)
+    term.setCursorPos(1, 1); term.write(string.rep(" ", w))
+    term.setCursorPos(1, h); term.write(string.rep(" ", w))
+    -- Draw side borders
+    for i = 2, h - 1 do
+        term.setCursorPos(1, i); term.write(" ")
+        term.setCursorPos(w, i); term.write(" ")
+    end
+
+    -- Render the centered title text
+    term.setCursorPos(1, 1)
+    term.setTextColor(theme.titleText)
+    local titleText = " " .. (title or "Master Installer") .. " "
     local titleStart = math.floor((w - #titleText) / 2) + 1
     term.setCursorPos(titleStart, 1)
     term.write(titleText)
-    term.setBackgroundColor(theme.bg); term.setTextColor(theme.text)
+    
+    term.setBackgroundColor(theme.bg)
+    term.setTextColor(theme.text)
 end
 
 local function printCentered(startY, text)
@@ -94,68 +134,63 @@ local function printCentered(startY, text)
 end
 
 local function showMessage(title, message, isError)
+    drawWindow(title)
     local w, h = term.getSize()
-    local boxBg = isError and theme.errorBg or theme.titleBg
-    local boxText = isError and theme.errorText or theme.titleText
-    local boxW, boxH = math.floor(w * 0.8), math.floor(h * 0.7)
-    local boxX, boxY = math.floor((w - boxW) / 2), math.floor((h - boxH) / 2)
-
-    term.setBackgroundColor(boxBg)
-    for y = boxY, boxY + boxH - 1 do
-        term.setCursorPos(boxX, y); term.write(string.rep(" ", boxW))
+    
+    if isError then
+        term.setTextColor(theme.errorBg)
+        printCentered(4, "!!! ERROR !!!")
+        term.setTextColor(theme.text)
     end
-
-    term.setTextColor(boxText)
-    local titleText = " " .. title .. " ";
-    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, boxY + 1); term.write(titleText)
-
-    local lines = {}
-    for line in message:gmatch("[^\n]+") do
-        while #line > boxW - 4 do
-            table.insert(lines, line:sub(1, boxW - 4))
-            line = line:sub(boxW - 3)
-        end
-        table.insert(lines, line)
-    end
-
-    for i, line in ipairs(lines) do
-        term.setCursorPos(boxX + 2, boxY + 3 + i)
-        print(line)
-    end
-
+    
+    printCentered(6, message)
+    
     local continueText = "Press any key to continue..."
-    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, boxY + boxH - 2)
-    print(continueText)
-
+    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, h - 1)
+    term.setTextColor(colors.gray)
+    term.write(continueText)
+    
     os.pullEvent("key")
 end
 
-local function drawMenu(title, options, help)
+local function drawMenu(title, options)
     local w, h = term.getSize()
     local selected = 1
+    local scroll = 1
+    local listHeight = h - 6
+
     while true do
-        drawFrame(title)
-        for i, opt in ipairs(options) do
-            term.setCursorPos(4, 4 + i)
+        drawWindow(title)
+        
+        -- Handle scrolling
+        if selected < scroll then scroll = selected
+        elseif selected >= scroll + listHeight then scroll = selected - listHeight + 1 end
+
+        for i = scroll, math.min(scroll + listHeight - 1, #options) do
+            local opt = options[i]
+            local y = 4 + (i - scroll)
+            term.setCursorPos(4, y)
+            
             if i == selected then
                 term.setBackgroundColor(theme.highlightBg)
                 term.setTextColor(theme.highlightText)
+                term.write(" > " .. opt.name .. string.rep(" ", w - 10 - #opt.name) .. " ")
             else
                 term.setBackgroundColor(theme.bg)
                 term.setTextColor(theme.text)
+                term.write("   " .. opt.name)
             end
-            term.write(" " .. opt.name .. string.rep(" ", w - 6 - #opt.name) .. " ")
         end
-        term.setBackgroundColor(theme.bg)
-        term.setTextColor(colors.yellow)
 
+        term.setBackgroundColor(theme.bg)
+        term.setTextColor(theme.prompt)
         local current_selection = options[selected]
         if current_selection.name == "Drunken OS Client" then
-            printCentered(h - 2, "Please insert a Pocket Computer and press Enter.")
+            printCentered(h - 2, "PC: Insert Pocket Computer and ENTER.")
         elseif current_selection.name == "Exit" then
-            printCentered(h - 2, "Press Enter to exit the installer.")
+            printCentered(h - 2, "Press ENTER to exit.")
         else
-            printCentered(h - 2, "Please insert a blank disk and press Enter.")
+            printCentered(h - 2, "DISK: Insert blank disk and ENTER.")
         end
 
         local _, key = os.pullEvent("key")
@@ -399,12 +434,13 @@ end
 
 local function mainMenu()
     while true do
-        local options = INSTALLABLE_PROGRAMS
+        local options = {}
+        for _, v in ipairs(INSTALLABLE_PROGRAMS) do table.insert(options, v) end
         table.insert(options, { name = "Exit" })
-        local choice = drawMenu("Select a program to install:", options, "Insert a disk or Pocket Computer and press Enter.")
-        table.remove(options) -- remove exit
+        
+        local choice = drawMenu("Select a program to install:", options)
 
-        if not choice or choice == #options + 1 then break end
+        if not choice or options[choice].name == "Exit" then break end
 
         createInstallDisk(options[choice])
     end
@@ -415,10 +451,11 @@ end
 --==============================================================================
 
 local function main()
+    showSplashScreen()
     mainMenu()
-    drawFrame("Goodbye")
+    drawWindow("Goodbye")
     printCentered(8, "Master Installer shutting down.")
-    sleep(2)
+    sleep(1)
 end
 
 main()

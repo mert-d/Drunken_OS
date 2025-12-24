@@ -1,5 +1,5 @@
 --[[
-    Drunken Arcade Server (v1.0)
+    Drunken Arcade Server (v1.1 - Premium UI)
     by Gemini Gem
 
     Purpose:
@@ -27,10 +27,20 @@ local arcadeLobbies = {} -- { [id] = { user = "name", game = "Game" } }
 local hasColor = term.isColor and term.isColor()
 local theme = {
     bg = colors.black,
+    windowBg = colors.black,
     title = colors.cyan,
     text = colors.white,
     prompt = colors.lime,
+    statusBarBg = colors.gray,
+    statusBarText = colors.white,
+    highlightBg = colors.blue,
+    highlightText = colors.white,
+    error = colors.red,
 }
+
+local currentScreen = "dashboard" -- "dashboard", "logs"
+local needsRedraw = true
+local startTime = os.time()
 
 local function saveTableToFile(path, data)
     local f = fs.open(path, "w")
@@ -56,47 +66,102 @@ local function logActivity(msg, isErr)
     local timestamp = os.date("%H:%M:%S")
     local entry = string.format("[%s] %s%s", timestamp, isErr and "[ERROR] " or "", msg)
     table.insert(logHistory, entry)
-    if #logHistory > 100 then table.remove(logHistory, 1) end
+    if #logHistory > 200 then table.remove(logHistory, 1) end
     
     -- Persistent Log
+    if not fs.exists("logs") then fs.makeDir("logs") end
     local f = fs.open(LOG_FILE, "a")
     if f then f.writeLine(entry); f.close() end
+    needsRedraw = true
 end
 
-local function redrawUI()
+local function drawWindow(title)
     local w, h = term.getSize()
     term.setBackgroundColor(theme.bg); term.clear()
     
-    -- Title
+    -- Title Bar
     term.setBackgroundColor(theme.title)
     term.setCursorPos(1, 1); term.write(string.rep(" ", w))
-    term.setCursorPos(math.floor(w/2 - 10), 1); term.setTextColor(colors.black); term.write(" DRUNKEN ARCADE SERVER ")
+    term.setTextColor(colors.black)
+    local titleText = " " .. (title or "DRUNKEN ARCADE SERVER") .. " "
+    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); term.write(titleText)
     
+    -- Status Bar
+    term.setBackgroundColor(theme.statusBarBg)
+    term.setCursorPos(1, h); term.write(string.rep(" ", w))
+    term.setTextColor(theme.statusBarText)
+    local footer = "[D] Dashboard | [L] Logs | [ESC] Exit"
+    term.setCursorPos(math.floor((w - #footer) / 2) + 1, h); term.write(footer)
+
+    term.setBackgroundColor(theme.bg)
+    term.setTextColor(theme.text)
+end
+
+local function drawDashboard()
+    drawWindow("ARCADE DASHBOARD")
+    local w, h = term.getSize()
+    
+    term.setTextColor(theme.prompt)
+    term.setCursorPos(2, 3); term.write("System Status:")
+    term.setTextColor(theme.text)
+    term.setCursorPos(4, 4); term.write("Uptime: " .. math.floor(os.clock()) .. "s")
+    
+    local numGames = 0
+    if fs.exists("games") then numGames = #fs.list("games") end
+    term.setCursorPos(4, 5); term.write("Library: " .. numGames .. " Games")
+
     -- Lobbies
-    term.setBackgroundColor(theme.bg); term.setTextColor(theme.prompt)
-    term.setCursorPos(2, 3); term.write("Active Lobbies:")
+    term.setTextColor(theme.prompt)
+    term.setCursorPos(2, 7); term.write("Active Lobbies:")
     local count = 0
-    for id, lob in pairs(arcadeLobbies) do
-        count = count + 1
-        term.setTextColor(theme.text)
-        term.setCursorPos(2, 3 + count); term.write(string.format("- %s (%s) @ ID:%d", lob.user, lob.game, id))
-        if count > 5 then break end
-    end
-    if count == 0 then
-        term.setTextColor(colors.gray); term.setCursorPos(4, 4); term.write("None")
+    local lobbyList = {}
+    for id, lob in pairs(arcadeLobbies) do table.insert(lobbyList, {id=id, lob=lob}) end
+    
+    if #lobbyList == 0 then
+        term.setTextColor(colors.gray); term.setCursorPos(4, 8); term.write("None")
+    else
+        for i, entry in ipairs(lobbyList) do
+            if i > 5 then break end
+            term.setTextColor(theme.text)
+            term.setCursorPos(4, 7 + i); term.write(string.format("- %s @ %s", entry.lob.user, entry.lob.game))
+        end
     end
 
-    -- Logs
+    -- Mini Log
     term.setTextColor(theme.prompt)
-    term.setCursorPos(2, h-6); term.write("Recent Activity:")
-    term.setTextColor(theme.text)
-    for i = 1, 5 do
-        local log = logHistory[#logHistory - 5 + i]
+    term.setCursorPos(2, h-6); term.write("Recent Logs:")
+    for i = 1, 4 do
+        local log = logHistory[#logHistory - 4 + i]
         if log then
             term.setCursorPos(2, h-5 + i)
+            term.setTextColor(log:find("ERROR") and theme.error or theme.text)
             term.write(log:sub(1, w - 4))
         end
     end
+end
+
+local function drawLogs()
+    drawWindow("ARCADE LOGS")
+    local w, h = term.getSize()
+    local logLines = h - 2
+    for i = 1, logLines do
+        local log = logHistory[#logHistory - logLines + i]
+        if log then
+            term.setCursorPos(2, i + 1)
+            term.setTextColor(log:find("ERROR") and theme.error or theme.text)
+            term.write(log:sub(1, w - 2))
+        end
+    end
+end
+
+local function redrawUI()
+    if not needsRedraw then return end
+    if currentScreen == "dashboard" then
+        drawDashboard()
+    elseif currentScreen == "logs" then
+        drawLogs()
+    end
+    needsRedraw = false
 end
 
 --==============================================================================
@@ -124,7 +189,7 @@ function gameHandlers.get_leaderboard(senderId, message)
 end
 
 function gameHandlers.host_game(senderId, message)
-    arcadeLobbies[senderId] = { user = message.user, game = message.game, time = os.time() }
+    arcadeLobbies[senderId] = { user = message.user, game = message.game, startTime = os.clock() }
     logActivity(string.format("Lobby: %s hosting %s", message.user, message.game))
 end
 
@@ -136,6 +201,21 @@ function gameHandlers.close_lobby(senderId, message)
     if arcadeLobbies[senderId] then
         logActivity(string.format("Closed: %s's lobby", arcadeLobbies[senderId].user))
         arcadeLobbies[senderId] = nil
+    end
+end
+
+local function cleanupLobbies()
+    local now = os.clock()
+    local removed = 0
+    for id, lob in pairs(arcadeLobbies) do
+        if not lob.startTime then lob.startTime = now end
+        if now - lob.startTime > 600 then -- 10 minutes session
+            arcadeLobbies[id] = nil
+            removed = removed + 1
+        end
+    end
+    if removed > 0 then
+        logActivity(string.format("Cleaned up %d staled lobbies.", removed))
     end
 end
 
@@ -197,28 +277,39 @@ local function syncGames()
         "Drunken_Sweeper.lua", "Drunken_Sokoban.lua"
     }
     
-    fs.makeDir("games")
+    if not fs.exists("games") then fs.makeDir("games") end
     local updated = 0
+    local failed = 0
+    
     for _, filename in ipairs(coreGames) do
         local url = GITHUB_GAMES_URL .. filename
-        local response = http.get(url)
-        if response then
+        logActivity("Requesting: " .. filename)
+        local ok, response = pcall(http.get, url)
+        
+        if ok and response then
             local code = response.readAll()
             response.close()
-            local f = fs.open("games/" .. filename, "w")
-            if f then
-                f.write(code)
-                f.close()
-                updated = updated + 1
-                logActivity("Synced: " .. filename)
+            if code and #code > 0 then
+                local f = fs.open("games/" .. filename, "w")
+                if f then
+                    f.write(code)
+                    f.close()
+                    updated = updated + 1
+                    logActivity("Synced: " .. filename)
+                else
+                    failed = failed + 1
+                    logActivity("Failed to write: " .. filename, true)
+                end
             else
-                 logActivity("Failed to write: " .. filename, true)
+                failed = failed + 1
+                logActivity("Empty response: " .. filename, true)
             end
         else
+            failed = failed + 1
             logActivity("Failed to sync: " .. filename .. " (HTTP Error)", true)
         end
     end
-    logActivity("Sync complete. Updated " .. updated .. " games.")
+    logActivity(string.format("Sync complete. %d updated, %d failed.", updated, failed))
 end
 
 local function handleCommand(cmd)
@@ -268,27 +359,40 @@ local function main()
             end,
             function()
                 local w, h = term.getSize()
-                term.setCursorPos(2, h)
-                term.setTextColor(theme.prompt)
-                term.write("> ")
-                term.setTextColor(theme.text)
-                
-                -- Wait for a character or key to trigger synchronous 'read'
-                local event = {os.pullEvent()}
-                if event[1] == "char" or event[1] == "key" then
-                    -- If a key was pressed, let's do a full read
-                    term.setCursorBlink(true)
-                    local cmd = read()
-                    term.setCursorBlink(false)
-                    if cmd and cmd ~= "" then
-                        handleCommand(cmd)
+                -- Only show prompt area if on dashboard?
+                -- For now, let's just listen for keys for screen switching
+                local event, p1 = os.pullEvent()
+                if event == "key" then
+                    if p1 == keys.d then
+                        currentScreen = "dashboard"
+                        needsRedraw = true
+                    elseif p1 == keys.l then
+                        currentScreen = "logs"
+                        needsRedraw = true
+                    elseif p1 == keys.enter then
+                        -- Enter command mode
+                        term.setCursorPos(2, h)
+                        term.setBackgroundColor(theme.statusBarBg)
+                        term.setTextColor(theme.statusBarText)
+                        term.write(string.rep(" ", w))
+                        term.setCursorPos(2, h)
+                        term.write("CMD: ")
+                        term.setCursorBlink(true)
+                        local cmd = read()
+                        term.setCursorBlink(false)
+                        if cmd and cmd ~= "" then
+                            handleCommand(cmd)
+                        end
+                        needsRedraw = true
+                    elseif p1 == keys.escape then
+                        error("Server shutdown")
                     end
                 end
             end,
             function()
-                -- Lobby Cleanup (Auto-expire after 5 mins)
-                -- ...
-                sleep(10)
+                -- Lobby Cleanup (Auto-expire after 10 mins)
+                cleanupLobbies()
+                sleep(60)
             end
         )
     end
