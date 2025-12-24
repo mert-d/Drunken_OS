@@ -8,7 +8,7 @@
     prevent interference during high-load reporting.
 ]]
 
-local PROXY_VERSION = "1.4-MF"
+local PROXY_VERSION = "1.5-MF"
 
 --==============================================================================
 -- Networking Configuration

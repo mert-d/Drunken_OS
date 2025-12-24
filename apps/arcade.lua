@@ -1,5 +1,4 @@
---[[
-    Drunken OS - Arcade Applet
+    Drunken OS - Arcade Applet (v1.1)
     Modularized from drunken_os_apps.lua
 ]]
 

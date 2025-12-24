@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Network Proxy Server (v1.3 - Protocol Isolation)
+    Drunken OS - Network Proxy Server (v1.4 - Protocol Isolation)
     by Antigravity
 
     Purpose:
@@ -14,7 +14,7 @@
 -- Configuration & State
 --==============================================================================
 
-local PROXY_VERSION = 1.1
+local PROXY_VERSION = 1.4
 local wireless_modem, wired_modem = nil, nil
 local logs = {}
 

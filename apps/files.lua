@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - File Manager Applet
+    Drunken OS - File Manager Applet (v1.2)
     Modularized from drunken_os_apps.lua
 ]]
 
