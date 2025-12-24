@@ -61,8 +61,12 @@ function arcade.run(context)
                             file.close()
                             context.clear()
                             
-                            local run_shell = context.shell or shell
-                            run_shell.run(gameFile, getParent(context).username)
+                            local run_shell = context.shell or _G.shell
+                            if run_shell and run_shell.run then
+                                run_shell.run(gameFile, getParent(context).username)
+                            else
+                                context.showMessage("Error", "Shell API (run) is not available.")
+                            end
                         else
                             context.showMessage("Error", "Could not save game file.")
                         end
@@ -72,7 +76,12 @@ function arcade.run(context)
                 else
                     context.clear()
                     local run_shell = context.shell or _G.shell
-                    local ok = run_shell and run_shell.run(gameFile, getParent(context).username)
+                    local ok = false
+                    if run_shell and run_shell.run then
+                        ok = run_shell.run(gameFile, getParent(context).username)
+                    else
+                        context.showMessage("Error", "Shell API (run) is not available.")
+                    end
                     if not ok then
                         print("\nGame exited with error.")
                         print("Press any key to return.")

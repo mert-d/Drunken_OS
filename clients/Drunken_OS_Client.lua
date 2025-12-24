@@ -69,6 +69,8 @@ local state = {
     location = nil        -- Latest GPS coordinates {x, y, z}
 }
 
+local context = {} -- Shared context for modular apps
+
 -- Universal word-wrap
 local function wordWrap(text, maxWidth)
     local lines = {}
@@ -425,7 +427,12 @@ local function runAdminConsole(context)
     end
     
     context.clear()
-    shell.run(consolePath, state.username, state.adminServerId)
+    local run_shell = context.shell or shell
+    if run_shell and run_shell.run then
+        run_shell.run(consolePath, state.username, state.adminServerId)
+    else
+        context.showMessage("Error", "Shell API unavailable.")
+    end
 end
 
 local function mainMenu()
@@ -560,21 +567,19 @@ local function main()
             state.crypto = crypto
             state.apps = apps
 
-            -- Define the context for modular apps
-            local context = {
-                parent = state,
-                programDir = programDir,
-                theme = theme,
-                shell = shell, -- Inject shell for applets
-                clear = clear,
-                drawWindow = drawWindow,
-                drawMenu = drawMenu,
-                printCentered = printCentered,
-                showMessage = showMessage,
-                readInput = readInput,
-                getSafeSize = getSafeSize,
-                wordWrap = wordWrap
-            }
+            -- Populate the shared context
+            context.parent = state
+            context.programDir = programDir
+            context.theme = theme
+            context.shell = shell
+            context.clear = clear
+            context.drawWindow = drawWindow
+            context.drawMenu = drawMenu
+            context.printCentered = printCentered
+            context.showMessage = showMessage
+            context.readInput = readInput
+            context.getSafeSize = getSafeSize
+            context.wordWrap = wordWrap
 
             state.username = nil
             state.isAdmin = false

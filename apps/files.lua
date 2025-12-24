@@ -139,7 +139,14 @@ function files.run(context)
                 else
                     local action = files.fileActionModal(context, f, storageMode == "Cloud")
                     if action == "🚀 Run" then
-                        context.clear(); shell.run(fs.combine(currentPath, f.name)); context.showMessage("Exited", "Finished.")
+                        context.clear()
+                        local run_shell = context.shell or _G.shell
+                        if run_shell and run_shell.run then
+                            run_shell.run(fs.combine(currentPath, f.name))
+                        else
+                            context.showMessage("Error", "Shell API unavailable.")
+                        end
+                        context.showMessage("Exited", "Finished.")
                     elseif action == "☁️ Sync to Cloud" then
                         local file = fs.open(fs.combine(currentPath, f.name), "r")
                         local content = file.readAll(); file.close()
