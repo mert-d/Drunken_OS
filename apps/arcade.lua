@@ -1,9 +1,9 @@
-    Drunken OS - Arcade Applet (v1.1)
+--[[
     Modularized from drunken_os_apps.lua
 ]]
 
 local arcade = {}
-local appVersion = 1.2
+local appVersion = 1.3
 
 local function getParent(context)
     return context.parent
