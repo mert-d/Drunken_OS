@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Master Installer (v1.5 - UI Overhaul)
+    Drunken OS - Master Installer (v1.6 - UI Overhaul)
     by MuhendizBey
 
     Purpose:
@@ -128,9 +128,36 @@ end
 
 local function printCentered(startY, text)
     local w, h = term.getSize()
-    local x = math.floor((w - #text) / 2) + 1
-    term.setCursorPos(x, startY)
-    term.write(text)
+    local maxWidth = w - 6 -- Padding for the side borders
+    
+    if #text > maxWidth then
+        local words = {}
+        for word in text:gmatch("%S+") do table.insert(words, word) end
+        
+        local lines = {}
+        local currentLine = ""
+        for _, word in ipairs(words) do
+            if #currentLine + #word + 1 <= maxWidth then
+                currentLine = currentLine == "" and word or (currentLine .. " " .. word)
+            else
+                table.insert(lines, currentLine)
+                currentLine = word
+            end
+        end
+        table.insert(lines, currentLine)
+        
+        -- Center the lines vertically around startY if there are many?
+        -- For now, just print downwards from startY.
+        for i, line in ipairs(lines) do
+            local x = math.floor((w - #line) / 2) + 1
+            term.setCursorPos(x, startY + i - 1)
+            term.write(line)
+        end
+    else
+        local x = math.floor((w - #text) / 2) + 1
+        term.setCursorPos(x, startY)
+        term.write(text)
+    end
 end
 
 local function showMessage(title, message, isError)
@@ -165,20 +192,22 @@ local function drawMenu(title, options)
         -- Handle scrolling
         if selected < scroll then scroll = selected
         elseif selected >= scroll + listHeight then scroll = selected - listHeight + 1 end
-
         for i = scroll, math.min(scroll + listHeight - 1, #options) do
             local opt = options[i]
             local y = 4 + (i - scroll)
             term.setCursorPos(4, y)
+
+            local name = opt.name
+            if #name > w - 10 then name = name:sub(1, w - 13) .. "..." end
             
             if i == selected then
                 term.setBackgroundColor(theme.highlightBg)
                 term.setTextColor(theme.highlightText)
-                term.write(" > " .. opt.name .. string.rep(" ", w - 10 - #opt.name) .. " ")
+                term.write(" > " .. name .. string.rep(" ", w - 10 - #name) .. " ")
             else
                 term.setBackgroundColor(theme.bg)
                 term.setTextColor(theme.text)
-                term.write("   " .. opt.name)
+                term.write("   " .. name)
             end
         end
 

@@ -54,7 +54,8 @@ function system.updateGames(context)
             if file then
                 local content = file.readAll()
                 file.close()
-                local v = content:match("%-%-%s*Version:%s*([%d%.]+)") or content:match("local%s+currentVersion%s*=%s*([%d%.]+)")
+                local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") 
+                       or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
                 return tonumber(v) or 0
             end
         end
@@ -66,12 +67,13 @@ function system.updateGames(context)
         local localVer = getLocalVersion(filename)
         if serverVer > localVer then
             updatesFound = true
+            local cleanFilename = filename:gsub("^games/", "")
             context.drawWindow("Updating Arcade")
-            term.setCursorPos(2, 4); term.write("Updating " .. filename .. "...")
+            term.setCursorPos(2, 4); term.write("Updating " .. cleanFilename .. "...")
             rednet.send(arcadeServer, {type = "get_game_update", filename = filename}, "ArcadeGames")
             local _, update = rednet.receive("ArcadeGames", 5)
             if update and update.code then
-                local path = fs.combine(gamesDir, filename)
+                local path = fs.combine(gamesDir, cleanFilename)
                 local file = fs.open(path, "w")
                 if file then file.write(update.code); file.close() end
             end
