@@ -1033,7 +1033,7 @@ function adminCommands.sync(a)
             local f = fs.open(path, "r")
             code = f.readAll()
             f.close()
-            v = code:match("local%s+currentVersion%s*=%s*([%d%.]+)")
+            v = code:match("[%w%.]+Version%s*=%s*([%d%.]+)")
         else
             logActivity("Local file needed? No. Check GitHub...")
             local url = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/clients/Drunken_OS_Client.lua"
@@ -1041,7 +1041,7 @@ function adminCommands.sync(a)
             if response then
                 code = response.readAll()
                 response.close()
-                v = code:match("local%s+currentVersion%s*=%s*([%d%.]+)")
+                v = code:match("[%w%.]+Version%s*=%s*([%d%.]+)")
                 logActivity("Fetched from GitHub.")
             else
                 logActivity("Error: Could not fetch from GitHub.", true)
@@ -1072,7 +1072,10 @@ function adminCommands.sync(a)
                 programCode[name] = code
                 
                 -- Attempt to extract version
-                local v = code:match("[%w%.]*_VERSION%s*=%s*([%d%.]+)")
+                local v = code:match("[%w%.]+Version%s*=%s*([%d%.]+)")
+                if not v then
+                    v = code:match("[%w%.]*_VERSION%s*=%s*([%d%.]+)")
+                end
                 if not v then
                     v = code:match("%(v([%d%.]+)%)") -- Matches (v1.0)
                 end
@@ -1161,7 +1164,7 @@ function adminCommands.syncgames(a)
         if code then
             v = code:match("%-%-%s*Version:%s*([%d%.]+)")
             if not v then
-                v = code:match("local%s+currentVersion%s*=%s*([%d%.]+)")
+                v = code:match("[%w%.]+Version%s*=%s*([%d%.]+)")
             end
 
             if v then
