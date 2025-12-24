@@ -23,7 +23,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 14.2
+local currentVersion = 14.3
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -289,10 +289,20 @@ local function installDependencies()
     if not fs.exists(fs.combine(programDir, "apps")) then fs.makeDir(fs.combine(programDir, "apps")) end
     for _, appName in ipairs(REQUIRED_APPS) do
         local appPath = fs.combine(programDir, "apps/" .. appName .. ".lua")
-        -- We don't have version tracking for apps yet, so we'll just ensure they exist or use updater.check if we add them to DB
-        -- For now, let's just use the same check but targeting the apps folder
-        if updater.check("app." .. appName, 0, appPath) then
-            -- Note: We prefix app names with 'app.' in the server DB to avoid collisions
+        local currentAppVer = 0
+        
+        if fs.exists(appPath) then
+            local f = fs.open(appPath, "r")
+            if f then
+                local content = f.readAll(); f.close()
+                local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") 
+                       or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+                currentAppVer = tonumber(v) or 0
+            end
+        end
+
+        if updater.check("app." .. appName, currentAppVer, appPath) then
+            needsReboot = true
         end
     end
     

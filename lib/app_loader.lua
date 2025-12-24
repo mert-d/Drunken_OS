@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - App Loader (v1.1)
+    Drunken OS - App Loader (v1.2)
     Purpose: Dynamically loads and runs applets from the /apps directory.
 ]]
 
@@ -26,13 +26,13 @@ function loader.run(appName, context, entryPoint)
         return false
     end
 
-    local success, appOrError = pcall(loadfile, path)
-    if not success then
-        context.showMessage("Load Error", tostring(appOrError))
+    local appFunc, loadErr = loadfile(path)
+    if not appFunc then
+        context.showMessage("Load Error", tostring(loadErr))
         return false
     end
 
-    local ok, instance = pcall(appOrError)
+    local ok, instance = pcall(appFunc)
     if not ok then
         context.showMessage("Init Error", tostring(instance))
         return false

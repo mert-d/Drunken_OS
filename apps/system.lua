@@ -4,7 +4,7 @@
 ]]
 
 local system = {}
-local appVersion = 1.3
+local appVersion = 1.4
 
 local function getParent(context)
     return context.parent
