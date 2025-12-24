@@ -641,8 +641,18 @@ local function runSession()
     turtleClerkId = data.turtleClerkId
     
     -- The ATM no longer looks up the turtle, it knows its private ID.
-    bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
-    if not bankServerId then error("Could not find bank server.", 0) end
+    -- Robust Bank Server Lookup
+    printCenteredWrapped(12, "Locating Bank Server...")
+    bankServerId = nil
+    for i = 1, 3 do
+        bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
+        if bankServerId then break end
+        sleep(1)
+    end
+
+    if not bankServerId then 
+        error("Bank Server (bank.server) not found. Check modem and distance.", 0) 
+    end
     
     drawFrame("Welcome")
     -- THE FIX: Use the new word-wrapping function.
