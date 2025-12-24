@@ -37,7 +37,7 @@ function mail.readMail(context)
             term.setCursorPos(2, y); term.write("Attachment: " .. mailData.attachment.name); y = y + 2
             term.setTextColor(context.theme.prompt); term.setCursorPos(2, y); term.write("Save this file? (Y/N)")
         else
-            term.setTextColor(context.theme.prompt); term.setCursorPos(2, h - 2); term.write("Press Q/TAB to return...")
+            term.setTextColor(context.theme.prompt); term.setCursorPos(2, h - 2); term.write("Press TAB to return...")
         end
 
         local event, key = os.pullEvent("key")
@@ -45,7 +45,7 @@ function mail.readMail(context)
             scroll = math.max(1, scroll - 1)
         elseif key == keys.down then
             scroll = math.min(math.max(1, #bodyLines - bodyDisplayHeight + 1), scroll + 1)
-        elseif key == keys.tab or key == keys.q then
+        elseif key == keys.tab then
             break
         elseif mailData.attachment and key == keys.y then
             local saveName = mailData.attachment.name
@@ -114,7 +114,7 @@ function mail.viewInbox(context)
         
         term.setBackgroundColor(context.theme.windowBg)
         term.setTextColor(context.theme.prompt)
-        local helpText = "ENTER: Read | D: Delete | Q: Back"
+        local helpText = "ENTER: Read | D: Delete | TAB: Back"
         term.setCursorPos(w - #helpText, h - 2)
         term.write(helpText)
         
@@ -133,7 +133,7 @@ function mail.viewInbox(context)
             table.remove(inbox, selected)
             if #inbox == 0 then break end
             selected = math.max(1, math.min(selected, #inbox))
-        elseif key == keys.tab or key == keys.q then
+        elseif key == keys.tab then
             break
         end
     end
@@ -256,7 +256,7 @@ function mail.manageLists(context)
             elseif selected == 4 then
                 break
             end
-        elseif key == keys.tab or key == keys.q then
+        elseif key == keys.tab then
             break
         end
     end
@@ -276,7 +276,7 @@ function mail.run(context)
             elseif selected == 2 then mail.sendMail(context)
             elseif selected == 3 then mail.manageLists(context)
             elseif selected == 4 then break end
-        elseif key == keys.tab or key == keys.q then break end
+        elseif key == keys.tab then break end
     end
 end
 

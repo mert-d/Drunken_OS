@@ -12,8 +12,14 @@ end
 function arcade.run(context)
     context.drawWindow("Arcade")
     term.setCursorPos(2, 4); term.write("Fetching game list...")
-    rednet.send(getParent(context).mailServerId, { type = "get_gamelist" }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 10)
+    local arcadeServer = rednet.lookup("ArcadeGames", "arcade.server")
+    if not arcadeServer then
+        context.showMessage("Error", "Arcade Server not found.")
+        return
+    end
+
+    rednet.send(arcadeServer, { type = "get_gamelist" }, "ArcadeGames")
+    local _, response = rednet.receive("ArcadeGames", 10)
 
     if not response or not response.games then
         context.showMessage("Error", (response and "Could not get game list from server.") or "Connection timeout.")
@@ -45,8 +51,8 @@ function arcade.run(context)
                 if not fs.exists(gameFile) then
                     term.setCursorPos(2, h-1)
                     term.write("Downloading " .. game.name .. "...")
-                    rednet.send(getParent(context).mailServerId, {type = "get_game_update", filename = game.file}, "SimpleMail")
-                    local _, update = rednet.receive("SimpleMail", 5)
+                    rednet.send(arcadeServer, {type = "get_game_update", filename = game.file}, "ArcadeGames")
+                    local _, update = rednet.receive("ArcadeGames", 10)
                     
                     if update and update.code then
                         local file = fs.open(gameFile, "w")
@@ -54,7 +60,9 @@ function arcade.run(context)
                             file.write(update.code)
                             file.close()
                             context.clear()
-                            shell.run(gameFile, getParent(context).username)
+                            
+                            local run_shell = context.shell or shell
+                            run_shell.run(gameFile, getParent(context).username)
                         else
                             context.showMessage("Error", "Could not save game file.")
                         end
@@ -63,7 +71,8 @@ function arcade.run(context)
                     end
                 else
                     context.clear()
-                    local ok = shell.run(gameFile, getParent(context).username)
+                    local run_shell = context.shell or _G.shell
+                    local ok = run_shell and run_shell.run(gameFile, getParent(context).username)
                     if not ok then
                         print("\nGame exited with error.")
                         print("Press any key to return.")
@@ -73,7 +82,7 @@ function arcade.run(context)
             else
                 break
             end
-        elseif key == keys.tab or key == keys.q then break end
+        elseif key == keys.tab then break end
     end
 end
 

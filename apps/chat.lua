@@ -80,7 +80,7 @@ function chat.run(context)
         while true do
             local event, p1 = os.pullEvent()
             if event == "key" then
-                if p1 == keys.tab or p1 == keys.q then
+                if p1 == keys.tab then
                     break
                 elseif p1 == keys.backspace then
                     if #input > 0 then

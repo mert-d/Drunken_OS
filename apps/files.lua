@@ -62,7 +62,7 @@ function files.fileActionModal(context, file, isCloud)
         if key == keys.up then selected = (selected == 1) and #options or selected - 1
         elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
         elseif key == keys.enter then break
-        elseif key == keys.q or key == keys.tab then return nil end
+        elseif key == keys.tab then break end
     end
 
     local choice = options[selected]
@@ -176,7 +176,7 @@ function files.run(context)
                     end
                 end
             end
-        elseif key == keys.q or key == keys.tab then break end
+        elseif key == keys.tab then break end
     end
 end
 

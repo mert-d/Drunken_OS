@@ -446,10 +446,8 @@ local function mainMenu()
             "Pocket Bank",
             payLabel,
             "File Manager",
-            "Read Mail" .. (state.unreadCount > 0 and " (" .. state.unreadCount .. " unread)" or ""),
-            "Send Mail", 
+            "Mail" .. (state.unreadCount > 0 and " (" .. state.unreadCount .. " unread)" or ""),
             "General Chat", 
-            "Mailing Lists", 
             "Games", 
             "System", 
             "Logout"
@@ -490,8 +488,7 @@ local function mainMenu()
         if selection == "Pocket Bank" then state.appLoader.run("bank", context)
         elseif selection == "Pay Merchant" then state.appLoader.run("bank", context, "pay")
         elseif selection == "File Manager" then state.appLoader.run("files", context)
-        elseif selection:match("Read Mail") or selection == "Send Mail" or selection == "Mailing Lists" then 
-            state.appLoader.run("mail", context)
+        elseif selection:match("^Mail") then state.appLoader.run("mail", context)
         elseif selection == "General Chat" then state.appLoader.run("chat", context)
         elseif selection == "Games" then state.appLoader.run("arcade", context)
         elseif selection == "System" then state.appLoader.run("system", context)
@@ -562,6 +559,22 @@ local function main()
 
             state.crypto = crypto
             state.apps = apps
+
+            -- Define the context for modular apps
+            local context = {
+                parent = state,
+                programDir = programDir,
+                theme = theme,
+                shell = shell, -- Inject shell for applets
+                clear = clear,
+                drawWindow = drawWindow,
+                drawMenu = drawMenu,
+                printCentered = printCentered,
+                showMessage = showMessage,
+                readInput = readInput,
+                getSafeSize = getSafeSize,
+                wordWrap = wordWrap
+            }
 
             state.username = nil
             state.isAdmin = false

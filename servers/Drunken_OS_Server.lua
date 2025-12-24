@@ -799,9 +799,7 @@ function mailHandlers.get_user_locations(senderId, message)
     rednet.send(senderId, { type = "user_locations_response", locations = userLocations }, "SimpleMail")
 end
 
-function mailHandlers.get_gamelist(senderId, message)
-    rednet.send(senderId, { type = "gamelist_response", games = gameList }, "SimpleMail")
-end
+
 
 function mailHandlers.is_admin_check(senderId, message)
     local senderUser = nil
@@ -835,20 +833,7 @@ function mailHandlers.get_user_data(senderId, message)
     end
 end
 
-function mailHandlers.get_all_game_versions(senderId, message)
-    local versions = {}
-    for filename, data in pairs(gameCode) do
-        versions[filename] = data.version
-    end
-    rednet.send(senderId, { type = "game_versions_response", versions = versions }, "SimpleMail")
-end
 
-function mailHandlers.get_game_update(senderId, message)
-    local filename = message.filename
-    if gameCode[filename] then
-        rednet.send(senderId, { type = "game_update_response", filename = filename, code = gameCode[filename].code }, "SimpleMail")
-    end
-end
 
 function mailHandlers.get_admin_tool(senderId, message)
     -- Security Check: Only serve to admins
@@ -1087,7 +1072,7 @@ function adminCommands.sync(a)
     end
     
     if target == "games" or target == "all" then
-       adminCommands.syncgames(a)
+       logActivity("Note: Game syncing has been migrated to the Arcade Server.", true)
     end
     
     if target == "auditor" or target == "all" then
@@ -1122,100 +1107,7 @@ function adminCommands.sync(a)
     end
 end
 
-function adminCommands.syncgames(a)
-    logActivity("Syncing games from GitHub...")
-    local baseUrl = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/games/"
-    
-    -- List of core games to always check/install
-    local coreGames = {
-        "snake.lua",
-        "tetris.lua",
-        "invaders.lua",
-        "floppa_bird.lua",
-        "Drunken_Dungeons.lua",
-        "Drunken_Duels.lua",
-        "Drunken_Pong.lua",
-        "Drunken_Sweeper.lua",
-        "Drunken_Sokoban.lua"
-    }
 
-    -- Create a set of games to check (merging core games with existing list)
-    local gamesToCheck = {}
-    for _, filename in ipairs(coreGames) do
-        gamesToCheck[filename] = true
-    end
-    for _, game in ipairs(gameList) do
-        local filename = game.file:gsub("games/", "")
-        gamesToCheck[filename] = true
-    end
-    
-    local updatedCount = 0
-    for filename, _ in pairs(gamesToCheck) do
-        local code, v = nil, nil
-        local fullPath = "games/" .. filename
-        
-        -- Strategy 1: Check Local File (Bundled)
-        if fs.exists(fullPath) then
-            logActivity("Found local copy of " .. filename .. ". Reading...")
-            local f = fs.open(fullPath, "r")
-            code = f.readAll()
-            f.close()
-        else
-            -- Strategy 2: Check GitHub (Remote)
-            local url = baseUrl .. filename
-            logActivity("Fetching " .. filename .. " from GitHub...")
-            local response = http.get(url)
-            if response then
-                code = response.readAll()
-                response.close()
-            else
-                logActivity("Failed to download " .. filename, true)
-            end
-        end
-
-        if code then
-            v = code:match("%-%-%s*Version:%s*([%d%.]+)")
-            if not v then
-                v = code:match("[%w%.]+Version%s*=%s*([%d%.]+)")
-            end
-
-            if v then
-                -- Update Code DB
-                gameCode[fullPath] = {code = code, version = tonumber(v)}
-                
-                -- Update Game List DB (if new)
-                local found = false
-                for _, g in ipairs(gameList) do
-                    if g.file == fullPath then found = true; break end
-                end
-                
-                if not found then
-                    local name = filename:gsub(".lua", "")
-                    name = name:gsub("_", " ")
-                    name = name:gsub("^%l", string.upper)
-                    table.insert(gameList, {name = name, file = fullPath})
-                    saveTableToFile(GAMELIST_DB, gameList)
-                    logActivity("Added new game: " .. name)
-                end
-                
-                updatedCount = updatedCount + 1
-                logActivity("Updated " .. filename .. " to v" .. v)
-            else
-                logActivity("No version tag in " .. filename .. " (Local: " .. tostring(fs.exists(fullPath)) .. ")", true)
-            end
-        end
-    end
-    
-    if updatedCount > 0 then
-        if saveTableToFile(GAMES_CODE_DB, gameCode) then
-            logActivity("Successfully synced " .. updatedCount .. " games.")
-        else
-            logActivity("Error saving game DB.", true)
-        end
-    else
-        logActivity("No games updated.")
-    end
-end
 
 function adminCommands.addadmin(args)
     local username = args[2]

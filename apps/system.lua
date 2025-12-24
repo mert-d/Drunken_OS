@@ -32,8 +32,14 @@ function system.updateGames(context)
     if not fs.exists(gamesDir) then fs.makeDir(gamesDir) end
 
     term.setCursorPos(2, y); term.write("Checking for updates...")
-    rednet.send(getParent(context).mailServerId, { type = "get_all_game_versions" }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 5)
+    local arcadeServer = rednet.lookup("ArcadeGames", "arcade.server")
+    if not arcadeServer then
+        context.showMessage("Error", "Arcade Server not found.")
+        return
+    end
+
+    rednet.send(arcadeServer, { type = "get_all_game_versions" }, "ArcadeGames")
+    local _, response = rednet.receive("ArcadeGames", 5)
 
     if not response or response.type ~= "game_versions_response" or not response.versions then
         context.showMessage("Error", (response and "Could not fetch updates.") or "Connection timeout.")
@@ -62,8 +68,8 @@ function system.updateGames(context)
             updatesFound = true
             context.drawWindow("Updating Arcade")
             term.setCursorPos(2, 4); term.write("Updating " .. filename .. "...")
-            rednet.send(getParent(context).mailServerId, {type = "get_game_update", filename = filename}, "SimpleMail")
-            local _, update = rednet.receive("SimpleMail", 5)
+            rednet.send(arcadeServer, {type = "get_game_update", filename = filename}, "ArcadeGames")
+            local _, update = rednet.receive("ArcadeGames", 5)
             if update and update.code then
                 local path = fs.combine(gamesDir, filename)
                 local file = fs.open(path, "w")
@@ -88,7 +94,7 @@ function system.run(context)
             if selected == 1 then system.changeNickname(context)
             elseif selected == 2 then system.updateGames(context)
             elseif selected == 3 then break end
-        elseif key == keys.tab or key == keys.q then break end
+        elseif key == keys.tab then break end
     end
 end
 

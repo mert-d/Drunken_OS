@@ -15,6 +15,7 @@ package.path = "/?.lua;" .. package.path
 
 local GAMES_DB = "games.db"
 local LOG_FILE = "arcade.log"
+local GITHUB_GAMES_URL = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/games/"
 
 --==============================================================================
 -- Utility Functions
@@ -138,6 +139,100 @@ function gameHandlers.close_lobby(senderId, message)
     end
 end
 
+-- New: Game Distribution handlers
+function gameHandlers.get_gamelist(senderId, message)
+    local gameList = {}
+    local files = fs.list("games/")
+    for _, file in ipairs(files) do
+        if not fs.isDir(fs.combine("games", file)) and file:match("%.lua$") then
+            -- Optional: read version or display name from file
+            local name = file:gsub("%.lua$", ""):gsub("_", " ")
+            name = name:gsub("^%l", string.upper)
+            table.insert(gameList, {name = name, file = "games/" .. file})
+        end
+    end
+    rednet.send(senderId, { games = gameList }, "ArcadeGames")
+end
+
+function gameHandlers.get_game_update(senderId, message)
+    local filename = message.filename
+    -- Basic security: ensure we only read from the games directory
+    if filename:find("%.%.") or not filename:find("^games/") then
+        rednet.send(senderId, { error = "Invalid path" }, "ArcadeGames")
+        return
+    end
+
+    if fs.exists(filename) then
+        local f = fs.open(filename, "r")
+        local code = f.readAll()
+        f.close()
+        rednet.send(senderId, { code = code }, "ArcadeGames")
+    else
+        rednet.send(senderId, { error = "Game not found" }, "ArcadeGames")
+    end
+end
+
+function gameHandlers.get_all_game_versions(senderId, message)
+    local versions = {}
+    local files = fs.list("games/")
+    for _, file in ipairs(files) do
+        local path = fs.combine("games", file)
+        if not fs.isDir(path) and file:match("%.lua$") then
+            local f = fs.open(path, "r")
+            if f then
+                local content = f.readAll(); f.close()
+                local v = content:match("%-%-%s*Version:%s*([%d%.]+)") or content:match("local%s+currentVersion%s*=%s*([%d%.]+)")
+                versions["games/" .. file] = tonumber(v) or 1.0
+            end
+        end
+    end
+    rednet.send(senderId, { type = "game_versions_response", versions = versions }, "ArcadeGames")
+end
+
+local function syncGames()
+    logActivity("Syncing games from GitHub...")
+    local coreGames = {
+        "snake.lua", "tetris.lua", "invaders.lua", "floppa_bird.lua",
+        "Drunken_Dungeons.lua", "Drunken_Duels.lua", "Drunken_Pong.lua",
+        "Drunken_Sweeper.lua", "Drunken_Sokoban.lua"
+    }
+    
+    fs.makeDir("games")
+    local updated = 0
+    for _, filename in ipairs(coreGames) do
+        local url = GITHUB_GAMES_URL .. filename
+        local response = http.get(url)
+        if response then
+            local code = response.readAll()
+            response.close()
+            local f = fs.open("games/" .. filename, "w")
+            if f then
+                f.write(code)
+                f.close()
+                updated = updated + 1
+                logActivity("Synced: " .. filename)
+            else
+                 logActivity("Failed to write: " .. filename, true)
+            end
+        else
+            logActivity("Failed to sync: " .. filename .. " (HTTP Error)", true)
+        end
+    end
+    logActivity("Sync complete. Updated " .. updated .. " games.")
+end
+
+local function handleCommand(cmd)
+    if cmd == "sync" then
+        syncGames()
+    elseif cmd == "clear" or cmd == "cls" then
+        logHistory = {}
+    elseif cmd == "help" then
+        logActivity("Commands: sync, clear, help, exit")
+    elseif cmd == "exit" then
+        error("Server shutdown")
+    end
+end
+
 --==============================================================================
 -- Main Loops
 --==============================================================================
@@ -160,19 +255,42 @@ local function main()
     
     while true do
         redrawUI()
-        local id, msg, proto = rednet.receive(nil, 1)
-        if id and (proto == "ArcadeGames_Internal" or proto == "ArcadeGames") and msg and msg.type then
-            if gameHandlers[msg.type] then
-                gameHandlers[msg.type](id, msg)
-            end
-        end
         
-        -- Lobby Cleanup (Auto-expire after 5 mins)
-        local now = os.time()
-        for lid, l in pairs(arcadeLobbies) do
-            -- os.time() is in game-hours 0-24, difficult to use for real-time timeout without os.epoch
-            -- For simplicity, let's just keep them until explicitly closed or computer restarts.
-        end
+        -- Use parallel to handle both rednet and console input
+        parallel.waitForAny(
+            function()
+                local id, msg, proto = rednet.receive(nil, 1)
+                if id and (proto == "ArcadeGames_Internal" or proto == "ArcadeGames") and msg and msg.type then
+                    if gameHandlers[msg.type] then
+                        gameHandlers[msg.type](id, msg)
+                    end
+                end
+            end,
+            function()
+                local w, h = term.getSize()
+                term.setCursorPos(2, h)
+                term.setTextColor(theme.prompt)
+                term.write("> ")
+                term.setTextColor(theme.text)
+                
+                -- Wait for a character or key to trigger synchronous 'read'
+                local event = {os.pullEvent()}
+                if event[1] == "char" or event[1] == "key" then
+                    -- If a key was pressed, let's do a full read
+                    term.setCursorBlink(true)
+                    local cmd = read()
+                    term.setCursorBlink(false)
+                    if cmd and cmd ~= "" then
+                        handleCommand(cmd)
+                    end
+                end
+            end,
+            function()
+                -- Lobby Cleanup (Auto-expire after 5 mins)
+                -- ...
+                sleep(10)
+            end
+        )
     end
 end
 

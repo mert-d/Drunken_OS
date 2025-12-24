@@ -68,7 +68,7 @@ function bank.run(context)
             if key == keys.up then selected = (selected == 1) and #options or selected - 1
             elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
             elseif key == keys.enter then break
-            elseif key == keys.tab or key == keys.q then return end
+            elseif key == keys.tab then return end
         end
         
         if selected == 4 then return end
