@@ -7,7 +7,7 @@
     Push all crates onto the target spots to win!
 ]]
 
-local gameVersion = 1.0
+local gameVersion = 1.1
 
 local function mainGame(...)
     local args = {...}
@@ -64,6 +64,7 @@ local function mainGame(...)
     local board = {}
     local player = { x = 1, y = 1 }
     local moveCount = 0
+    local w, h = term.getSize()
 
     local function getSafeSize()
         local w, h = term.getSize()
@@ -194,13 +195,14 @@ local function mainGame(...)
         elseif key == keys.q then return end
 
         if checkWin() then
+            local w, h = getSafeSize()
             drawBoard()
             term.setCursorPos(1, h-1); print("Level Clear!")
             sleep(1)
             currentLevel = currentLevel + 1
             if currentLevel > #levels then
                 print("Game Complete!")
-                score = moveCount -- In Sokoban lower is better, but arcade server usually expects higher. 
+                local score = moveCount -- In Sokoban lower is better
                 -- We'll submit a inverted score or just the count.
                 arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
                 if arcadeServerId then

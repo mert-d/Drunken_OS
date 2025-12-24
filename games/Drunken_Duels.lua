@@ -7,7 +7,7 @@
     Challenge a friend over Rednet and battle for dominance!
 ]]
 
-local gameVersion = 1.1
+local gameVersion = 1.2
 
 local function mainGame(...)
     local args = {...}
@@ -75,12 +75,13 @@ local function mainGame(...)
         term.setBackgroundColor(theme.bg)
         term.setTextColor(theme.text)
         
-        msg = msg or (isHost and "Waiting for a Challenger..." or "Searching for a Match...")
+        msg = msg or (isHost and "Waiting for player..." or "Searching for match...")
+        if #msg > w - 4 then msg = msg:sub(1, w - 7) .. "..." end
         term.setCursorPos(math.floor(w/2 - #msg/2), math.floor(h/2))
         term.write(msg)
         
         term.setCursorPos(math.floor(w/2 - 10), h)
-        term.setBackgroundColor(theme.border); term.write(" Q: Quit Lobby ")
+        term.setBackgroundColor(theme.border); term.write(" TAB: Back ")
     end
 
     local function drawStats()
@@ -120,7 +121,7 @@ local function mainGame(...)
         if turn == 1 then
             term.setCursorPos(2, h)
             term.setBackgroundColor(theme.border)
-            term.write(" [1] Atk (2e) | [2] Def (1e) | [3] Heal (5e) | [4] Rest (+3e) | [Q] Quit ")
+            term.write(" [1]Atk [2]Def [3]Heal [4]Rest [TAB]Back ")
         elseif turn == 2 then
             term.setCursorPos(math.floor(w/2 - 10), h)
             term.setBackgroundColor(theme.border)
@@ -153,9 +154,9 @@ local function findMatch()
     local event, key
     repeat
         event, key = os.pullEvent("key")
-    until key == keys.one or key == keys.two or key == keys.q
+    until key == keys.one or key == keys.two or key == keys.q or key == keys.tab
 
-    if key == keys.q then return false end
+    if key == keys.q or key == keys.tab then return false end
 
     if key == keys.one then
         -- HOSTING
@@ -172,7 +173,7 @@ local function findMatch()
                 return true
             end
             local tevt, tk = os.pullEventRaw()
-            if tevt == "key" and tk == keys.q then 
+            if tevt == "key" and (tk == keys.q or tk == keys.tab) then 
                 rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
                 return false 
             end
@@ -232,7 +233,7 @@ end
             elseif key == keys.two then move = "defend"
             elseif key == keys.three then move = "heal"
             elseif key == keys.four then move = "rest"
-            elseif key == keys.q then move = "forfeit" end
+            elseif key == keys.q or key == keys.tab then move = "forfeit" end
             
             if move then
                 local cost = {attack=2, defend=1, heal=5, rest=0, forfeit=0}

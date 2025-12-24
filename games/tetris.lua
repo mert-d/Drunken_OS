@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 7.0
+local currentVersion = 7.1
 -- ... rest of the tetris game code
 
 --==============================================================================
@@ -334,7 +334,7 @@ end
                 currentPiece.y = currentPiece.y - 1
                 lockPiece()
                 newPiece()
-            elseif p1 == keys.q then
+            elseif p1 == keys.q or p1 == keys.tab then
                 gameOver = true
             end
         elseif event == "timer" and p1 == dropTimer then

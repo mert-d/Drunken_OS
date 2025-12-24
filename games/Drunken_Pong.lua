@@ -7,7 +7,7 @@
     Battle a friend over Rednet in a classic game of Pong!
 ]]
 
-local gameVersion = 1.1
+local gameVersion = 1.2
 
 local function mainGame(...)
     local args = {...}
@@ -75,7 +75,7 @@ local function mainGame(...)
         term.setCursorPos(math.floor(w/2 - #msg/2), math.floor(h/2))
         term.write(msg)
         term.setCursorPos(math.floor(w/2 - 10), h)
-        term.setBackgroundColor(theme.border); term.write(" Q: Quit Lobby ")
+        term.setBackgroundColor(theme.border); term.write(" TAB: Back ")
     end
 
     local function drawGame()
@@ -129,9 +129,9 @@ local function mainGame(...)
         local event, key
         repeat
             event, key = os.pullEvent("key")
-        until key == keys.one or key == keys.two or key == keys.q
+        until key == keys.one or key == keys.two or key == keys.q or key == keys.tab
 
-        if key == keys.q then return false end
+        if key == keys.q or key == keys.tab then return false end
 
         if key == keys.one then
             -- HOSTING
@@ -148,7 +148,7 @@ local function mainGame(...)
                     return true
                 end
                 local tevt, tk = os.pullEventRaw()
-                if tevt == "key" and tk == keys.q then 
+                if tevt == "key" and (tk == keys.q or tk == keys.tab) then 
                     rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
                     return false 
                 end
@@ -207,7 +207,7 @@ local function mainGame(...)
                 if event == "key" then
                     if (key == keys.w or key == keys.up) and myY > 2 then myY = myY - 1
                     elseif (key == keys.s or key == keys.down) and myY < h - PADDLE_HEIGHT then myY = myY + 1
-                    elseif key == keys.q then matchActive = false end
+                    elseif key == keys.q or key == keys.tab then matchActive = false end
                     
                     -- Immediate Sync on move
                     rednet.send(opponentId, {type="move", y=myY}, "DrunkenPong_Game")

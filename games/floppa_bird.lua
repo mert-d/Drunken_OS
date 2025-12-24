@@ -6,7 +6,7 @@
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 7.0
+local currentVersion = 7.1
 -- ... rest of the floppa bird game code
 --==============================================================================
 -- Main Game Function (to be run inside pcall)
@@ -197,7 +197,11 @@ local function mainGame(...)
         local event, p1 = os.pullEvent()
 
         if event == "key" then
-            player.dy = flapStrength
+            if p1 == keys.q or p1 == keys.tab then
+                gameOver = true
+            else
+                player.dy = flapStrength
+            end
         elseif event == "timer" and p1 == gameTimer then
             updatePlayer()
             updatePipes()

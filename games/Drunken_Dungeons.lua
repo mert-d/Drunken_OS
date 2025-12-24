@@ -7,7 +7,7 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 1.4
+local gameVersion = 1.5
 local saveFile = ".dungeon_save"
 
 ---
@@ -43,6 +43,12 @@ local function mainGame(...)
     local opponentId = nil
     local isMultiplayer = false
     local sharedSeed = os.time()
+
+    local function getSafeSize()
+        local w, h = term.getSize()
+        while not w or not h do sleep(0.05); w, h = term.getSize() end
+        return w, h
+    end
 
     local w, h = getSafeSize()
     local MAP_W = math.min(w - 6, 40)
@@ -88,12 +94,6 @@ local function mainGame(...)
     player.maxHp = player.maxHp + (persist.upgrades.hp * 5)
     player.hp = player.maxHp
     player.dmg = player.dmg + persist.upgrades.dmg
-
-    local function getSafeSize()
-        local w, h = term.getSize()
-        while not w or not h do sleep(0.05); w, h = term.getSize() end
-        return w, h
-    end
 
     local function addLog(msg)
         table.insert(logs, msg)
@@ -217,7 +217,7 @@ end
         end
         
         term.setCursorPos(math.floor(w/2 - 10), h)
-        term.setBackgroundColor(theme.border); term.write(" WASD to Move | Q: Quit ")
+        term.setBackgroundColor(theme.border); term.write(" WASD to Move | TAB: Back ")
     end
 
 ---
@@ -310,7 +310,7 @@ end
         print("\n[1] Start Game")
         print("[2] Upgrades Shop")
         print("[3] Multiplayer Co-op")
-        print("[Q] Quit")
+        print("[TAB] Back")
     end
 
     local function upgradeShop()
@@ -322,7 +322,7 @@ end
             print("\n[1] Vitality (HP) - Lvl " .. persist.upgrades.hp .. " ($100)")
             print("[2] Sharpness (DMG) - Lvl " .. persist.upgrades.dmg .. " ($250)")
             print("[3] Luck (Crit/Loot) - Lvl " .. persist.upgrades.luck .. " ($150)")
-            print("[Q] Back")
+            print("[TAB] Back")
             
             local _, k = os.pullEvent("key")
             if k == keys.one and persist.gold >= 100 then
@@ -334,7 +334,7 @@ end
             elseif k == keys.three and persist.gold >= 150 then
                 persist.gold = persist.gold - 150
                 persist.upgrades.luck = persist.upgrades.luck + 1
-            elseif k == keys.q then return end
+            elseif k == keys.q or k == keys.tab then return end
             saveGame(persist)
         end
     end
@@ -385,12 +385,10 @@ end
                             break
                         end
                         local tevt, tk = os.pullEventRaw()
-                        if tevt == "key" and tk == keys.q then 
-                           rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
-                           break 
-                        end
-                    end
                     if isMultiplayer then break end
+                elseif lobbyKey == keys.tab or lobbyKey == keys.q then
+                    rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
+                    return
                 elseif lobbyKey == keys.two then
                     rednet.send(arcadeId, {type="list_lobbies"}, "ArcadeGames")
                     local _, reply = rednet.receive("ArcadeGames", 3)
@@ -420,7 +418,7 @@ end
                     sleep(1)
                 end
             end
-        elseif k == keys.q then
+        elseif k == keys.q or k == keys.tab then
             return
         end
     end
@@ -441,7 +439,7 @@ end
             elseif p1 == keys.s or p1 == keys.down then movePlayer(0, 1)
             elseif p1 == keys.a or p1 == keys.left then movePlayer(-1, 0)
             elseif p1 == keys.d or p1 == keys.right then movePlayer(1, 0)
-            elseif p1 == keys.q then gameOver = true end
+            elseif p1 == keys.q or p1 == keys.tab then gameOver = true end
         elseif event == "rednet_message" and p3 == "Dungeon_Coop" then
             if p2.type == "pos" then
                 otherPlayer.x, otherPlayer.y, otherPlayer.hp = p2.x, p2.y, p2.hp

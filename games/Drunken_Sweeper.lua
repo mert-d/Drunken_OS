@@ -7,11 +7,12 @@
     Clear the board without hitting any mines!
 ]]
 
-local gameVersion = 1.0
+local gameVersion = 1.1
 
 local function mainGame(...)
     local args = {...}
     local username = args[1] or "Guest"
+    local w, h = term.getSize()
 
     local gameName = "DrunkenSweeper"
     local arcadeServerId = nil
@@ -230,11 +231,12 @@ local function mainGame(...)
     end
 
     drawBoard()
+    local w, h = getSafeSize()
     term.setCursorPos(math.floor(w/2 - 5), math.floor(h/2 + 2))
     term.setBackgroundColor(colors.black)
     if gameState == "won" then
         term.setTextColor(colors.lime); term.write("YOU WON!")
-        score = 1000 -- Basic score for now
+        local score = 1000 -- Basic score for now
         local arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
         if arcadeServerId then
             rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames")

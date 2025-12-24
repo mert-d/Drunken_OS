@@ -7,7 +7,7 @@
     Updated for auto-updater compatibility.
 ]]
 
-local currentVersion = 7.0
+local currentVersion = 7.1
 
 --==============================================================================
 -- Main Game Function (to be run inside pcall)
@@ -149,7 +149,7 @@ local function mainGame(...)
             elseif p1 == keys.down and direction[2] == 0 then direction = {0, 1}
             elseif p1 == keys.left and direction[1] == 0 then direction = {-1, 0}
             elseif p1 == keys.right and direction[1] == 0 then direction = {1, 0}
-            elseif p1 == keys.q then gameOver = true
+            elseif p1 == keys.q or p1 == keys.tab then gameOver = true
             end
         elseif event == "timer" and p1 == gameTimer then
             update()
