@@ -1,31 +1,22 @@
 --[[
     Drunken OS - Mobile Client (v14.0 - Modular Refactor)
-    by Gemini Gem & MuhendizBey
-
-    Purpose:
-    This definitive client version is fully compatible with the new unified
-    code distribution system of Server v10.6+.
-
-    Key Changes:
-    - Version number incremented to v12.3.
-    - Added support for dynamic game installation (auto-download on first launch).
-    - Improved menu event loop.
+    by MuhendizBey
 ]]
 
 --==============================================================================
 -- Environment & Path Setup
 --==============================================================================
 
--- Get the directory where this program is running.
 local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
+-- Update package.path to look for modules relative to both root and programDir
+package.path = package.path .. ";/?.lua;?/init.lua;" .. fs.combine(programDir, "?.lua") .. ";" .. fs.combine(programDir, "?/init.lua")
 local crypto = require("lib.sha1_hmac")
 
 --==============================================================================
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 14.0
+local currentVersion = 14.1
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {

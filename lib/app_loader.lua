@@ -7,7 +7,7 @@ local loader = {}
 
 function loader.run(appName, context, entryPoint)
     entryPoint = entryPoint or "run"
-    local path = "/apps/" .. appName .. ".lua"
+    local path = fs.combine(context.programDir or "", "apps/" .. appName .. ".lua")
     
     if not fs.exists(path) then
         context.showMessage("Error", "Application '" .. appName .. "' not found.")
