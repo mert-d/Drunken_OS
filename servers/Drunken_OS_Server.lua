@@ -1009,7 +1009,7 @@ function adminCommands.sync(a)
         logActivity("Checking local path: " .. absPath)
         
         local code, v
-        if fs.exists(path) then
+        if fs.exists(absPath) then
             local f = fs.open(path, "r")
             code = f.readAll()
             f.close()
@@ -1042,23 +1042,36 @@ function adminCommands.sync(a)
     if target == "libs" or target == "all" then
         logActivity("Syncing Libraries...")
         local libs = { "lib/drunken_os_apps.lua", "lib/sha1_hmac.lua", "lib/updater.lua", "lib/app_loader.lua" }
+        local baseUrl = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
+        
         for _, path in ipairs(libs) do
-            if fs.exists(path) then
-                local f = fs.open(path, "r")
-                local code = f.readAll()
+            local code, v = nil, nil
+            local absPath = "/" .. path
+            
+            -- Strategy 1: Local File
+            if fs.exists(absPath) then
+                local f = fs.open(absPath, "r")
+                code = f.readAll()
                 f.close()
-                
+            else
+                -- Strategy 2: GitHub Fallback
+                logActivity("Local " .. path .. " not found. Fetching from GitHub...")
+                local response = http.get(baseUrl .. path)
+                if response then
+                    code = response.readAll()
+                    response.close()
+                    logActivity("Fetched " .. path .. " from GitHub.")
+                end
+            end
+            
+            if code then
                 local name = fs.getName(path):gsub("%.lua$", "")
                 programCode[name] = code
                 
                 -- Attempt to extract version
-                local v = code:match("[%w%.]+Version%s*=%s*([%d%.]+)")
-                if not v then
-                    v = code:match("[%w%.]*_VERSION%s*=%s*([%d%.]+)")
-                end
-                if not v then
-                    v = code:match("%(v([%d%.]+)%)") -- Matches (v1.0)
-                end
+                v = code:match("[%w%.]+Version%s*=%s*([%d%.]+)") or 
+                    code:match("[%w%.]*_VERSION%s*=%s*([%d%.]+)") or 
+                    code:match("%(v([%d%.]+)%)")
                 
                 if v then
                     programVersions[name] = tonumber(v)
@@ -1067,7 +1080,7 @@ function adminCommands.sync(a)
                     logActivity("Warning: No version found for library " .. name, true)
                 end
             else
-                logActivity("Warning: Library not found at " .. path, true)
+                logActivity("Error: Could not find library " .. path .. " locally or on GitHub.", true)
             end
         end
         saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
@@ -1080,15 +1093,31 @@ function adminCommands.sync(a)
     if target == "auditor" or target == "all" then
         logActivity("Syncing Auditor...")
         local path = "turtles/Auditor.lua"
-        if fs.exists(path) then
-            local f = fs.open(path, "r")
-            local code = f.readAll()
+        local code = nil
+        
+        -- Strategy 1: Local File
+        if fs.exists("/" .. path) then
+            local f = fs.open("/" .. path, "r")
+            code = f.readAll()
             f.close()
+        else
+            -- Strategy 2: GitHub Fallback
+            logActivity("Local " .. path .. " not found. Fetching from GitHub...")
+            local url = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/" .. path
+            local response = http.get(url)
+            if response then
+                code = response.readAll()
+                response.close()
+                logActivity("Fetched Auditor from GitHub.")
+            end
+        end
+
+        if code then
             programCode["Auditor"] = code
             saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
             logActivity("Published Auditor.")
         else
-            logActivity("Auditor source not found at " .. path, true)
+            logActivity("Error: Auditor source not found locally or on GitHub.", true)
         end
     end
 end
