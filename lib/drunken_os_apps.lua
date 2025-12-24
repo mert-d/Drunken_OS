@@ -12,12 +12,16 @@
     - Improved Proxy compatibility for secure communication.
 ]]
 
+--==============================================================================
+-- Core Library State & Utilities
+--==============================================================================
+
 local apps = {}
 apps._VERSION = 1.13
 
---==============================================================================
--- Helper function to access the parent's state
---==============================================================================
+---
+-- Helper function to access the parent's global state (Drunken_OS_Client).
+-- @param context {table} The application context containing the parent state.
 local function getParent(context)
     return context.parent
 end
@@ -26,10 +30,16 @@ end
 -- Login & Main Menu Logic
 --==============================================================================
 
+---
+-- Synchronously completes the 2FA token verification process.
+-- Prompts the user for a token and submits it to the Mainframe.
+-- @param context {table} The application context.
+-- @param user {string} The username being authenticated.
+-- @return {boolean} True if authentication was successful.
 local function completeAuthentication(context, user)
     context.drawWindow("Authentication Required")
     local w, h = context.getSafeSize()
-    local message = "A token has been sent to the Auth Server admin. Please ask them for your token and enter it below."
+    local message = "A verification token has been sent to you via the HyperAuth API. Please enter the code below to finalize your registration/login."
     local lines = context.wordWrap(message, w - 4)
     for i, line in ipairs(lines) do
         term.setCursorPos(3, 4 + i - 1)
@@ -44,17 +54,18 @@ local function completeAuthentication(context, user)
 
     local token_clean = token_raw:gsub("%s+", "")
     context.drawWindow("Verifying Token...")
+    -- Submit the token to the server's auth handler
     rednet.send(getParent(context).mailServerId, { type = "submit_auth_token", user = user, token = token_clean }, "SimpleMail")
     local _, response = rednet.receive("SimpleMail", 10)
 
     if response and response.success then
+        -- Update state with user permissions and session info
         getParent(context).username = user
         getParent(context).nickname = response.nickname
         getParent(context).unreadCount = response.unreadCount or 0
         getParent(context).isAdmin = response.isAdmin or false
         if response.session_token then
-            -- We can't easily write to a file in the program dir from here without the path
-            -- Luckily context has programDir
+            -- Persist session token for automatic future logins
             local sessionPath = fs.combine(context.programDir, ".session")
             local file = fs.open(sessionPath, "w")
             if file then
@@ -70,6 +81,11 @@ local function completeAuthentication(context, user)
     end
 end
 
+---
+-- Handles the initial Login/Registration interface.
+-- Features: Session-based auto-login and 2FA support.
+-- @param context {table} The application context.
+-- @return {boolean} True if the user successfully logged in or registered.
 function apps.loginOrRegister(context)
     local options = {"Login", "Register", "Exit"}
     local selected = 1
@@ -82,12 +98,13 @@ function apps.loginOrRegister(context)
         elseif key == keys.down then
             selected = (selected == #options) and 1 or selected + 1
         elseif key == keys.enter then
-            if selected == 1 then -- Login
+            if selected == 1 then -- Login Logic
                 context.drawWindow("Login")
                 local user = context.readInput("Username: ", 5, false)
                 if user and user ~= "" then
                     local pass = context.readInput("Password: ", 7, true)
                     if pass and pass ~= "" then
+                        -- Check for existing session token to facilitate faster login
                         local session_token = nil
                         local sessionPath = fs.combine(context.programDir, ".session")
                         if fs.exists(sessionPath) then
@@ -98,15 +115,18 @@ function apps.loginOrRegister(context)
                             end
                         end
                         
+                        -- Send login request to the Mainframe
                         rednet.send(getParent(context).mailServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "SimpleMail")
                         local _, response = rednet.receive("SimpleMail", 15)
 
                         if response and response.success then
                             if response.needs_auth then
+                                -- Trigger 2FA if required by the server
                                 if not completeAuthentication(context, user) then
                                     getParent(context).username = nil
                                 end
                             else
+                                -- Immediate success (session valid or 2FA not required)
                                 getParent(context).username = user
                                 getParent(context).nickname = response.nickname
                                 getParent(context).unreadCount = response.unreadCount or 0
@@ -117,7 +137,7 @@ function apps.loginOrRegister(context)
                         end
                     end
                 end
-            elseif selected == 2 then -- Register
+            elseif selected == 2 then -- Registration Logic
                 context.drawWindow("Register")
                 local user = context.readInput("Choose Username: ", 5, false)
                 if user and user ~= "" then
@@ -125,9 +145,11 @@ function apps.loginOrRegister(context)
                     if nick and nick ~= "" then
                         local pass = context.readInput("Choose Password: ", 9, true)
                         if pass and pass ~= "" then
+                            -- Send registration request
                             rednet.send(getParent(context).mailServerId, { type = "register", user = user, pass = pass, nickname = nick }, "SimpleMail")
                             local _, response = rednet.receive("SimpleMail", 15)
                             if response and response.success and response.needs_auth then
+                                -- Registration always requires 2FA confirmation
                                 if not completeAuthentication(context, user) then
                                     getParent(context).username = nil
                                 end
@@ -138,7 +160,7 @@ function apps.loginOrRegister(context)
                     end
                 end
             elseif selected == 3 then
-                return false
+                return false -- Exit OS
             end
         elseif key == keys.tab then
             return false

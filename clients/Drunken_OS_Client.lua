@@ -51,17 +51,18 @@ local theme = {
     windowBg = colors.black -- Alias for apps library
 }
 
+-- Global OS State: Stores session info, server IDs, and user data.
 local state = {
-    mailServerId = nil,
-    adminServerId = nil,
-    username = nil,
-    isAdmin = false,
-    apps = nil,
-    crypto = nil,
-    chatServerId = nil,
-    nickname = nil,
-    unreadCount = 0,
-    location = nil -- {x, y, z}
+    mailServerId = nil,   -- Rednet ID of the Mainframe
+    chatServerId = nil,   -- Rednet ID of the Chat Server
+    adminServerId = nil,  -- Rednet ID for admin operations
+    username = nil,       -- Logged in username
+    nickname = nil,       -- User's display name
+    isAdmin = false,      -- Boolean administrative flag
+    apps = nil,           -- Reference to the loaded apps library
+    crypto = nil,         -- Reference to the sha1_hmac library
+    unreadCount = 0,      -- Persistent unread mail count
+    location = nil        -- Latest GPS coordinates {x, y, z}
 }
 
 -- Universal word-wrap
@@ -87,20 +88,26 @@ local function clear()
     term.setCursorPos(1,1)
 end
 
+---
+-- Draws a standard OS window frame with a centered title bar.
+-- This creates a consistent look and feel across all applications.
+-- @param title The text to display in the top title bar.
 local function drawWindow(title)
     local w, h = term.getSize()
     term.setBackgroundColor(theme.bg)
     term.clear()
     
-    -- Draw subtle frame/border
+    -- Draw title and bottom borders
     term.setBackgroundColor(theme.titleBg)
     term.setCursorPos(1, 1); term.write(string.rep(" ", w))
     term.setCursorPos(1, h); term.write(string.rep(" ", w))
+    -- Draw side borders
     for i = 2, h - 1 do
         term.setCursorPos(1, i); term.write(" ")
         term.setCursorPos(w, i); term.write(" ")
     end
 
+    -- Render the centered title text
     term.setCursorPos(1, 1)
     term.setTextColor(theme.titleText)
     local titleText = " " .. (title or "Drunken OS") .. " "
@@ -171,10 +178,16 @@ end
 -- Networking & Initialization
 --==============================================================================
 
+---
+-- Discovers necessary services (Mail, Chat) on the Rednet network.
+-- @return {boolean} Success status.
+-- @return {string|nil} Error message if servers were not found.
 local function findServers()
+    -- Look for the Mainframe using the 'SimpleMail' protocol
     state.mailServerId = rednet.lookup("SimpleMail", "mail.server")
+    -- Look for the Chat service
     state.chatServerId = rednet.lookup("SimpleChat", "chat.server")
-    state.adminServerId = state.mailServerId -- Often same server
+    state.adminServerId = state.mailServerId -- Unified mainframe admin
     if not state.mailServerId then
         return false, "Mainframe (mail.server) not found."
     end
@@ -200,15 +213,21 @@ local context = {
 -- Installation & Update Functions
 --==============================================================================
 
+---
+-- Ensures all required libraries are installed and up to date.
+-- Bootstraps the 'updater' library if missing, then uses it to sync
+-- sha1_hmac and drunken_os_apps.
+-- @return {boolean} Success status.
 local function installDependencies()
     local needsReboot = false
     
-    -- Ensure updater exists first (bootstrap)
+    -- Bootstrap Stage: The OS cannot run without the library updater.
     local updaterPath = fs.combine(programDir, "lib/updater.lua")
     if not fs.exists(updaterPath) then
         print("Bootstrap: Downloading updater...")
         local server = rednet.lookup("SimpleMail", "mail.server")
         if server then
+            -- Fetch raw library code from the unified distribution system
             rednet.send(server, { type = "get_lib_code", lib = "updater" }, "SimpleMail")
             local _, resp = rednet.receive("SimpleMail", 15)
             if resp and resp.success and resp.code then
@@ -221,23 +240,26 @@ local function installDependencies()
         end
     end
 
+    -- Load the updater to manage remaining dependencies
     local ok_upd, updater = pcall(require, "lib.updater")
     if not ok_upd then
         print("Error: Could not load updater library.")
         return false
     end
     
+    -- Sync essential libraries defined in REQUIRED_LIBS
     for _, libDef in ipairs(REQUIRED_LIBS) do
         local libName = libDef.name
         local libPath = fs.combine(programDir, "lib/" .. libName .. ".lua")
         
         local currentVer = 0
         if fs.exists(libPath) then
+            -- Determine the current local version
             local ok, libOrError = pcall(require, "lib." .. libName)
             if ok and type(libOrError) == "table" then
                 currentVer = libOrError._VERSION or 0
                 if currentVer == 0 then
-                    -- Fallback to header extraction
+                    -- Fallback: Parse the version from the file header
                     local f = fs.open(libPath, "r")
                     if f then
                         local content = f.readAll()
@@ -250,6 +272,7 @@ local function installDependencies()
             end
         end
 
+        -- Check with server and download if a newer version exists
         if updater.check(libName, currentVer, libPath) then
             needsReboot = true
         end

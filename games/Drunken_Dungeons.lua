@@ -10,14 +10,22 @@
 local gameVersion = 1.1
 local saveFile = ".dungeon_save"
 
+---
+-- Persists player data (gold, upgrades) to a local sidecar file.
+-- @param data {table} The persistence table containing gold and upgrade levels.
 local function saveGame(data)
     local f = fs.open(saveFile, "w")
     f.write(textutils.serialize(data))
     f.close()
 end
 
+---
+-- Loads the player's persistent data from disk.
+-- Returns default values if no save file exists.
+-- @return {table} The persistence data.
 local function loadGame()
     if not fs.exists(saveFile) then
+        -- Default starting stats for new players
         return { gold = 0, upgrades = { hp = 0, dmg = 0, luck = 0 } }
     end
     local f = fs.open(saveFile, "r")
@@ -89,36 +97,42 @@ local function mainGame(...)
         if #logs > 3 then table.remove(logs, 1) end
     end
 
-    -- Procedural Generation
-    local function generateMap()
-        math.randomseed(sharedSeed)
-        map = {}
-        for y = 1, MAP_H do
-            map[y] = {}
-            for x = 1, MAP_W do map[y][x] = TILE_WALL end
-        end
+---
+-- Procedural Level Generation using a Drunkard's Walk algorithm.
+-- Generates floor tiles from a central point and populates the level
+-- with gold and enemies based on the current shared seed.
+local function generateMap()
+    math.randomseed(sharedSeed)
+    -- Initialize the map with solid walls
+    map = {}
+    for y = 1, MAP_H do
+        map[y] = {}
+        for x = 1, MAP_W do map[y][x] = TILE_WALL end
+    end
 
-        local cx, cy = math.random(5, MAP_W-5), math.random(5, MAP_H-5)
-        player.x, player.y = cx, cy
+    -- Starting position for the 'drunkard'
+    local cx, cy = math.random(5, MAP_W-5), math.random(5, MAP_H-5)
+    player.x, player.y = cx, cy
 
-        for i = 1, 300 do
-            map[cy][cx] = TILE_FLOOR
-            local dir = math.random(1, 4)
-            if dir == 1 and cx > 2 then cx = cx - 1
-            elseif dir == 2 and cx < MAP_W - 1 then cx = cx + 1
-            elseif dir == 3 and cy > 2 then cy = cy - 1
-            elseif dir == 4 and cy < MAP_H - 1 then cy = cy + 1 end
-        end
-        
-        -- Spawn Gold and Enemies
-        entities = {}
-        for i = 1, 5 do
-            local sx, sy = math.random(2, MAP_W-1), math.random(2, MAP_H-1)
-            if map[sy][sx] == TILE_FLOOR then
-                table.insert(entities, {x = sx, y = sy, type = math.random(1,2) == 1 and "gold" or "enemy", hp = 3})
-            end
+    -- Carve out tiles in random directions
+    for i = 1, 300 do
+        map[cy][cx] = TILE_FLOOR
+        local dir = math.random(1, 4)
+        if dir == 1 and cx > 2 then cx = cx - 1
+        elseif dir == 2 and cx < MAP_W - 1 then cx = cx + 1
+        elseif dir == 3 and cy > 2 then cy = cy - 1
+        elseif dir == 4 and cy < MAP_H - 1 then cy = cy + 1 end
+    end
+    
+    -- Populate the level with interactable entities
+    entities = {}
+    for i = 1, 5 do
+        local sx, sy = math.random(2, MAP_W-1), math.random(2, MAP_H-1)
+        if map[sy][sx] == TILE_FLOOR then
+            table.insert(entities, {x = sx, y = sy, type = math.random(1,2) == 1 and "gold" or "enemy", hp = 3})
         end
     end
+end
 
     local function draw()
         local w, h = getSafeSize()
@@ -180,67 +194,79 @@ local function mainGame(...)
         term.setBackgroundColor(theme.border); term.write(" WASD to Move | Q: Quit ")
     end
 
-    local function movePlayer(dx, dy)
-        local nx, ny = player.x + dx, player.y + dy
-        if nx < 1 or nx > MAP_W or ny < 1 or ny > MAP_H then return end
-        
-        if map[ny][nx] == TILE_WALL then
-            addLog("Ouch! You bumped into a wall.")
-            return
-        end
+---
+-- Handles player movement and collision with walls/entities.
+-- Triggers combat, item pickup, and multiplayer sync.
+-- @param dx {number} Change in X direction.
+-- @param dy {number} Change in Y direction.
+local function movePlayer(dx, dy)
+    local nx, ny = player.x + dx, player.y + dy
+    if nx < 1 or nx > MAP_W or ny < 1 or ny > MAP_H then return end
+    
+    if map[ny][nx] == TILE_WALL then
+        addLog("Ouch! You bumped into a wall.")
+        return
+    end
 
-        -- Check Entities
-        for i = #entities, 1, -1 do
-            local ent = entities[i]
-            if ent.x == nx and ent.y == ny then
-                if ent.type == "gold" then
-                    local amt = math.random(10, 50)
-                    player.gold = player.gold + amt
-                    addLog("Found " .. amt .. " gold!")
+    -- Dynamic Entity Interaction (Gold, Enemies, etc.)
+    for i = #entities, 1, -1 do
+        local ent = entities[i]
+        if ent.x == nx and ent.y == ny then
+            if ent.type == "gold" then
+                -- Random loot drop
+                local amt = math.random(10, 50)
+                player.gold = player.gold + amt
+                addLog("Found " .. amt .. " gold!")
+                table.remove(entities, i)
+            elseif ent.type == "enemy" then
+                -- Combat Calculation
+                local damage = player.dmg + (class == "Brawler" and 1 or 0)
+                -- Critical hit check based on Luck upgrade
+                if math.random(1, 100) <= (5 + persist.upgrades.luck) then
+                    damage = damage * 2
+                    addLog("CRITICAL HIT!")
+                end
+                ent.hp = ent.hp - damage
+                addLog("You hit the enemy for " .. damage .. "!")
+                
+                if ent.hp <= 0 then
+                    addLog("Enemy defeated!")
+                    -- Class-specific bonuses
+                    local xpGain = 20 + (class == "Nerd" and 10 or 0)
+                    player.xp = player.xp + xpGain
                     table.remove(entities, i)
-                elseif ent.type == "enemy" then
-                    local damage = player.dmg + (class == "Brawler" and 1 or 0)
-                    if math.random(1, 100) <= (5 + persist.upgrades.luck) then
-                        damage = damage * 2
-                        addLog("CRITICAL HIT!")
-                    end
-                    ent.hp = ent.hp - damage
-                    addLog("You hit the enemy for " .. damage .. "!")
-                    if ent.hp <= 0 then
-                        addLog("Enemy defeated!")
-                        local xpGain = 20 + (class == "Nerd" and 10 or 0)
-                        player.xp = player.xp + xpGain
-                        table.remove(entities, i)
+                else
+                    -- Counter-attack logic
+                    local edmg = 1
+                    if class == "Rogue" and math.random(1, 10) <= 3 then
+                        addLog("You dodged the attack!")
                     else
-                        local edmg = 1
-                        if class == "Rogue" and math.random(1, 10) <= 3 then
-                            addLog("You dodged the attack!")
-                        else
-                            player.hp = player.hp - edmg
-                            addLog("Enemy hits back!")
-                        end
+                        player.hp = player.hp - edmg
+                        addLog("Enemy hits back!")
                     end
-                    return -- Don't move into enemy tile
                 end
-            end
-        end
-
-        player.x, player.y = nx, ny
-        if isMultiplayer then
-            rednet.send(opponentId, {type="pos", x=player.x, y=player.y, hp=player.hp}, "Dungeon_Coop")
-        end
-        
-        -- Enemies move? (Simple)
-        for _, ent in ipairs(entities) do
-            if ent.type == "enemy" and math.random(1, 4) == 1 then
-                local edx = (player.x > ent.x) and 1 or (player.x < ent.x and -1 or 0)
-                local edy = (player.y > ent.y) and 1 or (player.y < ent.y and -1 or 0)
-                if map[ent.y + edy][ent.x + edx] == TILE_FLOOR then
-                    ent.x, ent.y = ent.x + edx, ent.y + edy
-                end
+                return -- Attack ends the movement sequence for this turn
             end
         end
     end
+
+    -- Update position and sync in multiplayer sessions
+    player.x, player.y = nx, ny
+    if isMultiplayer then
+        rednet.send(opponentId, {type="pos", x=player.x, y=player.y, hp=player.hp}, "Dungeon_Coop")
+    end
+    
+    -- Basic AI: Enemies have a chance to move towards the player
+    for _, ent in ipairs(entities) do
+        if ent.type == "enemy" and math.random(1, 4) == 1 then
+            local edx = (player.x > ent.x) and 1 or (player.x < ent.x and -1 or 0)
+            local edy = (player.y > ent.y) and 1 or (player.y < ent.y and -1 or 0)
+            if map[ent.y + edy][ent.x + edx] == TILE_FLOOR then
+                ent.x, ent.y = ent.x + edx, ent.y + edy
+            end
+        end
+    end
+end
 
     -- Menu Logic
     local function drawMenu()

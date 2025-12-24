@@ -7,9 +7,12 @@
     Terminal) to check for updates and self-install from the Mainframe.
 ]]
 
-local updater = {}
-updater._VERSION = 1.2
-
+---
+-- Checks for a newer version of a program or library and installs it if available.
+-- @param programName {string} The name of the program to check.
+-- @param currentVersion {number} The current local version number.
+-- @param targetPath {string|nil} The path to install to. Defaults to the running program.
+-- @return {boolean} Returns true if an update was installed.
 function updater.check(programName, currentVersion, targetPath)
     if not rednet.isOpen() then
         -- Try to open modem on back or any side

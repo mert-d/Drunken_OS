@@ -94,24 +94,31 @@ local theme = {
 
 ---
 -- Wraps long lines of text to fit within a specified width.
+-- Handles both explicit newlines and long strings of words.
 -- @param text The string to wrap.
 -- @param width The maximum width of each line.
 -- @return {table} A table of strings, each representing a wrapped line.
 local function wordWrap(text, width)
     local lines = {}
+    -- Iterate through each explicit line in the text
     for line in text:gmatch("[^\n]+") do
         if #line <= width then
+            -- Line already fits, just add it
             table.insert(lines, line)
         else
+            -- Line is too long, wrap it by words
             local currentLine = ""
             for word in line:gmatch("[^%s]+") do
                 if #currentLine + #word + 1 > width then
+                    -- Adding this word would exceed width, start a new line
                     table.insert(lines, currentLine)
                     currentLine = word
                 else
+                    -- Append word to the current line
                     currentLine = currentLine == "" and word or (currentLine .. " " .. word)
                 end
             end
+            -- Add the last piece of the line
             table.insert(lines, currentLine)
         end
     end
@@ -120,12 +127,13 @@ end
 
 ---
 -- Redraws the entire admin console UI on the server's terminal.
+-- This includes the title bar, a scrollable log area, and an interactive input prompt.
 local function redrawAdminUI()
     local w, h = term.getSize()
     term.setBackgroundColor(theme.windowBg)
     term.clear()
 
-    -- Draw title bar
+    -- Title Bar: Centered text on a highlighted background
     term.setBackgroundColor(theme.title)
     term.setCursorPos(1, 1)
     term.write((" "):rep(w))
@@ -134,7 +142,7 @@ local function redrawAdminUI()
     term.setCursorPos(math.floor((w - #title) / 2) + 1, 1)
     term.write(title)
 
-    -- Draw status bar
+    -- Status Bar: Displays the current server state at the bottom
     term.setBackgroundColor(theme.statusBarBg)
     term.setTextColor(theme.statusBarText)
     term.setCursorPos(1, h)
@@ -143,11 +151,12 @@ local function redrawAdminUI()
     term.setCursorPos(2, h)
     term.write(status)
 
-    -- Draw log area
+    -- Log Area: Displays recent activity logs with word-wrapping
     term.setBackgroundColor(theme.windowBg)
     term.setTextColor(theme.text)
     local logAreaHeight = h - 4
     local displayLines = {}
+    -- Iterate backwards through logs to fill the screen from the bottom up
     for i = #logHistory, 1, -1 do
         local wrappedLines = wordWrap(logHistory[i], w - 2)
         for j = #wrappedLines, 1, -1 do
@@ -161,7 +170,7 @@ local function redrawAdminUI()
         term.write(displayLines[i])
     end
 
-    -- Draw input area
+    -- Input Area: Separator and a cyan prompt for admin commands
     term.setCursorPos(1, h - 2)
     term.write(('-'):rep(w))
     term.setCursorPos(1, h - 1)
@@ -214,22 +223,26 @@ local function redrawMonitorUI()
 end
 
 ---
--- Logs a message to the admin console and a file.
+-- Logs a message to the internal history, the display UI, and a persistent log file.
+-- Automatically prunes history to prevent memory leaks (max 200 entries).
 -- @param message The message to log.
--- @param isError (Optional) True if the message is an error.
+-- @param isError (Optional) True if the message should be flagged as an error.
 local function logActivity(message, isError)
     local prefix = isError and "[ERROR] " or "[INFO] "
     local logEntry = os.date("[%H:%M:%S] ") .. prefix .. message
     
+    -- Update in-memory history
     table.insert(logHistory, logEntry)
     if #logHistory > 200 then table.remove(logHistory, 1) end
     
+    -- Append to log file for persistence
     local file = fs.open(LOG_FILE, "a")
     if file then
         file.writeLine(os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message)
         file.close()
     end
     
+    -- Refresh UIs
     redrawAdminUI()
     if monitor then redrawMonitorUI() end
 end
@@ -303,34 +316,43 @@ end
 
 ---
 -- Loads all server databases from disk into memory.
+-- Initializes missing files with defaults (e.g., ensuring a default admin exists).
+-- Scans the 'games/' directory to automatically populate the arcade catalog.
 local function loadAllData()
     admins = loadTableFromFile(ADMINS_DB)
     if not admins.MuhendizBey then
-        -- Ensure the default admin exists if the file is new/empty
+        -- Bootstrapping: Ensure the primary developer always has admin rights
         admins.MuhendizBey = true
         saveTableToFile(ADMINS_DB, admins)
     end
+    
+    -- Load various entity databases
     users = loadTableFromFile(USERS_DB)
     lists = loadTableFromFile(LISTS_DB)
     games = loadTableFromFile(GAMES_DB)
     chatHistory = loadTableFromFile(CHAT_DB)
     gameList = loadTableFromFile(GAMELIST_DB)
+    
+    -- Load update distribution data (versions and source code)
     local updaterData = loadTableFromFile(UPDATER_DB)
     programVersions = updaterData.v or {}
     programCode = updaterData.c or {}
     gameCode = loadTableFromFile(GAMES_CODE_DB)
+    
+    -- Load MOTD (Message of the Day)
     if fs.exists(MOTD_FILE) then
         local file = fs.open(MOTD_FILE, "r")
         motd = file.readAll()
         file.close()
     end
 
+    -- Synchronization: Scan the 'games' folder and update the gameList metadata
     if fs.exists("games") then
         gameList = {}
         for _, file in ipairs(fs.list("games")) do
             local name = file:gsub(".lua", "")
             name = name:gsub("_", " ")
-            name = name:gsub("^%l", string.upper)
+            name = name:gsub("^%l", string.upper) -- Simple title casing
             table.insert(gameList, {name = name, file = "games/" .. file})
         end
         saveTableToFile(GAMELIST_DB, gameList)
@@ -386,8 +408,18 @@ end
 -- Authentication Helper Functions
 --==============================================================================
 
+---
+-- Initiates a 2FA (Two-Factor Authentication) request via the HyperAuth service.
+-- This is used for both secure registration and login verification.
+-- @param username The username to authenticate.
+-- @param password The password hash provided by the client.
+-- @param nickname (Optional) The display name for new users.
+-- @param senderId The rednet ID of the client requesting auth.
+-- @param purpose A string indicating the intent ("login" or "register").
+-- @return {boolean|nil} True if request was sent successfully, nil otherwise.
 local function requestAuthCode(username, password, nickname, senderId, purpose)
     logActivity("Requesting auth code for '" .. username .. "'...")
+    -- Contact the external HyperAuth server
     local reply, err = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
         username = username,
         password = password,
@@ -407,6 +439,7 @@ local function requestAuthCode(username, password, nickname, senderId, purpose)
         return nil
     end
     
+    -- Store the request ID temporarily to verify the token later
     logActivity("Auth request ID created: " .. reply.request_id)
     pendingAuths[username] = {
         request_id = reply.request_id,
@@ -753,14 +786,24 @@ end
 -- Admin Command Handlers & Main Loops (REPAIRED)
 --==============================================================================
 
+--==============================================================================
+-- Admin Command Implementation
+-- These functions are triggered by input at the server terminal or via
+-- the remote Admin Console tool.
+--==============================================================================
+
 local adminCommands = {}
 
+---
+-- Displays a list of available admin commands.
 function adminCommands.help()
     logActivity("--- Mainframe Admin Commands ---")
     logActivity("users, deluser, addadmin, deladmin, lists, dellist, board, delscore")
     logActivity("motd, broadcast, publish, addgame, delgame, games, publishgame")
 end
 
+---
+-- Lists all registered users and their nicknames.
 function adminCommands.users()
     logActivity("Users:")
     for u, d in pairs(users) do
@@ -854,6 +897,12 @@ function adminCommands.broadcast(a)
     logActivity("Broadcast: " .. t)
 end
 
+---
+-- Publishes a program or library to the update server.
+-- If the second argument is an existing path, it treats it as a library and
+-- saves the code directly. Otherwise, it waits for a 'Publication' rednet message
+-- containing the program's source code.
+-- @param a {table} Arguments: { "publish", <program_name>, <version_or_path> }
 function adminCommands.publish(a)
     local progName, versionOrPath = a[2], a[3]
     if not progName or not versionOrPath then
@@ -866,7 +915,7 @@ function adminCommands.publish(a)
     local isLibrary = fs.exists(versionOrPath)
 
     if isLibrary then
-        -- This is a library publication
+        -- Library logic: Read file content directly and store it in the database
         local filePath = versionOrPath
         local file, err = fs.open(filePath, "r")
         if not file then
@@ -878,14 +927,15 @@ function adminCommands.publish(a)
         file.close()
 
         programCode[progName] = code
+        -- Save the code and version databases simultaneously
         if saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode}) then
             logActivity("Published library '" .. progName .. "' to code database.")
         else
             logActivity("Error: Could not save updater database.", true)
-            programCode[progName] = nil -- Revert on failure
+            programCode[progName] = nil -- Revert memory state on failure
         end
     else
-        -- This is a versioned program publication
+        -- Program logic: Listen for rednet broadcast containing the new code
         local n = tonumber(versionOrPath)
         if not n then
             logActivity("Version must be a number for programs.", true)
@@ -1228,8 +1278,15 @@ local function executeAdminCommand(command)
     return table.concat(output, "\n")
 end
 
+---
+-- Central dispatcher for all incoming rednet messages.
+-- Supports transparent proxying for secure multi-network communication.
+-- Handles Mail, Chat, Arcade, and Admin protocols.
+-- @param senderId The rednet ID of the source.
+-- @param message The payload (table or string).
+-- @param protocol The protocol name (e.g., SimpleMail_Internal).
 local function handleRednetMessage(senderId, message, protocol)
-    -- Proxy Support: Extract original sender and message
+    -- Proxy Support: Determine if the message came through a Network Proxy
     local origSender = senderId
     local actualMsg = message
     local isProxied = false
@@ -1240,35 +1297,35 @@ local function handleRednetMessage(senderId, message, protocol)
         isProxied = true
     end
 
+    -- Encapsulated response function that handles proxy routing automatically
     local realRednetSend = rednet.send
     local function sendResponse(p_id, p_msg, p_proto)
-        -- Only wrap and change protocol if we are responding back to the original client.
-        -- If we are proxied, we MUST use the internal protocol (protocol) so the Proxy recognizes it as a response.
         if isProxied and p_id == origSender then
+            -- Re-wrap response for the proxy to deliver back to the client
             realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, protocol)
         else
+            -- Direct rednet response
             realRednetSend(p_id, p_msg, p_proto or protocol)
         end
     end
 
+    -- Dispatch to appropriate subsystem handler
     if protocol == "SimpleMail_Internal" and actualMsg and actualMsg.type and mailHandlers[actualMsg.type] then
-        -- We need to modify mailHandlers to use sendResponse instead of rednet.send directly... 
-        -- OR we can just handle the most common ones here if we don't want to refactor all handlers.
-        -- For a clean architecture, we should override rednet.send temporarily or pass a responder.
-        -- Let's try to override rednet.send during the handler call.
+        -- Temporary rednet.send override allows handlers to remain stateless
         local oldSend = rednet.send
         rednet.send = sendResponse
         mailHandlers[actualMsg.type](origSender, actualMsg)
         rednet.send = oldSend
 
     elseif protocol == "SimpleChat_Internal" and actualMsg and actualMsg.from then
+        -- Generic chat message processing
         local nickname = users[actualMsg.from] and users[actualMsg.from].nickname or actualMsg.from
         local entry = string.format("[%s]: %s", nickname, actualMsg.text)
         table.insert(chatHistory, entry)
         if #chatHistory > 100 then table.remove(chatHistory, 1) end
         saveTableToFile(CHAT_DB, chatHistory)
+        -- Relay message to all clients on the internal network
         rednet.broadcast({ from = nickname, text = actualMsg.text }, "SimpleChat_Internal") 
-        -- Actually proxy should handle broadcasts too if we want full isolation.
 
     elseif protocol == "ArcadeGames_Internal" and actualMsg and actualMsg.type and gameHandlers[actualMsg.type] then
         local oldSend = rednet.send
@@ -1277,9 +1334,11 @@ local function handleRednetMessage(senderId, message, protocol)
         rednet.send = oldSend
 
     elseif protocol == AUTH_INTERLINK_PROTOCOL and actualMsg.type == "user_exists_check" then
+        -- Cross-service communication for checking existence
         sendResponse(senderId, { user = actualMsg.user, exists = (users[actualMsg.user] ~= nil) }, AUTH_INTERLINK_PROTOCOL)
 
     elseif protocol == "Drunken_Admin_Internal" and actualMsg.type == "execute_command" then
+        -- Remote command execution for the Admin Console app
         if actualMsg.user and admins[actualMsg.user] then
             logActivity("Remote cmd from " .. actualMsg.user)
             local output = executeAdminCommand(actualMsg.command)

@@ -69,9 +69,12 @@ local function log(msg, isError)
 end
 
 --==============================================================================
--- Logic
---==============================================================================
-
+---
+-- Forwards a message from the wireless/external network to the internal wired network.
+-- Implements protocol mapping and optional proxy header wrapping for isolation.
+-- @param senderId The ID of the external sender.
+-- @param message The payload to forward.
+-- @param protocol The public protocol name.
 local function forward(senderId, message, protocol)
     local internalProtocol = PROTOCOL_MAP[protocol]
     if not internalProtocol then return end
@@ -95,9 +98,12 @@ local function forward(senderId, message, protocol)
             proxy_orig_sender = senderId,
             proxy_orig_msg = message 
         }, internalProtocol)
-    end
-end
-
+---
+-- Relays a message from the internal wired network back to the external wireless network.
+-- Automatically un-wraps proxy response headers if present.
+-- @param senderId The ID of the internal sender.
+-- @param message The payload (potentially containing proxy_orig_sender).
+-- @param protocol The internal protocol name.
 local function relay(senderId, message, protocol)
     local publicProtocol = INTERNAL_TO_PUBLIC[protocol]
     if not publicProtocol then return end

@@ -136,36 +136,45 @@ local function mainGame(...)
     rednet.open(peripheral.getName(modem))
     
     -- Negotiation
-    local function findMatch()
-        drawLobby()
-        local protocol = "DrunkenDuels_Lobby"
-        rednet.broadcast({type="match_request", user=username}, protocol)
+---
+-- Negotiates a 1v1 match over the Rednet network.
+-- Broadcasts a match request and waits for an acceptance. 
+-- Determines host status based on Computer ID.
+-- @return {boolean} True if a match was successfully found.
+local function findMatch()
+    drawLobby()
+    local protocol = "DrunkenDuels_Lobby"
+    -- Broadcast presence to all players on the network
+    rednet.broadcast({type="match_request", user=username}, protocol)
+    
+    local timer = os.startTimer(1)
+    while true do
+        local id, msg = rednet.receive(protocol, 2)
+        if id and msg.type == "match_request" and id ~= os.getComputerID() then
+            -- Someone else is looking for a match; challenge them!
+            opponentId = id
+            addLog("Opponent Found! Connecting...")
+            rednet.send(id, {type="match_accept", user=username}, protocol)
+            isHost = os.getComputerID() > id -- Higher ID is the host for synchronization
+            return true
+        elseif id and msg.type == "match_accept" then
+            -- Someone accepted our broadcasted request
+            opponentId = id
+            addLog("Match Accepted! Starting...")
+            isHost = os.getComputerID() > id
+            return true
+        end
         
-        local timer = os.startTimer(1)
-        while true do
-            local id, msg = rednet.receive(protocol, 2)
-            if id and msg.type == "match_request" and id ~= os.getComputerID() then
-                opponentId = id
-                addLog("Opponent Found! Connecting...")
-                rednet.send(id, {type="match_accept", user=username}, protocol)
-                isHost = os.getComputerID() > id -- Higher ID is host
-                return true
-            elseif id and msg.type == "match_accept" then
-                opponentId = id
-                addLog("Match Accepted! Starting...")
-                isHost = os.getComputerID() > id
-                return true
-            end
-            
-            local event, p1 = os.pullEvent()
-            if event == "key" and p1 == keys.q then return false
-            elseif event == "timer" and p1 == timer then
-                rednet.broadcast({type="match_request", user=username}, protocol)
-                timer = os.startTimer(1)
-                drawLobby()
-            end
+        -- Handle lobby UI and retry logic
+        local event, p1 = os.pullEvent()
+        if event == "key" and p1 == keys.q then return false
+        elseif event == "timer" and p1 == timer then
+            rednet.broadcast({type="match_request", user=username}, protocol)
+            timer = os.startTimer(1)
+            drawLobby()
         end
     end
+end
 
     if not findMatch() then return end
     
@@ -196,11 +205,12 @@ local function mainGame(...)
                 end
             end
         elseif turn == 2 or turn == 0 then
+            -- Waiting for the opponent to send their move
             local id, msg = rednet.receive("DrunkenDuels_Game", 5)
             if id == opponentId and msg.type == "move" then
                 oppMove = msg.move
                 
-                -- Resolve (Simple for now)
+                -- Turn Resolution Logic: Compare both moves and calculate outcome
                 if myMove == "attack" then
                     if oppMove == "defend" then
                         oppStats.hp = oppStats.hp - 5
@@ -224,7 +234,7 @@ local function mainGame(...)
                     addLog("You rested and gained energy.")
                 end
                 
-                -- Opponent attacks me?
+                -- Check the relative outcome of the opponent's move
                 if oppMove == "attack" then
                     if myMove == "defend" then
                         myStats.hp = myStats.hp - 5
@@ -238,11 +248,13 @@ local function mainGame(...)
                     end
                 end
 
+                -- Edge Case: Forfeiting ends the match immediately
                 if myMove == "forfeit" or oppMove == "forfeit" then
                     addLog("A player forfeited.")
                     matchActive = false
                 end
 
+                -- Swap turns based on host synchronization
                 turn = isHost and 1 or 2
                 if turn == 1 then turn = 2 else turn = 1 end -- Swap
                 myMove = nil

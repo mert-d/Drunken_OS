@@ -131,6 +131,12 @@ end
 -- Integrity Logic
 --==============================================================================
 
+---
+-- Replays the entire banking ledger to calculate expected user balances.
+-- This state-replay ensures that the current database balances match the 
+-- sum of all historical transactions.
+-- @param ledger {table} The transaction history list.
+-- @return {table} A map of usernames to their calculated integer balances.
 local function recomputeBalances(ledger)
     local balances = {}
     -- Genesis state assumed 0
@@ -158,6 +164,10 @@ local function recomputeBalances(ledger)
     return balances
 end
 
+---
+-- Conducts a full security audit of the bank server.
+-- Fetches the ledger and account data, verifies the cryptographic hash chain,
+-- and compares the reported state against a local re-calculated replay.
 local function performAudit()
     if not bankServerId then
         bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server") -- Attempt to find by hostname or protocol

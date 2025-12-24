@@ -266,6 +266,12 @@ end
 -- Data Persistence & Core Logic
 --==============================================================================
 
+---
+-- Performs atomic write of a table to a JSON file.
+-- Uses a temporary file and 'fs.move' to ensure data integrity during power failures.
+-- @param path The target file path.
+-- @param data The table to serialize.
+-- @return {boolean} Success status.
 local function saveTableToFile(path, data)
     local tempPath = path .. ".tmp"
     local file, err_open = fs.open(tempPath, "w")
@@ -346,6 +352,10 @@ local function loadAllData()
     logActivity("All banking data loaded successfully.")
 end
 
+---
+-- Dynamically adjusts the market price of all registered currencies.
+-- Uses an inverse square root curve based on current stock vs target stock targets.
+-- New Price = Base * (Target / Stock) ^ 0.5
 local function adjustCurrencyRates()
     logActivity("Adjusting currency rates based on new stock report...")
     local changed = false
