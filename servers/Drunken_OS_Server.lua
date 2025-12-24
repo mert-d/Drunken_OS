@@ -473,6 +473,18 @@ function mailHandlers.get_lib_code(senderId, message)
     if programCode[libName] then
         rednet.send(senderId, { success = true, code = programCode[libName] }, "SimpleMail")
         logActivity("Served library '" .. libName .. "' to client " .. senderId)
+    elseif libName:match("^app%.") then
+        local appFileName = libName:gsub("^app%.", "") .. ".lua"
+        local appPath = "apps/" .. appFileName
+        if fs.exists(appPath) then
+            local f = fs.open(appPath, "r")
+            local code = f.readAll()
+            f.close()
+            rednet.send(senderId, { success = true, code = code }, "SimpleMail")
+            logActivity("Served applet '" .. appFileName .. "' to client " .. senderId)
+        else
+            rednet.send(senderId, { success = false, reason = "Applet file not found on server." }, "SimpleMail")
+        end
     else
         logActivity("Client requested non-existent library: '" .. libName .. "'", true)
         rednet.send(senderId, { success = false, reason = "Library not in server database." }, "SimpleMail")
@@ -611,6 +623,77 @@ function mailHandlers.send(senderId, message)
         logActivity(string.format("Mail from '%s' to '%s'", mail.from_nickname, mail.to))
     end
     rednet.send(senderId, { status = "Sent!" }, "SimpleMail")
+end
+
+--==============================================================================
+-- Cloud Storage Handlers (Pocket Edition Support)
+--==============================================================================
+
+function mailHandlers.list_cloud(senderId, message)
+    local user = message.user
+    local path = "cloud/" .. user
+    local files = {}
+    if fs.exists(path) and fs.isDir(path) then
+        for _, fileName in ipairs(fs.list(path)) do
+            local filePath = path .. "/" .. fileName
+            local size = fs.getSize(filePath)
+            table.insert(files, { name = fileName, size = size, isDir = fs.isDir(filePath) })
+        end
+    end
+    rednet.send(senderId, { type = "cloud_list_response", files = files }, "SimpleMail")
+    logActivity("User '" .. user .. "' listed their cloud storage.")
+end
+
+function mailHandlers.sync_file(senderId, message)
+    local user = message.user
+    local fileName = message.filename
+    local content = message.content
+    
+    if not user or not fileName or not content then
+        rednet.send(senderId, { success = false, reason = "Incomplete sync data." }, "SimpleMail")
+        return
+    end
+
+    local path = "cloud/" .. user
+    if not fs.exists(path) then fs.makeDir(path) end
+    
+    local filePath = path .. "/" .. fileName
+    local file = fs.open(filePath, "w")
+    if file then
+        file.write(content)
+        file.close()
+        rednet.send(senderId, { success = true, status = "File synced to cloud." }, "SimpleMail")
+        logActivity("Synced file '" .. fileName .. "' to cloud for user '" .. user .. "'")
+    else
+        rednet.send(senderId, { success = false, reason = "Server FS error." }, "SimpleMail")
+    end
+end
+
+function mailHandlers.download_cloud(senderId, message)
+    local user = message.user
+    local fileName = message.filename
+    local filePath = "cloud/" .. user .. "/" .. fileName
+    
+    if fs.exists(filePath) and not fs.isDir(filePath) then
+        local file = fs.open(filePath, "r")
+        local content = file.readAll()
+        file.close()
+        rednet.send(senderId, { success = true, filename = fileName, content = content }, "SimpleMail")
+        logActivity("User '" .. user .. "' downloaded '" .. fileName .. "' from cloud.")
+    else
+        rednet.send(senderId, { success = false, reason = "File not found." }, "SimpleMail")
+    end
+end
+
+function mailHandlers.delete_cloud(senderId, message)
+    local filePath = "cloud/" .. message.user .. "/" .. message.filename
+    if fs.exists(filePath) then
+        fs.delete(filePath)
+        rednet.send(senderId, { success = true }, "SimpleMail")
+        logActivity("User '" .. message.user .. "' deleted cloud file '" .. message.filename .. "'")
+    else
+        rednet.send(senderId, { success = false, reason = "File not found." }, "SimpleMail")
+    end
 end
 
 function mailHandlers.fetch(senderId, message)

@@ -31,7 +31,12 @@ local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
     { name = "sha1_hmac" },
     { name = "updater" },
-    { name = "drunken_os_apps" }
+    { name = "drunken_os_apps" },
+    { name = "app_loader" }
+}
+
+local REQUIRED_APPS = {
+    "mail", "bank", "files", "chat", "arcade", "system", "merchant"
 }
 
 --==============================================================================
@@ -56,6 +61,7 @@ local state = {
     mailServerId = nil,   -- Rednet ID of the Mainframe
     chatServerId = nil,   -- Rednet ID of the Chat Server
     adminServerId = nil,  -- Rednet ID for admin operations
+    appLoader = nil,      -- Dynamic app loader
     username = nil,       -- Logged in username
     nickname = nil,       -- User's display name
     isAdmin = false,      -- Boolean administrative flag
@@ -277,6 +283,17 @@ local function installDependencies()
             needsReboot = true
         end
     end
+
+    -- Sync Apps
+    if not fs.exists(fs.combine(programDir, "apps")) then fs.makeDir(fs.combine(programDir, "apps")) end
+    for _, appName in ipairs(REQUIRED_APPS) do
+        local appPath = fs.combine(programDir, "apps/" .. appName .. ".lua")
+        -- We don't have version tracking for apps yet, so we'll just ensure they exist or use updater.check if we add them to DB
+        -- For now, let's just use the same check but targeting the apps folder
+        if updater.check("app." .. appName, 0, appPath) then
+            -- Note: We prefix app names with 'app.' in the server DB to avoid collisions
+        end
+    end
     
     if needsReboot then
         print("System components updated. Rebooting...")
@@ -429,10 +446,10 @@ local function mainMenu()
         local options = {
             "Pocket Bank",
             payLabel,
+            "File Manager",
             "Read Mail" .. (state.unreadCount > 0 and " (" .. state.unreadCount .. " unread)" or ""),
             "Send Mail", 
             "General Chat", 
-            -- "People Tracker", -- Hidden for now
             "Mailing Lists", 
             "Games", 
             "System", 
@@ -470,16 +487,15 @@ local function mainMenu()
         if not choice or options[choice] == "Logout" then break end
         
         local selection = options[choice]
-        -- Use 'context' for all calls
-        if selection == "Pocket Bank" then state.apps.bankApp(context)
-        elseif selection == "Pay Merchant" then state.apps.onlinePayment(context)
-        elseif selection:match("Read Mail") then state.apps.viewInbox(context)
-        elseif selection == "Send Mail" then state.apps.sendMail(context)
-        elseif selection == "General Chat" then state.apps.startChat(context)
-        -- elseif selection == "People Tracker" then state.apps.peopleTracker(context)
-        elseif selection == "Mailing Lists" then state.apps.manageLists(context)
-        elseif selection == "Games" then state.apps.enterArcade(context)
-        elseif selection == "System" then state.apps.systemMenu(context)
+        -- Use 'appLoader' for dynamic apps
+        if selection == "Pocket Bank" then state.appLoader.run("bank", context)
+        elseif selection == "Pay Merchant" then state.appLoader.run("bank", context, "pay")
+        elseif selection == "File Manager" then state.appLoader.run("files", context)
+        elseif selection:match("Read Mail") or selection == "Send Mail" or selection == "Mailing Lists" then 
+            state.appLoader.run("mail", context)
+        elseif selection == "General Chat" then state.appLoader.run("chat", context)
+        elseif selection == "Games" then state.appLoader.run("arcade", context)
+        elseif selection == "System" then state.appLoader.run("system", context)
         elseif selection == "Admin Console" then runAdminConsole(context)
         end
     end
@@ -543,6 +559,7 @@ local function main()
             -- Load libraries after ensuring they exist
             if not crypto then crypto = require("lib.sha1_hmac") end
             if not apps then apps = require("lib.drunken_os_apps") end
+            if not state.appLoader then state.appLoader = require("lib.app_loader") end
 
             state.crypto = crypto
             state.apps = apps
