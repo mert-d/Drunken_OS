@@ -1283,20 +1283,21 @@ end
 
 ---
 -- Central dispatcher for all incoming rednet messages.
--- Supports transparent proxying for secure multi-network communication.
--- Handles Mail, Chat, Arcade, and Admin protocols.
--- @param senderId The rednet ID of the source.
--- @param message The payload (table or string).
--- @param protocol The protocol name (e.g., SimpleMail_Internal).
+-- The central dispatcher for all incoming Rednet messages.
+-- This function handles proxy unwrapping, session verification, and routing
+-- messages to specialized handlers (mail, chat, admin, etc).
+-- @param senderId The Rednet ID of the message sender (or proxy).
+-- @param message The raw message table.
+-- @param protocol The Rednet protocol string.
 local function handleRednetMessage(senderId, message, protocol)
-    -- Proxy Support: Determine if the message came through a Network Proxy
-    local origSender = senderId
     local actualMsg = message
+    local origSender = senderId
     local isProxied = false
     
-    if type(message) == "table" and message.proxy_orig_sender then
+    -- Unpack proxy messages if they come from a known Network Proxy
+    if message and message.proxy_orig_sender then
         origSender = message.proxy_orig_sender
-        actualMsg = message.proxy_orig_msg
+        actualMsg = message.proxy_payload
         isProxied = true
     end
 

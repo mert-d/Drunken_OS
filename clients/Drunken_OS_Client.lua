@@ -457,6 +457,10 @@ local function runAdminConsole(context)
     end
 end
 
+---
+-- The main interactive menu for the Drunken OS Client.
+-- This function handles UI rendering, user input for app selection,
+-- and real-time updates for notifications (mail, invoices).
 local function mainMenu()
     if not state.isAdmin and fs.exists("Admin_Console.lua") then
         fs.delete("Admin_Console.lua")

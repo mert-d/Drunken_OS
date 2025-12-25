@@ -8,12 +8,14 @@ Drunken OS follows a distributed architecture where a central **Mainframe** serv
 
 ### Core Components
 
-| Component            | Path                            | Description                                                                      |
-| :------------------- | :------------------------------ | :------------------------------------------------------------------------------- |
-| **Mainframe Server** | `servers/Drunken_OS_Server.lua` | Handles authentication, mail delivery, game high scores, and dynamic updates.    |
-| **OS Client**        | `clients/Drunken_OS_Client.lua` | The main user interface. Manages the app lifecycle, networking, and security.    |
-| **App Library**      | `lib/drunken_os_apps.lua`       | contains the logic for Mail, Chat, People Tracker, and the Banking Suite.        |
-| **Network Proxy**    | `servers/Network_Proxy.lua`     | Bridges different Rednet networks, allowing secure communication across domains. |
+| Component            | Path                                | Description                                                                      |
+| :------------------- | :---------------------------------- | :------------------------------------------------------------------------------- |
+| **Mainframe Server** | `servers/Drunken_OS_Server.lua`     | Handles authentication, mail, global chat, and app distribution.                 |
+| **Bank Server**      | `servers/Drunken_OS_BankServer.lua` | Manages currencies, stock markets, and persistent transaction ledgers.           |
+| **Arcade Server**    | `servers/Drunken_Arcade_Server.lua` | Specialized server for distributing and updating arcade games.                   |
+| **OS Client**        | `clients/Drunken_OS_Client.lua`     | The main user interface. Manages the app lifecycle, networking, and security.    |
+| **App Loader**       | `lib/app_loader.lua`                | Environment isolation for modular applets in the `apps/` directory.              |
+| **Network Proxy**    | `servers/Network_Proxy.lua`         | Bridges different Rednet networks, allowing secure communication across domains. |
 
 ---
 
@@ -27,49 +29,44 @@ Drunken OS implements a multi-tier security model:
 
 ### User Registration
 
-Users must select a unique username and a display nickname. Registration is secured via the **HyperAuth API** (running on a Command Computer). The system sends a verification token to the user's secondary device (e.g., Discord or HyperAuth client); once the user enters this code into the Drunken OS client, the registration is finalized.
+Users must select a unique username and a display nickname. Registration is secured via the **HyperAuth API**. The system sends a verification token to the user's secondary device; once the user enters this code into the Drunken OS client, the registration is finalized.
 
 ### 🛡️ Integrity Sentinel (Auditor)
 
-Security is further enhanced by the **Bank Sentinel (Auditor Turtle)**. This specialized turtle script:
+The **Bank Sentinel (Auditor Turtle)** ensures the validity of the financial system:
 
 - Performs real-time integrity audits on the banking ledger.
 - Verifies cryptographic hash chains to detect unauthorized database manipulation.
 - Replays transaction history to ensure balances are mathematically consistent.
-- Triggers visual and network-wide alerts upon detecting a data breach.
 
 ---
 
-## 📬 Communication Services
+## 📦 Modular Applet System
 
-### SimpleMail
+Drunken OS v3.0 introduces a modular applet system. Apps are no longer hardcoded into the client but are loaded dynamically from the `apps/` directory.
 
-A turn-based email system allowing users to send text messages and files to any registered user.
+### Standard Applets:
 
-- **Protocol**: `SimpleMail_Internal`
-- **Features**: Inbox, Compose, File Attachments.
-
-### SimpleChat
-
-A global real-time chat room for all connected users.
-
-- **Protocol**: `SimpleChat_Internal`
+- **Bank**: Full-featured banking interface for transfers, currency exchange, and stock tracking.
+- **Merchant**: Business suite with Cashier and POS modes for P2P commerce.
+- **SimpleMail**: Turn-based email system with file attachments.
+- **SimpleChat**: Real-time global chat room.
+- **Files**: Explorer for local and network-synced files.
+- **System**: Tool for checking updates, syncing apps, and managing settings.
 
 ---
 
 ## 🎮 Arcade Game Suite
 
-The OS features a variety of games located in the `games/` directory.
+The OS features a variety of games located in the `games/` directory, distributed via the **Arcade Server**.
 
 ### Featured Games:
 
-- **Drunken Dungeons**: A turn-based roguelike with persistent upgrades and co-op support.
+- **Drunken Doom**: A pseudo-3D raycasting engine (v1.3) with ASCII rendering, sprites, and save states.
+- **Drunken Dungeons**: A turn-based roguelike with persistent upgrades and 2-player co-op support.
 - **Drunken Duels**: A 1v1 P2P combat arena for challenging friends.
+- **Drunken Pong**: A classic 2-player arcade game.
 - **Classic Suite**: Includes Snake, Tetris, Floppa Bird, and Space Invaders.
-
-#### Developing Games:
-
-To add a new game, place the `.lua` file in the `games/` directory on the server. The server will automatically detect and list it for clients.
 
 ---
 
@@ -79,16 +76,21 @@ To add a new game, place the `.lua` file in the `games/` directory on the server
 
 The OS features a built-in **Master Installer** and **Updater**.
 
-- To publish an update: Use the `publish` command on the Mainframe Admin Console.
-- Libraries are synced automatically by the `lib/updater.lua` tool.
+- **App Syncing**: Use the `sync apps` command in the System applet or the Client terminal to pull the latest applets from the Mainframe.
+- **Game Updates**: The System applet queries the Arcade Server to check for newer versions of installed games.
+- **Library Updates**: Libraries are synced automatically by the `lib/updater.lua` tool.
 
 ### Networking Protocols
 
 When building apps for Drunken OS, use the following protocols:
 
-- `SimpleMail`: For mainframe communication.
-- `Drunken_Admin`: For remote administrative commands.
-- `Dungeon_Coop`: For P2P game synchronization.
+- `SimpleMail_Internal`: For mainframe mail communication.
+- `SimpleChat_Internal`: For global chat room traffic.
+- `DB_Bank_Comm`: For bank-client transaction requests.
+- `DB_Shop_Broadcast`: Used by Merchants to announce their shop status.
+- `DB_Merchant_Recv`: For receiving payment proofs in Merchant Cashier.
+- `Dunken_Admin`: For remote administrative commands.
+- `Arcade_Discovery`: Used to locate game servers on the network.
 
 ---
 
@@ -96,12 +98,12 @@ When building apps for Drunken OS, use the following protocols:
 
 ```text
 /
-├── apps/               # (Reserved for future standalone applets)
+├── apps/               # Modular applet source files
 ├── clients/            # OS Client and Administrative tools
-├── games/              # Game source files
+├── games/              # Game source files (distributed via Arcade Server)
 ├── installer/          # Setup and deployment scripts
-├── lib/                # Core libraries (UI, Crypto, Apps)
-├── servers/            # Mainframe, Proxies, and Dedicated servers
+├── lib/                # Core libraries (UI, Crypto, app_loader)
+├── servers/            # Mainframe, Bank, Arcade, and Proxies
 └── turtles/            # Specialized turtle scripts (Auditor, etc.)
 ```
 

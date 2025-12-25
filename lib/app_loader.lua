@@ -5,6 +5,12 @@
 
 local loader = {}
 
+---
+-- Dynamically loads and runs an applet from the /apps directory.
+-- @param appName The name of the application (filename without .lua extension).
+-- @param context The application context provided to the applet (parent, drawWindow, etc).
+-- @param entryPoint Optional. The function within the applet to call. Defaults to "run".
+-- @return {boolean} True if the applet ran successfully, false otherwise.
 function loader.run(appName, context, entryPoint)
     entryPoint = entryPoint or "run"
     -- Try both root apps/ and programDir/apps/
