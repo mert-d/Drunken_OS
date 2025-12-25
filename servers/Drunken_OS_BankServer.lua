@@ -646,20 +646,17 @@ function bankHandlers.deposit(senderId, message)
             queueSave(ACCOUNTS_DB)
             queueSave(STOCK_DB)
             rednet.send(senderId, { success = true, newBalance = accounts[user].balance, deposited_value = total_value }, BANK_PROTOCOL)
-                local transaction_data = {}
-                for _, item in ipairs(items) do
-                    local rateInfo = currencyRates[item.name or "unknown"] or currencyRates[item.name:match("^minecraft:(.+)") or ""]
-                    if rateInfo then
-                        transaction_data[item.name or "unknown"] = { count = item.count, value = item.count * rateInfo.current }
-                    end
+            local transaction_data = {}
+            for _, item in ipairs(items) do
+                local rateInfo = currencyRates[item.name or "unknown"] or currencyRates[item.name:match("^minecraft:(.+)") or ""]
+                if rateInfo then
+                    transaction_data[item.name or "unknown"] = { count = item.count, value = item.count * rateInfo.current }
                 end
-                logTransaction(user, "DEPOSIT", transaction_data, total_value)
-                logActivity(string.format("Stock updated for deposit: %s", table.concat(transaction_summary, ", ")))
-                broadcastSecurityEvent(string.format("DEP: %s +$%d", user, total_value), total_value)
-                needsRedraw = true -- Update the GUI
-            else
-                rednet.send(senderId, { success = false, reason = "Server database error." }, BANK_PROTOCOL)
             end
+            logTransaction(user, "DEPOSIT", transaction_data, total_value)
+            logActivity(string.format("Stock updated for deposit: %s", table.concat(transaction_summary, ", ")))
+            broadcastSecurityEvent(string.format("DEP: %s +$%d", user, total_value), total_value)
+            needsRedraw = true -- Update the GUI
         else
             rednet.send(senderId, { success = false, reason = "Account not found for deposit." }, BANK_PROTOCOL)
         end
@@ -718,6 +715,21 @@ function bankHandlers.finalize_withdrawal(senderId, message)
         currentStock[itemName] = 0
     end
 
+    queueSave(ACCOUNTS_DB)
+    queueSave(STOCK_DB)
+    
+    local transaction_data = {
+        [itemName] = { count = count, value = totalCost }
+    }
+    logTransaction(user, "WITHDRAW", transaction_data, totalCost)
+    logActivity(string.format("Finalized withdrawal for '%s'. New balance: $%d", user, account.balance))
+    logActivity(string.format("Stock updated for withdrawal: %d %s", count, itemName))
+    broadcastSecurityEvent(string.format("WDR: %s -$%d", user, totalCost), totalCost)
+    needsRedraw = true -- Update the GUI
+    
+    rednet.send(senderId, { success = true, newBalance = account.balance }, BANK_PROTOCOL)
+end
+
 -- Allows a user to fetch their own transaction history (for Merchant verification)
 function bankHandlers.get_transactions(senderId, message)
     local user, pin_hash = message.user, message.pin_hash
@@ -735,7 +747,7 @@ function bankHandlers.get_transactions(senderId, message)
     for i = #ledger, 1, -1 do
         local entry = ledger[i]
         if entry.user == user or (entry.details and entry.details.recipient == user) then
-            -- Sanitize entry (remove hash if needed? Nah)
+            -- Sanitize entry
             table.insert(history, entry)
             count = count + 1
             if count >= 10 then break end
@@ -747,27 +759,9 @@ end
 
 -- Allow saving/shutdown
 function bankHandlers.save_db(senderId, message)
-    -- Admin only check? For now open as driver handles it
-    saveLedger()
-    saveTableToFile(ACCOUNTS_DB, accounts)
-    saveTableToFile(STOCK_DB, currentStock)
-end
-    
-    if saveTableToFile(ACCOUNTS_DB, accounts) and saveTableToFile(STOCK_DB, currentStock) then
-        local transaction_data = {
-            [itemName] = { count = count, value = totalCost }
-        }
-        logTransaction(user, "WITHDRAW", transaction_data, totalCost)
-        logActivity(string.format("Finalized withdrawal for '%s'. New balance: $%d", user, account.balance))
-        logActivity(string.format("Stock updated for withdrawal: %d %s", count, itemName))
-        broadcastSecurityEvent(string.format("WDR: %s -$%d", user, totalCost), totalCost)
-        needsRedraw = true -- Update the GUI
-        
-        rednet.send(senderId, { success = true, newBalance = account.balance }, BANK_PROTOCOL)
-    else
-        logActivity("CRITICAL: FAILED TO SAVE DATABASE AFTER FINALIZATION FOR " .. user, true)
-        -- This is a critical state that requires manual admin intervention.
-    end
+    queueSave(LEDGER_FILE)
+    queueSave(ACCOUNTS_DB)
+    queueSave(STOCK_DB)
 end
 
 -- Handles a peer-to-peer money transfer.
