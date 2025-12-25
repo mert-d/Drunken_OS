@@ -1,12 +1,12 @@
 --[[
-    Drunken Doom (v1.2 PRO)
+    Drunken Doom (v2.0 PRO)
     by Antigravity & MuhendizBey
     Purpose:
     A pseudo-3D raycasting engine for Drunken OS.
     Navigate a 3D environment rendered in ASCII/Colors.
 ]]
 
-local gameVersion = 1.4
+local gameVersion = 1.5
 local saveFile = ".doom_save"
 
 -- Load arguments (username)
@@ -42,7 +42,8 @@ local playerX, playerY = 2, 2
 local playerA = 0
 local keysDown = {} -- Track held keys
 local rotSpeed = 3.0 -- Radians per second
-local moveSpeed = 5.0 -- Units per second
+local moveSpeed = 4.0 -- Units per second
+local sprintMult = 2.0 -- Sprint multiplier
 local showMinimap = false -- Toggle with 'M'
 
 -- Theme & Colors
@@ -78,9 +79,10 @@ end
 
 -- Sprites
 local objects = {
-    {x = 4.5, y = 4.5, char = "G", color = colors.yellow, active = true},
-    {x = 10.5, y = 10.5, char = "E", color = colors.red, active = true},
-    {x = 2.5, y = 10.5, char = "G", color = colors.yellow, active = true},
+    {x = 4.5, y = 4.5, char = "G", color = colors.yellow, active = true, type = "gold"},
+    {x = 10.5, y = 10.5, char = "E", color = colors.red, active = true, type = "enemy", hp = 100, pain = 0},
+    {x = 2.5, y = 10.5, char = "G", color = colors.yellow, active = true, type = "gold"},
+    {x = 14.5, y = 2.5, char = "E", color = colors.red, active = true, type = "enemy", hp = 100, pain = 0},
 }
 
 -- View Bobbing
@@ -90,6 +92,8 @@ local bobDir = 1
 -- Visual Effects State
 local isFiring = 0
 local screenShake = 0
+local damageFlash = 0
+local muzzleFlash = 0
 
 local function draw(score, hp, lastFrameTime)
     local screen_chars = {}
@@ -109,11 +113,12 @@ local function draw(score, hp, lastFrameTime)
         end
     end
 
-    -- Constants for DDA
-    local planeX = math.cos(playerA + math.pi/2) * (FOV/2)
-    local planeY = math.sin(playerA + math.pi/2) * (FOV/2)
+    -- Perpendicular plane for correct FOV perspective
+    -- If Dir is (sin A, cos A), Plane is (cos A, -sin A)
     local dirX = math.sin(playerA)
     local dirY = math.cos(playerA)
+    local planeX = math.cos(playerA) * (FOV/2)
+    local planeY = -math.sin(playerA) * (FOV/2)
 
     for x = 1, DISPLAY_W do
         local cameraX = 2 * x / DISPLAY_W - 1
@@ -182,6 +187,11 @@ local function draw(score, hp, lastFrameTime)
             end
         end
 
+        -- Damage Flash Effect
+        if damageFlash > 0 then
+            wallColor = (y % 2 == 0) and colors.red or colors.brown
+        end
+
         for y = 1, DISPLAY_H do
             if y <= ceiling then
                 screen_chars[y][x] = " "
@@ -232,11 +242,19 @@ local function draw(score, hp, lastFrameTime)
                     local sx = math.floor(middleX + lx - (objWidth / 2))
                     if sx >= 1 and sx <= DISPLAY_W then
                         if depth_buffer[sx] > distance then
+                            -- Crosshair interaction
+                            if sx == math.floor(DISPLAY_W/2) and obj.type == "enemy" then
+                                -- We'll set a flag to color crosshair later
+                                obj.isTargeted = true
+                            end
+
                             for ly = 0, objHeight - 1 do
                                 local sy = math.floor(objCeiling + ly)
                                 if sy >= 1 and sy <= DISPLAY_H then
                                     screen_chars[sy][sx] = obj.char
-                                    screen_text[sy][sx] = colorToBlit[obj.color or colors.white] or "0"
+                                    local col = obj.color or colors.white
+                                    if obj.pain and obj.pain > 0 then col = colors.white end
+                                    screen_text[sy][sx] = colorToBlit[col] or "0"
                                 end
                             end
                         end
@@ -258,15 +276,29 @@ local function draw(score, hp, lastFrameTime)
         end
     end
 
-    -- Bobbing Weapon Plot (Fake)
-    local weaponY = DISPLAY_H - 1 + math.floor(math.abs(bobOffset) * 2) - (isFiring > 0 and 2 or 0)
-    term.setCursorPos(math.floor(DISPLAY_W / 2) - 1, weaponY)
-    term.setTextColor(isFiring > 0 and colors.yellow or colors.gray)
+    -- Weapon Rendering (Fleshed out)
+    local weaponY = DISPLAY_H - 1 + math.floor(math.abs(bobOffset) * 2) - (isFiring > 0 and 1 or 0)
+    local centerX = math.floor(DISPLAY_W / 2)
+    
     term.setBackgroundColor(colors.black)
-    term.write(isFiring > 0 and "\\XX/" or "/MM\\")
+    
+    -- Gun Body (More detailed)
+    term.setTextColor(colors.gray)
+    term.setCursorPos(centerX - 3, weaponY)
+    term.write("[|#####|]")
+    term.setCursorPos(centerX - 2, weaponY - 1)
+    term.write("/ MMM \\")
+    term.setCursorPos(centerX - 1, weaponY - 2)
+    term.write("|H|")
+    
+    -- Muzzle Flash & Effects
     if isFiring > 0 then
-        term.setCursorPos(math.floor(DISPLAY_W / 2), weaponY - 1)
+        term.setTextColor(colors.yellow)
+        term.setCursorPos(centerX - 1, weaponY - 2)
+        term.write("/#\\")
+        term.setCursorPos(centerX, weaponY - 3)
         term.write("*")
+        screenShake = 1
     end
 
     -- Draw Minimap (if enabled)
@@ -294,12 +326,15 @@ local function draw(score, hp, lastFrameTime)
     local fps = lastFrameTime > 0 and math.floor(1 / lastFrameTime) or 0
     term.write(string.format(" HP: %d | Score: %d | FPS: %d | [M] Map | [Q] Quit", hp, score, fps))
     
-    -- Muzzle Flash (Screen overlay)
-    if isFiring > 0 then
-        term.setCursorPos(math.floor(DISPLAY_W/2), math.floor(DISPLAY_H/2))
-        term.setTextColor(colors.white)
-        term.write("+") -- Flash crosshair
+    -- Crosshair
+    local crosshairX, crosshairY = math.floor(DISPLAY_W / 2), math.floor(DISPLAY_H / 2)
+    term.setCursorPos(crosshairX, crosshairY)
+    local isEnemyTargeted = false
+    for _, obj in ipairs(objects) do
+        if obj.isTargeted then isEnemyTargeted = true; obj.isTargeted = nil end
     end
+    term.setTextColor(isEnemyTargeted and colors.red or colors.white)
+    term.write("+")
 end
 
 local function main(...)
@@ -356,18 +391,26 @@ local function main(...)
             if p1 == keys.m then showMinimap = not showMinimap end
             if p1 == keys.space then
                 isFiring = 0.15
-                screenShake = 1 -- Trigger 1-pixel shake
                 -- Shoot logic
                 for _, obj in ipairs(objects) do
-                    if obj.active and obj.char == "E" then
+                    if obj.active and obj.type == "enemy" then
                         local vecX = obj.x - playerX
                         local vecY = obj.y - playerY
                         local objAngle = math.atan2(vecX, vecY) - playerA
                         if objAngle < -math.pi then objAngle = objAngle + 2*math.pi end
                         if objAngle > math.pi then objAngle = objAngle - 2*math.pi end
+                        
+                        -- Tightened hitboxes for the gun
                         if math.abs(objAngle) < 0.15 then
-                            obj.active = false
-                            score = score + 500
+                            local dist = math.sqrt(vecX*vecX + vecY*vecY)
+                            if dist < 8 then
+                                obj.hp = obj.hp - 35
+                                obj.pain = 0.2
+                                if obj.hp <= 0 then
+                                    obj.active = false
+                                    score = score + 500
+                                end
+                            end
                         end
                     end
                 end
@@ -379,6 +422,11 @@ local function main(...)
         local moved = false
         if isFiring > 0 then isFiring = isFiring - frameTime end
         if screenShake > 0 then screenShake = math.max(0, screenShake - 5 * frameTime) end
+        if damageFlash > 0 then damageFlash = damageFlash - frameTime end
+
+        -- Rotation wrapping
+        if playerA > math.pi then playerA = playerA - 2*math.pi end
+        if playerA < -math.pi then playerA = playerA + 2*math.pi end
 
         -- Rotation
         if keysDown[keys.a] then playerA = playerA - rotSpeed * frameTime end
@@ -386,13 +434,15 @@ local function main(...)
 
         -- Movement with Collision Sliding
         local moveX, moveY = 0, 0
+        local curSpeed = moveSpeed * (keysDown[keys.leftShift] and sprintMult or 1.0)
+        
         if keysDown[keys.w] then
-            moveX = moveX + math.sin(playerA) * moveSpeed * frameTime
-            moveY = moveY + math.cos(playerA) * moveSpeed * frameTime
+            moveX = moveX + math.sin(playerA) * curSpeed * frameTime
+            moveY = moveY + math.cos(playerA) * curSpeed * frameTime
         end
         if keysDown[keys.s] then
-            moveX = moveX - math.sin(playerA) * moveSpeed * frameTime
-            moveY = moveY - math.cos(playerA) * moveSpeed * frameTime
+            moveX = moveX - math.sin(playerA) * curSpeed * frameTime
+            moveY = moveY - math.cos(playerA) * curSpeed * frameTime
         end
 
         if moveX ~= 0 or moveY ~= 0 then
@@ -418,17 +468,21 @@ local function main(...)
         -- AI & Collision
         for _, obj in ipairs(objects) do
             if obj.active then
+                if obj.pain and obj.pain > 0 then obj.pain = obj.pain - frameTime end
+                
                 local d = math.sqrt((obj.x-playerX)^2 + (obj.y-playerY)^2)
-                if obj.char == "G" and d < 0.8 then
+                if obj.type == "gold" and d < 0.8 then
                     obj.active = false
                     score = score + 100
-                elseif obj.char == "E" then
-                    if d < 8 then
+                elseif obj.type == "enemy" then
+                    -- Simple approach logic
+                    if d < 10 and (obj.pain == nil or obj.pain <= 0) then
                         obj.x = obj.x + (playerX - obj.x) * 1.5 * frameTime
                         obj.y = obj.y + (playerY - obj.y) * 1.5 * frameTime
                     end
                     if d < 0.8 then
-                        hp = hp - 10 * frameTime -- Continuous damage
+                        hp = hp - 15 * frameTime -- Continuous damage
+                        damageFlash = 0.1 -- Keep flashing while hit
                         if hp <= 0 then running = false end
                     end
                 end

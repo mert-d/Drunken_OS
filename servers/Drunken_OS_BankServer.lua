@@ -112,19 +112,6 @@ local function logActivity(message, isError)
     end
 end
 
-local function persistenceLoop()
-    while true do
-        sleep(30)
-        for path, isDirty in pairs(dbDirty) do
-            if isDirty and dbPointers[path] then
-                logActivity("Background saving DB: " .. path)
-                if saveTableToFile(path, dbPointers[path]()) then
-                    dbDirty[path] = false
-                end
-            end
-        end
-    end
-end
 
 local function logTransaction(username, transaction_type, data)
     local logEntry = {
@@ -337,6 +324,20 @@ local function loadTableFromFile(path)
         end
     end
     return {}
+end
+
+local function persistenceLoop()
+    while true do
+        sleep(30)
+        for path, isDirty in pairs(dbDirty) do
+            if isDirty and dbPointers[path] then
+                logActivity("Background saving DB: " .. path)
+                if saveTableToFile(path, dbPointers[path]()) then
+                    dbDirty[path] = false
+                end
+            end
+        end
+    end
 end
 
 local function loadAllData()

@@ -260,19 +260,6 @@ local function logActivity(message, isError)
     if monitor then redrawMonitorUI() end
 end
 
-local function persistenceLoop()
-    while true do
-        sleep(30) -- Save every 30 seconds if dirty
-        for path, isDirty in pairs(dbDirty) do
-            if isDirty and dbPointers[path] then
-                logActivity("Background saving " .. path .. "...")
-                if saveTableToFile(path, dbPointers[path]()) then
-                    dbDirty[path] = false
-                end
-            end
-        end
-    end
-end
 
 --==============================================================================
 -- Data Persistence Functions
@@ -339,6 +326,20 @@ local function loadTableFromFile(path)
         end
     end
     return {}
+end
+
+local function persistenceLoop()
+    while true do
+        sleep(30) -- Save every 30 seconds if dirty
+        for path, isDirty in pairs(dbDirty) do
+            if isDirty and dbPointers[path] then
+                logActivity("Background saving " .. path .. "...")
+                if saveTableToFile(path, dbPointers[path]()) then
+                    dbDirty[path] = false
+                end
+            end
+        end
+    end
 end
 
 ---
