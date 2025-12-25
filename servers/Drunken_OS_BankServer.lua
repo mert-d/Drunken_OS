@@ -47,6 +47,17 @@ local STOCK_DB = "bank_stock.db"
 local LOG_FILE = LOGS_DIR .. "/bank_server.log"
 local LEDGER_FILE = LOGS_DIR .. "/ledger.json"
 
+local dbDirty = {}
+local dbPointers = {
+    [ACCOUNTS_DB] = function() return accounts end,
+    [STOCK_DB] = function() return currentStock end,
+    [LEDGER_FILE] = function() return ledger end
+}
+
+local function queueSave(dbPath)
+    dbDirty[dbPath] = true
+end
+
 -- Rednet Protocols
 local BANK_PROTOCOL = "DB_Bank"
 local AUDIT_PROTOCOL = "DB_Audit"
@@ -109,6 +120,20 @@ local function logActivity(message, isError)
     end
 end
 
+local function persistenceLoop()
+    while true do
+        sleep(30)
+        for path, isDirty in pairs(dbDirty) do
+            if isDirty and dbPointers[path] then
+                logActivity("Background saving DB: " .. path)
+                if saveTableToFile(path, dbPointers[path]()) then
+                    dbDirty[path] = false
+                end
+            end
+        end
+    end
+end
+
 local function logTransaction(username, transaction_type, data)
     local logEntry = {
         timestamp = os.time(),
@@ -154,11 +179,7 @@ local function loadLedger()
 end
 
 local function saveLedger()
-    local file = fs.open(LEDGER_FILE, "w")
-    if file then
-        file.write(textutils.serialize(ledger))
-        file.close()
-    end
+    queueSave(LEDGER_FILE)
 end
 
 local function logTransaction(user, txType, details, amount, target)
@@ -421,13 +442,9 @@ function bankHandlers.login(senderId, message)
         if response and response.exists then
             logActivity("Mainframe verified user. Creating new bank account for '" .. user .. "'.")
             accounts[user] = { pin_hash = nil, balance = 0 }
-            if saveTableToFile(ACCOUNTS_DB, accounts) then
-                rednet.send(senderId, { success = false, reason = "setup_required" }, BANK_PROTOCOL)
-                logTransaction(user, "account_created", "SUCCESS - Awaiting PIN setup")
-            else
-                logActivity("Failed to save new account for " .. user, true)
-                rednet.send(senderId, { success = false, reason = "Bank database error." }, BANK_PROTOCOL)
-            end
+            queueSave(ACCOUNTS_DB)
+            rednet.send(senderId, { success = false, reason = "setup_required" }, BANK_PROTOCOL)
+            logTransaction(user, "account_created", "SUCCESS - Awaiting PIN setup")
         else
             rednet.send(senderId, { success = false, reason = "User does not exist in Drunken OS." }, BANK_PROTOCOL)
         end
@@ -466,11 +483,8 @@ function bankHandlers.set_pin(senderId, message)
 
     logActivity("Setting initial bank PIN for user '" .. user .. "'.")
     account.pin_hash = pin_hash
-    if saveTableToFile(ACCOUNTS_DB, accounts) then
-        rednet.send(senderId, { success = true }, BANK_PROTOCOL)
-    else
-        rednet.send(senderId, { success = false, reason = "Database error." }, BANK_PROTOCOL)
-    end
+    queueSave(ACCOUNTS_DB)
+    rednet.send(senderId, { success = true }, BANK_PROTOCOL)
 end
 
 -- Changes an existing PIN.
@@ -637,8 +651,9 @@ function bankHandlers.deposit(senderId, message)
     if total_value > 0 then
         if accounts[user] then
             accounts[user].balance = accounts[user].balance + total_value
-            if saveTableToFile(ACCOUNTS_DB, accounts) and saveTableToFile(STOCK_DB, currentStock) then
-                rednet.send(senderId, { success = true, newBalance = accounts[user].balance, deposited_value = total_value }, BANK_PROTOCOL)
+            queueSave(ACCOUNTS_DB)
+            queueSave(STOCK_DB)
+            rednet.send(senderId, { success = true, newBalance = accounts[user].balance, deposited_value = total_value }, BANK_PROTOCOL)
                 local transaction_data = {}
                 for _, item in ipairs(items) do
                     local rateInfo = currencyRates[item.name or "unknown"] or currencyRates[item.name:match("^minecraft:(.+)") or ""]
@@ -1368,7 +1383,7 @@ local function main()
     term.redirect(monitor)
     
     -- Run the main loops
-    parallel.waitForAny(networkListener, guiHandler)
+    parallel.waitForAny(networkListener, guiHandler, persistenceLoop)
     
     -- When the loops exit (on shutdown), restore the original terminal
     term.redirect(computerTerm)

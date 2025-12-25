@@ -51,7 +51,14 @@ local theme = {
     highlightText = colors.black,
     errorBg = colors.red,
     errorText = colors.white,
-    windowBg = colors.black -- Alias for apps library
+    windowBg = colors.black 
+}
+
+local colorToBlit = {
+    [colors.white] = "0", [colors.orange] = "1", [colors.magenta] = "2", [colors.lightBlue] = "3",
+    [colors.yellow] = "4", [colors.lime] = "5", [colors.pink] = "6", [colors.gray] = "7",
+    [colors.lightGray] = "8", [colors.cyan] = "9", [colors.purple] = "a", [colors.blue] = "b",
+    [colors.brown] = "c", [colors.green] = "d", [colors.red] = "e", [colors.black] = "f"
 }
 
 -- Global OS State: Stores session info, server IDs, and user data.
@@ -150,19 +157,24 @@ end
 
 local function drawMenu(options, selected, startX, startY)
     local w, h = term.getSize()
+    local blit_text = {}
+    local blit_fg = {}
+    local blit_bg = {}
+
+    local fg_hex = colorToBlit[theme.text]
+    local bg_hex = colorToBlit[theme.bg]
+    local hfg_hex = colorToBlit[theme.highlightText]
+    local hbg_hex = colorToBlit[theme.highlightBg]
+
     for i, opt in ipairs(options) do
         term.setCursorPos(startX, startY + i - 1)
+        local line = " " .. opt .. string.rep(" ", w - startX - #opt - 1) .. " "
         if i == selected then
-            term.setBackgroundColor(theme.highlightBg)
-            term.setTextColor(theme.highlightText)
-            term.write(" " .. opt .. string.rep(" ", w - startX - #opt - 1) .. " ")
+            term.blit(line, string.rep(hfg_hex, #line), string.rep(hbg_hex, #line))
         else
-            term.setBackgroundColor(theme.bg)
-            term.setTextColor(theme.text)
-            term.write(" " .. opt .. " ")
+            term.blit(line, string.rep(fg_hex, #line), string.rep(bg_hex, #line))
         end
     end
-    term.setBackgroundColor(theme.bg)
 end
 
 local function readInput(prompt, y)
@@ -446,20 +458,20 @@ local function runAdminConsole(context)
 end
 
 local function mainMenu()
-    -- Security cleanup: If not admin, ensure tool is removed
     if not state.isAdmin and fs.exists("Admin_Console.lua") then
         fs.delete("Admin_Console.lua")
     end
 
-    while true do
-        rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
-        local _, response = rednet.receive("SimpleMail", 2)
-        state.unreadCount = response and response.count or 0
-        
+    local lastUnread = -1
+    local lastInvoiceCount = -1
+    local dirty = true
+    local selected = 1
+    local options = {}
+
+    local function refreshOptions()
         local invoiceCount = state.pendingInvoices and #state.pendingInvoices or 0
         local payLabel = "Pay Merchant" .. (invoiceCount > 0 and " ("..invoiceCount.." pending)" or "")
-
-        local options = {
+        options = {
             "Pocket Bank",
             payLabel,
             "File Manager",
@@ -469,50 +481,54 @@ local function mainMenu()
             "System", 
             "Logout"
         }
-        
-        -- THE FIX: Correctly check for admin status
-        if state.isAdmin then
-            table.insert(options, "Admin Console")
-        end
-        
-        local selected = 1
-        local choice = nil
-        
-        while true do
-            -- Redraw menu
+        if state.isAdmin then table.insert(options, "Admin Console") end
+    end
+
+    refreshOptions()
+
+    while true do
+        if dirty or state.unreadCount ~= lastUnread or (state.pendingInvoices and #state.pendingInvoices ~= lastInvoiceCount) then
+            lastUnread = state.unreadCount
+            lastInvoiceCount = state.pendingInvoices and #state.pendingInvoices or 0
+            refreshOptions()
+            
             drawWindow("Home")
             drawMenu(options, selected, 2, 4)
-            
-            -- Handle Input
-            local event, key = os.pullEvent("key")
+            dirty = false
+        end
+
+        local event, key = os.pullEvent()
+        
+        if event == "key" then
             if key == keys.up then
                 selected = (selected == 1) and #options or selected - 1
+                dirty = true
             elseif key == keys.down then
                 selected = (selected == #options) and 1 or selected + 1
+                dirty = true
             elseif key == keys.enter then
-                choice = selected
-                break
+                local selection = options[selected]
+                if selection == "Logout" then break end
+                
+                if selection == "Pocket Bank" then state.appLoader.run("bank", context)
+                elseif selection:match("^Pay Merchant") then state.appLoader.run("bank", context, "pay")
+                elseif selection == "File Manager" then state.appLoader.run("files", context)
+                elseif selection:match("^Mail") then state.appLoader.run("mail", context)
+                elseif selection == "General Chat" then state.appLoader.run("chat", context)
+                elseif selection == "Games" then state.appLoader.run("arcade", context)
+                elseif selection == "System" then state.appLoader.run("system", context)
+                elseif selection == "Admin Console" then runAdminConsole(context)
+                end
+                dirty = true -- Force redraw after app exit
             elseif key == keys.q or key == keys.tab then
-                -- choice remains nil, signals exit
                 break
             end
-        end
-        
-        if not choice or options[choice] == "Logout" then break end
-        
-        local selection = options[choice]
-        -- Use 'appLoader' for dynamic apps
-        if selection == "Pocket Bank" then state.appLoader.run("bank", context)
-        elseif selection == "Pay Merchant" then state.appLoader.run("bank", context, "pay")
-        elseif selection == "File Manager" then state.appLoader.run("files", context)
-        elseif selection:match("^Mail") then state.appLoader.run("mail", context)
-        elseif selection == "General Chat" then state.appLoader.run("chat", context)
-        elseif selection == "Games" then state.appLoader.run("arcade", context)
-        elseif selection == "System" then state.appLoader.run("system", context)
-        elseif selection == "Admin Console" then runAdminConsole(context)
+        elseif event == "rednet_message" then
+            -- Let parallel handlers handle it, but we might need to flag dirty 
+            -- if counts changed (handled by loop condition above)
         end
     end
-    state.username = nil -- Signal logout
+    state.username = nil 
 end
 
 --==============================================================================
@@ -613,40 +629,37 @@ local function main()
             end
 
             -- Background Listener for Merchant Requests & Broadcasts
-            local function merchantListener()
+            local function backgroundListener()
+                local lastSync = 0
                 while true do
-                    -- Listen for Payment Requests (Targeted)
-                    local senderId, message, protocol = rednet.receive("DB_Merchant_Req")
-                    if senderId and message then
-                        -- Verify it's for us
+                    local now = os.epoch("utc") / 1000
+                    -- Fast poll for rednet messages
+                    local senderId, message, protocol = rednet.receive(nil, 0.5)
+                    
+                    if protocol == "DB_Merchant_Req" and message then
                         if message.type == "payment_request" and message.target == state.username then
-                             -- Add notification to a queue or just pop up if idle?
-                             -- For now, let's use a temporary HUD notification if possible.
-                             -- Or just rely on the user checking "Pay Merchant".
-                             -- Better: Add to a "Pending Invoices" list in state?
-                             if not state.pendingInvoices then state.pendingInvoices = {} end
-                             table.insert(state.pendingInvoices, message)
-                             
-                             -- Play sound
-                             local speaker = peripheral.find("speaker")
-                             if speaker then speaker.playNote("pling", 1, 2) end
+                            if not state.pendingInvoices then state.pendingInvoices = {} end
+                            table.insert(state.pendingInvoices, message)
+                            local speaker = peripheral.find("speaker")
+                            if speaker then speaker.playNote("pling", 1, 2) end
                         end
+                    elseif protocol == "DB_Shop_Broadcast" and message and message.menu then
+                        state.nearbyShop = message
                     end
                     
-                    -- Listen for Shop Broadcasts (Public)
-                    -- We can use a short timeout since we're in parallel
-                    local b_sender, b_msg = rednet.receive("DB_Shop_Broadcast", 0.5)
-                    if b_sender and b_msg and b_msg.menu then
-                        -- Store the latest shop we saw
-                        state.nearbyShop = b_msg
+                    -- Occasional sync (Mail/Unread count) every 10 seconds
+                    if now - lastSync > 10 then
+                        rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
+                        local _, response = rednet.receive("SimpleMail", 1)
+                        if response and response.count then
+                            state.unreadCount = response.count
+                        end
+                        lastSync = now
                     end
-                    
-                    -- Cleanup old nearbyShop if no signal?
-                    -- Simplified: Just overwrite whenever we see one.
                 end
             end
 
-            parallel.waitForAny(mainMenu, gpsHeartbeat, merchantListener)
+            parallel.waitForAny(mainMenu, gpsHeartbeat, backgroundListener)
             
             peripheral.find("modem", rednet.close)
             if not state.username then

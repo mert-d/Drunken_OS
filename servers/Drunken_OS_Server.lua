@@ -62,6 +62,7 @@ local users, lists, games, chatHistory, gameList, pendingAuths = {}, {}, {}, {},
 local userLocations = {} -- Stores latest (x, y, z) for each user
 local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
+local mailCountCache = {} -- Cache for unread mail counts
 local monitor = nil
 local ADMINS_DB = "admins.db" -- New database file for admins
 local USERS_DB = "users.db"
@@ -76,6 +77,22 @@ local GAMES_CODE_DB = "games_code.db"
 local AUTH_SERVER_PROTOCOL = "auth.secure.v1_Internal"
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 local ADMIN_PROTOCOL = "Drunken_Admin"
+
+local dbDirty = {}
+local dbPointers = {
+    [ADMINS_DB] = function() return admins end,
+    [USERS_DB] = function() return users end,
+    [LISTS_DB] = function() return lists end,
+    [GAMES_DB] = function() return games end,
+    [CHAT_DB] = function() return chatHistory end,
+    [GAMELIST_DB] = function() return gameList end,
+    [UPDATER_DB] = function() return {v = programVersions, c = programCode} end,
+    [GAMES_CODE_DB] = function() return gameCode end
+}
+
+local function queueSave(dbPath)
+    dbDirty[dbPath] = true
+end
 
 --==============================================================================
 -- UI & Theme Configuration
@@ -247,6 +264,20 @@ local function logActivity(message, isError)
     if monitor then redrawMonitorUI() end
 end
 
+local function persistenceLoop()
+    while true do
+        sleep(30) -- Save every 30 seconds if dirty
+        for path, isDirty in pairs(dbDirty) do
+            if isDirty and dbPointers[path] then
+                logActivity("Background saving " .. path .. "...")
+                if saveTableToFile(path, dbPointers[path]()) then
+                    dbDirty[path] = false
+                end
+            end
+        end
+    end
+end
+
 --==============================================================================
 -- Data Persistence Functions
 --==============================================================================
@@ -323,7 +354,7 @@ local function loadAllData()
     if not admins.MuhendizBey then
         -- Bootstrapping: Ensure the primary developer always has admin rights
         admins.MuhendizBey = true
-        saveTableToFile(ADMINS_DB, admins)
+        queueSave(ADMINS_DB)
     end
     
     -- Load various entity databases
@@ -369,14 +400,22 @@ local function saveItem(user, item, itemType)
     local dir = itemType .. "/" .. user
     if not fs.exists(dir) then fs.makeDir(dir) end
     local id = os.time() .. "-" .. math.random(100, 999)
-    saveTableToFile(dir .. "/" .. id, item)
+    if saveTableToFile(dir .. "/" .. id, item) then
+        if itemType == "mail" then
+            mailCountCache[user] = (mailCountCache[user] or 0) + 1
+        end
+        return true
+    end
+    return false
 end
 
 local function loadMail(user)
     local path = "mail/" .. user
     local mail = {}
     if fs.exists(path) and fs.isDir(path) then
-        for _, fileName in ipairs(fs.list(path)) do
+        local files = fs.list(path)
+        mailCountCache[user] = #files -- Refresh cache
+        for _, fileName in ipairs(files) do
             local mailPath = path .. "/" .. fileName
             local handle = fs.open(mailPath, "r")
             if handle then
@@ -395,10 +434,24 @@ local function loadMail(user)
     return mail
 end
 
+local function getMailCount(user)
+    if mailCountCache[user] then return mailCountCache[user] end
+    local path = "mail/" .. user
+    if fs.exists(path) and fs.isDir(path) then
+        mailCountCache[user] = #fs.list(path)
+    else
+        mailCountCache[user] = 0
+    end
+    return mailCountCache[user]
+end
+
 local function deleteItem(user, id, itemType)
     local path = itemType .. "/" .. user .. "/" .. id
     if fs.exists(path) then
         fs.delete(path)
+        if itemType == "mail" then
+            mailCountCache[user] = math.max(0, (mailCountCache[user] or 1) - 1)
+        end
         return true
     end
     return false
@@ -568,12 +621,12 @@ function mailHandlers.login(senderId, message)
 
     if needsMigration then
         users[message.user].password = receivedHash
-        saveTableToFile(USERS_DB, users)
+        queueSave(USERS_DB)
     end
     
     if message.session_token and users[message.user].session_token == message.session_token then
         logActivity("'" .. message.user .. "' logged in via session.")
-        rednet.send(senderId, { success = true, needs_auth = false, nickname = users[message.user].nickname, unreadCount = #loadMail(message.user), isAdmin = admins[message.user] or false }, "SimpleMail")
+        rednet.send(senderId, { success = true, needs_auth = false, nickname = users[message.user].nickname, unreadCount = getMailCount(message.user), isAdmin = admins[message.user] or false }, "SimpleMail")
         return
     end
     
@@ -615,8 +668,8 @@ function mailHandlers.submit_auth_token(senderId, message)
             end
         else -- This is a login
             users[user].session_token = token
-            saveTableToFile(USERS_DB, users)
-            payload = { success = true, unreadCount = #loadMail(user), nickname = users[user].nickname, session_token = token, isAdmin = admins[user] or false }
+            queueSave(USERS_DB)
+            payload = { success = true, unreadCount = getMailCount(user), nickname = users[user].nickname, session_token = token, isAdmin = admins[user] or false }
             logActivity("User '" .. user .. "' logged in.")
         end
         rednet.send(senderId, payload, "SimpleMail")
@@ -746,10 +799,9 @@ function mailHandlers.create_list(senderId, message)
         rednet.send(senderId, { success = false, status = "List exists." }, "SimpleMail")
     else
         lists[message.name] = { message.creator }
-        if saveTableToFile(LISTS_DB, lists) then
-            rednet.send(senderId, { success = true, status = "List created." }, "SimpleMail")
-            logActivity(string.format("'%s' created list '%s'", message.creator, message.name))
-        end
+        queueSave(LISTS_DB)
+        rednet.send(senderId, { success = true, status = "List created." }, "SimpleMail")
+        logActivity(string.format("'%s' created list '%s'", message.creator, message.name))
     end
 end
 
@@ -765,10 +817,9 @@ function mailHandlers.join_list(senderId, message)
         end
     end
     table.insert(lists[message.name], message.user)
-    if saveTableToFile(LISTS_DB, lists) then
-        rednet.send(senderId, { success = true, status = "Joined list." }, "SimpleMail")
-        logActivity(string.format("'%s' joined list '%s'", message.user, message.name))
-    end
+    queueSave(LISTS_DB)
+    rednet.send(senderId, { success = true, status = "Joined list." }, "SimpleMail")
+    logActivity(string.format("'%s' joined list '%s'", message.user, message.name))
 end
 
 function mailHandlers.get_lists(senderId, message)
@@ -784,7 +835,7 @@ function mailHandlers.get_chat_history(senderId, message)
 end
 
 function mailHandlers.get_unread_count(senderId, message)
-    rednet.send(senderId, { type = "unread_count_response", count = #loadMail(message.user) }, "SimpleMail")
+    rednet.send(senderId, { type = "unread_count_response", count = getMailCount(message.user) }, "SimpleMail")
 end
 
 function mailHandlers.report_location(senderId, message)
@@ -1279,7 +1330,7 @@ local function handleRednetMessage(senderId, message, protocol)
         local entry = string.format("[%s]: %s", nickname, actualMsg.text)
         table.insert(chatHistory, entry)
         if #chatHistory > 100 then table.remove(chatHistory, 1) end
-        saveTableToFile(CHAT_DB, chatHistory)
+        queueSave(CHAT_DB)
         -- Relay message to all clients on the internal network
         rednet.broadcast({ from = nickname, text = actualMsg.text }, "SimpleChat_Internal") 
 
@@ -1319,16 +1370,28 @@ local function handleTerminalInput(event, p1)
 end
 
 local function mainEventLoop()
-    while true do
-        local event, p1, p2, p3 = os.pullEvent()
-        if event == "rednet_message" then
-            handleRednetMessage(p1, p2, p3)
-        elseif event == "key" or event == "char" then
-            handleTerminalInput(event, p1)
-        elseif event == "terminate" then
-            break
+    -- Admin Prompt logic needs to be factored out for parallel
+    local function adminPrompt()
+        while true do
+            local event, p1 = os.pullEvent()
+            if event == "key" or event == "char" then
+                handleTerminalInput(event, p1)
+            elseif event == "terminate" then
+                break
+            end
         end
     end
+
+    local function rednetListener()
+        while true do
+            local senderId, message, protocol = rednet.receive()
+            if senderId then
+                handleRednetMessage(senderId, message, protocol)
+            end
+        end
+    end
+
+    parallel.waitForAny(adminPrompt, rednetListener, persistenceLoop)
 end
 
 local function main()
