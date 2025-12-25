@@ -56,6 +56,26 @@ local function mainGame(...)
                 "#######"
             },
             name = "The Lobby"
+        },
+        {
+            map = {
+                " ##### ",
+                " # . # ",
+                " # X # ",
+                " # @ # ",
+                " ##### "
+            },
+            name = "The Well"
+        },
+        {
+            map = {
+                "#######",
+                "#.. X #",
+                "#XX @ #",
+                "#     #",
+                "#######"
+            },
+            name = "The Corner"
         }
     }
 

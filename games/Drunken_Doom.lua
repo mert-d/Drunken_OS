@@ -313,14 +313,12 @@ local function main(...)
     -- Title Screen
     term.setBackgroundColor(colors.black); term.clear()
     local titleArt = {
-        "  _____   ____   ____  __  __ ",
-        " |  __ \\ / __ \\ / __ \\|  \\/  |",
-        " | |  | | |  | | |  | | \\  / |",
-        " | |  | | |  | | |  | | |\\/| |",
-        " | |__| | |__| | |__| | |  | |",
-        " |_____/ \\____/ \\____/|_|  |_|",
-        "                              ",
-        "      --- DRUNKEN DOOM ---    "
+        " ___  __  __  __  __ ",
+        "|   \\|  ||  ||  \\/  |",
+        "| |  |  ||  || |\\/| |",
+        "|___/ \\__/ \\__/|_|  |_|",
+        "                     ",
+        "  --- DRUNKEN DOOM ---"
     }
     
     local startY = math.floor((DISPLAY_H - #titleArt) / 2) - 1

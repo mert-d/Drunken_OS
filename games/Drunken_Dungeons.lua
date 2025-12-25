@@ -417,7 +417,6 @@ end
                 end
                 if isMultiplayer then break end
             end
-            end
         elseif k == keys.q or k == keys.tab then
             return
         end
