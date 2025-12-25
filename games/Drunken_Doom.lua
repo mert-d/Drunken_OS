@@ -93,7 +93,6 @@ local bobDir = 1
 local isFiring = 0
 local screenShake = 0
 local damageFlash = 0
-local muzzleFlash = 0
 
 local function draw(score, hp, lastFrameTime)
     local screen_chars = {}
@@ -187,12 +186,13 @@ local function draw(score, hp, lastFrameTime)
             end
         end
 
-        -- Damage Flash Effect
-        if damageFlash > 0 then
-            wallColor = (y % 2 == 0) and colors.red or colors.brown
-        end
 
         for y = 1, DISPLAY_H do
+            local drawColor = wallColor
+            if damageFlash > 0 and y > ceiling and y <= floor then
+                drawColor = (y % 2 == 0) and colors.red or colors.brown
+            end
+
             if y <= ceiling then
                 screen_chars[y][x] = " "
                 screen_text[y][x] = "f"
@@ -200,7 +200,7 @@ local function draw(score, hp, lastFrameTime)
             elseif y > ceiling and y <= floor then
                 screen_chars[y][x] = char
                 screen_text[y][x] = "f"
-                screen_bg[y][x] = colorToBlit[wallColor]
+                screen_bg[y][x] = colorToBlit[drawColor]
             else
                 local b = 1 - (y - DISPLAY_H/2) / (DISPLAY_H/2)
                 local fCol = theme.floor
@@ -265,8 +265,8 @@ local function draw(score, hp, lastFrameTime)
     end
 
     -- Render loop with screen shake
-    local shakeX = math.random(-screenShake, screenShake)
-    local shakeY = math.random(-screenShake, screenShake)
+    local shakeX = math.random(-math.floor(screenShake), math.floor(screenShake))
+    local shakeY = math.random(-math.floor(screenShake), math.floor(screenShake))
     
     for y = 1, DISPLAY_H do
         local drawY = y + shakeY
