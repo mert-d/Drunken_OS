@@ -6,7 +6,7 @@
     Navigate a 3D environment rendered in ASCII/Colors.
 ]]
 
-local gameVersion = 1.2
+local gameVersion = 1.3
 local saveFile = ".doom_save"
 
 -- Load arguments (username)
@@ -40,6 +40,9 @@ local MAP_W = #map[1]
 -- Player State
 local playerX, playerY = 2, 2
 local playerA = 0
+local keysDown = {} -- Track held keys
+local rotSpeed = 3.0 -- Radians per second
+local moveSpeed = 5.0 -- Units per second
 
 -- Theme & Colors
 local hasColor = term.isColor and term.isColor()
@@ -83,8 +86,9 @@ local objects = {
 local bobOffset = 0
 local bobDir = 1
 
--- Shooting State
+-- Visual Effects State
 local isFiring = 0
+local screenShake = 0
 
 local function draw(score, hp, lastFrameTime)
     local screen_chars = {}
@@ -241,10 +245,16 @@ local function draw(score, hp, lastFrameTime)
         end
     end
 
-    -- Render loop
+    -- Render loop with screen shake
+    local shakeX = math.random(-screenShake, screenShake)
+    local shakeY = math.random(-screenShake, screenShake)
+    
     for y = 1, DISPLAY_H do
-        term.setCursorPos(1, y)
-        term.blit(table.concat(screen_chars[y]), table.concat(screen_text[y]), table.concat(screen_bg[y]))
+        local drawY = y + shakeY
+        if drawY >= 1 and drawY <= DISPLAY_H then
+            term.setCursorPos(1 + shakeX, drawY)
+            term.blit(table.concat(screen_chars[y]), table.concat(screen_text[y]), table.concat(screen_bg[y]))
+        end
     end
 
     -- Bobbing Weapon Plot (Fake)
@@ -280,6 +290,13 @@ local function draw(score, hp, lastFrameTime)
     term.setTextColor(theme.text)
     local fps = lastFrameTime > 0 and math.floor(1 / lastFrameTime) or 0
     term.write(string.format(" HP: %d | Score: %d | FPS: %d | [Q] Quit", hp, score, fps))
+    
+    -- Muzzle Flash (Screen overlay)
+    if isFiring > 0 then
+        term.setCursorPos(math.floor(DISPLAY_W/2), math.floor(DISPLAY_H/2))
+        term.setTextColor(colors.white)
+        term.write("+") -- Flash crosshair
+    end
 end
 
 local function main(...)
@@ -313,27 +330,15 @@ local function main(...)
 
         draw(score, hp, frameTime)
         
-        local timer = os.startTimer(0.01) -- High frequency
-        local event, p1, p2, p3 = os.pullEvent()
+        -- Non-blocking event pull
+        local event, p1 = os.pullEvent()
         
-        local moved = false
-        if isFiring > 0 then isFiring = isFiring - 1 end
-
         if event == "key" then
-            if p1 == keys.w then
-                local nextX = playerX + math.sin(playerA) * 0.4
-                local nextY = playerY + math.cos(playerA) * 0.4
-                if getMapChar(nextX, nextY) ~= "#" then playerX, playerY = nextX, nextY; moved = true end
-            elseif p1 == keys.s then
-                local nextX = playerX - math.sin(playerA) * 0.4
-                local nextY = playerY - math.cos(playerA) * 0.4
-                if getMapChar(nextX, nextY) ~= "#" then playerX, playerY = nextX, nextY; moved = true end
-            elseif p1 == keys.a then
-                playerA = playerA - 0.2
-            elseif p1 == keys.d then
-                playerA = playerA + 0.2
-            elseif p1 == keys.space then
-                isFiring = 3
+            keysDown[p1] = true
+            if p1 == keys.q or p1 == keys.tab then running = false end
+            if p1 == keys.space then
+                isFiring = 0.15
+                screenShake = 1 -- Trigger 1-pixel shake
                 -- Shoot logic
                 for _, obj in ipairs(objects) do
                     if obj.active and obj.char == "E" then
@@ -342,22 +347,54 @@ local function main(...)
                         local objAngle = math.atan2(vecX, vecY) - playerA
                         if objAngle < -math.pi then objAngle = objAngle + 2*math.pi end
                         if objAngle > math.pi then objAngle = objAngle - 2*math.pi end
-                        if math.abs(objAngle) < 0.1 then
+                        if math.abs(objAngle) < 0.15 then
                             obj.active = false
                             score = score + 500
                         end
                     end
                 end
-            elseif p1 == keys.q or p1 == keys.tab then
-                running = false
+            end
+        elseif event == "key_up" then
+            keysDown[p1] = nil
+        end
+
+        local moved = false
+        if isFiring > 0 then isFiring = isFiring - frameTime end
+        if screenShake > 0 then screenShake = math.max(0, screenShake - 5 * frameTime) end
+
+        -- Rotation
+        if keysDown[keys.a] then playerA = playerA - rotSpeed * frameTime end
+        if keysDown[keys.d] then playerA = playerA + rotSpeed * frameTime end
+
+        -- Movement with Collision Sliding
+        local moveX, moveY = 0, 0
+        if keysDown[keys.w] then
+            moveX = moveX + math.sin(playerA) * moveSpeed * frameTime
+            moveY = moveY + math.cos(playerA) * moveSpeed * frameTime
+        end
+        if keysDown[keys.s] then
+            moveX = moveX - math.sin(playerA) * moveSpeed * frameTime
+            moveY = moveY - math.cos(playerA) * moveSpeed * frameTime
+        end
+
+        if moveX ~= 0 or moveY ~= 0 then
+            moved = true
+            -- Sliding logic: Check X and Y separately
+            local nextX = playerX + moveX
+            if getMapChar(nextX, playerY) ~= "#" then
+                playerX = nextX
+            end
+            local nextY = playerY + moveY
+            if getMapChar(playerX, nextY) ~= "#" then
+                playerY = nextY
             end
         end
 
         if moved then
-            bobOffset = bobOffset + 0.15 * bobDir
-            if math.abs(bobOffset) > 0.5 then bobDir = bobDir * -1 end
+            bobOffset = bobOffset + 5 * frameTime * bobDir
+            if math.abs(bobOffset) > 0.3 then bobDir = bobDir * -1 end
         else
-            bobOffset = bobOffset * 0.8
+            bobOffset = bobOffset * 0.9
         end
 
         -- AI & Collision
@@ -369,11 +406,11 @@ local function main(...)
                     score = score + 100
                 elseif obj.char == "E" then
                     if d < 8 then
-                        obj.x = obj.x + (playerX - obj.x) * 0.03
-                        obj.y = obj.y + (playerY - obj.y) * 0.03
+                        obj.x = obj.x + (playerX - obj.x) * 1.5 * frameTime
+                        obj.y = obj.y + (playerY - obj.y) * 1.5 * frameTime
                     end
                     if d < 0.8 then
-                        hp = hp - 1
+                        hp = hp - 10 * frameTime -- Continuous damage
                         if hp <= 0 then running = false end
                     end
                 end
@@ -391,7 +428,9 @@ local function main(...)
             break
         end
 
-        if event == "timer" and p1 == timer then end
+        -- Yield briefly to maintain responsiveness
+        os.queueEvent("yield")
+        os.pullEvent("yield")
     end
     
     term.setBackgroundColor(colors.black); term.clear(); term.setCursorPos(1, 1)
