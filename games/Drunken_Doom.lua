@@ -43,6 +43,7 @@ local playerA = 0
 local keysDown = {} -- Track held keys
 local rotSpeed = 3.0 -- Radians per second
 local moveSpeed = 5.0 -- Units per second
+local showMinimap = false -- Toggle with 'M'
 
 -- Theme & Colors
 local hasColor = term.isColor and term.isColor()
@@ -268,18 +269,20 @@ local function draw(score, hp, lastFrameTime)
         term.write("*")
     end
 
-    -- Draw Minimap
-    local mmX, mmY = 2, 2
-    for y = 1, MAP_H do
-        for x = 1, MAP_W do
-            term.setCursorPos(mmX + x - 1, mmY + y - 1)
-            local char = getMapChar(x, y)
-            if math.floor(playerX) == x and math.floor(playerY) == y then
-                term.setBackgroundColor(theme.minimap_player); term.write("P")
-            elseif char == "#" then
-                term.setBackgroundColor(theme.minimap_wall); term.write(" ")
-            else
-                term.setBackgroundColor(colors.black); term.write(".")
+    -- Draw Minimap (if enabled)
+    if showMinimap then
+        local mmX, mmY = 2, 2
+        for y = 1, MAP_H do
+            for x = 1, MAP_W do
+                term.setCursorPos(mmX + x - 1, mmY + y - 1)
+                local char = getMapChar(x, y)
+                if math.floor(playerX) == x and math.floor(playerY) == y then
+                    term.setBackgroundColor(theme.minimap_player); term.write("P")
+                elseif char == "#" then
+                    term.setBackgroundColor(theme.minimap_wall); term.write(" ")
+                else
+                    term.setBackgroundColor(colors.black); term.write(".")
+                end
             end
         end
     end
@@ -289,7 +292,7 @@ local function draw(score, hp, lastFrameTime)
     term.setBackgroundColor(colors.black)
     term.setTextColor(theme.text)
     local fps = lastFrameTime > 0 and math.floor(1 / lastFrameTime) or 0
-    term.write(string.format(" HP: %d | Score: %d | FPS: %d | [Q] Quit", hp, score, fps))
+    term.write(string.format(" HP: %d | Score: %d | FPS: %d | [M] Map | [Q] Quit", hp, score, fps))
     
     -- Muzzle Flash (Screen overlay)
     if isFiring > 0 then
@@ -309,12 +312,28 @@ local function main(...)
 
     -- Title Screen
     term.setBackgroundColor(colors.black); term.clear()
-    term.setCursorPos(math.floor((DISPLAY_W - 12)/2), math.floor(DISPLAY_H/2) - 1)
-    term.setTextColor(colors.red); print("DRUNKEN DOOM")
-    term.setCursorPos(math.floor((DISPLAY_W - 19)/2), math.floor(DISPLAY_H/2) + 1)
-    term.setTextColor(colors.white); print("PRO VERSION (DDA)")
-    term.setCursorPos(math.floor((DISPLAY_W - 18)/2), math.floor(DISPLAY_H/2) + 2)
-    print("Press ANY KEY to START")
+    local titleArt = {
+        "  _____   ____   ____  __  __ ",
+        " |  __ \\ / __ \\ / __ \\|  \\/  |",
+        " | |  | | |  | | |  | | \\  / |",
+        " | |  | | |  | | |  | | |\\/| |",
+        " | |__| | |__| | |__| | |  | |",
+        " |_____/ \\____/ \\____/|_|  |_|",
+        "                              ",
+        "      --- DRUNKEN DOOM ---    "
+    }
+    
+    local startY = math.floor((DISPLAY_H - #titleArt) / 2) - 1
+    for i, line in ipairs(titleArt) do
+        term.setCursorPos(math.floor((DISPLAY_W - #line) / 2) + 1, startY + i)
+        term.setTextColor(i < #titleArt and colors.red or colors.orange)
+        term.write(line)
+    end
+    
+    term.setCursorPos(math.floor((DISPLAY_W - 19) / 2) + 1, startY + #titleArt + 2)
+    term.setTextColor(colors.white); term.write("PRO VERSION (DDA)")
+    term.setCursorPos(math.floor((DISPLAY_W - 22) / 2) + 1, startY + #titleArt + 4)
+    term.setTextColor(colors.gray); term.write("PRESS ANY KEY TO START")
     os.pullEvent("key")
 
     local score = 0
@@ -336,6 +355,7 @@ local function main(...)
         if event == "key" then
             keysDown[p1] = true
             if p1 == keys.q or p1 == keys.tab then running = false end
+            if p1 == keys.m then showMinimap = not showMinimap end
             if p1 == keys.space then
                 isFiring = 0.15
                 screenShake = 1 -- Trigger 1-pixel shake

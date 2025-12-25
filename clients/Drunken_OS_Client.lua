@@ -149,7 +149,7 @@ local function showMessage(title, message)
     printCentered(4, message)
     
     local continueText = "Press any key to continue..."
-    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, h - 1)
+    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, h - 2)
     term.setTextColor(colors.gray)
     term.write(continueText)
     os.pullEvent("key")
