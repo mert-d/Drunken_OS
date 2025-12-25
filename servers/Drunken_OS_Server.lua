@@ -138,6 +138,15 @@ local function wordWrap(text, width)
     return lines
 end
 
+local function parseVersion(content)
+    if not content then return 0 end
+    local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or
+              content:match("local%s+appVersion%s*=%s*([%d%.]+)") or
+              content:match("%(v([%d%.]+)%)") or
+              content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+    return tonumber(v) or 1.0
+end
+
 ---
 -- Redraws the entire admin console UI on the server's terminal.
 -- This includes the title bar, a scrollable log area, and an interactive input prompt.
@@ -529,7 +538,19 @@ function mailHandlers.get_version(senderId, message)
             rednet.send(senderId, { version = 0 }, "SimpleMail")
         end
     else
-        rednet.send(senderId, { version = programVersions[prog] or 0 }, "SimpleMail")
+        local version = programVersions[prog]
+        if not version or version == 0 then
+            -- Fallback: check games/ directory
+            local gamePath = "games/" .. prog
+            if fs.exists(gamePath) then
+                local f = fs.open(gamePath, "r")
+                if f then
+                    version = parseVersion(f.readAll())
+                    f.close()
+                end
+            end
+        end
+        rednet.send(senderId, { version = version or 0 }, "SimpleMail")
     end
 end
 
@@ -553,6 +574,24 @@ function mailHandlers.get_all_app_versions(senderId, message)
     rednet.send(senderId, { type = "app_versions_response", versions = versions }, "SimpleMail")
 end
 
+function mailHandlers.get_all_game_versions(senderId, message)
+    local versions = {}
+    if fs.exists("games/") then
+        local files = fs.list("games/")
+        for _, file in ipairs(files) do
+            if not fs.isDir("games/" .. file) and file:match("%.lua$") then
+                local path = "games/" .. file
+                local f = fs.open(path, "r")
+                if f then
+                    versions[file] = parseVersion(f.readAll())
+                    f.close()
+                end
+            end
+        end
+    end
+    rednet.send(senderId, { type = "game_versions_response", versions = versions }, "SimpleMail")
+end
+
 function mailHandlers.get_update(senderId, message)
     local prog = message.program
     if prog:match("^app%.") then
@@ -566,7 +605,19 @@ function mailHandlers.get_update(senderId, message)
             rednet.send(senderId, { code = nil }, "SimpleMail")
         end
     else
-        rednet.send(senderId, { code = programCode[prog] }, "SimpleMail")
+        local code = programCode[prog]
+        if not code then
+            -- Fallback: check games/ directory
+            local gamePath = "games/" .. prog
+            if fs.exists(gamePath) then
+                local f = fs.open(gamePath, "r")
+                if f then
+                    code = f.readAll()
+                    f.close()
+                end
+            end
+        end
+        rednet.send(senderId, { code = code }, "SimpleMail")
     end
 end
 

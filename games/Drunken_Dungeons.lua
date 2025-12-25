@@ -7,7 +7,7 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 2.0
+local gameVersion = 2.0 -- Version: 2.0
 local saveFile = ".dungeon_save"
 
 -- Color mapping for term.blit
@@ -98,7 +98,7 @@ local function mainGame(...)
     local entities = {}
     local dungeonLevel = 1
     local gameOver = false
-    local logs = {"Welcome to Drunken Dungeons!"}
+    local logs = {{ text = "Welcome to Drunken Dungeons!", color = colors.yellow }}
     local class = "Brawler"
     local otherPlayer = { x = 0, y = 0, hp = 10, active = false }
 
@@ -322,8 +322,13 @@ end
         -- Logs
         for i, log in ipairs(logs) do
             term.setCursorPos(2, h - 3 + i)
-            term.setTextColor(log.color or colors.lightGray)
-            term.write("> " .. log.text)
+            if type(log) == "table" then
+                term.setTextColor(log.color or colors.lightGray)
+                term.write("> " .. (log.text or "???"))
+            else
+                term.setTextColor(colors.lightGray)
+                term.write("> " .. tostring(log))
+            end
         end
         
         term.setCursorPos(math.floor(w/2 - 10), h)
