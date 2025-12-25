@@ -275,7 +275,7 @@ local function syncGames()
     local coreGames = {
         "snake.lua", "tetris.lua", "invaders.lua", "floppa_bird.lua",
         "Drunken_Dungeons.lua", "Drunken_Duels.lua", "Drunken_Pong.lua",
-        "Drunken_Sweeper.lua", "Drunken_Sokoban.lua"
+        "Drunken_Sweeper.lua", "Drunken_Sokoban.lua", "Drunken_Doom.lua"
     }
     
     if not fs.exists("games") then fs.makeDir("games") end
