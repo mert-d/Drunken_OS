@@ -7,8 +7,16 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 1.8
+local gameVersion = 2.0
 local saveFile = ".dungeon_save"
+
+-- Color mapping for term.blit
+local colorToBlit = {
+    [colors.white] = "0", [colors.orange] = "1", [colors.magenta] = "2", [colors.lightBlue] = "3",
+    [colors.yellow] = "4", [colors.lime] = "5", [colors.pink] = "6", [colors.gray] = "7",
+    [colors.lightGray] = "8", [colors.cyan] = "9", [colors.purple] = "a", [colors.blue] = "b",
+    [colors.brown] = "c", [colors.green] = "d", [colors.red] = "e", [colors.black] = "f"
+}
 
 ---
 -- Persists player data (gold, upgrades) to a local sidecar file.
@@ -81,8 +89,12 @@ local function mainGame(...)
     local persist = loadGame()
 
     -- Game State
-    local player = { x = 2, y = 2, hp = 10, maxHp = 10, gold = 0, level = 1, xp = 0, dmg = 1 }
+    local player = { 
+        x = 2, y = 2, hp = 10, maxHp = 10, gold = 0, level = 1, xp = 0, dmg = 1,
+        equipment = { weapon = nil, armor = nil, trinket = nil }
+    }
     local map = {}
+    local visibility = {} -- 0: hidden, 1: explored, 2: visible
     local entities = {}
     local dungeonLevel = 1
     local gameOver = false
@@ -90,13 +102,26 @@ local function mainGame(...)
     local class = "Brawler"
     local otherPlayer = { x = 0, y = 0, hp = 10, active = false }
 
-    -- Apply Upgrades
-    player.maxHp = player.maxHp + (persist.upgrades.hp * 5)
-    player.hp = player.maxHp
-    player.dmg = player.dmg + persist.upgrades.dmg
+    -- Item Templates
+    local itemPool = {
+        weapon = {
+            { name = "Rusty Dagger", dmg = 1, rarity = colors.lightGray },
+            { name = "Iron Sword", dmg = 3, rarity = colors.white },
+            { name = "Great Axe", dmg = 5, rarity = colors.orange },
+        },
+        armor = {
+            { name = "Cloth Tunic", defense = 1, rarity = colors.lightGray },
+            { name = "Leather Armor", defense = 2, rarity = colors.white },
+            { name = "Plate Mail", defense = 4, rarity = colors.orange },
+        },
+        trinket = {
+            { name = "Lucky Coin", luck = 5, rarity = colors.yellow },
+            { name = "Owl Eye", vision = 2, rarity = colors.cyan },
+        }
+    }
 
-    local function addLog(msg)
-        table.insert(logs, msg)
+    local function addLog(msg, color)
+        table.insert(logs, { text = msg, color = color or colors.lightGray })
         if #logs > 3 then table.remove(logs, 1) end
     end
 
@@ -108,9 +133,14 @@ local function generateMap()
     math.randomseed(sharedSeed + dungeonLevel)
     -- Initialize the map with solid walls
     map = {}
+    visibility = {}
     for y = 1, MAP_H do
         map[y] = {}
-        for x = 1, MAP_W do map[y][x] = TILE_WALL end
+        visibility[y] = {}
+        for x = 1, MAP_W do 
+            map[y][x] = TILE_WALL 
+            visibility[y][x] = 0
+        end
     end
 
     -- Starting position for the 'drunkard'
@@ -160,64 +190,177 @@ local function generateMap()
     table.insert(entities, {x = sx, y = sy, type = "stairs", hp = 0})
 end
 
+---
+-- Updates the visibility map based on player position.
+-- Implements a simple Raycast or Radius-based vision.
+local function updateVisibility()
+    -- Set all currently visible to explored
+    for y = 1, MAP_H do
+        for x = 1, MAP_W do
+            if visibility[y][x] == 2 then visibility[y][x] = 1 end
+        end
+    end
+
+    local radius = 5
+    for dy = -radius, radius do
+        for dx = -radius, radius do
+            local dist = math.sqrt(dx*dx + dy*dy)
+            if dist <= radius then
+                local vx, vy = player.x + dx, player.y + dy
+                if vx >= 1 and vx <= MAP_W and vy >= 1 and vy <= MAP_H then
+                    -- Simple Line of Sight check
+                    local blocked = false
+                    local steps = math.max(math.abs(dx), math.abs(dy))
+                    for i = 1, steps - 1 do
+                        local tx = math.floor(player.x + (dx * i / steps) + 0.5)
+                        local ty = math.floor(player.y + (dy * i / steps) + 0.5)
+                        if map[ty][tx] == TILE_WALL then
+                            blocked = true; break
+                        end
+                    end
+                    if not blocked then visibility[vy][vx] = 2 end
+                end
+            end
+        end
+    end
+end
+
     local function draw()
         local w, h = getSafeSize()
-        term.setBackgroundColor(theme.bg); term.clear()
+        updateVisibility()
         
-        -- Draw Border
+        -- Draw Border & Header/Footer
+        term.setBackgroundColor(theme.bg); term.clear()
         term.setBackgroundColor(theme.border)
         term.setCursorPos(1, 1); term.write(string.rep(" ", w))
         term.setCursorPos(1, h); term.write(string.rep(" ", w))
+        term.setCursorPos(1, 1); term.setTextColor(colors.white)
+        local titleText = " DRUNKEN DUNGEONS Lv" .. dungeonLevel .. " "
+        term.setCursorPos(math.floor((w - #titleText)/2), 1); term.write(titleText)
+        
         for i = 2, h - 1 do
             term.setCursorPos(1, i); term.write(" ")
             term.setCursorPos(w, i); term.write(" ")
         end
 
-        term.setCursorPos(1, 1)
-        term.setTextColor(theme.text)
-        local titleText = " Drunken Dungeons Lvl: "..dungeonLevel.." "
-        term.setCursorPos(math.floor((w - #titleText)/2), 1); term.write(titleText)
-
-        -- Draw Map (Offcentered)
         local ox, oy = math.floor((w - MAP_W)/2), 3
+        
         for y = 1, MAP_H do
-            term.setCursorPos(ox, oy + y - 1)
+            local row_chars = {}
+            local row_fg = {}
+            local row_bg = {}
+            
             for x = 1, MAP_W do
-                local t = map[y][x]
-                if x == player.x and y == player.y then
-                    term.setTextColor(theme.player); term.write(TILE_PLAYER)
-                elseif otherPlayer.active and x == otherPlayer.x and y == otherPlayer.y then
-                    term.setTextColor(colors.purple); term.write(TILE_PLAYER)
+                local v = visibility[y][x]
+                local char = " "
+                local fg = theme.text
+                local bg = theme.bg
+                
+                if v == 0 then
+                    -- Hidden
+                    char = " "
+                    fg = colors.black
+                    bg = colors.black
                 else
-                    local entFound = false
-                    for _, ent in ipairs(entities) do
-                        if ent.x == x and ent.y == y then
-                            term.setTextColor(ent.type == "gold" and theme.gold or (ent.type == "stairs" and colors.white or theme.enemy))
-                            term.write(ent.type == "gold" and TILE_GOLD or (ent.type == "stairs" and TILE_STAIRS or TILE_ENEMY))
-                            entFound = true; break
+                    local t = map[y][x]
+                    if x == player.x and y == player.y then
+                        char = TILE_PLAYER
+                        fg = theme.player
+                    elseif otherPlayer.active and x == otherPlayer.x and y == otherPlayer.y then
+                        char = TILE_PLAYER
+                        fg = colors.purple
+                    else
+                        local entFound = false
+                        for _, ent in ipairs(entities) do
+                            if ent.x == x and ent.y == y then
+                                if v == 2 then -- Only see entities in direct vision
+                                    char = (ent.type == "gold" and TILE_GOLD or (ent.type == "stairs" and TILE_STAIRS or TILE_ENEMY))
+                                    fg = (ent.type == "gold" and theme.gold or (ent.type == "stairs" and colors.white or theme.enemy))
+                                    entFound = true; break
+                                end
+                            end
+                        end
+                        if not entFound then
+                            char = t
+                            fg = (t == TILE_WALL and theme.wall or theme.floor)
                         end
                     end
-                    if not entFound then
-                        term.setTextColor(t == TILE_WALL and theme.wall or theme.floor)
-                        term.write(t)
+                    
+                    if v == 1 then
+                        -- Explored but not visible (Dimmed)
+                        fg = colors.gray
+                        if char == TILE_ENEMY or char == TILE_GOLD then char = TILE_FLOOR end -- Hide dynamic entities in FOW
                     end
                 end
+                
+                table.insert(row_chars, char)
+                table.insert(row_fg, colorToBlit[fg] or "0")
+                table.insert(row_bg, colorToBlit[bg] or "f")
             end
+            
+            term.setCursorPos(ox, oy + y - 1)
+            term.blit(table.concat(row_chars), table.concat(row_fg), table.concat(row_bg))
         end
 
-        -- Draw HUD
+        -- Draw HUD (Status Bars)
         term.setBackgroundColor(theme.bg)
-        term.setTextColor(theme.text)
-        term.setCursorPos(2, h-4); term.write(string.format("HP: %d/%d | Gold: %d | XP: %d", player.hp, player.maxHp, player.gold, player.xp))
+        
+        -- HP Bar
+        local barLen = 15
+        local hpFill = math.floor((player.hp / player.maxHp) * barLen)
+        term.setCursorPos(2, h-4)
+        term.setTextColor(colors.white); term.write("HP: ")
+        term.blit(string.rep("|", hpFill) .. string.rep(".", barLen - hpFill), 
+                  string.rep("e", hpFill) .. string.rep("7", barLen - hpFill),
+                  string.rep("f", barLen))
+        
+        -- Gold & XP
+        term.setCursorPos(20, h-4)
+        term.setTextColor(theme.gold); term.write(" Gold: " .. player.gold)
+        term.setTextColor(colors.lime); term.write(" XP: " .. player.xp)
         
         -- Logs
         for i, log in ipairs(logs) do
-            term.setCursorPos(2, h - 4 + i)
-            term.write("> " .. log)
+            term.setCursorPos(2, h - 3 + i)
+            term.setTextColor(log.color or colors.lightGray)
+            term.write("> " .. log.text)
         end
         
         term.setCursorPos(math.floor(w/2 - 10), h)
-        term.setBackgroundColor(theme.border); term.write(" WASD to Move | TAB: Back ")
+        term.setBackgroundColor(theme.border); term.setTextColor(colors.white); term.write(" WASD to Move | TAB: Back ")
+    end
+
+    local function showInventory()
+        local w, h = getSafeSize()
+        term.setBackgroundColor(colors.black); term.clear()
+        term.setTextColor(colors.cyan)
+        term.setCursorPos(math.floor(w/2 - 5), 2); term.write(" INVENTORY ")
+        
+        local items = {
+            { slot = "Weapon", item = player.equipment.weapon },
+            { slot = "Armor", item = player.equipment.armor },
+            { slot = "Trinket", item = player.equipment.trinket },
+        }
+        
+        for i, entry in ipairs(items) do
+            term.setCursorPos(4, 5 + (i * 2))
+            term.setTextColor(colors.white); term.write(entry.slot .. ": ")
+            if entry.item then
+                term.setTextColor(entry.item.rarity or colors.white)
+                term.write(entry.item.name)
+                term.setTextColor(colors.gray)
+                if entry.item.dmg then term.write(" (+" .. entry.item.dmg .. " DMG)")
+                elseif entry.item.defense then term.write(" (+" .. entry.item.defense .. " DEF)")
+                elseif entry.item.luck then term.write(" (+" .. entry.item.luck .. " LUCK)")
+                elseif entry.item.vision then term.write(" (+" .. entry.item.vision .. " VISION)") end
+            else
+                term.setTextColor(colors.gray); term.write("Empty")
+            end
+        end
+        
+        term.setCursorPos(math.floor(w/2 - 10), h-2)
+        term.setTextColor(colors.yellow); term.write(" Press any key to return ")
+        os.pullEvent("key")
     end
 
 ---
@@ -234,47 +377,63 @@ local function movePlayer(dx, dy)
         return
     end
 
-    -- Dynamic Entity Interaction (Gold, Enemies, etc.)
+    -- Dynamic Entity Interaction (Gold, Items, Enemies, etc.)
     for i = #entities, 1, -1 do
         local ent = entities[i]
         if ent.x == nx and ent.y == ny then
-            if ent.type == "gold" then
-                -- Random loot drop
-                local amt = math.random(10, 50)
-                player.gold = player.gold + amt
-                addLog("Found " .. amt .. " gold!")
+                if ent.type == "gold" then
+                    -- Random loot drop: Gold or Item
+                    if math.random(1, 10) > 8 then
+                        -- Drop Item
+                        local slots = {"weapon", "armor", "trinket"}
+                        local slot = slots[math.random(1, #slots)]
+                        local pool = itemPool[slot]
+                        local item = pool[math.random(1, #pool)]
+                        
+                        addLog("Found " .. item.name .. "!", item.rarity or colors.yellow)
+                        player.equipment[slot] = item
+                    else
+                        -- Drop Gold
+                        local amt = math.random(10, 50) + (persist.upgrades.luck * 2)
+                        player.gold = player.gold + amt
+                        addLog("Found " .. amt .. " gold!", colors.gold)
+                    end
                 table.remove(entities, i)
             elseif ent.type == "enemy" then
                 -- Combat Calculation
-                local damage = player.dmg + (class == "Brawler" and 1 or 0)
-                -- Critical hit check based on Luck upgrade
-                if math.random(1, 100) <= (5 + persist.upgrades.luck) then
+                local bonusDmg = (player.equipment.weapon and player.equipment.weapon.dmg or 0)
+                local damage = player.dmg + (class == "Brawler" and 1 or 0) + bonusDmg
+                -- Critical hit check based on Luck upgrade + Trinket
+                local bonusLuck = (player.equipment.trinket and player.equipment.trinket.luck or 0)
+                if math.random(1, 100) <= (5 + persist.upgrades.luck + bonusLuck) then
                     damage = damage * 2
-                    addLog("CRITICAL HIT!")
+                    addLog("CRITICAL HIT!", colors.orange)
                 end
                 ent.hp = ent.hp - damage
-                addLog("You hit the enemy for " .. damage .. "!")
+                addLog("You hit the enemy for " .. damage .. "!", colors.red)
                 
                 if ent.hp <= 0 then
-                    addLog("Enemy defeated!")
+                    addLog("Enemy defeated!", colors.lime)
                     -- Class-specific bonuses
                     local xpGain = 20 + (class == "Nerd" and 10 or 0)
                     player.xp = player.xp + xpGain
                     table.remove(entities, i)
                 else
                     -- Counter-attack logic
-                    local edmg = 1
+                    local bonusDef = (player.equipment.armor and player.equipment.armor.defense or 0)
+                    local edmg = math.max(1, 2 + math.floor(dungeonLevel/3) - bonusDef)
+                    
                     if class == "Rogue" and math.random(1, 10) <= 3 then
-                        addLog("You dodged the attack!")
+                        addLog("You dodged the attack!", colors.cyan)
                     else
                         player.hp = player.hp - edmg
-                        addLog("Enemy hits back!")
+                        addLog("Enemy hits for " .. edmg .. "!", colors.magenta)
                     end
                 end
                 return -- Attack ends the movement sequence for this turn
             elseif ent.type == "stairs" then
                 dungeonLevel = dungeonLevel + 1
-                addLog("You descend to level " .. dungeonLevel .. "!")
+                addLog("You descend to level " .. dungeonLevel .. "!", colors.yellow)
                 generateMap()
                 return
             end
@@ -284,16 +443,70 @@ local function movePlayer(dx, dy)
     -- Update position and sync in multiplayer sessions
     player.x, player.y = nx, ny
     if isMultiplayer then
-        rednet.send(opponentId, {type="pos", x=player.x, y=player.y, hp=player.hp}, "Dungeon_Coop")
+        rednet.send(opponentId, {
+            type="sync", 
+            x=player.x, 
+            y=player.y, 
+            hp=player.hp, 
+            gold=player.gold, 
+            xp=player.xp,
+            lvl=dungeonLevel
+        }, "Dungeon_Coop_v2")
     end
     
-    -- Basic AI: Enemies have a chance to move towards the player
+    -- Partner Revival Mechanic
+    if isMultiplayer and otherPlayer.active and otherPlayer.hp <= 0 then
+        local dist = math.sqrt((player.x - otherPlayer.x)^2 + (player.y - otherPlayer.y)^2)
+        if dist <= 1.5 then
+            if player.gold >= 100 then
+                player.gold = player.gold - 100
+                otherPlayer.hp = 5
+                addLog("You revived your partner! (-100g)", colors.lime)
+                rednet.send(opponentId, {type="revive", hp=5}, "Dungeon_Coop_v2")
+            else
+                addLog("Not enough gold to revive partner (100g)", colors.orange)
+            end
+        end
+    end
+    
+    -- Advanced AI: Smarter movement
     for _, ent in ipairs(entities) do
-        if ent.type == "enemy" and math.random(1, 4) == 1 then
-            local edx = (player.x > ent.x) and 1 or (player.x < ent.x and -1 or 0)
-            local edy = (player.y > ent.y) and 1 or (player.y < ent.y and -1 or 0)
-            if map[ent.y + edy][ent.x + edx] == TILE_FLOOR then
-                ent.x, ent.y = ent.x + edx, ent.y + edy
+        if ent.type == "enemy" then
+            local dist = math.sqrt((player.x - ent.x)^2 + (player.y - ent.y)^2)
+            local moveProb = 0.5 -- 50% chance to act
+            
+            if math.random() <= moveProb then
+                local edx, edy = 0, 0
+                if dist < 6 then
+                    -- Aggressive/Survival Behavior
+                    if ent.hp <= 1 then
+                        -- Flee if low HP
+                        edx = (player.x > ent.x) and -1 or (player.x < ent.x and 1 or 0)
+                        edy = (player.y > ent.y) and -1 or (player.y < ent.y and 1 or 0)
+                    else
+                        -- Approach
+                        edx = (player.x > ent.x) and 1 or (player.x < ent.x and -1 or 0)
+                        edy = (player.y > ent.y) and 1 or (player.y < ent.y and -1 or 0)
+                    end
+                else
+                    -- Wander
+                    local r = math.random(1, 4)
+                    if r == 1 then edx = 1 elseif r == 2 then edx = -1 elseif r == 3 then edy = 1 elseif r == 4 then edy = -1 end
+                end
+                
+                local tx, ty = ent.x + edx, ent.y + edy
+                if tx >= 1 and tx <= MAP_W and ty >= 1 and ty <= MAP_H and map[ty][tx] == TILE_FLOOR then
+                    -- Check if position is occupied by another entity
+                    local occ = false
+                    for _, other in ipairs(entities) do
+                        if other ~= ent and other.x == tx and other.y == ty then occ = true; break end
+                    end
+                    if tx == player.x and ty == player.y then occ = true end
+                    
+                    if not occ then
+                        ent.x, ent.y = tx, ty
+                    end
+                end
             end
         end
     end
@@ -374,13 +587,13 @@ end
                     rednet.send(arcadeId, {type="host_game", user=username, game=gameName}, "ArcadeGames")
                     print("Hosting... Waiting for Partner...")
                     while true do
-                        local id, msg = rednet.receive("Dungeon_Coop", 2)
+                        local id, msg = rednet.receive("Dungeon_Coop_v2", 2)
                         if id and msg.type == "match_join" then
                             opponentId = id
                             isMultiplayer = true
-                            rednet.send(id, {type="match_accept", user=username, seed=sharedSeed}, "Dungeon_Coop")
+                            rednet.send(id, {type="match_accept", user=username, seed=sharedSeed}, "Dungeon_Coop_v2")
                             rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
-                            addLog("Partner Joined!")
+                            addLog("Partner Joined!", colors.lime)
                             selectClass()
                             break
                         end
@@ -400,13 +613,13 @@ end
                         if #options > 0 then
                             local target = options[1]
                             print("Joining " .. target.user .. "...")
-                            rednet.send(target.id, {type="match_join", user=username}, "Dungeon_Coop")
-                            local sid, smsg = rednet.receive("Dungeon_Coop", 5)
+                            rednet.send(target.id, {type="match_join", user=username}, "Dungeon_Coop_v2")
+                            local sid, smsg = rednet.receive("Dungeon_Coop_v2", 5)
                             if sid == target.id and smsg.type == "match_accept" then
                                 opponentId = target.id
                                 isMultiplayer = true
                                 sharedSeed = smsg.seed
-                                addLog("Joined " .. target.user)
+                                addLog("Joined " .. target.user, colors.lime)
                                 selectClass()
                                 break
                             end
@@ -438,11 +651,20 @@ end
             elseif p1 == keys.s or p1 == keys.down then movePlayer(0, 1)
             elseif p1 == keys.a or p1 == keys.left then movePlayer(-1, 0)
             elseif p1 == keys.d or p1 == keys.right then movePlayer(1, 0)
+            elseif p1 == keys.i then showInventory()
             elseif p1 == keys.q or p1 == keys.tab then gameOver = true end
-        elseif event == "rednet_message" and p3 == "Dungeon_Coop" then
-            if p2.type == "pos" then
+        elseif event == "rednet_message" and p3 == "Dungeon_Coop_v2" then
+            if p2.type == "sync" then
                 otherPlayer.x, otherPlayer.y, otherPlayer.hp = p2.x, p2.y, p2.hp
+                if p2.lvl > dungeonLevel then
+                    dungeonLevel = p2.lvl
+                    addLog("Partner descended! Syncing level...", colors.yellow)
+                    generateMap()
+                end
                 otherPlayer.active = true
+            elseif p2.type == "revive" then
+                player.hp = p2.hp
+                addLog("Partner revived you!", colors.lime)
             end
         end
 
