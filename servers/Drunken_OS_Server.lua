@@ -1297,7 +1297,7 @@ local function handleRednetMessage(senderId, message, protocol)
     -- Unpack proxy messages if they come from a known Network Proxy
     if message and message.proxy_orig_sender then
         origSender = message.proxy_orig_sender
-        actualMsg = message.proxy_payload
+        actualMsg = message.proxy_orig_msg
         isProxied = true
     end
 
