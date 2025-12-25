@@ -76,32 +76,33 @@ function system.updateAll(context)
     term.setCursorPos(2, y); term.write("Checking Mainframe Apps...")
     local mainframe = rednet.lookup("SimpleMail", "mail.server")
     if mainframe then
-        local appsDir = fs.combine(context.programDir, "apps")
-        if fs.exists(appsDir) then
-            local files = fs.list(appsDir)
-            for _, filename in ipairs(files) do
-                if filename:match("%.lua$") then
-                    local appName = filename:gsub("%.lua$", "")
-                    local path = fs.combine(appsDir, filename)
-                    local localVer = 0
+        rednet.send(mainframe, { type = "get_all_app_versions" }, "SimpleMail")
+        local _, resp = rednet.receive("SimpleMail", 5)
+        if resp and resp.type == "app_versions_response" and resp.versions then
+            local appsDir = fs.combine(context.programDir, "apps")
+            if not fs.exists(appsDir) then fs.makeDir(appsDir) end
+            
+            for fileId, serverVer in pairs(resp.versions) do
+                local filename = fileId:gsub("^app%.", "") .. ".lua"
+                local path = fs.combine(appsDir, filename)
+                local localVer = 0
+                if fs.exists(path) then
                     local f = fs.open(path, "r")
                     if f then
                         local content = f.readAll(); f.close()
                         local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
                         localVer = tonumber(v) or 0
                     end
-                    
-                    rednet.send(mainframe, { type = "get_version", program = "app." .. appName }, "SimpleMail")
-                    local _, resp = rednet.receive("SimpleMail", 3)
-                    if resp and resp.version and resp.version > localVer then
-                        updatesFound = true
-                        term.setCursorPos(2, y + 1); term.clearLine(); term.write("Updating App: " .. filename)
-                        rednet.send(mainframe, { type = "get_update", program = "app." .. appName }, "SimpleMail")
-                        local _, update = rednet.receive("SimpleMail", 5)
-                        if update and update.code then
-                            local file = fs.open(path, "w")
-                            if file then file.write(update.code); file.close() end
-                        end
+                end
+                
+                if serverVer > localVer then
+                    updatesFound = true
+                    term.setCursorPos(2, y + 1); term.clearLine(); term.write("Updating App: " .. filename)
+                    rednet.send(mainframe, { type = "get_update", program = fileId }, "SimpleMail")
+                    local _, update = rednet.receive("SimpleMail", 5)
+                    if update and update.code then
+                        local file = fs.open(path, "w")
+                        if file then file.write(update.code); file.close() end
                     end
                 end
             end

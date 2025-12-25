@@ -532,6 +532,26 @@ function mailHandlers.get_version(senderId, message)
     end
 end
 
+function mailHandlers.get_all_app_versions(senderId, message)
+    local versions = {}
+    local files = fs.list("apps/")
+    for _, file in ipairs(files) do
+        if not fs.isDir("apps/" .. file) and file:match("%.lua$") then
+            local path = "apps/" .. file
+            local f = fs.open(path, "r")
+            if f then
+                local content = f.readAll(); f.close()
+                local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or
+                          content:match("local%s+appVersion%s*=%s*([%d%.]+)") or
+                          content:match("%(v([%d%.]+)%)") or
+                          content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+                versions["app." .. file:gsub("%.lua$", "")] = tonumber(v) or 1.0
+            end
+        end
+    end
+    rednet.send(senderId, { type = "app_versions_response", versions = versions }, "SimpleMail")
+end
+
 function mailHandlers.get_update(senderId, message)
     local prog = message.program
     if prog:match("^app%.") then

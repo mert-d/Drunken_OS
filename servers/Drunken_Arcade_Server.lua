@@ -271,27 +271,60 @@ function gameHandlers.get_all_game_versions(senderId, message)
 end
 
 local function syncGames()
-    logActivity("Syncing games from GitHub...")
-    local coreGames = {
-        "snake.lua", "tetris.lua", "invaders.lua", "floppa_bird.lua",
-        "Drunken_Dungeons.lua", "Drunken_Duels.lua", "Drunken_Pong.lua",
-        "Drunken_Sweeper.lua", "Drunken_Sokoban.lua", "Drunken_Doom.lua"
-    }
+    logActivity("Syncing games from GitHub repository...")
     
+    local GITHUB_CONTENT_API = "https://api.github.com/repos/mert-d/Drunken_OS/contents/games"
+    local LIST_HEADERS = { ["User-Agent"] = "Drunken-Arcade-Server" }
+
     if not fs.exists("games") then fs.makeDir("games") end
+
+    logActivity("Fetching game list from GitHub...")
+    local ok, response = pcall(http.get, GITHUB_CONTENT_API, LIST_HEADERS)
+    
+    local gamesToDownload = {}
+    if ok and response then
+        local content = response.readAll()
+        response.close()
+        local data = textutils.unserializeJSON(content)
+        if data and type(data) == "table" then
+            for _, item in ipairs(data) do
+                if item.type == "file" and item.name:match("%.lua$") then
+                    table.insert(gamesToDownload, item.name)
+                end
+            end
+        end
+    end
+
+    -- Fallback to hardcoded list if API fails
+    if #gamesToDownload == 0 then
+        logActivity("GitHub API failed or empty. Using fallback list.", true)
+        gamesToDownload = {
+            "snake.lua", "tetris.lua", "invaders.lua", "floppa_bird.lua",
+            "Drunken_Dungeons.lua", "Drunken_Duels.lua", "Drunken_Pong.lua",
+            "Drunken_Sweeper.lua", "Drunken_Sokoban.lua", "Drunken_Doom.lua"
+        }
+    end
+
+    logActivity(string.format("Preparing to sync %d games...", #gamesToDownload))
+    
     local updated = 0
     local failed = 0
-    
-    for _, filename in ipairs(coreGames) do
+    local activeRequests = {}
+
+    -- Start parallel requests
+    for _, filename in ipairs(gamesToDownload) do
         local url = GITHUB_GAMES_URL .. filename
-        local success = false
-        local retries = 3
+        http.request(url, nil, LIST_HEADERS)
+        activeRequests[url] = filename
+    end
+
+    local timeout = os.startTimer(15) -- 15 seconds global timeout
+    while next(activeRequests) do
+        local event, url, response = os.pullEvent()
         
-        while retries > 0 and not success do
-            logActivity("Pulling: " .. filename .. (retries < 3 and " (Retry " .. (3 - retries) .. ")" or ""))
-            local ok, response = pcall(http.get, url)
-            
-            if ok and response then
+        if event == "http_success" then
+            local filename = activeRequests[url]
+            if filename then
                 local code = response.readAll()
                 response.close()
                 if code and #code > 0 then
@@ -299,34 +332,35 @@ local function syncGames()
                     if f then
                         f.write(code)
                         f.close()
-                        
-                        -- Extract version for logging
-                        local v = code:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") 
-                               or code:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
-                        local verStr = v and (" (v" .. v .. ")") or ""
-                        
                         updated = updated + 1
-                        logActivity("Synced: " .. filename .. verStr)
-                        success = true
+                        logActivity("Synced: " .. filename)
                     else
                         logActivity("FS Error: " .. filename, true)
-                        retries = 0 -- Fatal FS error
+                        failed = failed + 1
                     end
                 else
                     logActivity("Empty Res: " .. filename, true)
+                    failed = failed + 1
                 end
-            else
+                activeRequests[url] = nil
+            end
+        elseif event == "http_failure" then
+            local filename = activeRequests[url]
+            if filename then
                 logActivity("Net Error: " .. filename, true)
+                failed = failed + 1
+                activeRequests[url] = nil
             end
-            
-            if not success then
-                retries = retries - 1
-                if retries > 0 then sleep(0.5) end
+        elseif event == "timer" and url == timeout then
+            logActivity("Sync timed out for some games.", true)
+            for u, f in pairs(activeRequests) do
+                logActivity("Timed out: " .. f, true)
+                failed = failed + 1
             end
+            break
         end
-        if not success then failed = failed + 1 end
-        sleep(0.05) -- Graceful pacing
     end
+
     logActivity(string.format("Sync complete. %d updated, %d failed.", updated, failed))
 end
 
