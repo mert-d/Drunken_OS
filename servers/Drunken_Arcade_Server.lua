@@ -219,16 +219,30 @@ local function cleanupLobbies()
     end
 end
 
+local function parseGameVersion(content)
+    if not content then return 1.0 end
+    local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") 
+           or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+    return tonumber(v) or 1.0
+end
+
 -- New: Game Distribution handlers
 function gameHandlers.get_gamelist(senderId, message)
     local gameList = {}
     local files = fs.list("games/")
     for _, file in ipairs(files) do
-        if not fs.isDir(fs.combine("games", file)) and file:match("%.lua$") then
-            -- Optional: read version or display name from file
+        local path = fs.combine("games", file)
+        if not fs.isDir(path) and file:match("%.lua$") then
+            local version = 1.0
+            local f = fs.open(path, "r")
+            if f then
+                version = parseGameVersion(f.readAll())
+                f.close()
+            end
+
             local name = file:gsub("%.lua$", ""):gsub("_", " ")
             name = name:gsub("^%l", string.upper)
-            table.insert(gameList, {name = name, file = "games/" .. file})
+            table.insert(gameList, {name = name, file = "games/" .. file, version = version})
         end
     end
     rednet.send(senderId, { games = gameList }, "ArcadeGames")
@@ -260,10 +274,8 @@ function gameHandlers.get_all_game_versions(senderId, message)
         if not fs.isDir(path) and file:match("%.lua$") then
             local f = fs.open(path, "r")
             if f then
-                local content = f.readAll(); f.close()
-                local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") 
-                       or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
-                versions["games/" .. file] = tonumber(v) or 1.0
+                versions["games/" .. file] = parseGameVersion(f.readAll())
+                f.close()
             end
         end
     end

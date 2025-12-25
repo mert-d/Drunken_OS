@@ -9,6 +9,16 @@ local function getParent(context)
     return context.parent
 end
 
+local function parseLocalVersion(path)
+    if not fs.exists(path) then return nil end
+    local f = fs.open(path, "r")
+    local content = f.readAll()
+    f.close()
+    local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") 
+           or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+    return tonumber(v) or 1.0
+end
+
 function arcade.run(context)
     context.drawWindow("Arcade")
     term.setCursorPos(2, 4); term.write("Fetching game list...")
@@ -32,12 +42,23 @@ function arcade.run(context)
         return
     end
 
-    local options = {}
-    for _, game in ipairs(games) do table.insert(options, "Play " .. game.name) end
-    table.insert(options, "Back")
-
     local selected = 1
     while true do
+        local options = {}
+        for _, game in ipairs(games) do
+            local localVer = parseLocalVersion(fs.combine(context.programDir, game.file))
+            local display = game.name .. " (v" .. (game.version or "1.0") .. ")"
+            if localVer then
+                if game.version and game.version > localVer then
+                    display = display .. " [!] UPDATE"
+                end
+            else
+                display = display .. " [NEW]"
+            end
+            table.insert(options, display)
+        end
+        table.insert(options, "Back")
+
         context.drawWindow("Arcade")
         context.drawMenu(options, selected, 2, 4)
         local event, key = os.pullEvent("key")
@@ -48,9 +69,13 @@ function arcade.run(context)
                 local w, h = term.getSize()
                 local game = games[selected]
                 local gameFile = fs.combine(context.programDir, game.file)
-                if not fs.exists(gameFile) then
+                
+                local localVer = parseLocalVersion(gameFile)
+                local needsUpdate = not localVer or (game.version and game.version > localVer)
+
+                if needsUpdate then
                     term.setCursorPos(2, h-1)
-                    term.write("Downloading " .. game.name .. "...")
+                    term.write((not localVer and "Downloading " or "Updating ") .. game.name .. "...")
                     rednet.send(arcadeServer, {type = "get_game_update", filename = game.file}, "ArcadeGames")
                     local _, update = rednet.receive("ArcadeGames", 10)
                     
