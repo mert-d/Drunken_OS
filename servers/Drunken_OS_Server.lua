@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mainframe Server (v11.0 - Performance Edition)
+    Drunken OS - Mainframe Server (v11.1 - Performance Edition)
     by MuhendizBey
 
     Purpose:

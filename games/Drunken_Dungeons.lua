@@ -7,7 +7,7 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 1.7
+local gameVersion = 1.8
 local saveFile = ".dungeon_save"
 
 ---

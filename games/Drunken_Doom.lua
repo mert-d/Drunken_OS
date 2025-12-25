@@ -1,12 +1,12 @@
 --[[
-    Drunken Doom (v1.1 PRO)
+    Drunken Doom (v1.2 PRO)
     by Antigravity & MuhendizBey
     Purpose:
     A pseudo-3D raycasting engine for Drunken OS.
     Navigate a 3D environment rendered in ASCII/Colors.
 ]]
 
-local gameVersion = 1.3
+local gameVersion = 1.4
 local saveFile = ".doom_save"
 
 -- Load arguments (username)

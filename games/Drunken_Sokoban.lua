@@ -7,7 +7,7 @@
     Push all crates onto the target spots to win!
 ]]
 
-local gameVersion = 1.1
+local gameVersion = 1.2
 
 local function mainGame(...)
     local args = {...}

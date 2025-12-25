@@ -1,5 +1,5 @@
 --[[
-    Drunken Arcade Server (v1.2 - Premium UI)
+    Drunken Arcade Server (v1.3 - Premium UI)
     by MuhendizBey
 
     Purpose:
