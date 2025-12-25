@@ -1,19 +1,11 @@
 --[[
-    Drunken OS - Bank Server (v2.19 - Hardened Handlers & Proxy Fix)
+    Drunken OS - Bank Server (v3.0 - Performance Edition)
     by MuhendizBey
 
-    Purpose:
-    This version provides a full security audit and hardening of all
-    account-related admin commands, ensuring they are safe from misuse and
-    preventing potential data corruption or server crashes.
-
     Key Changes:
-    - Hardened the 'give' command to prevent it from creating malformed
-      accounts and to ensure it only operates on existing users.
-    - Hardened the 'balance' command to prevent server crashes when checking
-      the balance of a non-existent user.
-    - All account modification commands now provide clear error messages if the
-      target user does not exist.
+    - Lazy Persistence: Implemented dbDirty tracking and background save pulse.
+    - Non-blocking Transactions: Refactored database writes to reduce UI lag.
+    - Integrated with Mainframe Performance interlink.
 ]]
 
 

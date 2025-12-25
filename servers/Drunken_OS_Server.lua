@@ -1,18 +1,14 @@
 --[[
-    Drunken OS - Mainframe Server (v10.24 - App Sync Update)
+    Drunken OS - Mainframe Server (v11.0 - Performance Edition)
     by MuhendizBey
 
     Purpose:
-    This definitive version replaces the hardcoded admin list with a dynamic
-    system managed via a database file and new admin commands. This resolves
-    the issue where admin privileges were not being correctly assigned.
-
+    Major performance overhaul focusing on I/O throughput and reduced latency.
+    
     Key Changes:
-    - Server now loads an `admins.db` file to manage the list of administrators.
-    - Removed the hardcoded `admins` table.
-    - Added new admin commands: `addadmin <user>` and `deladmin <user>`.
-    - All login and registration functions now check against the new dynamic
-      admin list.
+    - Implemented Mail Metadata Caching: Eliminates disk-scans for unread counts.
+    - Lazy Database Persistence: Global DBs now use background saving for higher throughput.
+    - Parallel Event Loop: Decoupled admin prompt from network listening.
 ]]
 
 --==============================================================================

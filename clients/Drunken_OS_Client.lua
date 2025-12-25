@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mobile Client (v14.0 - Modular Refactor)
+    Drunken OS - Mobile Client (v15.0 - Performance Edition)
     by MuhendizBey
 ]]
 
@@ -23,7 +23,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 14.3
+local currentVersion = 15.0
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
