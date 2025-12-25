@@ -6,7 +6,7 @@
     Navigate a 3D environment rendered in ASCII/Colors.
 ]]
 
-local gameVersion = 1.1
+local gameVersion = 1.2
 local saveFile = ".doom_save"
 
 -- Load arguments (username)
@@ -74,9 +74,9 @@ end
 
 -- Sprites
 local objects = {
-    {x = 4.5, y = 4.5, char = "G", color = colors.gold, active = true},
+    {x = 4.5, y = 4.5, char = "G", color = colors.yellow, active = true},
     {x = 10.5, y = 10.5, char = "E", color = colors.red, active = true},
-    {x = 2.5, y = 10.5, char = "G", color = colors.gold, active = true},
+    {x = 2.5, y = 10.5, char = "G", color = colors.yellow, active = true},
 }
 
 -- View Bobbing
@@ -92,11 +92,16 @@ local function draw(score, hp, lastFrameTime)
     local screen_bg = {}
     local depth_buffer = {}
 
-    -- Initialize buffer
+    -- Initialize buffer with defaults
     for y = 1, DISPLAY_H do
         screen_chars[y] = {}
         screen_text[y] = {}
         screen_bg[y] = {}
+        for x = 1, DISPLAY_W do
+            screen_chars[y][x] = " "
+            screen_text[y][x] = "f"
+            screen_bg[y][x] = "f"
+        end
     end
 
     -- Constants for DDA
@@ -226,7 +231,7 @@ local function draw(score, hp, lastFrameTime)
                                 local sy = math.floor(objCeiling + ly)
                                 if sy >= 1 and sy <= DISPLAY_H then
                                     screen_chars[sy][sx] = obj.char
-                                    screen_text[sy][sx] = colorToBlit[obj.color]
+                                    screen_text[sy][sx] = colorToBlit[obj.color or colors.white] or "0"
                                 end
                             end
                         end
