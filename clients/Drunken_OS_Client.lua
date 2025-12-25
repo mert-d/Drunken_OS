@@ -267,8 +267,10 @@ local function installDependencies()
     local updater = updaterOrError
     
     -- Sync essential libraries defined in REQUIRED_LIBS
+    print("Syncing libraries...")
     for _, libDef in ipairs(REQUIRED_LIBS) do
         local libName = libDef.name
+        print("- Checking " .. libName .. "...")
         local libPath = fs.combine(programDir, "lib/" .. libName .. ".lua")
         
         local currentVer = 0
@@ -298,8 +300,10 @@ local function installDependencies()
     end
 
     -- Sync Apps
+    print("Syncing apps...")
     if not fs.exists(fs.combine(programDir, "apps")) then fs.makeDir(fs.combine(programDir, "apps")) end
     for _, appName in ipairs(REQUIRED_APPS) do
+        print("- Checking " .. appName .. "...")
         local appPath = fs.combine(programDir, "apps/" .. appName .. ".lua")
         local currentAppVer = 0
         
@@ -330,13 +334,13 @@ end
 
 local function autoUpdateCheck()
     rednet.send(state.mailServerId, { type = "get_version", program = programName }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 15)
+    local _, response = rednet.receive("SimpleMail", 3)
     if response and response.version and response.version > currentVersion then
         term.clear(); term.setCursorPos(1, 1)
         print("New version available: " .. response.version)
         print("Downloading update...")
         rednet.send(state.mailServerId, { type = "get_update", program = programName }, "SimpleMail")
-        local _, update = rednet.receive("SimpleMail", 10)
+        local _, update = rednet.receive("SimpleMail", 5)
         if update and update.code then
             local path = shell.getRunningProgram()
             local file = fs.open(path, "w")
@@ -418,7 +422,7 @@ function updateGames()
         end
     end
     term.setCursorPos(2, y + 1); term.write("Update check complete.")
-    sleep(2)
+    sleep(1.5)
 end
 
 --==============================================================================
