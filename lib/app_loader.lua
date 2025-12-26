@@ -1,5 +1,6 @@
 --[[
-    Drunken OS - App Loader (v1.2)
+    Drunken OS - App Loader
+    _VERSION = 1.2
     Purpose: Dynamically loads and runs applets from the /apps directory.
 ]]
 

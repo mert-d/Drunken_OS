@@ -1,4 +1,5 @@
 local theme = {
+    _VERSION = 1.0,
     bg = colors.black,
     text = colors.white,
     prompt = colors.cyan,

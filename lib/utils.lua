@@ -1,4 +1,5 @@
 local utils = {}
+utils._VERSION = 1.0
 local theme = require("lib.theme")
 
 function utils.drawWindow(title, context)
