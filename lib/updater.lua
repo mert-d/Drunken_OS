@@ -32,7 +32,7 @@ function updater.check(programName, currentVersion, targetPath)
     local _, response = rednet.receive("SimpleMail", 3)
 
     if response and response.version and response.version > currentVersion then
-        print("Updater: New version " .. response.version .. " found for " .. programName)
+        print(string.format("Update: %s | Local: v%s vs Server: v%s", programName, currentVersion, response.version))
         print("Updater: Downloading...")
         
         rednet.send(server, { type = "get_update", program = programName }, "SimpleMail")
