@@ -789,7 +789,7 @@ function mailHandlers.get_unread_count(senderId, message)
     -- Use the module-scoped function if available, otherwise 0
     local count = 0
     if MailModule and MailModule.getMailCount then
-         count = MailModule.getMailCount(message.user, {files=mailFiles})
+         count = MailModule.getMailCount(message.user, {mailCountCache=mailCountCache})
     end
     rednet.send(senderId, { type = "unread_count_response", count = count }, "SimpleMail")
 end
@@ -1372,7 +1372,7 @@ local function main()
     rednet.host("SimpleChat_Internal", "chat.server.internal")
     rednet.host("Drunken_Admin_Internal", "admin.server.internal")
     rednet.host("auth.secure.v1_Internal", "auth.client.internal")
-    logActivity("Mainframe Server v11.0 (Internal Only) Initialized.")
+    logActivity("Mainframe Server v12.0 (Internal Only) Initialized.")
     mainEventLoop()
 end
 

@@ -17,6 +17,7 @@ return {
         "lib/theme.lua",
         "lib/utils.lua",
         "lib/p2p_socket.lua",
+        "manifest.lua"
     },
 
     packages = {
