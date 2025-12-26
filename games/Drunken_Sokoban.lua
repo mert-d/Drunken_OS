@@ -73,9 +73,9 @@ local function mainGame(...)
         {
             map = {
                 "#######",
-                "#.. X #",
-                "#XX @ #",
-                "#     #",
+                "#.  X #",
+                "#X  @ #",
+                "#.  X #",
                 "#######"
             },
             name = "The Corner"
@@ -86,7 +86,7 @@ local function mainGame(...)
                 "#@    #",
                 "# X X #",
                 "# X.X #",
-                "# ..  #",
+                "# ... #",
                 "#######"
             },
             name = "Push & Shove"
@@ -107,7 +107,7 @@ local function mainGame(...)
                 "#   #   #",
                 "# X . X #",
                 "#   @   #",
-                "# . # . #",
+                "# . #   #",
                 "#########"
             },
             name = "The Cross"
@@ -128,7 +128,7 @@ local function mainGame(...)
                 "  #####  ",
                 " ##   ## ",
                 "## X.X ##",
-                "# @.X.  #",
+                "# @.X.X #",
                 "## X.X ##",
                 " ##   ## ",
                 "  #####  "
@@ -142,7 +142,7 @@ local function mainGame(...)
                 "#  X#X   #",
                 "#  #.#   #",
                 "#  X#X   #",
-                "#   .    #",
+                "#.  .   .#",
                 "##########"
             },
             name = "Interstices"
@@ -165,9 +165,10 @@ local function mainGame(...)
             map = {
                 "####################",
                 "#@ #     # . . . . #",
-                "#  # X X # . . . . #",
-                "#  # X X # . . . . #",
-                "#  #     # . . . . #",
+                "#  # XXXX# . . . . #",
+                "#  # XXXX# . . . . #",
+                "#  # XXXX# . . . . #",
+                "#  # XXXX# . . . . #",
                 "#  #######         #",
                 "#                  #",
                 "####################"
@@ -179,9 +180,9 @@ local function mainGame(...)
                 "        ########    ",
                 "        #      #    ",
                 "######### X XX #    ",
-                "#@      # X    #    ",
-                "#  X X  #  X   #    ",
-                "#  ...  #      #    ",
+                "#@      # X XX #    ",
+                "#  X XX #  X XX #    ",
+                "#  ...  #  ... #    ",
                 "#  ...  #####  #    ",
                 "#  ...      #  #    ",
                 "#############  #    ",
@@ -193,15 +194,15 @@ local function mainGame(...)
         {
             map = {
                 "####################",
-                "#@       #        .#",
+                "#@       #       . #",
                 "#   X    #    X    #",
-                "#        #         #",
+                "#        #       . #",
                 "####  ########  ####",
                 "#        #         #",
                 "#   X    #    X    #",
                 "#        #         #",
                 "####  ########  ####",
-                "#.       #        .#",
+                "#.       #       . #",
                 "####################"
             },
             name = "Quadrants"
@@ -211,13 +212,13 @@ local function mainGame(...)
                 "      ########      ",
                 "     ##      ##     ",
                 "    ##  X  X  ##    ",
-                "   ##          ##   ",
-                "  ##   ..  ..   ##  ",
-                " ##    ..  ..    ## ",
+                "   ##  .    .  ##   ",
+                "  ##   .    .   ##  ",
+                " ##    .    .    ## ",
                 "##      @  X      ##",
-                " ##    X    X    ## ",
-                "  ##            ##  ",
-                "   ##  X    X  ##   ",
+                " ##    X    X.    ## ",
+                "  ##   X    X   ##  ",
+                "   ##          ##   ",
                 "    ##        ##    ",
                 "     ##########     "
             },
@@ -241,15 +242,15 @@ local function mainGame(...)
         {
             map = {
                 "####################",
-                "#@       #        .#",
+                "#@       #       . #",
                 "#   X    #    X    #",
-                "#        #         #",
+                "#        #       . #",
                 "####  ########  ####",
                 "#        #         #",
                 "#   X    #    X    #",
                 "#        #         #",
                 "####  ########  ####",
-                "#.       #        X#",
+                "#.       #       X #",
                 "####################"
             },
             name = "The Gauntlet"
@@ -271,7 +272,7 @@ local function mainGame(...)
                 "####################",
                 "#.#.#.#.#.#.#.#.#.#",
                 "#                 #",
-                "# X X X X X X X X #",
+                "# X X X X X X X X X#",
                 "#                 #",
                 "#@                #",
                 "####################"
@@ -287,7 +288,7 @@ local function mainGame(...)
                 "   ##  .X.X.X.  ##  ",
                 "    ##  X.X.X  ##   ",
                 "     ## .X.X. ##    ",
-                "      ##  @  ##     ",
+                "      ##  @ X##     ",
                 "       #######      "
             },
             name = "The Star"
@@ -455,7 +456,7 @@ local function mainGame(...)
     end
 
     local function showMenu()
-        local options = { "New Game", "Level Select", "World Builder", "Community Maps", "Quit" }
+        local options = { "New Game", "Level Select", "Local Maps", "World Builder", "Community Maps", "Quit" }
         local selection = 1
         while true do
             drawFrame()
@@ -613,41 +614,131 @@ local function mainGame(...)
                 elseif key == keys.four then brush = "@"
                 elseif key == keys.five then brush = " "
                 elseif key == keys.s then
-                    -- Simple save to local file
-                    local mapData = {}
-                    for _, row in ipairs(editorBoard) do table.insert(mapData, table.concat(row)) end
-                    if not fs.exists("/data/sokoban") then fs.makeDir("/data/sokoban") end
-                    local f = fs.open("/data/sokoban/custom_map.lua", "w")
-                    f.write(textutils.serialize(mapData))
-                    f.close()
-                    term.setCursorPos(2, 2); print("Saved to /data/sokoban/custom_map.lua")
-                    sleep(1)
+                    -- Named save to local file
+                    term.setCursorPos(2, 2); term.setBackgroundColor(theme.bg); term.setTextColor(theme.prompt)
+                    term.write("Enter Map Name: ")
+                    term.setCursorBlink(true)
+                    local mapName = read()
+                    term.setCursorBlink(false)
+                    if mapName and mapName ~= "" then
+                        local mapData = {}
+                        for _, row in ipairs(editorBoard) do table.insert(mapData, table.concat(row)) end
+                        if not fs.exists("/data/sokoban") then fs.makeDir("/data/sokoban") end
+                        local filename = mapName:gsub("[%s%c%p]", "_") .. ".map.lua"
+                        local f = fs.open(fs.combine("/data/sokoban", filename), "w")
+                        f.write(textutils.serialize({ name = mapName, data = mapData }))
+                        f.close()
+                        term.setCursorPos(2, 2); term.setTextColor(colors.lime); term.write("Saved as " .. filename)
+                    else
+                        term.setCursorPos(2, 2); term.setTextColor(colors.red); term.write("Save cancelled.")
+                    end
+                    sleep(1.5)
                 elseif key == keys.p then
                     -- Publish to Arcade Server
-                    local mapData = {}
-                    for _, row in ipairs(editorBoard) do table.insert(mapData, table.concat(row)) end
-                    term.setCursorPos(2, 2); term.setTextColor(colors.lime); term.write("Publishing...")
-                    arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
-                    if arcadeServerId then
-                        rednet.send(arcadeServerId, {
-                            type = "upload_map",
-                            game = gameName,
-                            mapName = "Custom " .. os.time(),
-                            creator = username,
-                            mapData = mapData
-                        }, "ArcadeGames")
-                        local id, msg = rednet.receive("ArcadeGames", 2)
-                        if msg and msg.success then
-                            term.setCursorPos(2, 2); term.write("Published Successfully!")
+                    term.setCursorPos(2, 2); term.setBackgroundColor(theme.bg); term.setTextColor(theme.prompt)
+                    term.write("Enter Public Name: ")
+                    term.setCursorBlink(true)
+                    local pubName = read()
+                    term.setCursorBlink(false)
+                    if pubName and pubName ~= "" then
+                        local mapData = {}
+                        for _, row in ipairs(editorBoard) do table.insert(mapData, table.concat(row)) end
+                        term.setCursorPos(2, 2); term.setTextColor(colors.lime); term.write("Publishing...")
+                        arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
+                        if arcadeServerId then
+                            rednet.send(arcadeServerId, {
+                                type = "upload_map",
+                                game = gameName,
+                                mapName = pubName,
+                                creator = username,
+                                mapData = mapData
+                            }, "ArcadeGames")
+                            local id, msg = rednet.receive("ArcadeGames", 2)
+                            if msg and msg.success then
+                                term.setCursorPos(2, 2); term.write("Published Successfully!")
+                            else
+                                term.setCursorPos(2, 2); term.setTextColor(colors.red); term.write("Publish Failed.")
+                            end
                         else
-                            term.setCursorPos(2, 2); term.setTextColor(colors.red); term.write("Publish Failed.")
+                            term.setCursorPos(2, 2); term.setTextColor(colors.red); term.write("Server not found.")
                         end
                     else
-                        term.setCursorPos(2, 2); term.setTextColor(colors.red); term.write("Server not found.")
+                        term.setCursorPos(2, 2); term.setTextColor(colors.red); term.write("Publish cancelled.")
                     end
                     sleep(1.5)
                 elseif key == keys.q then return end
             end
+        end
+    end
+
+    local function showLocalMaps()
+        local w, h = getSafeSize()
+        local localDir = "/data/sokoban/"
+        if not fs.exists(localDir) then fs.makeDir(localDir) end
+
+        local files = fs.list(localDir)
+        local maps = {}
+        for _, file in ipairs(files) do
+            if file:match("%.map%.lua$") then
+                local f = fs.open(fs.combine(localDir, file), "r")
+                if f then
+                    local data = textutils.unserialize(f.readAll())
+                    f.close()
+                    if data then
+                        table.insert(maps, { filename = file, name = data.name, data = data.data })
+                    end
+                end
+            end
+        end
+
+        if #maps == 0 then
+            drawFrame()
+            term.setTextColor(colors.red); term.setCursorPos(5, 5)
+            term.write("No local maps found. Use World Builder to create one.")
+            sleep(2); return
+        end
+
+        local selection = 1
+        local scroll = 0
+        local maxVisible = 10
+        while true do
+            drawFrame()
+            term.setTextColor(theme.prompt)
+            term.setCursorPos(math.floor(w/2 - 5), 3); term.write("LOCAL MAPS")
+
+            for i = 1, maxVisible do
+                local idx = i + scroll
+                if idx > #maps then break end
+                local map = maps[idx]
+                
+                if idx == selection then
+                    term.setBackgroundColor(theme.highlightBg); term.setTextColor(theme.highlightText)
+                else
+                    term.setBackgroundColor(theme.bg); term.setTextColor(theme.text)
+                end
+                local label = string.format("%d. %s", idx, map.name)
+                term.setCursorPos(math.floor(w/2 - #label/2), 5 + i)
+                term.write(label)
+            end
+
+            term.setBackgroundColor(theme.bg); term.setTextColor(colors.gray)
+            term.setCursorPos(2, h); term.write(" ENTER: Play | BACKSPACE: Back ")
+
+            local event, key = os.pullEvent("key")
+            if key == keys.up then 
+                selection = math.max(1, selection - 1)
+                if selection <= scroll then scroll = math.max(0, scroll - 1) end
+            elseif key == keys.down then 
+                selection = math.min(#maps, selection + 1)
+                if selection > scroll + maxVisible then scroll = math.min(#maps - maxVisible, scroll + 1) end
+            elseif key == keys.enter then
+                local selected = maps[selection]
+                local originalLevel = currentLevel
+                levels[100] = { map = selected.data, name = selected.name }
+                currentLevel = 100
+                gameLoop()
+                currentLevel = originalLevel
+            elseif key == keys.backspace or key == keys.q then return end
         end
     end
 
@@ -753,6 +844,8 @@ local function mainGame(...)
             gameLoop()
         elseif choice == "Level Select" then
             if showLevelSelect() then gameLoop() end
+        elseif choice == "Local Maps" then
+            showLocalMaps()
         elseif choice == "World Builder" then
             worldBuilder()
         elseif choice == "Community Maps" then
