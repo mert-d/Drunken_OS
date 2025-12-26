@@ -40,6 +40,7 @@ function arcade.run(context)
     local cachedLobbies = nil
     
     -- Load Games List
+    if not fs.exists("games") then fs.makeDir("games") end
     local list = fs.list("games")
     for _, file in ipairs(list) do
         if file:match("%.lua$") then

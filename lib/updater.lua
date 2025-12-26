@@ -86,6 +86,10 @@ function updater.install_package(packageName, uiCallback)
     end
     
     local manifest = response.manifest
+    if not manifest.packages then
+        logUI("Error: Invalid manifest (no packages).")
+        return false
+    end
     local pkg = manifest.packages[packageName]
     if not pkg then
         logUI("Error: Package '"..packageName.."' not found in manifest.")
