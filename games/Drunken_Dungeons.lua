@@ -586,8 +586,16 @@ end
                 print("Mainframe Arcade Server Offline!")
                 sleep(2)
             else
-                print("1: Host Co-op | 2: Join Co-op")
+                print("1: Host | 2: Join | 3: Direct Connect")
                 local _, lobbyKey = os.pullEvent("key")
+                
+                local directTarget = nil
+                if lobbyKey == keys.three then
+                    print("Enter Host ID: ")
+                    directTarget = tonumber(read())
+                    if not directTarget then return end
+                end
+
                 if lobbyKey == keys.one then
                     rednet.send(arcadeId, {type="host_game", user=username, game=gameName}, "ArcadeGames")
                     print("Hosting... Waiting for Partner...")
@@ -596,7 +604,7 @@ end
                         if id and msg.type == "match_join" then
                             opponentId = id
                             isMultiplayer = true
-                            rednet.send(id, {type="match_accept", user=username, seed=sharedSeed}, "Dungeon_Coop_v2")
+                            rednet.send(id, {type="match_accept", user=username, seed=sharedSeed, version=gameVersion}, "Dungeon_Coop_v2")
                             rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
                             addLog("Partner Joined!", colors.lime)
                             selectClass()
@@ -607,29 +615,39 @@ end
                 elseif lobbyKey == keys.tab or lobbyKey == keys.q then
                     rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
                     return
-                elseif lobbyKey == keys.two then
-                    rednet.send(arcadeId, {type="list_lobbies"}, "ArcadeGames")
-                    local _, reply = rednet.receive("ArcadeGames", 3)
-                    if reply and reply.lobbies then
-                        local options = {}
-                        for id, lob in pairs(reply.lobbies) do
-                            if lob.game == gameName then table.insert(options, {id=id, user=lob.user}) end
-                        end
-                        if #options > 0 then
-                            local target = options[1]
-                            print("Joining " .. target.user .. "...")
-                            rednet.send(target.id, {type="match_join", user=username}, "Dungeon_Coop_v2")
-                            local sid, smsg = rednet.receive("Dungeon_Coop_v2", 5)
-                            if sid == target.id and smsg.type == "match_accept" then
-                                opponentId = target.id
-                                isMultiplayer = true
-                                sharedSeed = smsg.seed
-                                addLog("Joined " .. target.user, colors.lime)
-                                selectClass()
-                                break
+                else
+                    -- JOIN or DIRECT
+                    local target = nil
+                    if lobbyKey == keys.two then
+                        rednet.send(arcadeId, {type="list_lobbies"}, "ArcadeGames")
+                        local _, reply = rednet.receive("ArcadeGames", 3)
+                        if reply and reply.lobbies then
+                            local options = {}
+                            for id, lob in pairs(reply.lobbies) do
+                                if lob.game == gameName then table.insert(options, {id=id, user=lob.user}) end
                             end
-                        else
-                            print("No Co-op hosts online.")
+                            if #options > 0 then target = options[1]
+                            else print("No Co-op hosts online."); sleep(1) end
+                        end
+                    else
+                        target = {id = directTarget, user = "ID "..directTarget}
+                    end
+
+                    if target then
+                        print("Connecting to " .. target.user .. "...")
+                        rednet.send(target.id, {type="match_join", user=username, version=gameVersion}, "Dungeon_Coop_v2")
+                        local sid, smsg = rednet.receive("Dungeon_Coop_v2", 5)
+                        if sid == target.id and smsg.type == "match_accept" then
+                            if smsg.version ~= gameVersion then
+                                print("Version Mismatch! Host: v" .. (smsg.version or "??"))
+                                sleep(2)
+                                return
+                            end
+                            opponentId = target.id
+                            isMultiplayer = true
+                            sharedSeed = smsg.seed
+                            addLog("Joined " .. target.user, colors.lime)
+                            selectClass()
                         end
                     end
                 end

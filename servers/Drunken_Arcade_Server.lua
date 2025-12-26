@@ -282,6 +282,78 @@ function gameHandlers.get_all_game_versions(senderId, message)
     rednet.send(senderId, { type = "game_versions_response", versions = versions }, "ArcadeGames")
 end
 
+-- Community Map Handlers
+function gameHandlers.upload_map(senderId, message)
+    local game = message.game
+    local mapData = message.mapData
+    local mapName = message.mapName or ("map_" .. os.time())
+    local creator = message.creator or "Unknown"
+
+    local communityDir = fs.combine("community_maps", game)
+    if not fs.exists(communityDir) then fs.makeDir(communityDir) end
+
+    local filename = mapName:gsub("[%s%c%p]", "_") .. ".map"
+    local path = fs.combine(communityDir, filename)
+
+    local f = fs.open(path, "w")
+    if f then
+        f.write(textutils.serialize({
+            name = mapName,
+            creator = creator,
+            data = mapData,
+            timestamp = os.time()
+        }))
+        f.close()
+        logActivity(string.format("Map Upload: %s by %s for %s", mapName, creator, game))
+        rednet.send(senderId, { success = true, filename = filename }, "ArcadeGames")
+    else
+        rednet.send(senderId, { success = false, error = "Failed to save map" }, "ArcadeGames")
+    end
+end
+
+function gameHandlers.list_community_maps(senderId, message)
+    local game = message.game
+    local communityDir = fs.combine("community_maps", game)
+    local maps = {}
+
+    if fs.exists(communityDir) then
+        local files = fs.list(communityDir)
+        for _, file in ipairs(files) do
+            local path = fs.combine(communityDir, file)
+            local f = fs.open(path, "r")
+            if f then
+                local data = textutils.unserialize(f.readAll())
+                f.close()
+                if data then
+                    table.insert(maps, {
+                        filename = file,
+                        name = data.name,
+                        creator = data.creator,
+                        timestamp = data.timestamp
+                    })
+                end
+            end
+        end
+    end
+    rednet.send(senderId, { maps = maps }, "ArcadeGames")
+end
+
+function gameHandlers.get_community_map(senderId, message)
+    local game = message.game
+    local filename = message.filename
+    local path = fs.combine("community_maps", fs.combine(game, filename))
+
+    if fs.exists(path) then
+        local f = fs.open(path, "r")
+        local content = f.readAll()
+        f.close()
+        local data = textutils.unserialize(content)
+        rednet.send(senderId, { success = true, map = data }, "ArcadeGames")
+    else
+        rednet.send(senderId, { success = false, error = "Map not found" }, "ArcadeGames")
+    end
+end
+
 local function syncGames()
     logActivity("Syncing games from GitHub repository...")
     
