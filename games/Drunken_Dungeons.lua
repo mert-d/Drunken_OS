@@ -7,7 +7,7 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 2.0 -- Version: 2.0
+local gameVersion = 2.1 -- Version: 2.1
 local saveFile = ".dungeon_save"
 
 -- Color mapping for term.blit
@@ -518,29 +518,40 @@ local function movePlayer(dx, dy)
 end
 
     -- Menu Logic
-    local function drawMenu()
+    local function drawMenu(selectedOpt)
         local w, h = getSafeSize()
         term.setBackgroundColor(colors.black); term.clear()
         
-        -- Header with Neon/Pixel art style
-        local titleLines = {
-            "  ____   _____  _    _  _   _  _  __ ______  _   _ ",
-            " |  _ \\ |  __ \\| |  | || \\ | || |/ /|  ____|| \\ | |",
-            " | | | || |__) | |  | ||  \\| || ' / | |__   |  \\| |",
-            " | | | ||  _  /| |  | || . ` ||  <  |  __|  | . ` |",
-            " | |_| || | \\ \\| |__| || |\\  || . \\ | |____ | |\\  |",
-            " |____/ |_|  \\_\\\\____/ |_| \\_||_|\\_\\|______||_| \\_|",
-            "         D  U  N  G  E  O  N  S  (v2.0)"
-        }
-        
-        for i, line in ipairs(titleLines) do
-            local color = (i < 7) and "9" or "3"
-            term.setCursorPos(math.floor(w/2 - #line/2), i + 1)
-            term.blit(line, string.rep(color, #line), string.rep("f", #line))
+        -- Responsive Header
+        local statsBoxY = 10
+        if w > 45 then
+             local titleLines = {
+                "  ____   _____  _    _  _   _  _  __ ______  _   _ ",
+                " |  _ \\ |  __ \\| |  | || \\ | || |/ /|  ____|| \\ | |",
+                " | | | || |__) | |  | ||  \\| || ' / | |__   |  \\| |",
+                " | | | ||  _  /| |  | || . ` ||  <  |  __|  | . ` |",
+                " | |_| || | \\ \\| |__| || |\\  || . \\ | |____ | |\\  |",
+                " |____/ |_|  \\_\\\\____/ |_| \\_||_|\\_\\|______||_| \\_|",
+                "         D  U  N  G  E  O  N  S  (v2.1)"
+            }
+            for i, line in ipairs(titleLines) do
+                local color = (i < 7) and "9" or "3"
+                term.setCursorPos(math.floor(w/2 - #line/2), i + 1)
+                term.blit(line, string.rep(color, #line), string.rep("f", #line))
+            end
+            statsBoxY = 10
+        else
+            -- Mobile/Compact Header
+            term.setCursorPos(math.floor(w/2 - 8), 2)
+            term.setTextColor(colors.cyan)
+            term.write("DRUNKEN DUNGEONS")
+            term.setCursorPos(math.floor(w/2 - 2), 3)
+            term.setTextColor(colors.gray)
+            term.write("v2.1")
+            statsBoxY = 5
         end
 
         -- Stats Box
-        local statsBoxY = 10
         term.setCursorPos(math.floor(w/2 - 10), statsBoxY)
         term.setTextColor(colors.gray); term.write("╔═══════════════════╗")
         term.setCursorPos(math.floor(w/2 - 10), statsBoxY + 1)
@@ -552,18 +563,25 @@ end
 
         -- Options
         local opts = {
-            "[1] Enter Dungeon",
-            "[2] Upgrade Hero",
-            "[3] Join Party (Co-op)",
-            "[TAB] Exit Game"
+            "Enter Dungeon",
+            "Upgrade Hero",
+            "Join Party (Co-op)",
+            "Exit Game"
         }
         
         for i, opt in ipairs(opts) do
-            term.setCursorPos(math.floor(w/2 - #opt/2), statsBoxY + 4 + i)
-            term.setTextColor(i == 1 and colors.lime or (i == 4 and colors.red or colors.white))
-            term.write(opt)
+            term.setCursorPos(math.floor(w/2 - #opt/2) - 2, statsBoxY + 4 + i)
+            if i == selectedOpt then
+                 term.setTextColor(colors.yellow)
+                 term.write("> " .. opt .. " <")
+            else
+                 term.setTextColor(colors.white)
+                 term.write("  " .. opt .. "  ")
+            end
         end
     end
+    
+
 
     local function upgradeShop()
         while true do
@@ -615,95 +633,121 @@ end
         isMultiplayer = false
         otherPlayer.active = false
         
+        local menuSelected = 1
         while true do
-            drawMenu()
+            drawMenu(menuSelected)
             local _, k = os.pullEvent("key")
-            if k == keys.one then
-                selectClass()
-                break
-            elseif k == keys.two then
-                upgradeShop()
-            elseif k == keys.three then
-                term.clear(); term.setCursorPos(1,1)
-                local arcadeId = rednet.lookup("ArcadeGames_Internal", "arcade.server.internal")
-                if not arcadeId then 
-                    print("Mainframe Arcade Server Offline!")
-                    sleep(2)
-                else
-                    print("1: Host | 2: Join | 3: Direct Connect")
-                    local _, lobbyKey = os.pullEvent("key")
-                    
-                    local directTarget = nil
-                    if lobbyKey == keys.three then
-                        print("Enter Host ID: ")
-                        directTarget = tonumber(read())
-                        if not directTarget then return end
-                    end
-
-                    if lobbyKey == keys.one then
-                        rednet.send(arcadeId, {type="host_game", user=username, game=gameName}, "ArcadeGames")
-                        print("Hosting... Waiting for Partner...")
-                        while true do
-                            local id, msg = rednet.receive("Dungeon_Coop_v2", 2)
-                            if id and msg.type == "match_join" then
-                                opponentId = id
-                                isMultiplayer = true
-                                rednet.send(id, {type="match_accept", user=username, seed=sharedSeed, version=gameVersion}, "Dungeon_Coop_v2")
-                                rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
-                                addLog("Partner Joined!", colors.lime)
-                                selectClass()
-                                break
-                            end
-                            if isMultiplayer then break end
-                            local e, ek = os.pullEventRaw()
-                            if e == "key" and ek == keys.q then 
-                                rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
-                                break 
-                            end
-                        end
-                    elseif lobbyKey == keys.tab or lobbyKey == keys.q then
-                        rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
-                        -- Return to menu loop
+            
+            -- Selection Logic
+            if k == keys.up then
+                menuSelected = (menuSelected == 1) and 4 or menuSelected - 1
+            elseif k == keys.down then
+                menuSelected = (menuSelected == 4) and 1 or menuSelected + 1
+            
+            -- Activation Logic
+            elseif k == keys.enter or k == keys.space or k == keys.one or (k == keys.two and menuSelected==2) or (k == keys.three and menuSelected==3) then
+                if k == keys.one then menuSelected = 1 end
+                if k == keys.two then menuSelected = 2 end
+                if k == keys.three then menuSelected = 3 end
+                
+                -- Route Selection
+                if menuSelected == 1 then
+                    -- Play
+                    selectClass() -- Ask for class before map gen
+                    -- Wait, old code called selectClass inside loop only for [1]?
+                    -- Old code: [1]->selectClass->break loop->generateMap
+                    break
+                elseif menuSelected == 2 then
+                    upgradeShop()
+                elseif menuSelected == 3 then
+                    -- Multiplayer Setup
+                    menuSelected = 3 -- Visual stickiness
+                    term.clear(); term.setCursorPos(1,1)
+                    local arcadeId = rednet.lookup("ArcadeGames_Internal", "arcade.server.internal")
+                    if not arcadeId then 
+                        print("Mainframe Arcade Server Offline!")
+                        sleep(2)
                     else
-                        -- JOIN or DIRECT
-                        local target = nil
-                        if lobbyKey == keys.two then
-                            rednet.send(arcadeId, {type="list_lobbies"}, "ArcadeGames")
-                            local _, reply = rednet.receive("ArcadeGames", 3)
-                            if reply and reply.lobbies then
-                                local options = {}
-                                for id, lob in pairs(reply.lobbies) do
-                                    if lob.game == gameName then table.insert(options, {id=id, user=lob.user}) end
-                                end
-                                if #options > 0 then target = options[1]
-                                else print("No Co-op hosts online."); sleep(1) end
-                            end
+                        print("1: Host | 2: Join | 3: Direct Connect")
+                        print("[TAB] Back")
+                        local _, lobbyKey = os.pullEvent("key")
+                        
+                        if lobbyKey == keys.tab or lobbyKey == keys.q then
+                             -- Back to menu
                         else
-                            target = {id = directTarget, user = "ID "..directTarget}
-                        end
+                            local directTarget = nil
+                            if lobbyKey == keys.three then
+                                print("Enter Host ID: ")
+                                directTarget = tonumber(read())
+                                if not directTarget then lobbyKey = nil end -- Cancel
+                            end
 
-                        if target then
-                            print("Connecting to " .. target.user .. "...")
-                            rednet.send(target.id, {type="match_join", user=username, version=gameVersion}, "Dungeon_Coop_v2")
-                            local sid, smsg = rednet.receive("Dungeon_Coop_v2", 5)
-                            if sid == target.id and smsg.type == "match_accept" then
-                                if smsg.version ~= gameVersion then
-                                    print("Version Mismatch! Host: v" .. (smsg.version or "??"))
-                                    sleep(2)
+                            if lobbyKey == keys.one then
+                                rednet.send(arcadeId, {type="host_game", user=username, game=gameName}, "ArcadeGames")
+                                print("Hosting... Waiting for Partner...")
+                                while true do
+                                    local id, msg = rednet.receive("Dungeon_Coop_v2", 2)
+                                    if id and msg.type == "match_join" then
+                                        opponentId = id
+                                        isMultiplayer = true
+                                        rednet.send(id, {type="match_accept", user=username, seed=sharedSeed, version=gameVersion}, "Dungeon_Coop_v2")
+                                        rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
+                                        addLog("Partner Joined!", colors.lime)
+                                        selectClass()
+                                        break -- Break wait loop
+                                    end
+                                    local e, ek = os.pullEventRaw()
+                                    if e == "key" and ek == keys.q then 
+                                        rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
+                                        break -- Cancel host
+                                    end
+                                end
+                                if isMultiplayer then break end -- Break Menu Loop
+                            
+                            elseif lobbyKey == keys.two or directTarget then
+                                -- JOIN Logic
+                                local target = nil
+                                if lobbyKey == keys.two then
+                                    rednet.send(arcadeId, {type="list_lobbies"}, "ArcadeGames")
+                                    local _, reply = rednet.receive("ArcadeGames", 3)
+                                    if reply and reply.lobbies then
+                                        local options = {}
+                                        for id, lob in pairs(reply.lobbies) do
+                                            if lob.game == gameName then table.insert(options, {id=id, user=lob.user}) end
+                                        end
+                                        if #options > 0 then target = options[1]
+                                        else print("No Co-op hosts online."); sleep(1) end
+                                    end
                                 else
-                                    opponentId = target.id
-                                    isMultiplayer = true
-                                    sharedSeed = smsg.seed
-                                    addLog("Joined " .. target.user, colors.lime)
-                                    selectClass()
+                                    target = {id = directTarget, user = "ID "..directTarget}
+                                end
+
+                                if target then
+                                    print("Connecting to " .. target.user .. "...")
+                                    rednet.send(target.id, {type="match_join", user=username, version=gameVersion}, "Dungeon_Coop_v2")
+                                    local sid, smsg = rednet.receive("Dungeon_Coop_v2", 5)
+                                    if sid == target.id and smsg.type == "match_accept" then
+                                        if smsg.version ~= gameVersion then
+                                            print("Ver: " .. (smsg.version or "?") .. " != Local: " .. gameVersion)
+                                            sleep(2)
+                                        else
+                                            opponentId = target.id
+                                            isMultiplayer = true
+                                            sharedSeed = smsg.seed
+                                            addLog("Joined " .. target.user, colors.lime)
+                                            selectClass()
+                                            break -- Break Menu Loop
+                                        end
+                                    end
                                 end
                             end
                         end
                     end
-                    if isMultiplayer then break end
+                elseif menuSelected == 4 then
+                    return -- Exit
                 end
-            elseif k == keys.q or k == keys.tab then
-                return -- Exit App
+            elseif k == keys.tab or k == keys.q then
+                return -- Exit
             end
         end
 
