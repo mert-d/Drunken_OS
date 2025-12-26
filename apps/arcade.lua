@@ -7,7 +7,7 @@ local theme = require("lib.theme")
 local utils = require("lib.utils")
 local P2P_Socket = require("lib.p2p_socket")
 local arcade = {}
-local arcadeVersion = 2.2 -- Bumped for crash fixes
+local arcadeVersion = 2.3 -- Bumped for join fix
 
 local function getParent(context)
     return context.parent
@@ -208,7 +208,7 @@ function arcade.run(context)
             local run_shell = context.shell or _G.shell
             if run_shell then
                  -- Pass username and any other standard args
-                 run_shell.run(game.path, getParent(context).username)
+                 run_shell.run(games[selectedIdx].path, getParent(context).username)
             end
             -- Redraw on return
         elseif p1 == keys.l then
@@ -228,9 +228,10 @@ function arcade.run(context)
              if targetLobby then
                  context.clear()
                  local run_shell = context.shell or _G.shell
-                 -- Launch with connect args: game.lua username connect <hostID>
-                 run_shell.run(game.path, getParent(context).username, "connect", tostring(id))
+                 -- Join directly
+                 run_shell.run(games[selectedIdx].path, getParent(context).username, "join", tostring(id))
              end
+
         elseif p1 == keys.q or p1 == keys.tab then
             break
         end
