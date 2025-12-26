@@ -511,6 +511,16 @@ function mailHandlers.get_version(senderId, message)
                     version = parseVersion(f.readAll())
                     f.close()
                 end
+            else
+                -- Fallback 2: check lib/ directory
+                local libPath = "lib/" .. prog .. ".lua"
+                if fs.exists(libPath) then
+                    local f = fs.open(libPath, "r")
+                    if f then
+                        version = parseVersion(f.readAll())
+                        f.close()
+                    end
+                end
             end
         end
         rednet.send(senderId, { version = version or 0 }, "SimpleMail")
