@@ -756,7 +756,12 @@ function mailHandlers.delete_cloud(senderId, message)
 end
 
 function mailHandlers.fetch(senderId, message)
-    rednet.send(senderId, { mail = loadMail(message.user) }, "SimpleMail")
+    -- Use MailModule to fetch mail
+    local mail = {}
+    if MailModule and MailModule.loadMail then
+        mail = MailModule.loadMail(message.user)
+    end
+    rednet.send(senderId, { mail = mail }, "SimpleMail")
 end
 
 function mailHandlers.delete(senderId, message)
