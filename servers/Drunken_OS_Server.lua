@@ -786,7 +786,12 @@ function mailHandlers.get_chat_history(senderId, message)
 end
 
 function mailHandlers.get_unread_count(senderId, message)
-    rednet.send(senderId, { type = "unread_count_response", count = getMailCount(message.user) }, "SimpleMail")
+    -- Use the module-scoped function if available, otherwise 0
+    local count = 0
+    if MailModule and MailModule.getMailCount then
+         count = MailModule.getMailCount(message.user, {files=mailFiles})
+    end
+    rednet.send(senderId, { type = "unread_count_response", count = count }, "SimpleMail")
 end
 
 function mailHandlers.report_location(senderId, message)

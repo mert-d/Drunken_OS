@@ -544,7 +544,7 @@ end
         term.setCursorPos(math.floor(w/2 - 10), statsBoxY)
         term.setTextColor(colors.gray); term.write("╔═══════════════════╗")
         term.setCursorPos(math.floor(w/2 - 10), statsBoxY + 1)
-        term.write("║ "); term.setTextColor(colors.gold); term.write("Gold: " .. persist.gold); term.setCursorPos(math.floor(w/2 + 9), statsBoxY + 1); term.setTextColor(colors.gray); term.write("║")
+        term.write("║ "); term.setTextColor(theme.gold); term.write("Gold: " .. persist.gold); term.setCursorPos(math.floor(w/2 + 9), statsBoxY + 1); term.setTextColor(colors.gray); term.write("║")
         term.setCursorPos(math.floor(w/2 - 10), statsBoxY + 2)
         term.write("║ "); term.setTextColor(colors.cyan); term.write("Class: " .. (class or "None")); term.setCursorPos(math.floor(w/2 + 9), statsBoxY + 2); term.setTextColor(colors.gray); term.write("║")
         term.setCursorPos(math.floor(w/2 - 10), statsBoxY + 3)

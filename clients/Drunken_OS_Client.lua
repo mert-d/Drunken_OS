@@ -32,7 +32,8 @@ local REQUIRED_LIBS = {
     { name = "drunken_os_apps" },
     { name = "app_loader" },
     { name = "theme" },
-    { name = "utils" }
+    { name = "utils" },
+    { name = "p2p_socket" }
 }
 
 local REQUIRED_APPS = {
