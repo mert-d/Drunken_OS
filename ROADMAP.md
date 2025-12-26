@@ -7,8 +7,8 @@ This document outlines the strategic direction for Drunken OS. Agents and contri
 _Goal: Move away from monolithic files and ensure the new modular app system is robust._
 
 - [x] **Modular App Loader**: Move core apps to `apps/` (Done in v3.0).
-- [ ] **Server Refactoring**: Break down `Drunken_OS_Server.lua` (1400+ lines) into modular modules (e.g., `servers/modules/auth.lua`, `servers/modules/chat.lua`).
-- [ ] **Standardized UI Lib**: Extract common UI patterns from `Drunken_OS_Client.lua` and `drunken_os_apps.lua` into `lib/ui.lua`.
+- [x] **Server Refactoring**: Break down `Drunken_OS_Server.lua` (1400+ lines) into modular modules (e.g., `servers/modules/auth.lua`, `servers/modules/chat.lua`).
+- [x] **Standardized UI Lib**: Extract common UI patterns from `Drunken_OS_Client.lua` and `drunken_os_apps.lua` into `lib/theme.lua` and `lib/utils.lua`.
 
 ## 🟡 Phase 2: The Multiplayer Era
 

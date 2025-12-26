@@ -51,6 +51,7 @@ local function mainGame(...)
     local arcadeServerId = nil
     local opponentId = nil
     local isHost = false
+    local isSpectator = false
 
     -- Theme & Colors
     local hasColor = term.isColor and term.isColor()
@@ -154,7 +155,7 @@ local function mainGame(...)
         term.write(msg)
         
         term.setCursorPos(math.floor(w/2 - 10), h)
-        term.setBackgroundColor(theme.border); term.write(" TAB: Back ")
+        term.setBackgroundColor(theme.border); term.write(" TAB: Back | Q: Quit ")
     end
 
     local function drawStats()
@@ -163,7 +164,8 @@ local function mainGame(...)
         
         -- My Stats (Left)
         term.setTextColor(theme.player)
-        term.setCursorPos(3, 3); term.write("YOU (" .. username .. ") [" .. (myStats.class or "?") .. "]")
+        local leftLabel = isSpectator and "P2 (" .. (myStats.username or "Player 2") .. ")" or "YOU (" .. username .. ")"
+        term.setCursorPos(3, 3); term.write(leftLabel .. " [" .. (myStats.class or "?") .. "]")
         drawBar(3, 4, 10, myStats.hp, myStats.maxHp, theme.hp, "HP")
         drawBar(3, 5, 10, myStats.energy, myStats.maxEnergy or 10, theme.en, "EN")
         drawBar(3, 6, 5, myStats.charge, 3, theme.charge, "ULT")
@@ -178,8 +180,9 @@ local function mainGame(...)
 
         -- Opponent Stats (Right)
         term.setTextColor(theme.opponent)
-        local oppLabel = "OP (" .. (oppStats.username or "Opponent") .. ") [" .. (oppStats.class or "?") .. "]"
-        term.setCursorPos(w - #oppLabel - 2, 3); term.write(oppLabel)
+        local oppName = oppStats.username or "Opponent"
+        local rightLabel = isSpectator and "P1 (" .. oppName .. ")" or "OP (" .. oppName .. ")"
+        term.setCursorPos(w - #rightLabel - #oppStats.class - 5, 3); term.write(rightLabel .. " [" .. (oppStats.class or "?") .. "]")
         drawBar(w - 25, 4, 10, oppStats.hp, oppStats.maxHp, theme.hp, "HP")
         drawBar(w - 25, 5, 10, oppStats.energy, oppStats.maxEnergy or 10, theme.en, "EN")
         drawBar(w - 25, 6, 5, oppStats.charge, 3, theme.charge, "ULT")
@@ -257,6 +260,10 @@ local function mainGame(...)
             end
 
             term.write(" [1]Atk [2]" .. spec .. " [3]" .. ult .. " [4]Def [5]Rest [TAB]Quit ")
+        elseif isSpectator then
+            term.setCursorPos(math.floor(w/2 - 10), h)
+            term.setBackgroundColor(theme.border)
+            term.write(" SPECTATING MATCH ")
         elseif turn == 0 or turn == 2 then
             term.setCursorPos(math.floor(w/2 - 10), h)
             term.setBackgroundColor(theme.border)
@@ -280,21 +287,40 @@ local function mainGame(...)
             -- We can allow direct connect even if arcade is offline, but listing won't work
         end
 
-        drawLobby("1: Host | 2: Join | 3: Direct Connect")
+        drawLobby("1: Host | 2: Join | 3: Direct | 4: Spectate")
         local event, key
         repeat
             event, key = os.pullEvent("key")
-        until key == keys.one or key == keys.two or key == keys.three or key == keys.q or key == keys.tab
+        until key == keys.one or key == keys.two or key == keys.three or key == keys.four or key == keys.q or key == keys.tab
 
         if key == keys.q or key == keys.tab then return false end
         
         local directTarget = nil
-        if key == keys.three then
+        if key == keys.three or key == keys.four then
             drawLobby("Enter Host ID: ")
             term.setCursorPos(math.floor(getSafeSize()/2-5), math.floor(getSafeSize()/2)+1)
             term.setBackgroundColor(colors.gray)
             directTarget = tonumber(read())
             if not directTarget then return false end
+        end
+
+        if key == keys.four then
+            -- SPECTATING
+            opponentId = directTarget -- In spectator mode, the host is the "opponent"
+            drawLobby("Spectating Host ID " .. directTarget .. "...")
+            
+            socket.lobbyProtocol = "DrunkenDuels_Lobby"
+            local reply, err = socket:spectate(directTarget)
+            if reply then
+                isSpectator = true
+                isHost = false
+                -- We wait for the first sync to populate stats
+                return true
+            else
+                drawLobby(err or "Spectate Failed.")
+                sleep(2)
+                return false
+            end
         end
 
         -- Class Selection before match
@@ -344,6 +370,9 @@ local function mainGame(...)
                     -- Socket handles the accept reply internally in waitForJoin
                     return true
                 end
+
+                -- Also check for spectators
+                socket:acceptSpectator(0.1)
                 
                 local tevt, tk = os.pullEventRaw()
                 if tevt == "key" and (tk == keys.q or tk == keys.tab) then 
@@ -515,8 +544,8 @@ local function mainGame(...)
     while matchActive do
         drawGame()
         
-        local canMove = (turn == 1)
-        if myStats.status.stun then
+        local canMove = (turn == 1 and not isSpectator)
+        if myStats.status.stun and not isSpectator then
             addLog("STUNNED! Skipping turn...", colors.yellow)
             myStats.status.stun = nil
             if isHost then myMove = "rest" else socket:send({type="move", move="rest"}) end
@@ -578,7 +607,10 @@ local function mainGame(...)
             if isHost then
                 -- Wait for guest move
                 -- Wait for guest move
-                local msg = socket:receive(1)
+                local msg = socket:receive(0.5)
+                -- Also check for spectators mid-game
+                socket:acceptSpectator(0)
+
                 if msg and msg.type == "move" then
                     oppMove = msg.move
                     processTurn(myMove, oppMove)
@@ -609,7 +641,7 @@ local function mainGame(...)
                         logs = msg.logs
                         screenShake()
                         if msg.ended then matchActive = false end
-                        turn = 1
+                        if not isSpectator then turn = 1 end
                     elseif msg.type == "forfeit" then
                         addLog("Opponent Forfeited!", colors.red)
                         matchActive = false

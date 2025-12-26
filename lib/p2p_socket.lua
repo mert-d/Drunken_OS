@@ -25,6 +25,7 @@ function P2P_Socket.new(gameName, version, protocol)
     self.protocol = protocol
     self.lobbyProtocol = protocol .. "_Lobby" -- Convention: GameProtocol + "_Lobby"
     self.peerId = nil
+    self.spectatorIds = {}
     self.isHost = false
     self.arcadeId = nil
     
@@ -136,11 +137,67 @@ function P2P_Socket:connect(hostId, payload)
     return false, "Connection Timed Out"
 end
 
+--- Waits for a spectator to join
+-- @param timeout number: How long to wait in seconds (optional)
+-- @return table|nil: The spectate message if successful, or nil
+function P2P_Socket:acceptSpectator(timeout)
+    local id, msg = rednet.receive(self.lobbyProtocol, timeout)
+    if id and msg and msg.type == "spectate_join" then
+        table.insert(self.spectatorIds, id)
+        -- Accept the spectator
+        rednet.send(id, {
+            type="spectate_accept", 
+            version=self.version
+        }, self.lobbyProtocol)
+        
+        return msg
+    end
+    return nil
+end
+
+--- Connects as a spectator (Client side)
+-- @param hostId number: The ID of the host to spectate
+-- @return table|false: The accept message if successful, false/error otherwise
+function P2P_Socket:spectate(hostId)
+    self.peerId = hostId -- For spectators, the host is the "peer" they listen to
+    self.isHost = false
+    
+    local joinMsg = {
+        type = "spectate_join",
+        version = self.version
+    }
+    
+    rednet.send(hostId, joinMsg, self.lobbyProtocol)
+    
+    local id, msg = rednet.receive(self.lobbyProtocol, 5)
+    if id == hostId and msg and msg.type == "spectate_accept" then
+        if msg.version ~= self.version then
+            return false, "Version Mismatch! Host: v" .. (msg.version or "??")
+        end
+        return msg
+    end
+    
+    return false, "Connection Timed Out"
+end
+
 --- Sends data to the connected peer
 -- @param data table: The data to send
 function P2P_Socket:send(data)
-    if not self.peerId then return end
-    rednet.send(self.peerId, data, self.protocol)
+    if self.isHost then
+        -- Send to primary peer (Player 2)
+        if self.peerId then
+            rednet.send(self.peerId, data, self.protocol)
+        end
+        -- Also send to all spectators
+        for _, id in ipairs(self.spectatorIds) do
+            rednet.send(id, data, self.protocol)
+        end
+    else
+        -- Clients/Spectators send only to host
+        if self.peerId then
+            rednet.send(self.peerId, data, self.protocol)
+        end
+    end
 end
 
 --- Receives data from the connected peer

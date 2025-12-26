@@ -14,6 +14,7 @@
 package.path = "/?.lua;" .. package.path
 
 local GAMES_DB = "games.db"
+local SCORES_DB = "scores.db"
 local LOG_FILE = "arcade.log"
 local GITHUB_GAMES_URL = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/games/"
 
@@ -41,6 +42,13 @@ local theme = {
 local currentScreen = "dashboard" -- "dashboard", "logs"
 local needsRedraw = true
 local startTime = os.time()
+
+local dbDirty = {}
+local dbPointers = {}
+
+local function queueSave(dbPath)
+    dbDirty[dbPath] = true
+end
 
 local function saveTableToFile(path, data)
     local f = fs.open(path, "w")
@@ -169,19 +177,46 @@ end
 --==============================================================================
 
 local games = loadTableFromFile(GAMES_DB)
+local scores = loadTableFromFile(SCORES_DB)
+
+dbPointers[GAMES_DB] = function() return games end
+dbPointers[SCORES_DB] = function() return scores end
 
 local gameHandlers = {}
 
 function gameHandlers.submit_score(senderId, message)
     local game, user, score = message.game, message.user, message.score
-    if not games[game] then games[game] = {} end
-    if not games[game][user] or score > games[game][user] then
-        games[game][user] = score
-        saveTableToFile(GAMES_DB, games)
-        logActivity(string.format("Score: %s @ %s = %d", user, game, score))
+    local timestamp = message.timestamp or os.epoch("utc")
+
+    if not scores[game] then scores[game] = {} end
+    
+    -- Add to global list for the game
+    table.insert(scores[game], { user = user, score = score, timestamp = timestamp })
+    
+    -- Sort by score descending
+    table.sort(scores[game], function(a, b) return a.score > b.score end)
+    
+    -- Keep only top 50
+    if #scores[game] > 50 then
+        table.remove(scores[game])
     end
+    
+    queueSave(SCORES_DB)
+    logActivity(string.format("Score: %s @ %s = %d", user, game, score))
 end
 
+function gameHandlers.get_board(senderId, message)
+    local game = message.game
+    local top10 = {}
+    if scores[game] then
+        for i = 1, math.min(10, #scores[game]) do
+            table.insert(top10, scores[game][i])
+        end
+    end
+    rednet.send(senderId, { type = "leaderboard_response", game = game, board = top10 }, "ArcadeGames")
+end
+
+-- Legacy support
 function gameHandlers.get_leaderboard(senderId, message)
     local game = message.game
     local leaderboard = games[game] or {}
@@ -532,6 +567,20 @@ local function main()
                 -- Lobby Cleanup (Auto-expire after 10 mins)
                 cleanupLobbies()
                 sleep(60)
+            end,
+            function()
+                -- Persistence Loop
+                while true do
+                    sleep(30)
+                    for path, isDirty in pairs(dbDirty) do
+                        if isDirty and dbPointers[path] then
+                            logActivity("Background saving " .. path .. "...")
+                            if saveTableToFile(path, dbPointers[path]()) then
+                                dbDirty[path] = false
+                            end
+                        end
+                    end
+                end
             end
         )
     end

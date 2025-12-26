@@ -15,7 +15,7 @@
 
 local GITHUB_REPO_URL = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
 
-local MANIFEST_FILE = "manifest.lua"
+local MANIFEST_FILE = "installer/manifest.lua"
 local manifest = nil
 local INSTALLABLE_PROGRAMS = {}
 

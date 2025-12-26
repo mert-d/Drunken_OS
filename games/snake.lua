@@ -123,7 +123,17 @@ local function mainGame(...)
         term.write(" " .. scoreText .. " ")
     end
 
-    local function submitScore() if arcadeServerId then rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames") end end
+    local function submitScore() 
+        if arcadeServerId then 
+            rednet.send(arcadeServerId, {
+                type = "submit_score", 
+                game = gameName, 
+                user = username, 
+                score = score, 
+                timestamp = os.epoch("utc")
+            }, "ArcadeGames") 
+        end 
+    end
 
     local function showGameOverScreen()
         submitScore()
