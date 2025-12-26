@@ -15,8 +15,9 @@ _Goal: Move away from monolithic files and ensure the new modular app system is 
 _Goal: Enhance the P2P and Arcade experience._
 
 - [x] **P2P API Standardization**: Create a unified API for games to connect peer-to-peer without rewriting handshake logic every time (Completed in v3.1 using `lib/p2p_socket.lua`).
-- [ ] **Arcade Leaderboards**: Persist high scores on the Arcade Server.
-- [ ] **Spectator Mode**: Allow users to watch P2P matches (e.g., in Drunken Duels).
+- [x] **Arcade Leaderboards**: Persist high scores on the Arcade Server (Completed in v4.0).
+- [x] **Spectator Mode**: Allow users to watch P2P matches (e.g., in Drunken Duels) (Completed in v4.0).
+- [ ] **Arcade Lobby App**: A unified client app (`apps/arcade.lua` V2) to browse games, lobbies, and leaderboards.
 
 ## 🔴 Phase 3: Developer Ecosystem
 

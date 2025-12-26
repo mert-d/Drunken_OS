@@ -1,4 +1,30 @@
 local utils = {}
+local theme = require("lib.theme")
+
+function utils.drawWindow(title, context)
+    local w, h = term.getSize()
+    term.setBackgroundColor(theme.bg)
+    term.clear()
+    
+    -- Title Bar
+    term.setCursorPos(1, 1)
+    term.setBackgroundColor(theme.titleBg)
+    term.clearLine()
+    term.setTextColor(theme.titleText)
+    
+    local titleText = " " .. (title or "Window") .. " "
+    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1)
+    term.write(titleText)
+    
+    -- Footer/Status Bar (Optional, mimic standard look)
+    term.setCursorPos(1, h)
+    term.setBackgroundColor(theme.titleBg) -- or gray
+    term.clearLine()
+    
+    -- Reset
+    term.setBackgroundColor(theme.bg)
+    term.setTextColor(theme.text)
+end
 
 -- Universal word-wrap
 function utils.wordWrap(text, maxWidth)
