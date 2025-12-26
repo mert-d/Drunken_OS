@@ -32,7 +32,8 @@ function loader.run(appName, context, entryPoint)
         return false
     end
 
-    local appFunc, loadErr = loadfile(path)
+    -- Pass _G to ensure require and other globals are available
+    local appFunc, loadErr = loadfile(path, _G)
     if not appFunc then
         context.showMessage("Load Error", tostring(loadErr))
         return false
