@@ -43,10 +43,10 @@ local REQUIRED_APPS = {
 -- UI & Theme Helpers
 --==============================================================================
 
-local theme = require("lib.theme")
-local utils = require("lib.utils")
-local wordWrap = utils.wordWrap
-local printCentered = utils.printCentered
+local theme -- Delayed require
+local utils -- Delayed require
+local wordWrap -- Delayed assign
+local printCentered -- Delayed assign
 
 local colorToBlit = {
     [colors.white] = "0", [colors.orange] = "1", [colors.magenta] = "2", [colors.lightBlue] = "3",
@@ -569,6 +569,12 @@ local function main()
 
             state.crypto = crypto
             state.apps = apps
+            
+            -- Load shared libraries now that we know they exist
+            if not theme then theme = require("lib.theme") end
+            if not utils then utils = require("lib.utils") end
+            wordWrap = utils.wordWrap
+            printCentered = utils.printCentered
 
             -- Populate the shared context
             context.parent = state
