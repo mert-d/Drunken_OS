@@ -36,7 +36,7 @@ function updater.check(programName, currentVersion, targetPath)
         print("Updater: Downloading...")
         
         rednet.send(server, { type = "get_update", program = programName }, "SimpleMail")
-        local _, update = rednet.receive("SimpleMail", 2)
+        local _, update = rednet.receive("SimpleMail", 5)
         
         if update and update.code then
             local path = targetPath or shell.getRunningProgram()
