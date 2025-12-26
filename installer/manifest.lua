@@ -162,18 +162,7 @@ return {
              main = "servers/Drunken_Arcade_Server.lua",
              files = {
                 "servers/Drunken_Arcade_Server.lua",
-                "lib/sha1_hmac.lua",
-                -- Include all games in the Arcade Server's local repo
-                "games/Drunken_Doom.lua",
-                "games/Drunken_Duels.lua",
-                "games/Drunken_Dungeons.lua",
-                "games/Drunken_Pong.lua",
-                "games/Drunken_Sokoban.lua",
-                "games/Drunken_Sweeper.lua",
-                "games/floppa_bird.lua",
-                "games/invaders.lua",
-                "games/snake.lua",
-                "games/tetris.lua"
+                "lib/sha1_hmac.lua"
              },
              include_shared = false
         }
