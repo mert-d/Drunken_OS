@@ -578,6 +578,16 @@ function mailHandlers.get_update(senderId, message)
                     code = f.readAll()
                     f.close()
                 end
+            else
+                -- Fallback 2: check lib/ directory
+                local libPath = "lib/" .. prog .. ".lua"
+                if fs.exists(libPath) then
+                    local f = fs.open(libPath, "r")
+                    if f then
+                        code = f.readAll()
+                        f.close()
+                    end
+                end
             end
         end
         rednet.send(senderId, { code = code }, "SimpleMail")
