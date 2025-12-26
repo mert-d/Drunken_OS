@@ -128,7 +128,7 @@ function arcade.run(context)
             local xBase = 23
             
             -- Info
-            term.setTextColor(theme.title)
+            term.setTextColor(theme.prompt)
             term.setCursorPos(xBase, 3); term.write(game.name)
             term.setTextColor(colors.gray)
             term.setCursorPos(xBase, 4); term.write("v" .. game.version .. " by " .. game.author)

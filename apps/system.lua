@@ -4,6 +4,7 @@
 ]]
 
 local updater = require("lib.updater")
+local theme = require("lib.theme")
 local system = {}
 local appVersion = 1.7 -- Bump version for this change
 
