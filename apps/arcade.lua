@@ -115,59 +115,72 @@ function arcade.run(context)
             end
         end
         
-        -- Separator
-        term.setBackgroundColor(theme.bg)
-        term.setTextColor(colors.gray)
-        for i=3, 16 do
-            term.setCursorPos(21, i); term.write("|")
-        end
-        
-        -- Right Column: Details
-        local game = games[selectedIdx]
-        if game then
-            local xBase = 23
+        if w > 30 then
+            -- DESKTOP LAYOUT (Split Screen)
             
-            -- Info
-            term.setTextColor(theme.prompt)
-            term.setCursorPos(xBase, 3); term.write(game.name)
+            -- Separator
+            term.setBackgroundColor(theme.bg)
             term.setTextColor(colors.gray)
-            term.setCursorPos(xBase, 4); term.write("v" .. game.version .. " by " .. game.author)
-            
-            -- Leaderboard
-            term.setTextColor(theme.prompt)
-            term.setCursorPos(xBase, 6); term.write("Top Scores:")
-            term.setTextColor(theme.text)
-            if cachedLeaderboard == "offline" then
-                term.setCursorPos(xBase, 7); term.setTextColor(theme.error); term.write("Server Offline")
-            elseif cachedLeaderboard and #cachedLeaderboard > 0 then
-                for k=1, 4 do
-                    if cachedLeaderboard[k] then
-                        term.setCursorPos(xBase, 6+k)
-                        local s = cachedLeaderboard[k]
-                        term.write(string.format("%d. %s (%d)", k, s.user:sub(1,8), s.score))
-                    end
-                end
-            else
-                term.setCursorPos(xBase, 7); term.write("No scores yet.")
+            for i=3, h-2 do
+                term.setCursorPos(21, i); term.write("|")
             end
             
-            -- Active Lobbies
-            term.setTextColor(theme.prompt)
-            term.setCursorPos(xBase, 12); term.write("Active Lobbies:")
-            term.setTextColor(theme.text)
-            if cachedLobbies and #cachedLobbies > 0 then
-                 for k=1, 3 do
-                    if cachedLobbies[k] then
-                        term.setCursorPos(xBase, 12+k)
-                        local lob = cachedLobbies[k]
-                        term.write(string.format("[%d] %s", lob.id, lob.user))
-                    end
-                end
+            -- Right Column: Details
+            local game = games[selectedIdx]
+            if game then
+                local xBase = 23
+                
+                -- Info
+                term.setTextColor(theme.prompt)
+                term.setCursorPos(xBase, 3); term.write(game.name)
                 term.setTextColor(colors.gray)
-                term.setCursorPos(xBase, 16); term.write("Press J to Join ID")
-            else
-                term.setCursorPos(xBase, 13); term.write("No matches found.")
+                term.setCursorPos(xBase, 4); term.write("v" .. game.version .. " by " .. game.author)
+                
+                -- Leaderboard
+                term.setTextColor(theme.prompt)
+                term.setCursorPos(xBase, 6); term.write("Top Scores:")
+                term.setTextColor(theme.text)
+                if cachedLeaderboard == "offline" then
+                    term.setCursorPos(xBase, 7); term.setTextColor(theme.errorText or colors.red); term.write("Server Offline")
+                elseif cachedLeaderboard and #cachedLeaderboard > 0 then
+                    for k=1, 4 do
+                        if cachedLeaderboard[k] then
+                            term.setCursorPos(xBase, 6+k)
+                            local s = cachedLeaderboard[k]
+                            term.write(string.format("%d. %s (%d)", k, s.user:sub(1,8), s.score))
+                        end
+                    end
+                else
+                    term.setCursorPos(xBase, 7); term.write("No scores yet.")
+                end
+                
+                -- Active Lobbies
+                term.setTextColor(theme.prompt)
+                term.setCursorPos(xBase, 12); term.write("Active Lobbies:")
+                term.setTextColor(theme.text)
+                if cachedLobbies and #cachedLobbies > 0 then
+                     for k=1, 3 do
+                        if cachedLobbies[k] then
+                            term.setCursorPos(xBase, 12+k)
+                            local lob = cachedLobbies[k]
+                            term.write(string.format("[%d] %s", lob.id, lob.user))
+                        end
+                    end
+                    term.setTextColor(colors.gray)
+                    term.setCursorPos(xBase, 16); term.write("Press J to Join ID")
+                else
+                    term.setCursorPos(xBase, 13); term.write("No matches found.")
+                end
             end
+        else
+            -- MOBILE LAYOUT (Pocket Computer)
+            -- Just show the list, and maybe basic info for selected item at bottom
+             local game = games[selectedIdx]
+             if game then
+                term.setCursorPos(2, h-2)
+                term.setTextColor(colors.gray)
+                term.write(game.name .. " v" .. game.version)
+             end
         end
         
         -- Controls Footer
