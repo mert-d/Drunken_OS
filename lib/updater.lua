@@ -113,10 +113,15 @@ function updater.install_package(packageName, uiCallback)
         local _, fileData = rednet.receive("SimpleMail", 3)
         
         if fileData and fileData.success and fileData.code then
-             if not fs.exists(fs.getDir(filePath)) then fs.makeDir(fs.getDir(filePath)) end
-             local f = fs.open(filePath, "w")
-             f.write(fileData.code)
-             f.close()
+             -- Special Case: Preserve HyperAuth Configuration
+             if filePath == "HyperAuthClient/config.lua" and fs.exists(filePath) then
+                 logUI("Skipping existing config: " .. filePath)
+             else
+                 if not fs.exists(fs.getDir(filePath)) then fs.makeDir(fs.getDir(filePath)) end
+                 local f = fs.open(filePath, "w")
+                 f.write(fileData.code)
+                 f.close()
+             end
         else
             logUI("Error: Failed to download " .. filePath)
             -- Just warn, don't abort entire update?

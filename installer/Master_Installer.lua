@@ -443,10 +443,16 @@ local function createInstallDisk(program)
     for _, filePath in ipairs(allFiles) do
         local fileCode = dependencies[filePath] or programCode
         local destPath = mountPath .. "/" .. filePath
-        fs.makeDir(fs.getDir(destPath))
-        local file = fs.open(destPath, "w")
-        file.write(fileCode)
-        file.close()
+        
+        -- Special Case: Preserve HyperAuth Configuration
+        if filePath == "HyperAuthClient/config.lua" and fs.exists(destPath) then
+            print("Skipping existing config: " .. filePath)
+        else
+            fs.makeDir(fs.getDir(destPath))
+            local file = fs.open(destPath, "w")
+            file.write(fileCode)
+            file.close()
+        end
     end
     print("Program files written.")
 
