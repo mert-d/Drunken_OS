@@ -1,6 +1,6 @@
 --[[
     Drunken OS - App Loader
-    _VERSION = 1.2
+    _VERSION = 1.3
     Purpose: Dynamically loads and runs applets from the /apps directory.
 ]]
 
@@ -33,8 +33,14 @@ function loader.run(appName, context, entryPoint)
         return false
     end
 
-    -- Pass _G to ensure require and other globals are available
-    local appFunc, loadErr = loadfile(path, _G)
+    -- Construct a robust environment
+    local env = setmetatable({
+        require = require,
+        shell = shell,
+        multishell = multishell,
+    }, { __index = _G })
+
+    local appFunc, loadErr = loadfile(path, env)
     if not appFunc then
         context.showMessage("Load Error", tostring(loadErr))
         return false
