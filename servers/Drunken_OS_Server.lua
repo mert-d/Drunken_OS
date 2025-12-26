@@ -845,6 +845,18 @@ end
 
 
 
+function mailHandlers.user_exists(senderId, message)
+    local exists = false
+    if message.recipient:sub(1,1) == "@" then
+        if message.recipient == "@all" or lists[message.recipient:sub(2)] then
+            exists = true
+        end
+    elseif users[message.recipient] then
+        exists = true
+    end
+    rednet.send(senderId, { exists = exists }, "SimpleMail")
+end
+
 function mailHandlers.is_admin_check(senderId, message)
     local senderUser = nil
     for user, data in pairs(users) do
