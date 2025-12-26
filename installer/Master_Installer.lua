@@ -15,46 +15,82 @@
 
 local GITHUB_REPO_URL = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
 
-local INSTALLABLE_PROGRAMS = {
-    { name = "Drunken OS Server", type = "server", path = "servers/Drunken_OS_Server.lua", dependencies = {
-        "lib/sha1_hmac.lua",
-        "HyperAuthClient/config.lua",
-        "HyperAuthClient/api/auth_api.lua",
-        "HyperAuthClient/api/auth_client.lua",
-        "HyperAuthClient/encrypt/secure.lua",
-        "HyperAuthClient/encrypt/sha1.lua",
-        "clients/Admin_Console.lua"
-    } },
-    { name = "Drunken OS Bank Server", type = "server", path = "servers/Drunken_OS_BankServer.lua", dependencies = { "lib/sha1_hmac.lua" }, needs_setup = true, setup_type = "bank_server" },
-    { name = "Drunken OS Client", type = "client", path = "clients/Drunken_OS_Client.lua", dependencies = { 
-        "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua", "lib/app_loader.lua",
-        "apps/mail.lua", "apps/bank.lua", "apps/files.lua", "apps/chat.lua", "apps/arcade.lua", "apps/system.lua", "apps/merchant.lua"
-    } },
-    { name = "DB Bank ATM", type = "client", path = "clients/DB_Bank_ATM.lua", dependencies = { 
-        "lib/sha1_hmac.lua", "lib/updater.lua", "lib/app_loader.lua", "lib/drunken_os_apps.lua",
-        "apps/bank.lua"
-    }, needs_setup = true, setup_type = "atm" },
-    { name = "DB Bank Clerk Terminal", type = "client", path = "clients/DB_Bank_Clerk_Terminal.lua", dependencies = { 
-        "lib/sha1_hmac.lua", "lib/updater.lua", "lib/app_loader.lua", "lib/drunken_os_apps.lua",
-        "apps/bank.lua"
-    } },
-    { name = "DB Bank Clerk Turtle", type = "turtle", path = "turtles/DB_Bank_Clerk.lua", dependencies = {} },
-    { name = "Auditor Turtle", type = "turtle", path = "turtles/Auditor.lua", dependencies = { "lib/sha1_hmac.lua", "lib/updater.lua" }, needs_setup = true, setup_type = "auditor" },
-    -- Merchant Business Suite
-    { name = "Merchant POS", type = "client", path = "clients/DB_Merchant_POS.lua", dependencies = { 
-        "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua", "lib/app_loader.lua",
-        "apps/merchant.lua", "apps/bank.lua"
-    } },
-    { name = "Merchant Cashier PC", type = "client", path = "clients/DB_Merchant_Cashier.lua", dependencies = { 
-        "lib/sha1_hmac.lua", "lib/drunken_os_apps.lua", "lib/updater.lua", "lib/app_loader.lua",
-        "apps/merchant.lua", "apps/bank.lua"
-    } },
-    { name = "DB Merchant Turtle", type = "turtle", path = "clients/DB_Merchant_Turtle.lua", dependencies = {} },
-    -- Specialized Networking
-    { name = "Mainframe Proxy", type = "server", path = "servers/Proxy_Mainframe.lua", dependencies = { "lib/sha1_hmac.lua" } },
-    { name = "Bank Proxy", type = "server", path = "servers/Proxy_Bank.lua", dependencies = { "lib/sha1_hmac.lua" } },
-    { name = "Drunken Arcade Server", type = "server", path = "servers/Drunken_Arcade_Server.lua", dependencies = { "lib/sha1_hmac.lua" } },
-}
+local MANIFEST_FILE = "manifest.lua"
+local manifest = nil
+local INSTALLABLE_PROGRAMS = {}
+
+local function fetchManifest()
+    print("Fetching manifest from GitHub...")
+    local url = GITHUB_REPO_URL .. MANIFEST_FILE .. "?t=" .. os.time()
+    local response = http.get(url)
+    if response and response.getResponseCode() == 200 then
+        local content = response.readAll()
+        response.close()
+        -- Safely load the manifest table
+        local func, err = load(content, "manifest", "t", {})
+        if func then
+            manifest = func()
+            print("Manifest loaded successfully.")
+            return true
+        else
+            print("Error loading manifest Lua: " .. tostring(err))
+        end
+    else
+        print("Failed to download manifest.")
+    end
+    return false
+end
+
+local function buildProgramList()
+    INSTALLABLE_PROGRAMS = {}
+    if not manifest or not manifest.packages then return end
+
+    -- Convert the key-value packages table into a sorted list
+    for key, pkg in pairs(manifest.packages) do
+        local entry = {
+            id = key, -- Store the key for reference
+            name = pkg.name,
+            type = pkg.type,
+            path = pkg.main,
+            files = pkg.files or {},
+            include_shared = pkg.include_shared,
+            needs_setup = pkg.needs_setup,
+            setup_type = pkg.setup_type
+        }
+        
+        -- Resolve full dependency list including shared files
+        local allFiles = {}
+        -- Add package specific files
+        for _, f in ipairs(entry.files) do table.insert(allFiles, f) end
+        
+        -- Add shared files if requested
+        if entry.include_shared and manifest.shared then
+            for _, f in ipairs(manifest.shared) do
+                -- Check for duplicates (simple check)
+                local exists = false
+                for _, existing in ipairs(allFiles) do
+                    if existing == f then exists = true; break end
+                end
+                if not exists then table.insert(allFiles, f) end
+            end
+        end
+        
+        -- We store the resolved file list as 'dependencies' for compatibility with existing installer logic
+        -- But wait, the existing logic expects 'dependencies' to NOT include the main file usually, 
+        -- or it handles it. Let's check createInstallDisk.
+        -- createInstallDisk: local allFiles = { program.path }; join dependencies...
+        
+        -- So 'dependencies' should be everything EXCEPT the main path? 
+        -- Or I can just override the logic later.
+        -- Let's just create a 'full_file_list' property and update createInstallDisk to use it.
+        entry.full_file_list = allFiles
+        
+        table.insert(INSTALLABLE_PROGRAMS, entry)
+    end
+
+    -- Sort by name
+    table.sort(INSTALLABLE_PROGRAMS, function(a, b) return a.name < b.name end)
+end
 
 --==============================================================================
 -- Graphical UI & Theme
@@ -278,9 +314,9 @@ local function installToPocketComputer(program, drive)
         fs.delete(mountPath .. "/" .. file)
     end
 
-    local allFiles = { program.path }
-    for _, dep in ipairs(program.dependencies) do
-        table.insert(allFiles, dep)
+    local allFiles = program.full_file_list or { program.path }
+    if not program.full_file_list and program.dependencies then
+         for _, dep in ipairs(program.dependencies) do table.insert(allFiles, dep) end
     end
 
     for _, filePath in ipairs(allFiles) do
@@ -335,13 +371,24 @@ local function createInstallDisk(program)
     end
 
     local dependencies = {}
-    for _, depPath in ipairs(program.dependencies) do
-        local depCode = getFileContent(depPath)
-        if not depCode then
-            showMessage("Error", "Failed to get content for " .. depPath, true)
+    
+    -- If we have full_file_list, gathering dependencies is slightly different because
+    -- we want to key them by path, and 'programCode' is already fetched above (though maybe unnecessary if it's in the list).
+    -- Actually, let's just use allFiles for everything.
+    local allFiles = program.full_file_list or { program.path }
+    if not program.full_file_list and program.dependencies then
+        for _, dep in ipairs(program.dependencies) do table.insert(allFiles, dep) end
+    end
+
+     for _, filePath in ipairs(allFiles) do
+        -- Skip the main program if we fetched it separately, or just overwrite it, doesn't matter.
+        -- We store everything in dependencies map for the disk installer logic below
+        local code = getFileContent(filePath)
+        if not code then
+            showMessage("Error", "Failed to get content for " .. filePath, true)
             return
         end
-        dependencies[depPath] = depCode
+        dependencies[filePath] = code
     end
 
     local drive = peripheral.find("drive")
@@ -377,10 +424,7 @@ local function createInstallDisk(program)
 
     -- Write the program and its dependencies
     print("Writing program files to disk...")
-    local allFiles = { program.path }
-    for _, dep in ipairs(program.dependencies) do
-        table.insert(allFiles, dep)
-    end
+    -- allFiles is already defined and populated above
 
     -- Check total size
     local totalSize = 0
@@ -481,6 +525,14 @@ end
 
 local function main()
     showSplashScreen()
+    if not fetchManifest() then
+        drawWindow("Error")
+        printCentered(8, "Could not fetch manifest!")
+        printCentered(10, "Check internet connection.")
+        sleep(3)
+        return
+    end
+    buildProgramList()
     mainMenu()
     drawWindow("Goodbye")
     printCentered(8, "Master Installer shutting down.")

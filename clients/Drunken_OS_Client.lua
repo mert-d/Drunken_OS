@@ -30,7 +30,9 @@ local REQUIRED_LIBS = {
     { name = "sha1_hmac" },
     { name = "updater" },
     { name = "drunken_os_apps" },
-    { name = "app_loader" }
+    { name = "app_loader" },
+    { name = "theme" },
+    { name = "utils" }
 }
 
 local REQUIRED_APPS = {
@@ -41,18 +43,10 @@ local REQUIRED_APPS = {
 -- UI & Theme Helpers
 --==============================================================================
 
-local theme = {
-    bg = colors.black,
-    text = colors.white,
-    prompt = colors.cyan,
-    titleBg = colors.blue,
-    titleText = colors.white,
-    highlightBg = colors.cyan,
-    highlightText = colors.black,
-    errorBg = colors.red,
-    errorText = colors.white,
-    windowBg = colors.black 
-}
+local theme = require("lib.theme")
+local utils = require("lib.utils")
+local wordWrap = utils.wordWrap
+local printCentered = utils.printCentered
 
 local colorToBlit = {
     [colors.white] = "0", [colors.orange] = "1", [colors.magenta] = "2", [colors.lightBlue] = "3",
@@ -78,23 +72,7 @@ local state = {
 
 local context = {} -- Shared context for modular apps
 
--- Universal word-wrap
-local function wordWrap(text, maxWidth)
-    local lines = {}
-    for line in text:gmatch("[^\n]+") do
-        while #line > maxWidth do
-            local breakPoint = maxWidth
-            while breakPoint > 0 and line:sub(breakPoint, breakPoint) ~= " " do
-                breakPoint = breakPoint - 1
-            end
-            if breakPoint == 0 then breakPoint = maxWidth end
-            table.insert(lines, line:sub(1, breakPoint))
-            line = line:sub(breakPoint + 1)
-        end
-        table.insert(lines, line)
-    end
-    return lines
-end
+-- wordWrap moved to lib.utils
 
 local function clear()
     term.clear()
@@ -132,16 +110,7 @@ local function drawWindow(title)
     term.setTextColor(theme.text)
 end
 
-local function printCentered(startY, message)
-    local w, h = term.getSize()
-    -- USE W-2 to maximize space, and 3 column/row padding for frame
-    local lines = wordWrap(message, w - 2)
-    for i, line in ipairs(lines) do
-        local x = math.floor((w - #line) / 2) + 1
-        term.setCursorPos(x, startY + i - 1)
-        term.write(line)
-    end
-end
+-- printCentered moved to lib.utils
 
 local function showMessage(title, message)
     drawWindow(title)

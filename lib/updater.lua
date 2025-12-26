@@ -57,4 +57,74 @@ function updater.check(programName, currentVersion, targetPath)
     return false
 end
 
+---
+-- Installs or updates a full package definition from the Mainframe manifest.
+-- @param packageName {string} The key of the package tuple in the manifest (e.g., "client", "server")
+-- @param uiCallback {function|nil} Optional callback(statusString) to update UI.
+-- @return {boolean} True if successful.
+function updater.install_package(packageName, uiCallback)
+    local function logUI(msg) if uiCallback then uiCallback(msg) else print(msg) end end
+
+    if not rednet.isOpen() then
+        local modem = peripheral.find("modem")
+        if modem then rednet.open(peripheral.getName(modem)) end
+    end
+    
+    local server = rednet.lookup("SimpleMail", "mail.server")
+    if not server then
+        logUI("Error: Mainframe not found.")
+        return false
+    end
+
+    logUI("Fetching manifest...")
+    rednet.send(server, { type = "get_manifest" }, "SimpleMail")
+    local _, response = rednet.receive("SimpleMail", 3)
+    
+    if not response or response.type ~= "manifest_response" or not response.manifest then
+        logUI("Error: Failed to fetch manifest.")
+        return false
+    end
+    
+    local manifest = response.manifest
+    local pkg = manifest.packages[packageName]
+    if not pkg then
+        logUI("Error: Package '"..packageName.."' not found in manifest.")
+        return false
+    end
+    
+    local filesToInstall = {}
+    for _, f in ipairs(pkg.files or {}) do table.insert(filesToInstall, f) end
+    
+    if pkg.include_shared and manifest.shared then
+        for _, f in ipairs(manifest.shared) do
+            local exists = false
+            for _, existing in ipairs(filesToInstall) do if existing == f then exists=true break end end
+            if not exists then table.insert(filesToInstall, f) end
+        end
+    end
+    
+    logUI("Syncing " .. #filesToInstall .. " files...")
+    
+    for i, filePath in ipairs(filesToInstall) do
+        -- Check if file needs update? For now we just overwrite to ensure sync
+        -- Optimization: In potential future, we could send hashes.
+        logUI("Downloading " .. filePath .. " (" .. i .. "/" .. #filesToInstall .. ")")
+        rednet.send(server, { type = "get_file", path = filePath }, "SimpleMail")
+        local _, fileData = rednet.receive("SimpleMail", 3)
+        
+        if fileData and fileData.success and fileData.code then
+             if not fs.exists(fs.getDir(filePath)) then fs.makeDir(fs.getDir(filePath)) end
+             local f = fs.open(filePath, "w")
+             f.write(fileData.code)
+             f.close()
+        else
+            logUI("Error: Failed to download " .. filePath)
+            -- Just warn, don't abort entire update?
+        end
+    end
+    
+    logUI("Update complete.")
+    return true
+end
+
 return updater

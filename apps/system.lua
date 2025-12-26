@@ -3,14 +3,19 @@
     Modularized from drunken_os_apps.lua
 ]]
 
+local updater = require("lib.updater")
 local system = {}
-local appVersion = 1.5
+local appVersion = 1.6 -- Bump version for this change
 
 local function getParent(context)
     return context.parent
 end
+-- ... (keeping existing functions until updateAll)
 
 function system.changeNickname(context)
+    -- ... (unchanged, but I need to be careful with replace_file_content range)
+    -- Actually, I shouldn't replace the whole file if I can avoid it.
+    -- I'll target the updateAll function specifically.
     context.drawWindow("Change Nickname")
     local new_nick = context.readInput("New nickname: ", 4)
     if new_nick and new_nick ~= "" then
@@ -71,44 +76,30 @@ function system.updateAll(context)
         term.setTextColor(theme.text); y = y + 1
     end
 
-    -- 2. Check for Applet Updates (Mainframe)
-    y = y + 1
-    term.setCursorPos(2, y); term.write("Checking Mainframe Apps...")
-    local mainframe = rednet.lookup("SimpleMail", "mail.server")
-    if mainframe then
-        rednet.send(mainframe, { type = "get_all_app_versions" }, "SimpleMail")
-        local _, resp = rednet.receive("SimpleMail", 5)
-        if resp and resp.type == "app_versions_response" and resp.versions then
-            local appsDir = fs.combine(context.programDir, "apps")
-            if not fs.exists(appsDir) then fs.makeDir(appsDir) end
-            
-            for fileId, serverVer in pairs(resp.versions) do
-                local filename = fileId:gsub("^app%.", "") .. ".lua"
-                local path = fs.combine(appsDir, filename)
-                local localVer = 0
-                if fs.exists(path) then
-                    local f = fs.open(path, "r")
-                    if f then
-                        local content = f.readAll(); f.close()
-                        local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
-                        localVer = tonumber(v) or 0
-                    end
-                end
-                
-                if serverVer > localVer then
-                    updatesFound = true
-                    term.setCursorPos(2, y + 1); term.clearLine(); term.write("Updating App: " .. filename)
-                    rednet.send(mainframe, { type = "get_update", program = fileId }, "SimpleMail")
-                    local _, update = rednet.receive("SimpleMail", 5)
-                    if update and update.code then
-                        local file = fs.open(path, "w")
-                        if file then file.write(update.code); file.close() end
-                    end
-                end
-            end
+    -- 2. Check for System Updates via Manifest (Mainframe)
+    y = y + 2
+    term.setCursorPos(2, y); term.write("Checking System Files...")
+    
+    local function uiCallback(msg)
+        term.setCursorPos(2, y + 1)
+        term.clearLine()
+        term.write(msg)
+        if #msg > 48 then -- Simple truncation
+             term.setCursorPos(2, y + 1)
+             term.write(msg:sub(1, 45) .. "...")
         end
+    end
+    
+    -- We assume we are the 'client' package.
+    -- Ideally, we'd know our package type, but for a standard client, 'client' is safe.
+    -- If this was an ATM, it might be different, but system.lua is shared.
+    -- Maybe we can infer or pass it? For now, standard 'client' is the main use case for this menu.
+    
+    local success = updater.install_package("client", uiCallback)
+    if success then
+        updatesFound = true
     else
-        term.setCursorPos(2, y); term.setTextColor(colors.red); term.write("Mainframe offline.")
+        term.setCursorPos(2, y + 1); term.setTextColor(colors.red); term.write("Update failed.")
         term.setTextColor(theme.text)
     end
 

@@ -49,6 +49,11 @@ if not ok_auth then
     error("HyperAuthClient API not found.", 0)
 end
 
+-- Load internal server modules
+local ChatModule = require("servers.modules.chat")
+local AuthModule = require("servers.modules.auth")
+local MailModule = require("servers.modules.mail")
+
 --==============================================================================
 -- Configuration & State
 --==============================================================================
@@ -59,6 +64,7 @@ local userLocations = {} -- Stores latest (x, y, z) for each user
 local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
 local mailCountCache = {} -- Cache for unread mail counts
+local manifest = {} -- Manifest table
 local monitor = nil
 local ADMINS_DB = "admins.db" -- New database file for admins
 local USERS_DB = "users.db"
@@ -395,119 +401,50 @@ local function loadAllData()
         saveTableToFile(GAMELIST_DB, gameList)
     end
 
+    -- Load Manifest
+    if fs.exists("manifest.lua") then
+        local f = fs.open("manifest.lua", "r")
+        local content = f.readAll()
+        f.close()
+        local func = load(content, "manifest", "t", {})
+        if func then 
+            manifest = func() 
+            logActivity("Manifest loaded (v" .. (manifest.version or "?") .. ")")
+        else
+            logActivity("Error loading manifest.lua", true)
+        end
+    else
+        logActivity("manifest.lua not found!", true)
+    end
+
     logActivity("Mainframe data loaded.")
 end
 
 --==============================================================================
--- Mail & List Management Functions
+-- Helper Closure for Context
 --==============================================================================
 
-local function saveItem(user, item, itemType)
-    local dir = itemType .. "/" .. user
-    if not fs.exists(dir) then fs.makeDir(dir) end
-    local id = os.time() .. "-" .. math.random(100, 999)
-    if saveTableToFile(dir .. "/" .. id, item) then
-        if itemType == "mail" then
-            mailCountCache[user] = (mailCountCache[user] or 0) + 1
-        end
-        return true
-    end
-    return false
-end
-
-local function loadMail(user)
-    local path = "mail/" .. user
-    local mail = {}
-    if fs.exists(path) and fs.isDir(path) then
-        local files = fs.list(path)
-        mailCountCache[user] = #files -- Refresh cache
-        for _, fileName in ipairs(files) do
-            local mailPath = path .. "/" .. fileName
-            local handle = fs.open(mailPath, "r")
-            if handle then
-                local data = handle.readAll()
-                handle.close()
-                local success, item = pcall(textutils.unserialize, data)
-                if success and item then
-                    item.id = fileName
-                    table.insert(mail, item)
-                else
-                    logActivity("Corrupted mail file: " .. mailPath, true)
-                end
-            end
-        end
-    end
-    return mail
-end
-
-local function getMailCount(user)
-    if mailCountCache[user] then return mailCountCache[user] end
-    local path = "mail/" .. user
-    if fs.exists(path) and fs.isDir(path) then
-        mailCountCache[user] = #fs.list(path)
-    else
-        mailCountCache[user] = 0
-    end
-    return mailCountCache[user]
-end
-
-local function deleteItem(user, id, itemType)
-    local path = itemType .. "/" .. user .. "/" .. id
-    if fs.exists(path) then
-        fs.delete(path)
-        if itemType == "mail" then
-            mailCountCache[user] = math.max(0, (mailCountCache[user] or 1) - 1)
-        end
-        return true
-    end
-    return false
-end
-
---==============================================================================
--- Authentication Helper Functions
---==============================================================================
-
----
--- Initiates a 2FA (Two-Factor Authentication) request via the HyperAuth service.
--- This is used for both secure registration and login verification.
--- @param username The username to authenticate.
--- @param password The password hash provided by the client.
--- @param nickname (Optional) The display name for new users.
--- @param senderId The rednet ID of the client requesting auth.
--- @param purpose A string indicating the intent ("login" or "register").
--- @return {boolean|nil} True if request was sent successfully, nil otherwise.
-local function requestAuthCode(username, password, nickname, senderId, purpose)
-    logActivity("Requesting auth code for '" .. username .. "'...")
-    -- Contact the external HyperAuth server
-    local reply, err = AuthClient.requestCode(AUTH_SERVER_PROTOCOL, {
-        username = username,
-        password = password,
-        vendorID = "DrunkenOS_Mainframe",
-        computerID = os.getComputerID(),
-        extra = { purpose = purpose or "unknown" },
-    })
-    
-    if reply then
-        logActivity("HyperAuth raw reply: " .. textutils.serializeJSON(reply))
-    end
-
-    if not reply or not reply.request_id then
-        local detail = reply and (reply.reason or reply.error or "Field 'request_id' missing") or tostring(err)
-        logActivity("HyperAuth error: " .. detail, true)
-        rednet.send(senderId, { success = false, reason = "Auth service error: " .. detail }, "SimpleMail")
-        return nil
-    end
-    
-    -- Store the request ID temporarily to verify the token later
-    logActivity("Auth request ID created: " .. reply.request_id)
-    pendingAuths[username] = {
-        request_id = reply.request_id,
-        password = password,
-        nickname = nickname,
-        senderId = senderId,
-        timestamp = os.time()
+local function getContext()
+    return {
+        users = users,
+        admins = admins,
+        lists = lists,
+        games = games,
+        chatHistory = chatHistory,
+        pendingAuths = pendingAuths,
+        mailCountCache = mailCountCache,
+        
+        queueSave = queueSave,
+        saveTableToFile = saveTableToFile,
+        logActivity = logActivity,
+        
+        getMailCount = function(u) return MailModule.getMailCount(u, {mailCountCache = mailCountCache}) end,
+        
+        USERS_DB = USERS_DB,
+        LISTS_DB = LISTS_DB,
+        CHAT_DB = CHAT_DB,
+        ADMINS_DB = ADMINS_DB
     }
-    return true
 end
 
 --==============================================================================
@@ -515,6 +452,32 @@ end
 --==============================================================================
 
 local mailHandlers = {}
+
+function mailHandlers.get_manifest(senderId, message)
+    rednet.send(senderId, { type = "manifest_response", manifest = manifest }, "SimpleMail")
+end
+
+function mailHandlers.get_file(senderId, message)
+    local path = message.path
+    if not path or type(path) ~= "string" then return end
+    
+    -- Security check: prevent directory traversal
+    if path:find("%.%.") or path:sub(1,1) == "/" or path:match("^[a-zA-Z]:") then
+         rednet.send(senderId, { success = false, reason = "Invalid path security violation" }, "SimpleMail")
+         return
+    end
+
+    if fs.exists(path) and not fs.isDir(path) then
+        local f = fs.open(path, "r")
+        local content = f.readAll()
+        f.close()
+        rednet.send(senderId, { success = true, path = path, code = content }, "SimpleMail")
+        logActivity("Served file '" .. path .. "' to " .. senderId)
+    else
+        rednet.send(senderId, { success = false, reason = "File not found" }, "SimpleMail")
+        logActivity("Client " .. senderId .. " requested missing file: " .. path, true)
+    end
+end
 
 function mailHandlers.get_version(senderId, message)
     local prog = message.program
@@ -648,137 +611,57 @@ function mailHandlers.get_lib_code(senderId, message)
 end
 
 function mailHandlers.register(senderId, message)
-    if users[message.user] then
-        rednet.send(senderId, { success = false, reason = "Username taken." }, "SimpleMail")
-        return
-    end
-
-    -- This now waits for the auth code request to complete before replying.
-    if requestAuthCode(message.user, message.pass, message.nickname, senderId, "register") then
-        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
-    end
+    AuthModule.handleRegister(senderId, message, getContext())
 end
 
----
--- Handles a user login using a synchronous flow and graceful migration.
 function mailHandlers.login(senderId, message)
-    local userData = users[message.user]
-    local receivedHash = message.pass
-
-    if not userData then
-        rednet.send(senderId, { success = false, reason = "Invalid credentials." }, "SimpleMail")
-        return
-    end
-
-    local storedHash = userData.password
-    local loginSuccess = false
-    local needsMigration = false
-
-    if storedHash == receivedHash then
-        loginSuccess = true
-    elseif storedHash == crypto.hex(receivedHash) then
-        loginSuccess = true
-        needsMigration = true
-        logActivity("Legacy password for '" .. message.user .. "' detected. Migrating.")
-    end
-
-    if not loginSuccess then
-        rednet.send(senderId, { success = false, reason = "Invalid credentials." }, "SimpleMail")
-        return
-    end
-
-    if needsMigration then
-        users[message.user].password = receivedHash
-        queueSave(USERS_DB)
-    end
-    
-    if message.session_token and users[message.user].session_token == message.session_token then
-        logActivity("'" .. message.user .. "' logged in via session.")
-        rednet.send(senderId, { success = true, needs_auth = false, nickname = users[message.user].nickname, unreadCount = getMailCount(message.user), isAdmin = admins[message.user] or false }, "SimpleMail")
-        return
-    end
-    
-    -- This now waits for the auth code request to complete before replying.
-    if requestAuthCode(message.user, receivedHash, nil, senderId, "login") then
-        rednet.send(senderId, { success = true, needs_auth = true }, "SimpleMail")
-    end
+    AuthModule.handleLogin(senderId, message, getContext())
 end
 
 function mailHandlers.submit_auth_token(senderId, message)
-    local user, code = message.user, message.token
-    logActivity("Received auth submission from '" .. user .. "'")
-    
-    local authData = pendingAuths[user]
-    if not authData then
-        rednet.send(senderId, { success = false, reason = "No pending auth." }, "SimpleMail")
-        return
-    end
-
-    logActivity("Verifying code for RID: " .. authData.request_id)
-    local reply, err = AuthClient.verifyCode(AUTH_SERVER_PROTOCOL, { request_id = authData.request_id, code = code })
-    
-    if not reply then
-        logActivity("Auth verify error: " .. tostring(err), true)
-        rednet.send(senderId, { success = false, reason = "Auth service error." }, "SimpleMail")
-        return
-    end
-
-    if reply.ok then
-        local payload = {}
-        local token = crypto.hex(os.time() .. math.random())
-        if not users[user] then -- This is a registration
-            users[user] = { password = authData.password, nickname = authData.nickname, session_token = token }
-            if saveTableToFile(USERS_DB, users) then
-                payload = { success = true, unreadCount = 0, nickname = authData.nickname, session_token = token, isAdmin = admins[user] or false }
-                logActivity("User '" .. user .. "' registered.")
-            else
-                payload = { success = false, reason = "DB error." }
-            end
-        else -- This is a login
-            users[user].session_token = token
-            queueSave(USERS_DB)
-            payload = { success = true, unreadCount = getMailCount(user), nickname = users[user].nickname, session_token = token, isAdmin = admins[user] or false }
-            logActivity("User '" .. user .. "' logged in.")
-        end
-        rednet.send(senderId, payload, "SimpleMail")
-        pendingAuths[user] = nil
-    else
-        rednet.send(senderId, { success = false, reason = reply.reason or "Invalid code." }, "SimpleMail")
-        logActivity("Auth fail for " .. user .. ': ' .. (reply.reason or "Unknown"), true)
-    end
+    AuthModule.handleSubmitToken(senderId, message, getContext())
 end
 
 function mailHandlers.user_exists(senderId, message)
-    local recipient = message.user
-    local exists = false
-    if recipient and recipient ~= "" then
-        if recipient == "@all" then
-            exists = true
-        elseif recipient:sub(1, 1) == "@" then
-            exists = lists[recipient:sub(2)] ~= nil
-        else
-            exists = users[recipient] ~= nil
-        end
-    end
-    rednet.send(senderId, { exists = exists }, "SimpleMail")
+    AuthModule.handleUserExists(senderId, message, getContext())
 end
 
 function mailHandlers.send(senderId, message)
-    local mail = message.mail
-    if mail.to == "@all" then
-        for user, _ in pairs(users) do saveItem(user, mail, "mail") end
-        logActivity(string.format("Mail from '%s' to @all", mail.from_nickname))
-    elseif mail.to:sub(1, 1) == "@" then
-        local list = mail.to:sub(2)
-        if lists[list] then
-            for _, member in ipairs(lists[list]) do saveItem(member, mail, "mail") end
-            logActivity(string.format("Mail from '%s' to list '%s'", mail.from_nickname, list))
-        end
-    else
-        saveItem(mail.to, mail, "mail")
-        logActivity(string.format("Mail from '%s' to '%s'", mail.from_nickname, mail.to))
-    end
-    rednet.send(senderId, { status = "Sent!" }, "SimpleMail")
+    MailModule.handleSend(senderId, message, getContext())
+end
+
+-- ... Cloud handlers stay separately for now as they are file system ops ...
+
+function mailHandlers.fetch(senderId, message)
+    MailModule.handleFetch(senderId, message, getContext())
+end
+
+function mailHandlers.delete(senderId, message)
+    MailModule.handleDelete(senderId, message, getContext())
+end
+
+function mailHandlers.create_list(senderId, message)
+    MailModule.handleCreateList(senderId, message, getContext())
+end
+
+function mailHandlers.join_list(senderId, message)
+    MailModule.handleJoinList(senderId, message, getContext())
+end
+
+function mailHandlers.get_lists(senderId, message)
+    MailModule.handleGetLists(senderId, message, getContext())
+end
+
+function mailHandlers.get_motd(senderId, message)
+    rednet.send(senderId, { motd = motd }, "SimpleMail")
+end
+
+function mailHandlers.get_chat_history(senderId, message)
+    ChatModule.handleGetHistory(senderId, message, { chatHistory = chatHistory })
+end
+
+function mailHandlers.get_unread_count(senderId, message)
+    MailModule.handleGetUnreadCount(senderId, message, getContext())
 end
 
 --==============================================================================
@@ -899,7 +782,7 @@ function mailHandlers.get_motd(senderId, message)
 end
 
 function mailHandlers.get_chat_history(senderId, message)
-    rednet.send(senderId, { history = chatHistory }, "SimpleMail")
+    ChatModule.handleGetHistory(senderId, message, { chatHistory = chatHistory })
 end
 
 function mailHandlers.get_unread_count(senderId, message)
@@ -1394,14 +1277,12 @@ local function handleRednetMessage(senderId, message, protocol)
         rednet.send = oldSend
 
     elseif protocol == "SimpleChat_Internal" and actualMsg and actualMsg.from then
-        -- Generic chat message processing
-        local nickname = users[actualMsg.from] and users[actualMsg.from].nickname or actualMsg.from
-        local entry = string.format("[%s]: %s", nickname, actualMsg.text)
-        table.insert(chatHistory, entry)
-        if #chatHistory > 100 then table.remove(chatHistory, 1) end
-        queueSave(CHAT_DB)
-        -- Relay message to all clients on the internal network
-        rednet.broadcast({ from = nickname, text = actualMsg.text }, "SimpleChat_Internal") 
+        ChatModule.handleProtocolMessage(senderId, actualMsg, {
+            users = users,
+            chatHistory = chatHistory,
+            queueSave = queueSave,
+            CHAT_DB = CHAT_DB
+        }) 
 
     elseif protocol == AUTH_INTERLINK_PROTOCOL and actualMsg.type == "user_exists_check" then
         -- Cross-service communication for checking existence

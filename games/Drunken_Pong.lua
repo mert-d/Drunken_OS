@@ -8,6 +8,7 @@
 ]]
 
 local gameVersion = 2.0
+local P2P_Socket = require("lib.p2p_socket")
 
 local function mainGame(...)
     local args = {...}
@@ -156,16 +157,12 @@ local function mainGame(...)
     end
 
     -- Networking
-    local modem = peripheral.find("modem")
-    if not modem then error("Drunken Pong requires a Modem!") end
-    rednet.open(peripheral.getName(modem))
+    local socket = P2P_Socket.new("DrunkenPong", gameVersion, "DrunkenPong_Game")
     
     local function findMatch()
-        local arcadeId = rednet.lookup("ArcadeGames_Internal", "arcade.server.internal")
-        if not arcadeId then 
+        if not socket:checkArcade() then 
             drawLobby("Mainframe Arcade Server Offline!")
             sleep(2)
-            return false
         end
 
         drawLobby("1: Host | 2: Join | 3: Direct Connect")
@@ -188,65 +185,57 @@ local function mainGame(...)
         if key == keys.one then
             -- HOSTING
             isHost = true
-            rednet.send(arcadeId, {type="host_game", user=username, game=gameName}, "ArcadeGames")
+            socket.lobbyProtocol = "DrunkenPong_Lobby"
+            socket:hostGame(username)
             drawLobby("Hosting... Waiting for Player...")
             
             while true do
-                local id, msg = rednet.receive("DrunkenPong_Lobby", 2)
-                if id and msg.type == "match_join" then
-                    opponentId = id
-                    rednet.send(id, {type="match_accept", user=username, version=gameVersion}, "DrunkenPong_Lobby")
-                    rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
+                local msg = socket:waitForJoin(0.1)
+                if msg then
+                    opponentId = socket.peerId
+                    -- Socket handles accept
                     return true
                 end
+                
                 local tevt, tk = os.pullEventRaw()
                 if tevt == "key" and (tk == keys.q or tk == keys.tab) then 
-                    rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
+                    socket:stopHosting()
                     return false 
                 end
             end
         else
             -- JOINING
-            local target = nil
+            local targetId = nil
             if key == keys.two then
-                rednet.send(arcadeId, {type="list_lobbies"}, "ArcadeGames")
-                local _, reply = rednet.receive("ArcadeGames", 3)
-                if not reply or not reply.lobbies then
-                    drawLobby("No Lobbies Found.")
+                drawLobby("Fetching Lobbies...")
+                local lobbies, err = socket:findLobbies()
+                if not lobbies then
+                    drawLobby(err or "Failed to list lobbies.")
                     sleep(1)
                     return false
                 end
 
-                local options = {}
-                for id, lob in pairs(reply.lobbies) do
-                    if lob.game == gameName then table.insert(options, {id=id, user=lob.user}) end
-                end
-
-                if #options == 0 then
+                if #lobbies == 0 then
                     drawLobby("No " .. gameName .. " hosts online.")
                     sleep(1)
                     return false
                 end
-                target = options[1]
+                targetId = lobbies[1].id
             else
-                target = {id = directTarget, user = "ID "..directTarget}
+                targetId = directTarget
             end
 
-            opponentId = target.id
-            drawLobby("Connecting to " .. target.user .. "...")
-            rednet.send(target.id, {type="match_join", user=username, version=gameVersion}, "DrunkenPong_Lobby")
+            opponentId = targetId
+            drawLobby("Connecting to ID " .. targetId .. "...")
             
-            local sid, smsg = rednet.receive("DrunkenPong_Lobby", 5)
-            if sid == opponentId and smsg.type == "match_accept" then
-                if smsg.version ~= gameVersion then
-                    drawLobby("Version Mismatch! Host: v" .. (smsg.version or "??"))
-                    sleep(2)
-                    return false
-                end
+            socket.lobbyProtocol = "DrunkenPong_Lobby"
+            local reply, err = socket:connect(targetId, {user=username})
+            
+            if reply then
                 isHost = false
                 return true
             else
-                drawLobby("Join Failed/Timed Out.")
+                drawLobby(err or "Join Failed.")
                 sleep(1)
                 return false
             end
@@ -287,7 +276,7 @@ local function mainGame(...)
                     elseif key == keys.q or key == keys.tab then matchActive = false end
                     
                     -- Immediate Sync on move
-                    rednet.send(opponentId, {type="move", y=myY}, "DrunkenPong_Game")
+                    socket:send({type="move", y=myY})
                 end
             end
         end,
@@ -368,7 +357,7 @@ local function mainGame(...)
                     end
                     
                     if os.epoch("utc") - lastSync > 50 then
-                        rednet.send(opponentId, {
+                        socket:send({
                             type="sync", 
                             balls=balls, 
                             score=score, 
@@ -376,7 +365,7 @@ local function mainGame(...)
                             myH = myHeight,
                             oppH = oppHeight,
                             speed = ballSpeed
-                        }, "DrunkenPong_Game")
+                        })
                         lastSync = os.epoch("utc")
                     end
                 end
@@ -394,8 +383,8 @@ local function mainGame(...)
         end,
         function() -- Receiving
             while matchActive do
-                local id, msg = rednet.receive("DrunkenPong_Game", 0.5)
-                if id == opponentId then
+                local msg = socket:receive(0.5)
+                if msg then
                     if msg.type == "move" then
                         oppY = msg.y
                     elseif msg.type == "sync" then

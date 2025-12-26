@@ -8,6 +8,7 @@
 ]]
 
 local gameVersion = 2.0
+local P2P_Socket = require("lib.p2p_socket")
 
 local classes = {
     Warrior = {
@@ -264,148 +265,148 @@ local function mainGame(...)
     end
 
     -- Networking
-    local modem = peripheral.find("modem")
-    if not modem then
-        error("Drunken Duels requires a Modem to play!")
-    end
-    rednet.open(peripheral.getName(modem))
+    local socket = P2P_Socket.new("DrunkenDuels", gameVersion, "DrunkenDuels_Game")
     
     -- Negotiation
 ---
--- Negotiates a 1v1 match over the Rednet network.
--- Broadcasts a match request and waits for an acceptance. 
--- Determines host status based on Computer ID.
--- @return {boolean} True if a match was successfully found.
-local function findMatch()
-    local arcadeId = rednet.lookup("ArcadeGames_Internal", "arcade.server.internal")
-    if not arcadeId then 
-        drawLobby("Mainframe Arcade Server Offline!")
-        sleep(2)
-        return false
-    end
+    -- Negotiates a 1v1 match over the Rednet network.
+    -- Broadcasts a match request and waits for an acceptance. 
+    -- Determines host status based on Computer ID.
+    -- @return {boolean} True if a match was successfully found.
+    local function findMatch()
+        if not socket:checkArcade() then 
+            drawLobby("Mainframe Arcade Server Offline!")
+            sleep(2)
+            -- We can allow direct connect even if arcade is offline, but listing won't work
+        end
 
-    drawLobby("1: Host | 2: Join | 3: Direct Connect")
-    local event, key
-    repeat
-        event, key = os.pullEvent("key")
-    until key == keys.one or key == keys.two or key == keys.three or key == keys.q or key == keys.tab
+        drawLobby("1: Host | 2: Join | 3: Direct Connect")
+        local event, key
+        repeat
+            event, key = os.pullEvent("key")
+        until key == keys.one or key == keys.two or key == keys.three or key == keys.q or key == keys.tab
 
-    if key == keys.q or key == keys.tab then return false end
-    
-    local directTarget = nil
-    if key == keys.three then
-        drawLobby("Enter Host ID: ")
-        term.setCursorPos(math.floor(getSafeSize()/2-5), math.floor(getSafeSize()/2)+1)
-        term.setBackgroundColor(colors.gray)
-        directTarget = tonumber(read())
-        if not directTarget then return false end
-    end
-
-    -- Class Selection before match
-    drawClassSelection()
-    local cKey
-    repeat
-        _, cKey = os.pullEvent("key")
-    until cKey == keys.one or cKey == keys.two or cKey == keys.three
-    
-    local classNames = {"Warrior", "Mage", "Rogue"}
-    local myClass = classNames[cKey == keys.one and 1 or (cKey == keys.two and 2 or 3)]
-    local classData = classes[myClass]
-    
-    myStats.class = myClass
-    myStats.hp = classData.hp
-    myStats.maxHp = classData.hp
-    myStats.energy = classData.energy
-    myStats.maxEnergy = classData.energy
-    myStats.charge = 0
-    myStats.username = username
-    myStats.status = {}
-
-    if key == keys.one then
-        -- HOSTING
-        isHost = true
-        rednet.send(arcadeId, {type="host_game", user=username, game=gameName}, "ArcadeGames")
-        drawLobby("Hosting... Waiting for Player...")
+        if key == keys.q or key == keys.tab then return false end
         
-        while true do
-            local id, msg = rednet.receive("DrunkenDuels_Lobby", 2)
-            if id and msg.type == "match_join" then
-                opponentId = id
-                oppStats.username = msg.user
-                oppStats.class = msg.class
-                local oData = classes[msg.class]
+        local directTarget = nil
+        if key == keys.three then
+            drawLobby("Enter Host ID: ")
+            term.setCursorPos(math.floor(getSafeSize()/2-5), math.floor(getSafeSize()/2)+1)
+            term.setBackgroundColor(colors.gray)
+            directTarget = tonumber(read())
+            if not directTarget then return false end
+        end
+
+        -- Class Selection before match
+        drawClassSelection()
+        local cKey
+        repeat
+            _, cKey = os.pullEvent("key")
+        until cKey == keys.one or cKey == keys.two or cKey == keys.three
+        
+        local classNames = {"Warrior", "Mage", "Rogue"}
+        local myClass = classNames[cKey == keys.one and 1 or (cKey == keys.two and 2 or 3)]
+        local classData = classes[myClass]
+        
+        myStats.class = myClass
+        myStats.hp = classData.hp
+        myStats.maxHp = classData.hp
+        myStats.energy = classData.energy
+        myStats.maxEnergy = classData.energy
+        myStats.charge = 0
+        myStats.username = username
+        myStats.status = {}
+
+        if key == keys.one then
+            -- HOSTING
+            isHost = true
+            socket.lobbyProtocol = "DrunkenDuels_Lobby" -- Ensure specific lobby protocol
+            socket:hostGame(username)
+            drawLobby("Hosting... Waiting for Player...")
+            
+            while true do
+                -- Listen using socket
+                local msg = socket:waitForJoin(0.1)
+                if msg then
+                    opponentId = socket.peerId
+                    
+                    -- Process handshake data
+                    oppStats.username = msg.user
+                    oppStats.class = msg.class
+                    local oData = classes[msg.class]
+                    oppStats.hp = oData.hp
+                    oppStats.maxHp = oData.hp
+                    oppStats.energy = oData.energy
+                    oppStats.maxEnergy = oData.energy
+                    oppStats.charge = 0
+                    oppStats.status = {}
+                    
+                    -- Socket handles the accept reply internally in waitForJoin
+                    return true
+                end
+                
+                local tevt, tk = os.pullEventRaw()
+                if tevt == "key" and (tk == keys.q or tk == keys.tab) then 
+                    socket:stopHosting()
+                    return false 
+                end
+            end
+        else
+            -- JOINING (Standard or Direct)
+            local targetId = nil
+            if key == keys.two then
+                drawLobby("Fetching Lobbies...")
+                local lobbies, err = socket:findLobbies()
+                if not lobbies then
+                    drawLobby(err or "Failed to list lobbies.")
+                    sleep(1)
+                    return false
+                end
+
+                if #lobbies == 0 then
+                    drawLobby("No " .. gameName .. " hosts online.")
+                    sleep(1)
+                    return false
+                end
+                
+                -- Simple selection: just pick the first for now (as in original)
+                -- Ideally we'd show a menu, but sticking to original flow
+                targetId = lobbies[1].id
+            else
+                targetId = directTarget
+            end
+
+            opponentId = targetId
+            drawLobby("Connecting to ID " .. targetId .. "...")
+            
+            -- Use socket to connect
+            socket.lobbyProtocol = "DrunkenDuels_Lobby"
+            local reply, err = socket:connect(targetId, {
+                user=username, 
+                class=myClass 
+                -- socket adds version automatically
+            })
+            
+            if reply then
+                isHost = false
+                -- Process Accept data
+                oppStats.username = reply.user
+                oppStats.class = reply.class
+                local oData = classes[reply.class]
                 oppStats.hp = oData.hp
                 oppStats.maxHp = oData.hp
                 oppStats.energy = oData.energy
                 oppStats.maxEnergy = oData.energy
                 oppStats.charge = 0
                 oppStats.status = {}
-
-                rednet.send(id, {type="match_accept", user=username, class=myClass, version=gameVersion}, "DrunkenDuels_Lobby")
-                rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
                 return true
-            end
-            local tevt, tk = os.pullEventRaw()
-            if tevt == "key" and (tk == keys.q or tk == keys.tab) then 
-                rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
-                return false 
-            end
-        end
-    else
-        -- JOINING (Standard or Direct)
-        local target = nil
-        if key == keys.two then
-            rednet.send(arcadeId, {type="list_lobbies"}, "ArcadeGames")
-            local _, reply = rednet.receive("ArcadeGames", 3)
-            if not reply or not reply.lobbies then
-                drawLobby("No Lobbies Found.")
-                sleep(1)
-                return false
-            end
-
-            local options = {}
-            for id, lob in pairs(reply.lobbies) do
-                if lob.game == gameName then table.insert(options, {id=id, user=lob.user}) end
-            end
-
-            if #options == 0 then
-                drawLobby("No " .. gameName .. " hosts online.")
-                sleep(1)
-                return false
-            end
-            target = options[1]
-        else
-            target = {id = directTarget, user = "ID " .. directTarget}
-        end
-
-        opponentId = target.id
-        drawLobby("Connecting to " .. target.user .. "...")
-        rednet.send(target.id, {type="match_join", user=username, class=myClass, version=gameVersion}, "DrunkenDuels_Lobby")
-        
-        local sid, smsg = rednet.receive("DrunkenDuels_Lobby", 5)
-        if sid == opponentId and smsg.type == "match_accept" then
-            if smsg.version ~= gameVersion then
-                drawLobby("Version Mismatch! Host: v" .. (smsg.version or "??"))
+            else
+                drawLobby(err or "Join Failed.")
                 sleep(2)
                 return false
             end
-            isHost = false
-            oppStats.username = smsg.user
-            oppStats.class = smsg.class
-            local oData = classes[smsg.class]
-            oppStats.hp = oData.hp
-            oppStats.maxHp = oData.hp
-            oppStats.energy = oData.energy
-            oppStats.maxEnergy = oData.energy
-            oppStats.charge = 0
-            oppStats.status = {}
-            return true
-        else
-            drawLobby("Join Failed/Timed Out.")
-            sleep(1)
         end
     end
-end
 
     -- Combat Resolution (Host Only)
     local function processTurn(p1Move, p2Move)
@@ -518,7 +519,7 @@ end
         if myStats.status.stun then
             addLog("STUNNED! Skipping turn...", colors.yellow)
             myStats.status.stun = nil
-            if isHost then myMove = "rest" else rednet.send(opponentId, {type="move", move="rest"}, "DrunkenDuels_Game") end
+            if isHost then myMove = "rest" else socket:send({type="move", move="rest"}) end
             canMove = false
             turn = 0
         end
@@ -569,15 +570,16 @@ end
             if isHost then
                 myMove = move
             else
-                rednet.send(opponentId, {type="move", move=move}, "DrunkenDuels_Game")
+                socket:send({type="move", move=move})
             end
             turn = 0
         elseif turn == 0 or turn == 2 then
             -- Waiting logic
             if isHost then
                 -- Wait for guest move
-                local id, msg = rednet.receive("DrunkenDuels_Game", 1)
-                if id == opponentId and msg.type == "move" then
+                -- Wait for guest move
+                local msg = socket:receive(1)
+                if msg and msg.type == "move" then
                     oppMove = msg.move
                     processTurn(myMove, oppMove)
                     
@@ -587,7 +589,8 @@ end
                     screenShake()
 
                     -- Sync state to guest
-                    rednet.send(opponentId, {type="sync", myStats=oppStats, oppStats=myStats, logs=logs, ended=ended}, "DrunkenDuels_Game")
+                    -- Sync state to guest
+                    socket:send({type="sync", myStats=oppStats, oppStats=myStats, logs=logs, ended=ended})
                     
                     if ended then matchActive = false end
                     
@@ -597,8 +600,9 @@ end
                 end
             else
                 -- Wait for sync from host
-                local id, msg = rednet.receive("DrunkenDuels_Game", 1)
-                if id == opponentId then
+                -- Wait for sync from host
+                local msg = socket:receive(1)
+                if msg then
                     if msg.type == "sync" then
                         myStats = msg.myStats
                         oppStats = msg.oppStats
