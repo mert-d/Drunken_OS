@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mainframe Server (v11.1 - Performance Edition)
+    Drunken OS - Mainframe Server (v12.0 - Modular Architecture)
     by MuhendizBey
 
     Purpose:

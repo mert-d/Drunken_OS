@@ -5,7 +5,7 @@
 
 local updater = require("lib.updater")
 local system = {}
-local appVersion = 1.6 -- Bump version for this change
+local appVersion = 1.7 -- Bump version for this change
 
 local function getParent(context)
     return context.parent
