@@ -1288,16 +1288,11 @@ function adminCommands.approve(args)
     f.close()
     
     -- 2. Update Manifest (Dynamic!)
-    if not manifest.all_apps then manifest.all_apps = {} end
-    local exists = false
-    for _, existing in ipairs(manifest.all_apps) do
-        if existing == filename then exists = true break end
-    end
-    if not exists then table.insert(manifest.all_apps, filename) end
+    -- We now add to 'store' instead of 'all_apps' to make it Optional/On-Demand
+    if not manifest.store then manifest.store = {} end
     
-    -- Add to 'client' package too? Ideally yes, for now we add to 'all_apps' 
-    -- and let users download individually or update 'client' package manually
-    -- FUTURE: 'community' package?
+    -- Check uniqueness or overwrite
+    manifest.store[app.name] = filename
     
     -- Just saving manifest to disk is enough if we reload it?
     -- We need to save the manifest table back to manifest.lua
@@ -1309,7 +1304,7 @@ function adminCommands.approve(args)
     pendingApps[subId] = nil
     queueSave(SUBMISSIONS_DB)
     
-    return "App '" .. app.name .. "' approved and published to Manifest."
+    return "App '" .. app.name .. "' approved and published to App Store."
 end
 
 function adminCommands.reject(args)
