@@ -17,7 +17,7 @@ local function mainMenu(context)
         local options = {
             "New Project",
             "Documentation",
-            "Submit App (Coming Soon)",
+            "Submit App",
             "Exit"
         }
         
@@ -86,7 +86,48 @@ local function mainMenu(context)
             os.pullEvent("key")
             
         elseif selected == 3 then
-            SDK.UI.showMessage("Info", "App Store submission coming in Phase 4.1")
+            -- Submit App
+            SDK.UI.drawWindow("Submit App")
+            term.setCursorPos(2,4); term.write("File Path: ")
+            local path = read()
+            
+            if not fs.exists(path) then
+                SDK.UI.showMessage("Error", "File not found!")
+            else
+                term.setCursorPos(2,6); term.write("Description: ")
+                local desc = read()
+                
+                SDK.UI.drawWindow("Sending...")
+                
+                -- Read Code
+                local f = fs.open(path, "r")
+                local code = f.readAll()
+                f.close()
+                
+                -- Connect
+                if not rednet.isOpen() then SDK.Net.connect() end
+                local server = rednet.lookup("SimpleMail", "mail.server")
+                
+                if server then
+                    local name = fs.getName(path):gsub("%.lua$", "")
+                    rednet.send(server, {
+                        type = "submit_app",
+                        name = name,
+                        code = code,
+                        description = desc,
+                        author = SDK.System.getUsername()
+                    }, "SimpleMail")
+                    
+                    local _, resp = rednet.receive("SimpleMail", 5)
+                    if resp and resp.success then
+                        SDK.UI.showMessage("Success", "App submitted for review!")
+                    else
+                        SDK.UI.showMessage("Error", (resp and resp.reason) or "Timeout")
+                    end
+                else
+                    SDK.UI.showMessage("Error", "Server Offline.")
+                end
+            end
         end
     end
 end
