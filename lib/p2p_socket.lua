@@ -1,5 +1,5 @@
 --[[
-    P2P Socket Library (v1.0)
+    P2P Socket Library (v1.1)
     Part of Drunken OS Shared Libraries
 
     Purpose:
@@ -93,16 +93,19 @@ end
 
 --- Waits for a player to join (Host side handshake)
 -- @param timeout number: How long to wait in seconds (optional)
+-- @param acceptPayload table: Additional data to send back to the joining player (optional)
 -- @return table|nil: The join message if successful (contains user, class, etc.), or nil
-function P2P_Socket:waitForJoin(timeout)
+function P2P_Socket:waitForJoin(timeout, acceptPayload)
     local id, msg = rednet.receive(self.lobbyProtocol, timeout)
     if id and msg and msg.type == "match_join" then
         self.peerId = id
+        
+        local response = acceptPayload or {}
+        response.type = "match_accept"
+        response.version = self.version
+        
         -- Accept the match
-        rednet.send(id, {
-            type="match_accept", 
-            version=self.version
-        }, self.lobbyProtocol)
+        rednet.send(id, response, self.lobbyProtocol)
         
         -- Close lobby listing
         self:stopHosting()
@@ -209,6 +212,23 @@ function P2P_Socket:receive(timeout)
         return msg
     end
     return nil
+end
+
+--- Submits a high score to the Arcade Server
+-- @param user string: The username
+-- @param score number: The score to submit
+-- @return boolean: true if sent, false otherwise
+function P2P_Socket:submitScore(user, score)
+    if not self:checkArcade() then return false end
+    
+    rednet.send(self.arcadeId, {
+        type = "submit_score",
+        game = self.gameName,
+        user = user,
+        score = score,
+        timestamp = os.epoch("utc")
+    }, "ArcadeGames")
+    return true
 end
 
 return P2P_Socket

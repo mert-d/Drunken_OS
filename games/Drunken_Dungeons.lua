@@ -7,7 +7,8 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
-local gameVersion = 2.1 -- Version: 2.1
+local P2P_Socket = require("lib.p2p_socket")
+local gameVersion = 2.2 -- Version: 2.2
 local saveFile = ".dungeon_save"
 
 -- Color mapping for term.blit
@@ -47,8 +48,7 @@ local function mainGame(...)
     local username = args[1] or "Guest"
 
     local gameName = "DrunkenDungeons"
-    local arcadeServerId = nil
-    local opponentId = nil
+    local socket = P2P_Socket.new(gameName, gameVersion, "DrunkenDungeons_Game")
     local isMultiplayer = false
     local sharedSeed = os.time()
 
@@ -448,7 +448,7 @@ local function movePlayer(dx, dy)
     -- Update position and sync in multiplayer sessions
     player.x, player.y = nx, ny
     if isMultiplayer then
-        rednet.send(opponentId, {
+        socket:send({
             type="sync", 
             x=player.x, 
             y=player.y, 
@@ -456,7 +456,7 @@ local function movePlayer(dx, dy)
             gold=player.gold, 
             xp=player.xp,
             lvl=dungeonLevel
-        }, "Dungeon_Coop_v2")
+        })
     end
     
     -- Partner Revival Mechanic
@@ -467,7 +467,7 @@ local function movePlayer(dx, dy)
                 player.gold = player.gold - 100
                 otherPlayer.hp = 5
                 addLog("You revived your partner! (-100g)", colors.lime)
-                rednet.send(opponentId, {type="revive", hp=5}, "Dungeon_Coop_v2")
+                socket:send({type="revive", hp=5})
             else
                 addLog("Not enough gold to revive partner (100g)", colors.orange)
             end
@@ -663,8 +663,8 @@ end
                     -- Multiplayer Setup
                     menuSelected = 3 -- Visual stickiness
                     term.clear(); term.setCursorPos(1,1)
-                    local arcadeId = rednet.lookup("ArcadeGames_Internal", "arcade.server.internal")
-                    if not arcadeId then 
+                    -- Use P2P Socket for Networking
+                    if not socket:checkArcade() then 
                         print("Mainframe Arcade Server Offline!")
                         sleep(2)
                     else
@@ -683,40 +683,54 @@ end
                             end
 
                             if lobbyKey == keys.one then
-                                rednet.send(arcadeId, {type="host_game", user=username, game=gameName}, "ArcadeGames")
-                                print("Hosting... Waiting for Partner...")
-                                while true do
-                                    local id, msg = rednet.receive("Dungeon_Coop_v2", 2)
-                                    if id and msg.type == "match_join" then
-                                        opponentId = id
-                                        isMultiplayer = true
-                                        rednet.send(id, {type="match_accept", user=username, seed=sharedSeed, version=gameVersion}, "Dungeon_Coop_v2")
-                                        rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
-                                        addLog("Partner Joined!", colors.lime)
-                                        selectClass()
-                                        break -- Break wait loop
+                                -- HOST GAME
+                                if socket:hostGame(username) then
+                                    print("Hosting... Waiting for Partner (Q to Cancel)...")
+                                    while true do
+                                        -- Non-blocking Event Loop for responsiveness
+                                        local event, p1, p2, p3 = os.pullEvent()
+                                        
+                                        if event == "key" and (p1 == keys.q or p1 == keys.tab) then
+                                            socket:stopHosting()
+                                            break
+                                        elseif event == "rednet_message" and p3 == socket.lobbyProtocol then
+                                            -- Manually handle handshake to inject seed
+                                            local id, msg = p1, p2
+                                            if msg.type == "match_join" then
+                                                socket.peerId = id
+                                                socket:stopHosting()
+                                                -- Send Accept with SEED
+                                                rednet.send(id, {
+                                                    type="match_accept", 
+                                                    version=socket.version,
+                                                    seed=sharedSeed
+                                                }, socket.lobbyProtocol)
+                                                
+                                                isMultiplayer = true
+                                                addLog("Partner Joined!", colors.lime)
+                                                selectClass()
+                                                break
+                                            end
+                                        end
                                     end
-                                    local e, ek = os.pullEventRaw()
-                                    if e == "key" and ek == keys.q then 
-                                        rednet.send(arcadeId, {type="close_lobby"}, "ArcadeGames")
-                                        break -- Cancel host
-                                    end
+                                    if isMultiplayer then break end
+                                else
+                                    print("Failed to Host (Arcade Error)")
+                                    sleep(1)
                                 end
-                                if isMultiplayer then break end -- Break Menu Loop
                             
                             elseif lobbyKey == keys.two or directTarget then
-                                -- JOIN Logic
+                                -- JOIN / DIRECT
                                 local target = nil
                                 if lobbyKey == keys.two then
-                                    rednet.send(arcadeId, {type="list_lobbies"}, "ArcadeGames")
-                                    local _, reply = rednet.receive("ArcadeGames", 3)
-                                    if reply and reply.lobbies then
-                                        local options = {}
-                                        for id, lob in pairs(reply.lobbies) do
-                                            if lob.game == gameName then table.insert(options, {id=id, user=lob.user}) end
-                                        end
-                                        if #options > 0 then target = options[1]
-                                        else print("No Co-op hosts online."); sleep(1) end
+                                    print("Searching Lobbies...")
+                                    local lobbies = socket:findLobbies()
+                                    if lobbies and #lobbies > 0 then
+                                        target = lobbies[1] -- Auto-pick first (Simplification for now)
+                                        -- Could implement sub-menu for lobby selection here
+                                    else
+                                        print("No lobbies found.")
+                                        sleep(1)
                                     end
                                 else
                                     target = {id = directTarget, user = "ID "..directTarget}
@@ -724,20 +738,16 @@ end
 
                                 if target then
                                     print("Connecting to " .. target.user .. "...")
-                                    rednet.send(target.id, {type="match_join", user=username, version=gameVersion}, "Dungeon_Coop_v2")
-                                    local sid, smsg = rednet.receive("Dungeon_Coop_v2", 5)
-                                    if sid == target.id and smsg.type == "match_accept" then
-                                        if smsg.version ~= gameVersion then
-                                            print("Ver: " .. (smsg.version or "?") .. " != Local: " .. gameVersion)
-                                            sleep(2)
-                                        else
-                                            opponentId = target.id
-                                            isMultiplayer = true
-                                            sharedSeed = smsg.seed
-                                            addLog("Joined " .. target.user, colors.lime)
-                                            selectClass()
-                                            break -- Break Menu Loop
-                                        end
+                                    local msg, err = socket:connect(target.id, {user=username})
+                                    if msg then
+                                        isMultiplayer = true
+                                        sharedSeed = msg.seed
+                                        addLog("Joined " .. target.user, colors.lime)
+                                        selectClass()
+                                        break
+                                    else
+                                        print("Connection Failed: " .. (err or "Unknown"))
+                                        sleep(2)
                                     end
                                 end
                             end
@@ -769,7 +779,7 @@ end
                 elseif p1 == keys.d or p1 == keys.right then movePlayer(1, 0)
                 elseif p1 == keys.i then showInventory()
                 elseif p1 == keys.q or p1 == keys.tab then gameOver = true end
-            elseif event == "rednet_message" and p3 == "Dungeon_Coop_v2" then
+            elseif event == "rednet_message" and p3 == socket.protocol then
                 if p2.type == "sync" then
                     otherPlayer.x, otherPlayer.y, otherPlayer.hp = p2.x, p2.y, p2.hp
                     if p2.lvl > dungeonLevel then
@@ -795,7 +805,7 @@ end
         saveGame(persist)
 
         -- High Score Submit
-        if arcadeServerId then rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = player.gold + player.xp}, "ArcadeGames") end
+        socket:submitScore(username, player.gold + player.xp)
         
         term.setBackgroundColor(colors.black); term.clear()
         local w, h = getSafeSize()
