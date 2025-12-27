@@ -511,7 +511,7 @@ local function mainMenu()
     
     while true do
         theme.clear()
-        theme.drawTitleBar("Drunken OS " .. version)
+        theme.drawTitleBar("Drunken OS " .. currentVersion)
         
         -- Build Menu Options
         local menuItems = {}
@@ -644,8 +644,18 @@ local function mainMenu()
     end
 end
 
-            -- Background Listener for Merchant Requests & Broadcasts
-            local function backgroundListener()
+    end
+end
+
+-- Helper to keep track of location (Stubbed for now)
+local function gpsHeartbeat()
+    while true do
+        sleep(60)
+    end
+end
+
+-- Background Listener for Merchant Requests & Broadcasts
+local function backgroundListener()
                 local lastSync = 0
                 while true do
                     local now = os.epoch("utc") / 1000

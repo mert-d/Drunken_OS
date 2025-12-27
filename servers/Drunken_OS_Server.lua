@@ -640,6 +640,24 @@ function mailHandlers.get_file(senderId, message)
         end
     end
     rednet.send(senderId, { success=false, error="File not found" }, "SimpleMail")
+    rednet.send(senderId, { success=false, error="File not found" }, "SimpleMail")
+end
+
+function mailHandlers.submit_app(senderId, message)
+    -- { type="submit_app", name="...", code="...", description="...", author="..." }
+    local subId = tostring(os.epoch("utc"))
+    
+    pendingApps[subId] = {
+        name = message.name,
+        code = message.code,
+        description = message.description,
+        author = message.author or "Anonymous",
+        timestamp = os.epoch("utc")
+    }
+    
+    queueSave(SUBMISSIONS_DB)
+    logActivity("New App Submission: " .. message.name .. " by " .. (message.author or "?"))
+    rednet.send(senderId, { success = true, msg = "Submitted for review." }, "SimpleMail")
 end
 
 -- Admin Review Handlers
