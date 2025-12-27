@@ -200,25 +200,78 @@ function merchant.pos(context)
             term.setCursorPos(2, 8); term.write("Ask customer to use")
             term.setCursorPos(2, 9); term.write("'Pay Merchant'")
             term.setCursorPos(2, 10); term.write("on their Bank App.")
-            term.setCursorPos(2, 13); term.write("Press Q to Cancel")
+            term.setCursorPos(2, 13); term.write("Scan User ID... (Input)")
+            term.setCursorPos(2, 14); term.write("Press Q to Cancel")
             
-            -- Ideally here we broadcast an invoice to nearby phones?
-            -- context.broadcastInvoice(bill, total) 
+            -- Find Bank Server
+            local bankServerId = rednet.lookup("DB_Bank", "bank.server")
             
-            while true do
-                local e, p1, p2 = os.pullEvent()
-                if e == "key" and p1 == keys.q then break end
-                if e == "rednet_message" then
-                    local sender, msg, proto = p1, p2, p3
-                    if proto == "DB_Merchant_Recv" and msg.type == "payment_proof" then
-                        if msg.amount >= total then
-                            context.showMessage("PAID!", "Payment received from " .. msg.from)
-                            bill = {}
-                            total = 0
-                            break
-                        end
-                    end
+            -- We need to know WHO is paying. 
+            -- The Bank App asks for "Recipient". The User types it.
+            -- The Merchant App needs to know the "Customer Name" to verify.
+            -- Add an input for "Customer Name" to search for?
+            -- Or just poll for ANY payment to US with exact amount?
+            -- The verify_transaction API requires `customer`.
+            -- Let's poll for RECENT payments to US with correct AMOUNT. 
+            
+            -- Wait, my verify_transaction handler requires `customer`.
+            -- I should probably relax that if I want "Any Customer".
+            -- But for security, asking the cashier "Who is paying?" is good.
+            -- Let's ask for the Customer Username.
+            
+            local customer = context.readInput("Customer Name: ", 4)
+            if not customer or customer == "" then break end
+            
+            context.drawWindow("Verifying Payment...")
+            term.setCursorPos(2,6); term.write("Customer: " .. customer)
+            term.setCursorPos(2,7); term.write("Amount: $" .. total)
+            term.setCursorPos(2,8); term.write("Checking Bank...")
+            
+            local verified = false
+            while not verified do
+                -- Poll Bank every 3 seconds
+                if bankServerId then
+                   rednet.send(bankServerId, {
+                       type = "verify_transaction",
+                       merchant = getParent(context).username,
+                       customer = customer,
+                       amount = total,
+                       interval = 60000 -- Look back 60s
+                   }, "DB_Bank")
+                   local _, resp = rednet.receive("DB_Bank", 3)
+                   if resp and resp.success then
+                       verified = true
+                   end
                 end
+                
+                if verified then break end
+                
+                term.setCursorPos(2, 10); term.write("Waiting...")
+                
+                -- Allow Exit
+                local e, k = os.pullEvent("key")
+                if k == keys.q then break end
+            end
+            
+            if verified then
+                context.showMessage("PAID!", "Payment Confirmed!")
+                
+                -- VENDING LOGIC
+                if fs.exists(fs.combine(context.programDir, MERCHANT_TURTLE_ID_FILE)) then
+                     local f = fs.open(fs.combine(context.programDir, MERCHANT_TURTLE_ID_FILE), "r")
+                     local tid = tonumber(f.readAll()); f.close()
+                     if tid then
+                         -- Send dispense command
+                         rednet.send(tid, { type="dispense", items=bill }, "DB_Vending_Turtle")
+                         context.showMessage("Vending", "Dispensing items...")
+                     end
+                end
+                
+                bill = {}
+                total = 0
+                break
+            else
+                context.showMessage("Cancelled", "Payment not verified.")
             end
         end
     end

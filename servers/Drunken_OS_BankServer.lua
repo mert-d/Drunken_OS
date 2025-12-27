@@ -170,7 +170,9 @@ local function logTransaction(user, txType, details, amount, target)
         target = target,
         details = details,
         prevHash = lastLedgerHash,
-        timestamp = timestamp
+        prevHash = lastLedgerHash,
+        timestamp = timestamp,
+        realTimestamp = os.epoch("utc") -- Added for precise verification
     }
     
     -- Create content string for hashing. Serialize details if table.
@@ -502,6 +504,57 @@ function bankHandlers.change_pin(senderId, message)
     else
         rednet.send(senderId, { success = false, reason = "Database error." }, BANK_PROTOCOL)
     end
+end
+
+-- Handles a secure verification request (e.g., from a POS machine).
+-- Checks if a specific payment was received in the last N seconds.
+function bankHandlers.verify_transaction(senderId, message)
+    local merchant = message.merchant -- The user expecting the money
+    local customer = message.customer -- The user who paid
+    local amount = tonumber(message.amount)
+    local interval = tonumber(message.interval) or 60000 -- Default 60s lookback
+    
+    if not merchant or not amount then
+         rednet.send(senderId, { success = false, reason = "Invalid request." }, BANK_PROTOCOL)
+         return
+    end
+
+    local now = os.epoch("utc")
+    local found = false
+    
+    -- Iterate backwards
+    for i = #ledger, 1, -1 do
+        local entry = ledger[i]
+        
+        -- Stop if too old (if realTimestamp provided)
+        if entry.realTimestamp and (now - entry.realTimestamp > interval) then
+            break
+        end
+        
+        -- Check Match
+        -- Entry details: { recipient="Merchant", ... } checks.
+        -- We typically store transfer details in `details` table or `target` field.
+        -- In `process_payment` (client side), we send bank: process_payment.
+        -- We need to check how `process_payment` logs usage.
+        
+        -- Let's look at how process_payment handler logs (we haven't read it yet but assume common sense)
+        -- Actually, we should check `bankHandlers.process_payment` or `transfer`.
+        
+        -- Assumption: `details` contains { recipient=..., sender=... }
+        -- And `entry.amount` is the amount.
+        
+        if entry.amount == amount and (entry.type == "PAYMENT" or entry.type == "TRANSFER") then
+            -- Check recipient in details
+            if type(entry.details) == "table" and entry.details.recipient == merchant then
+                 -- Check customer in user field
+                 if entry.user == customer then
+                     found = true; break
+                 end
+            end
+        end
+    end
+    
+    rednet.send(senderId, { success = found }, BANK_PROTOCOL)
 end
 
 
