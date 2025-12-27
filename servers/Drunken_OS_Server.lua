@@ -65,6 +65,16 @@ local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
 local mailCountCache = {} -- Cache for unread mail counts
 local manifest = {} -- Manifest table
+if fs.exists("manifest.lua") then
+    local f = fs.open("manifest.lua", "r")
+    if f then
+        local content = f.readAll()
+        f.close()
+        -- Safely load the table
+        local func = load(content, "manifest", "t", {})
+        if func then manifest = func() end
+    end
+end
 local monitor = nil
 local ADMINS_DB = "admins.db" -- New database file for admins
 local USERS_DB = "users.db"
@@ -602,6 +612,30 @@ function mailHandlers.get_update(senderId, message)
         end
         rednet.send(senderId, { code = code }, "SimpleMail")
     end
+end
+
+function mailHandlers.get_manifest(senderId, message)
+    rednet.send(senderId, { type="manifest_response", manifest=manifest }, "SimpleMail")
+end
+
+function mailHandlers.get_file(senderId, message)
+    local path = message.path
+    -- Security Check: Don't allow climbing up directories
+    if path:find("%.%.") then
+        rednet.send(senderId, { success=false, error="Invalid Path" }, "SimpleMail")
+        return
+    end
+
+    if fs.exists(path) and not fs.isDir(path) then
+        local f = fs.open(path, "r")
+        if f then
+            local content = f.readAll()
+            f.close()
+            rednet.send(senderId, { success=true, code=content }, "SimpleMail")
+            return
+        end
+    end
+    rednet.send(senderId, { success=false, error="File not found" }, "SimpleMail")
 end
 
 -- UNIFIED LIBRARY HANDLER: Serves code directly from the programCode database.
