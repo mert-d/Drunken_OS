@@ -681,6 +681,27 @@ function bankHandlers.city_export(senderId, message)
     end
 end
 
+-- Handles Arcade Leaderboard Payouts (Minting Prize Money)
+function bankHandlers.arcade_payout(senderId, message)
+    local user = message.user
+    local amount = tonumber(message.amount)
+    local gameName = message.game or "Arcade"
+    
+    if not user or not amount or amount <= 0 then return end
+    
+    local account = accounts[user]
+    if not account then return end
+    
+    -- Verify Sender is Arcade Server?
+    -- For now, we trust the protocol/ID mapping or just allow it for this alpha phase.
+    -- Ideally: Check senderId against a known trusted list.
+    
+    account.balance = account.balance + amount
+    queueSave(ACCOUNTS_DB)
+    logTransaction(user, "PRIZE", "Leaderboard Reward: " .. gameName, amount)
+    rednet.send(senderId, { success = true, newBalance = account.balance }, BANK_PROTOCOL)
+end
+
 ---
 -- Handles a request for balance and rates.
 function bankHandlers.get_balance_and_rates(senderId, message)
