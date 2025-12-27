@@ -58,7 +58,7 @@ return {
                 "apps/mail.lua",
                 "apps/merchant.lua",
                 "apps/system.lua",
-                "apps/developer.lua"
+                "apps/store.lua"
             },
             include_shared = true
         },
@@ -178,9 +178,13 @@ return {
         "apps/chat.lua",
         "apps/files.lua",
         "apps/mail.lua",
-        "apps/merchant.lua",
         "apps/system.lua",
-        "apps/developer.lua"
+        "apps/store.lua"
+    },
+    
+    -- Optional Apps (On-Demand Store)
+    store = {
+        ["Developer Portal"] = "apps/developer.lua"
     },
 
     all_games = {

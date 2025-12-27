@@ -559,12 +559,171 @@ local function main()
             end
             
             -- Helper to keep track of location (Stubbed for now)
-            local function gpsHeartbeat()
-                while true do
-                    -- Update state.location if/when needed
-                    sleep(60)
+            local favorites = {} -- Table of pinned apps: { ["App Name"] = true }
+local FAVORITES_FILE = ".favorites"
+
+local function loadFavorites()
+    if fs.exists(FAVORITES_FILE) then
+        local f = fs.open(FAVORITES_FILE, "r")
+        local data = textutils.unserialize(f.readAll())
+        f.close()
+        if data then favorites = data end
+    end
+end
+
+local function saveFavorites()
+    local f = fs.open(FAVORITES_FILE, "w")
+    f.write(textutils.serialize(favorites))
+    f.close()
+end
+
+local function toggleFavorite(appName)
+    if favorites[appName] then
+        favorites[appName] = nil
+    else
+        favorites[appName] = true
+    end
+    saveFavorites()
+end
+
+-- Refactored Main Menu
+local function mainMenu()
+    loadFavorites()
+    
+    while true do
+        theme.clear()
+        theme.drawTitleBar("Drunken OS " .. version)
+        
+        -- Build Menu Options
+        local menuItems = {}
+        
+        -- 1. Favorites Section
+        local hasFavs = false
+        for appName, _ in pairs(favorites) do
+            -- Verify app still exists
+            local path = "apps/" .. appName .. ".lua" -- Assumption based on naming convention
+            -- Actually, we need to map Display Name -> Filename.
+            -- Our 'all_apps' list is just paths. display names are derived.
+            -- Let's iterate all installed apps and match.
+            hasFavs = true
+        end
+        
+        -- Construct list: { label="Display", action=func, isApp=true, path=... }
+        local mainOptions = {}
+        
+        -- A. Favorites
+        for _, path in ipairs(fs.list("apps")) do
+            if not fs.isDir("apps/"..path) then
+                local name = path:gsub("%.lua$", "")
+                local label = name:gsub("_", " ")
+                if favorites[label] then
+                   table.insert(mainOptions, { label = "★ " .. label, path = "apps/"..path, isApp = true }) 
                 end
             end
+        end
+        
+        -- Separator?
+        
+        -- B. Core Folders
+        table.insert(mainOptions, { label = "📂 All Apps", isFolder = true })
+        table.insert(mainOptions, { label = "🛍️ App Store", path = "apps/store.lua", isApp = true }) -- Quick Access?
+        table.insert(mainOptions, { label = "⚙️ System", path = "apps/system.lua", isApp = true })
+        table.insert(mainOptions, { label = "🚪 Shutdown", action = os.shutdown })
+        table.insert(mainOptions, { label = "🔄 Reboot", action = os.reboot })
+
+        local selected = 1
+        local inFolder = false
+        
+        -- Navigation Loop
+        while true do
+            theme.clear()
+            theme.drawTitleBar("Drunken OS " .. version)
+            
+            local currentList = mainOptions
+            local viewingFolder = nil
+            
+            if inFolder == "All Apps" then
+                viewingFolder = "All Apps"
+                currentList = {}
+                 -- Populate All Apps
+                for _, path in ipairs(fs.list("apps")) do
+                    if not fs.isDir("apps/"..path) then
+                        local name = path:gsub("%.lua$", "")
+                        local label = name:gsub("_", " ")
+                        -- Skip system/store/hidden? No, show all using folder.
+                        table.insert(currentList, { label = label, path = "apps/"..path, isApp = true })
+                    end
+                end
+                table.insert(currentList, { label = "⬅ Back", action = "back" })
+            end
+            
+            -- Draw Menu
+            local y = 4
+            if viewingFolder then 
+                term.setCursorPos(2, 3); term.setTextColor(colors.yellow); term.write("Folder: " .. viewingFolder) 
+            end
+            
+            for i, opt in ipairs(currentList) do
+                term.setCursorPos(2, y)
+                if i == selected then
+                    term.setTextColor(theme.highlightText)
+                    term.setBackgroundColor(theme.highlightBg)
+                    term.write(" " .. opt.label .. string.rep(" ", 20 - #opt.label) .. " ")
+                    term.setBackgroundColor(theme.bg)
+                    
+                    -- Show Hint
+                    if opt.isApp and viewingFolder == "All Apps" then
+                        term.setCursorPos(2, 18)
+                        term.setTextColor(colors.gray)
+                        term.write("Press 'F' to Pin/Unpin")
+                    end
+                else
+                    term.setTextColor(theme.text)
+                    term.write(" " .. opt.label .. " ")
+                end
+                y = y + 1
+            end
+            
+            local event, key = os.pullEvent("key")
+            if key == keys.up then selected = (selected == 1) and #currentList or selected - 1
+            elseif key == keys.down then selected = (selected == #currentList) and 1 or selected + 1
+            elseif key == keys.enter then
+                local choice = currentList[selected]
+                if choice.action == "back" then
+                    inFolder = false; selected = 1
+                elseif choice.isFolder then
+                    inFolder = choice.label:gsub("📂 ", ""); selected = 1
+                elseif choice.isApp then
+                    -- Run App
+                    local env = setmetatable({parent = context}, {__index = _G})
+                    local fn, err = loadfile(choice.path, "t", env)
+                    if fn then
+                        -- Protect pcall
+                        local ok, err2 = pcall(function()
+                            if env.run then env.run(context) else fn(context) end
+                        end)
+                        if not ok then
+                            context.showMessage("App Crash", err2)
+                        end
+                    else
+                        context.showMessage("Load Error", err)
+                    end
+                    -- Refresh favorites on return needed?
+                    break -- breaks inner loop, reloads outer loop (refresh favs)
+                elseif choice.action then
+                    choice.action()
+                end 
+            elseif key == keys.f and inFolder == "All Apps" then
+                local choice = currentList[selected]
+                if choice.isApp then
+                   -- Toggle Favorite
+                   toggleFavorite(choice.label)
+                   context.showMessage("Favorites", "Toggled " .. choice.label)
+                end
+            end
+        end
+    end
+end
 
             -- Background Listener for Merchant Requests & Broadcasts
             local function backgroundListener()
