@@ -478,22 +478,71 @@ local function main()
             end
             
             -- Helper to keep track of location (Stubbed for now)
-            local favorites = {} -- Table of pinned apps: { ["App Name"] = true }
-local FAVORITES_FILE = ".favorites"
+local currentApp = nil
+local running = true
+local currentVersion = "1.0.0"
+local favorites = {} -- Loaded from disk
 
+-- Notification State
+local notification = {
+    active = false,
+    title = "",
+    message = "",
+    color = colors.blue,
+    timerId = nil
+}
+
+-- Load/Save Favorites (Existing)
 local function loadFavorites()
-    if fs.exists(FAVORITES_FILE) then
-        local f = fs.open(FAVORITES_FILE, "r")
-        local data = textutils.unserialize(f.readAll())
+    if fs.exists(".favorites") then
+        local f = fs.open(".favorites", "r")
+        favorites = textutils.unserialize(f.readAll()) or {}
         f.close()
-        if data then favorites = data end
     end
 end
-
 local function saveFavorites()
-    local f = fs.open(FAVORITES_FILE, "w")
+    local f = fs.open(".favorites", "w")
     f.write(textutils.serialize(favorites))
     f.close()
+end
+
+-- Helper: Draw Notification Toast
+local function drawNotification()
+    if not notification.active then return end
+    
+    local w, h = term.getSize()
+    local msg = notification.message
+    local width = #msg + 4
+    if width < 20 then width = 20 end
+    local x = w - width - 1
+    local y = 2 -- Below top bar
+    
+    -- Draw Box
+    paintutils.drawFilledBox(x, y, x+width, y+2, notification.color)
+    term.setCursorPos(x, y)
+    term.setTextColor(colors.white)
+    term.setBackgroundColor(notification.color)
+    
+    -- Title (Center or Left?)
+    term.setCursorPos(x+1, y)
+    term.write(notification.title)
+    
+    -- Message
+    term.setCursorPos(x+1, y+1)
+    term.write(msg)
+    
+    -- Border/Shadow? (Optional polish)
+end
+
+-- Helper: Trigger Notification
+local function showNotification(title, msg, color)
+    notification.active = true
+    notification.title = title or "System"
+    notification.message = msg or ""
+    notification.color = color or colors.blue
+    
+    if notification.timerId then os.cancelTimer(notification.timerId) end
+    notification.timerId = os.startTimer(4) -- 4 Seconds
 end
 
 local function toggleFavorite(appName)
