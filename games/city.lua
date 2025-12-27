@@ -57,9 +57,18 @@ local state = {
     running = true,
     mode = "view", -- view, build, system
     selectedBuildIdx = 1,
-    lastAutoSave = os.epoch("utc")
+    lastAutoSave = os.epoch("utc"),
+    speaker = peripheral.find("speaker") -- Find speaker on init
 }
 
+-- Sound Helper
+local function playSound(name, vol, pitch)
+    if state.speaker then
+        -- pcall to avoid crash if speaker disconnects
+        pcall(state.speaker.playSound, name, vol or 1.0, pitch or 1.0)
+    end
+end
+ 
 -- Helper: Check if building can be placed
 local function canPlace(bDef, x, y)
     local tile = state.map:get(x, y)
@@ -449,24 +458,29 @@ local function main()
                          state.selectedBuildIdx = state.selectedBuildIdx + 1
                          if state.selectedBuildIdx > #STRUCTURES then state.selectedBuildIdx = 1 end
                     elseif key == keys.enter then
-                         -- Place logic (from before)
-                         local bDef = STRUCTURES[state.selectedBuildIdx]
-                         local valid, reason = canPlace(bDef, state.cursor.x, state.cursor.y)
-                         if valid then
-                             for res, amt in pairs(bDef.cost) do state.resources[res] = state.resources[res] - amt end
-                             table.insert(state.buildings, { 
-                                x=state.cursor.x, 
-                                y=state.cursor.y, 
-                                def=bDef, 
-                                lastTick=os.epoch("utc") 
-                             })
-                         end
-                    end
+                     -- Place
+                     local bDef = STRUCTURES[state.selectedBuildIdx]
+                     local valid, reason = canPlace(bDef, state.cursor.x, state.cursor.y)
+                     if valid then
+                         -- Deduct Cost
+                         for res, amt in pairs(bDef.cost) do state.resources[res] = state.resources[res] - amt end
+                         -- Add Building
+                         table.insert(state.buildings, { 
+                            x=state.cursor.x, 
+                            y=state.cursor.y, 
+                            def=bDef, 
+                            lastTick=os.epoch("utc") 
+                         })
+                         playSound("entity.experience_orb.pickup", 1, 1.2) -- Pling!
+                     else
+                         -- Show Error (Flash UI? or just sound)
+                         playSound("block.note_block.bass", 1, 0.5) -- Buzz!
+                     end
                 end
-                
-                -- Camera Follow
-                state.camera:centerOn(state.cursor.x, state.cursor.y, MAP_W, MAP_H)
             end
+            
+            -- Camera Follow
+            state.camera:centerOn(state.cursor.x, state.cursor.y, MAP_W, MAP_H)
         end
     end
 end
