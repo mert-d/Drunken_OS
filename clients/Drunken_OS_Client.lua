@@ -49,12 +49,7 @@ local utils -- Delayed require
 local wordWrap -- Delayed assign
 local printCentered -- Delayed assign
 
-local colorToBlit = {
-    [colors.white] = "0", [colors.orange] = "1", [colors.magenta] = "2", [colors.lightBlue] = "3",
-    [colors.yellow] = "4", [colors.lime] = "5", [colors.pink] = "6", [colors.gray] = "7",
-    [colors.lightGray] = "8", [colors.cyan] = "9", [colors.purple] = "a", [colors.blue] = "b",
-    [colors.brown] = "c", [colors.green] = "d", [colors.red] = "e", [colors.black] = "f"
-}
+local colorToBlit = theme.colorToBlit
 
 -- Global OS State: Stores session info, server IDs, and user data.
 local state = {
@@ -385,83 +380,7 @@ local function runAdminConsole(context)
     end
 end
 
----
--- The main interactive menu for the Drunken OS Client.
--- This function handles UI rendering, user input for app selection,
--- and real-time updates for notifications (mail, invoices).
-local function mainMenu()
-    if not state.isAdmin and fs.exists("Admin_Console.lua") then
-        fs.delete("Admin_Console.lua")
-    end
-
-    local lastUnread = -1
-    local lastInvoiceCount = -1
-    local dirty = true
-    local selected = 1
-    local options = {}
-
-    local function refreshOptions()
-        local invoiceCount = state.pendingInvoices and #state.pendingInvoices or 0
-        local payLabel = "Pay Merchant" .. (invoiceCount > 0 and " ("..invoiceCount.." pending)" or "")
-        options = {
-            "Pocket Bank",
-            payLabel,
-            "File Manager",
-            "Mail" .. (state.unreadCount > 0 and " (" .. state.unreadCount .. " unread)" or ""),
-            "General Chat", 
-            "Games", 
-            "System", 
-            "Logout"
-        }
-        if state.isAdmin then table.insert(options, "Admin Console") end
-    end
-
-    refreshOptions()
-
-    while true do
-        if dirty or state.unreadCount ~= lastUnread or (state.pendingInvoices and #state.pendingInvoices ~= lastInvoiceCount) then
-            lastUnread = state.unreadCount
-            lastInvoiceCount = state.pendingInvoices and #state.pendingInvoices or 0
-            refreshOptions()
-            
-            drawWindow("Home")
-            drawMenu(options, selected, 2, 4)
-            dirty = false
-        end
-
-        local event, key = os.pullEvent()
-        
-        if event == "key" then
-            if key == keys.up then
-                selected = (selected == 1) and #options or selected - 1
-                dirty = true
-            elseif key == keys.down then
-                selected = (selected == #options) and 1 or selected + 1
-                dirty = true
-            elseif key == keys.enter then
-                local selection = options[selected]
-                if selection == "Logout" then break end
-                
-                if selection == "Pocket Bank" then state.appLoader.run("bank", context)
-                elseif selection:match("^Pay Merchant") then state.appLoader.run("bank", context, "pay")
-                elseif selection == "File Manager" then state.appLoader.run("files", context)
-                elseif selection:match("^Mail") then state.appLoader.run("mail", context)
-                elseif selection == "General Chat" then state.appLoader.run("chat", context)
-                elseif selection == "Games" then state.appLoader.run("arcade", context)
-                elseif selection == "System" then state.appLoader.run("system", context)
-                elseif selection == "Admin Console" then runAdminConsole(context)
-                end
-                dirty = true -- Force redraw after app exit
-            elseif key == keys.q or key == keys.tab then
-                break
-            end
-        elseif event == "rednet_message" then
-            -- Let parallel handlers handle it, but we might need to flag dirty 
-            -- if counts changed (handled by loop condition above)
-        end
-    end
-    state.username = nil 
-end
+-- Old mainMenu removed. See Refactored Main Menu below.
 
 --==============================================================================
 -- Program Entry Point

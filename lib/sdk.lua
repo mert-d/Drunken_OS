@@ -100,14 +100,13 @@ DrunkenOS.System = {}
 --- Gets the current logged-in username (if available in environment)
 -- @return string: Username or "Guest"
 function DrunkenOS.System.getUsername()
-    -- This relies on the bootloader setting a global or needing an API call
-    -- Since we don't have a global state exposed yet, we return Guest for now.
-    -- Future: Read from .session file safely.
+    -- Check if we are running inside the OS client environment
+    -- The OS usually exposes 'state' or we can check a local session file
     if fs.exists(".session") then
         local f = fs.open(".session", "r")
-        local u = f.readAll()
+        local data = textutils.unserialize(f.readAll())
         f.close()
-        return u
+        return data and data.username or "Guest"
     end
     return "Guest"
 end

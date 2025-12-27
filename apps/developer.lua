@@ -99,9 +99,16 @@ local function mainMenu(context)
                              SDK.UI.drawWindow("Running Test...")
                              sleep(0.5)
                              theme.clear() -- Clear for app
-                             shell.run(tempPath)
                              
-                             SDK.UI.showMessage("Test Ended", "Returned to Review.")
+                             local ok, err = pcall(function()
+                                 shell.run(tempPath)
+                             end)
+                             
+                             if not ok then
+                                 SDK.UI.showMessage("Runtime Error", err)
+                             else
+                                 SDK.UI.showMessage("Test Ended", "Returned to Review.")
+                             end
                              fs.delete(tempPath)
                         else
                              SDK.UI.showMessage("Error", "Failed to fetch code.")
@@ -129,25 +136,9 @@ end
         -- But SDK doesn't have a menu helper yet! We should add one to lib/sdk.lua later.
         -- For now, falling back to context.drawMenu which is passed by the OS client.
         
-        if context.drawMenu then
-             -- Use the OS's native menu renderer for consistency
-             -- We have to manage the selection loop ourselves though if drawMenu is just a renderer
-             -- See merchant.lua for pattern
-             local sel = 1
-             while true do
-                 SDK.UI.drawWindow("Developer Portal")
-                 context.drawMenu(options, sel, 2, 4)
-                 local _, k = os.pullEvent("key")
-                 if k == keys.up then sel = (sel==1) and #options or sel-1
-                 elseif k == keys.down then sel = (sel==#options) and 1 or sel+1
-                 elseif k == keys.enter then
-                    selected = sel
-                    break
-                 end
-             end
-        else
-            print("Error: Context missing drawMenu.")
-            return
+        if not context.drawMenu then
+             SDK.UI.showMessage("Error", "Context missing drawMenu.")
+             return
         end
         
         if selected == 4 then break end

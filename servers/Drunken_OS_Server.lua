@@ -642,6 +642,47 @@ function mailHandlers.get_file(senderId, message)
     rednet.send(senderId, { success=false, error="File not found" }, "SimpleMail")
 end
 
+-- Admin Review Handlers
+function mailHandlers.admin_get_submissions(senderId, message)
+    if not message.username or not admins[message.username] then
+        rednet.send(senderId, { success = false, reason = "Unauthorized" }, "SimpleMail")
+        return
+    end
+    
+    local list = {}
+    for id, app in pairs(pendingApps) do
+        table.insert(list, { id = id, name = app.name, author = app.author, desc = app.description })
+    end
+    rednet.send(senderId, { success = true, list = list }, "SimpleMail")
+end
+
+function mailHandlers.admin_get_code(senderId, message)
+    if not message.username or not admins[message.username] then return end
+    
+    local app = pendingApps[message.id]
+    if app then
+        rednet.send(senderId, { success = true, code = app.code, name = app.name }, "SimpleMail")
+    else
+        rednet.send(senderId, { success = false, reason = "Not found" }, "SimpleMail")
+    end
+end
+
+function mailHandlers.admin_action(senderId, message)
+    if not message.username or not admins[message.username] then return end
+    
+    local action = message.action
+    local id = message.id
+    
+    local result = "Invalid Action"
+    if action == "approve" then
+        result = adminCommands.approve({ "approve", id })
+    elseif action == "reject" then
+        result = adminCommands.reject({ "reject", id })
+    end
+    
+    rednet.send(senderId, { success = true, msg = result }, "SimpleMail")
+end
+
 -- UNIFIED LIBRARY HANDLER: Serves code directly from the programCode database.
 function mailHandlers.get_lib_code(senderId, message)
     local libName = message.lib
