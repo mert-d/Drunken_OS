@@ -658,6 +658,29 @@ function bankHandlers.clerk_set_merchant(senderId, message)
     end
 end
 
+-- Handles City Builder Exports (Virtual Resource -> Credits)
+function bankHandlers.city_export(senderId, message)
+    local user = message.user
+    local resource = message.resource -- "alloys"
+    local count = tonumber(message.count)
+    
+    if not user or not count or count <= 0 then return end
+    
+    local account = accounts[user]
+    if not account then return end
+    
+    -- Rate: 10 Alloys = $1
+    if resource == "alloys" then
+        local value = math.floor(count / 10)
+        if value > 0 then
+            account.balance = account.balance + value
+            queueSave(ACCOUNTS_DB)
+            logTransaction(user, "CITY_EXPORT", "Exported " .. count .. " Alloys", value)
+            rednet.send(senderId, { success = true, value = value, newBalance = account.balance }, BANK_PROTOCOL)
+        end
+    end
+end
+
 ---
 -- Handles a request for balance and rates.
 function bankHandlers.get_balance_and_rates(senderId, message)

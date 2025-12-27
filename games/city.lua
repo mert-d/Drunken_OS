@@ -37,7 +37,10 @@ local STRUCTURES = {
       production={pop=1}, consumption={energy=1} }, 
       
     { name="Solar",   char="S", fg=colors.cyan, bg=colors.gray, cost={alloys=20}, desc="Generates +5 Energy/s",
-      production={energy=5}, consumption={} }
+      production={energy=5}, consumption={} },
+      
+    { name="Export",  char="E", fg=colors.lime, bg=colors.black, cost={alloys=200}, desc="Sells 10 Alloys -> $1 Bank Credit",
+      production={}, consumption={alloys=10} } -- Consumption handled specially in logic
 }
 
 --==============================================================================
@@ -142,17 +145,54 @@ local function simulationTick()
         
         -- Apply Effects
         if canProduce then
-            -- Consume
-            if def.consumption then
-                for res, amt in pairs(def.consumption) do
-                    state.resources[res] = state.resources[res] - amt
-                end
-            end
+            -- Consume & Produce
+            local netProd = {} -- For tracking net production/consumption per resource
             
-            -- Produce
-            if def.production then
-                for res, amt in pairs(def.production) do
-                    state.resources[res] = state.resources[res] + amt
+            if b.def.name == "Export" then
+                -- Special Export Logic
+                if state.resources.alloys >= 10 then
+                    -- Get Username
+                    local username = nil
+                    if fs.exists(".session") then
+                        local f = fs.open(".session", "r")
+                        local data = textutils.unserialize(f.readAll())
+                        f.close()
+                        if data then username = data.username end
+                    end
+                    
+                    if username then
+                        -- Check Bank
+                        state.resources.alloys = state.resources.alloys - 10
+                        netProd.alloys = (netProd.alloys or 0) - 10
+                        -- Send to Bank
+                        -- We use rednet globally
+                        peripheral.find("modem", rednet.open)
+                        local bankId = rednet.lookup("DB_Bank", "bank.server")
+                        if bankId then
+                            rednet.send(bankId, { type="city_export", user=username, resource="alloys", count=10 }, "DB_Bank")
+                            -- Visual Feedback?
+                            -- playSound("entity.arrow.hit_player", 0.5, 2.0)
+                        end
+                    end
+                end
+            else
+                -- Standard Production
+                if b.def.production then
+                    for res, amt in pairs(b.def.production) do
+                        state.resources[res] = state.resources[res] + amt
+                        netProd[res] = (netProd[res] or 0) + amt
+                    end
+                end
+                
+                -- Standard Consumption
+                -- (Simplified: Always consume if available - real logic needs 'active' state)
+                if b.def.consumption then
+                    for res, amt in pairs(b.def.consumption) do
+                        if state.resources[res] and state.resources[res] >= amt then
+                            state.resources[res] = state.resources[res] - amt
+                            netProd[res] = (netProd[res] or 0) - amt
+                        end
+                    end
                 end
             end
         end

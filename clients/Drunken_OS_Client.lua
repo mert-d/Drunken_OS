@@ -471,6 +471,11 @@ local function main()
                 term.clear(); term.setCursorPos(1,1); print("Goodbye!"); break
             end
             
+            -- Persist Session for SDK/Apps
+            local f = fs.open(".session", "w")
+            f.write(textutils.serialize({ username = state.username }))
+            f.close()
+            
             rednet.send(state.mailServerId, {type = "get_motd"}, "SimpleMail")
             local _, motd_response = rednet.receive("SimpleMail", 3)
             if motd_response and motd_response.motd and motd_response.motd ~= "" then
