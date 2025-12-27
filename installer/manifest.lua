@@ -17,6 +17,7 @@ return {
         "lib/theme.lua",
         "lib/utils.lua",
         "lib/p2p_socket.lua",
+        "lib/sdk.lua",
         "manifest.lua"
     },
 
@@ -56,7 +57,8 @@ return {
                 "apps/files.lua",
                 "apps/mail.lua",
                 "apps/merchant.lua",
-                "apps/system.lua"
+                "apps/system.lua",
+                "apps/developer.lua"
             },
             include_shared = true
         },
@@ -177,7 +179,8 @@ return {
         "apps/files.lua",
         "apps/mail.lua",
         "apps/merchant.lua",
-        "apps/system.lua"
+        "apps/system.lua",
+        "apps/developer.lua"
     },
 
     all_games = {
