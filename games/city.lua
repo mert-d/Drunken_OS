@@ -27,10 +27,17 @@ local TILES = {
 -- Building Definitions
 local STRUCTURES = {
     { name="Road",    char="+", fg=colors.lightGray, bg=colors.gray, cost={minerals=1}, desc="Connects buildings." },
-    { name="Mine",    char="M", fg=colors.black, bg=colors.yellow, cost={minerals=10}, desc="Produces Minerals on [Ore]." },
-    { name="Factory", char="F", fg=colors.orange, bg=colors.gray, cost={minerals=50, energy=10}, desc="Refines Minerals -> Alloys." },
-    { name="House",   char="H", fg=colors.white, bg=colors.brown, cost={alloys=10, energy=5}, desc="Housing for workers." },
-    { name="Solar",   char="S", fg=colors.cyan, bg=colors.gray, cost={alloys=20}, desc="Generates Energy." }
+    { name="Mine",    char="M", fg=colors.black, bg=colors.yellow, cost={minerals=10}, desc="Produces +1 Mineral/s",
+      production={minerals=1}, consumption={energy=1} },
+      
+    { name="Factory", char="F", fg=colors.orange, bg=colors.gray, cost={minerals=50, energy=10}, desc="Refines 2 Min -> 1 Alloy/s",
+      production={alloys=1}, consumption={minerals=2, energy=2} },
+      
+    { name="House",   char="H", fg=colors.white, bg=colors.brown, cost={alloys=10}, desc="Workers. Consumes Energy.",
+      production={pop=1}, consumption={energy=1} }, 
+      
+    { name="Solar",   char="S", fg=colors.cyan, bg=colors.gray, cost={alloys=20}, desc="Generates +5 Energy/s",
+      production={energy=5}, consumption={} }
 }
 
 --==============================================================================
@@ -53,7 +60,6 @@ local state = {
 }
 
 -- Helper: Check if building can be placed
--- Returns: boolean, reason_string
 local function canPlace(bDef, x, y)
     local tile = state.map:get(x, y)
     if not tile then return false, "Out of bounds" end
@@ -107,6 +113,43 @@ local function generateWorld()
 end
 
 --==============================================================================
+-- SIMULATION (ECONOMY)
+--==============================================================================
+local function simulationTick()
+    for _, b in ipairs(state.buildings) do
+        local def = b.def
+        
+        -- Check Consumption first
+        local canProduce = true
+        if def.consumption then
+            for res, amt in pairs(def.consumption) do
+                if state.resources[res] < amt then
+                    canProduce = false
+                    break
+                end
+            end
+        end
+        
+        -- Apply Effects
+        if canProduce then
+            -- Consume
+            if def.consumption then
+                for res, amt in pairs(def.consumption) do
+                    state.resources[res] = state.resources[res] - amt
+                end
+            end
+            
+            -- Produce
+            if def.production then
+                for res, amt in pairs(def.production) do
+                    state.resources[res] = state.resources[res] + amt
+                end
+            end
+        end
+    end
+end
+
+--==============================================================================
 -- UI & RENDER
 --==============================================================================
 local function drawUI()
@@ -151,6 +194,9 @@ local function main()
     state.map = generateWorld()
     local w, h = term.getSize()
     state.camera = Engine.newCamera(1, 1, w, h-2) -- Reserve top/bottom lines
+    
+    -- Start Timer
+    local timerId = os.startTimer(1)
     
     while state.running do
         -- 1. Draw Map
@@ -227,46 +273,54 @@ local function main()
         end
         
         -- 5. Input
-        local event, key = os.pullEvent("key")
-        if key == keys.q then
-            state.running = false
-        elseif key == keys.up and state.cursor.y > 1 then
-            state.cursor.y = state.cursor.y - 1
-        elseif key == keys.down and state.cursor.y < MAP_H then
-            state.cursor.y = state.cursor.y + 1
-        elseif key == keys.left and state.cursor.x > 1 then
-            state.cursor.x = state.cursor.x - 1
-        elseif key == keys.right and state.cursor.x < MAP_W then
-            state.cursor.x = state.cursor.x + 1
-        elseif key == keys.tab then
-            state.mode = (state.mode == "view") and "build" or "view"
-        elseif state.mode == "build" then
-            -- Build Controls
-            if key == keys.w then -- Cycle up
-                 state.selectedBuildIdx = state.selectedBuildIdx - 1
-                 if state.selectedBuildIdx < 1 then state.selectedBuildIdx = #STRUCTURES end
-            elseif key == keys.s then -- Cycle down
-                 state.selectedBuildIdx = state.selectedBuildIdx + 1
-                 if state.selectedBuildIdx > #STRUCTURES then state.selectedBuildIdx = 1 end
-            elseif key == keys.enter then
-                 -- Place
-                 local bDef = STRUCTURES[state.selectedBuildIdx]
-                 local valid, reason = canPlace(bDef, state.cursor.x, state.cursor.y)
-                 if valid then
-                     -- Deduct Cost
-                     for res, amt in pairs(bDef.cost) do state.resources[res] = state.resources[res] - amt end
-                     -- Add Building
-                     table.insert(state.buildings, { 
-                        x=state.cursor.x, 
-                        y=state.cursor.y, 
-                        def=bDef, 
-                        lastTick=os.epoch("utc") 
-                     })
-                     -- Reset ground if needed (e.g. Road overrides Rock... wait, checks prevent that)
-                 else
-                     -- Show Error (Flash UI?)
-                 end
+        local event, p1 = os.pullEvent()
+        
+        if event == "timer" and p1 == timerId then
+            simulationTick()
+            timerId = os.startTimer(1)
+            
+        elseif event == "key" then
+            local key = p1
+            if key == keys.q then
+                state.running = false
+            elseif key == keys.up and state.cursor.y > 1 then
+                state.cursor.y = state.cursor.y - 1
+            elseif key == keys.down and state.cursor.y < MAP_H then
+                state.cursor.y = state.cursor.y + 1
+            elseif key == keys.left and state.cursor.x > 1 then
+                state.cursor.x = state.cursor.x - 1
+            elseif key == keys.right and state.cursor.x < MAP_W then
+                state.cursor.x = state.cursor.x + 1
+            elseif key == keys.tab then
+                state.mode = (state.mode == "view") and "build" or "view"
+            elseif state.mode == "build" then
+                -- Build Controls
+                if key == keys.w then -- Cycle up
+                     state.selectedBuildIdx = state.selectedBuildIdx - 1
+                     if state.selectedBuildIdx < 1 then state.selectedBuildIdx = #STRUCTURES end
+                elseif key == keys.s then -- Cycle down
+                     state.selectedBuildIdx = state.selectedBuildIdx + 1
+                     if state.selectedBuildIdx > #STRUCTURES then state.selectedBuildIdx = 1 end
+                elseif key == keys.enter then
+                     -- Place
+                     local bDef = STRUCTURES[state.selectedBuildIdx]
+                     local valid, reason = canPlace(bDef, state.cursor.x, state.cursor.y)
+                     if valid then
+                         -- Deduct Cost
+                         for res, amt in pairs(bDef.cost) do state.resources[res] = state.resources[res] - amt end
+                         -- Add Building
+                         table.insert(state.buildings, { 
+                            x=state.cursor.x, 
+                            y=state.cursor.y, 
+                            def=bDef, 
+                            lastTick=os.epoch("utc") 
+                         })
+                     end
+                end
             end
+            
+            -- Camera Follow
+            state.camera:centerOn(state.cursor.x, state.cursor.y, MAP_W, MAP_H)
         end
     end
 end
