@@ -765,6 +765,61 @@ function bankHandlers.save_db(senderId, message)
     queueSave(STOCK_DB)
 end
 
+-- Handles a merchant payment with metadata logging.
+function bankHandlers.process_payment(senderId, message)
+    if not message or type(message.user) ~= "string" or type(message.recipient) ~= "string" then
+        rednet.send(senderId, { success = false, reason = "Invalid payment payload." }, BANK_PROTOCOL)
+        return
+    end
+    local sender, recipient = message.user, message.recipient
+    local amount = tonumber(message.amount)
+    local metadata = message.metadata or "Payment"
+    local pin_hash = message.pin_hash
+
+    if not amount or amount <= 0 then
+        rednet.send(senderId, { success = false, reason = "Invalid amount." }, BANK_PROTOCOL)
+        return
+    end
+
+    local senderAcc = accounts[sender]
+    if not senderAcc or senderAcc.pin_hash ~= pin_hash then
+        rednet.send(senderId, { success = false, reason = "Auth failed." }, BANK_PROTOCOL)
+        return
+    end
+
+    if senderAcc.balance < amount then
+        rednet.send(senderId, { success = false, reason = "Insufficient funds." }, BANK_PROTOCOL)
+        return
+    end
+
+    -- Verify Recipient
+    local recipientAcc = accounts[recipient]
+    if not recipientAcc then
+        -- Optional: Check Mainframe, but for payments usually we pay existing accounts
+        rednet.send(senderId, { success = false, reason = "Recipient account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    -- Execute Transaction
+    senderAcc.balance = senderAcc.balance - amount
+    recipientAcc.balance = recipientAcc.balance + amount
+
+    queueSave(ACCOUNTS_DB)
+    
+    local details = {
+        recipient = recipient,
+        sender = sender,
+        note = metadata
+    }
+    logTransaction(sender, "PAYMENT", details, amount)
+    logActivity("Payment: " .. sender .. " paid $" .. amount .. " to " .. recipient .. " (" .. metadata .. ")")
+    broadcastSecurityEvent("PAY: " .. sender .. " -> " .. recipient .. " $" .. amount, amount)
+
+    senderAcc.balance = senderAcc.balance -- Sync?
+    
+    rednet.send(senderId, { success = true, newBalance = senderAcc.balance }, BANK_PROTOCOL)
+end
+
 -- Handles a peer-to-peer money transfer.
 function bankHandlers.transfer(senderId, message)
     if not message or type(message.user) ~= "string" or type(message.recipient) ~= "string" then
