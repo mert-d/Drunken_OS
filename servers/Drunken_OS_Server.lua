@@ -59,7 +59,7 @@ local MailModule = require("servers.modules.mail")
 --==============================================================================
 
 local admins = {} -- This will now be loaded from a file
-local users, lists, games, chatHistory, gameList, pendingAuths = {}, {}, {}, {}, {}, {}
+local users, lists, games, chatHistory, gameList, pendingAuths, pendingApps = {}, {}, {}, {}, {}, {}, {}
 local userLocations = {} -- Stores latest (x, y, z) for each user
 local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
@@ -83,6 +83,7 @@ local GAMES_DB = "games.db"
 local CHAT_DB = "chat.db"
 local UPDATER_DB = "updater.db"
 local GAMELIST_DB = "gamelist.db"
+local SUBMISSIONS_DB = "submissions.db"
 local MOTD_FILE = "motd.txt"
 local LOG_FILE = "server.log"
 local GAMES_CODE_DB = "games_code.db"
@@ -98,6 +99,7 @@ local dbPointers = {
     [GAMES_DB] = function() return games end,
     [CHAT_DB] = function() return chatHistory end,
     [GAMELIST_DB] = function() return gameList end,
+    [SUBMISSIONS_DB] = function() return pendingApps end,
     [UPDATER_DB] = function() return {v = programVersions, c = programCode} end,
     [GAMES_CODE_DB] = function() return gameCode end
 }
@@ -384,6 +386,8 @@ local function loadAllData()
     lists = loadTableFromFile(LISTS_DB)
     games = loadTableFromFile(GAMES_DB)
     chatHistory = loadTableFromFile(CHAT_DB)
+    -- Load clean
+    pendingApps = loadTableFromFile(SUBMISSIONS_DB)
     gameList = loadTableFromFile(GAMELIST_DB)
     
     -- Load update distribution data (versions and source code)
@@ -1254,6 +1258,67 @@ function adminCommands.addadmin(args)
         logActivity("Failed to save admin database.", true)
         admins[username] = nil -- Revert on failure
     end
+end
+
+function adminCommands.submissions()
+    local count = 0
+    local output = "--- Pending Apps ---\n"
+    for id, app in pairs(pendingApps) do
+        output = output .. string.format("[%s] %s by %s\n", id, app.name, app.author)
+        count = count + 1
+    end
+    if count == 0 then output = "No pending submissions." end
+    return output
+end
+
+function adminCommands.approve(args)
+    local subId = args[2]
+    if not subId or not pendingApps[subId] then
+        return "Usage: approve <id> (ID not found)"
+    end
+    
+    local app = pendingApps[subId]
+    local filename = "apps/" .. app.name .. ".lua"
+    
+    -- 1. Save File Locally
+    -- Ensure apps dir exists
+    if not fs.exists("apps") then fs.makeDir("apps") end
+    local f = fs.open(filename, "w")
+    f.write(app.code)
+    f.close()
+    
+    -- 2. Update Manifest (Dynamic!)
+    if not manifest.all_apps then manifest.all_apps = {} end
+    local exists = false
+    for _, existing in ipairs(manifest.all_apps) do
+        if existing == filename then exists = true break end
+    end
+    if not exists then table.insert(manifest.all_apps, filename) end
+    
+    -- Add to 'client' package too? Ideally yes, for now we add to 'all_apps' 
+    -- and let users download individually or update 'client' package manually
+    -- FUTURE: 'community' package?
+    
+    -- Just saving manifest to disk is enough if we reload it?
+    -- We need to save the manifest table back to manifest.lua
+    local fMan = fs.open("manifest.lua", "w")
+    fMan.write("return " .. textutils.serialize(manifest))
+    fMan.close()
+    
+    -- 3. Cleanup
+    pendingApps[subId] = nil
+    queueSave(SUBMISSIONS_DB)
+    
+    return "App '" .. app.name .. "' approved and published to Manifest."
+end
+
+function adminCommands.reject(args)
+    local subId = args[2]
+    if not subId or not pendingApps[subId] then return "Usage: reject <id>" end
+    local name = pendingApps[subId].name
+    pendingApps[subId] = nil
+    queueSave(SUBMISSIONS_DB)
+    return "Rejected submission '" .. name .. "'."
 end
 
 function adminCommands.deladmin(args)
