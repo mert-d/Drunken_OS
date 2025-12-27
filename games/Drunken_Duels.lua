@@ -7,8 +7,23 @@
     Challenge a friend over Rednet and battle for dominance!
 ]]
 
-local gameVersion = 2.0
+local gameVersion = 2.1
 local P2P_Socket = require("lib.p2p_socket")
+local saveFile = ".duels_save"
+
+local persist = { wins = 0 }
+if fs.exists(saveFile) then
+    local f = fs.open(saveFile, "r")
+    local data = textutils.unserialize(f.readAll())
+    f.close()
+    if data then persist = data end
+end
+
+local function saveGame()
+    local f = fs.open(saveFile, "w")
+    f.write(textutils.serialize(persist))
+    f.close()
+end
 
 local classes = {
     Warrior = {
@@ -47,10 +62,9 @@ local function mainGame(...)
     local args = {...}
     local username = args[1] or "Guest"
 
+
     local gameName = "DrunkenDuels"
-    local arcadeServerId = nil
-    local opponentId = nil
-    local isHost = false
+    local socket = P2P_Socket.new(gameName, gameVersion, "DrunkenDuels_Game")
     local isSpectator = false
 
     -- Theme & Colors
@@ -653,6 +667,12 @@ local function mainGame(...)
         if myStats.hp <= 0 or oppStats.hp <= 0 then
             addLog("Match Ended!")
             matchActive = false
+            
+            if oppStats.hp <= 0 then
+                persist.wins = persist.wins + 1
+                saveGame()
+                socket:submitScore(username, persist.wins)
+            end
         end
     end
     

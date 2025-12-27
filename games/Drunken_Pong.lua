@@ -7,16 +7,30 @@
     Battle a friend over Rednet in a classic game of Pong!
 ]]
 
-local gameVersion = 2.0
+local gameVersion = 2.1
 local P2P_Socket = require("lib.p2p_socket")
+local saveFile = ".pong_save"
+
+local persist = { wins = 0 }
+if fs.exists(saveFile) then
+    local f = fs.open(saveFile, "r")
+    local data = textutils.unserialize(f.readAll())
+    f.close()
+    if data then persist = data end
+end
+
+local function saveGame()
+    local f = fs.open(saveFile, "w")
+    f.write(textutils.serialize(persist))
+    f.close()
+end
 
 local function mainGame(...)
     local args = {...}
     local username = args[1] or "Guest"
 
     local gameName = "DrunkenPong"
-    local arcadeServerId = nil
-    local opponentId = nil
+    local socket = P2P_Socket.new(gameName, gameVersion, "DrunkenPong_Game")
     local isHost = false
 
     -- Theme & Colors
@@ -413,15 +427,9 @@ local function mainGame(...)
 
     -- Submit winners score
     if score.me > score.opp then
-        arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
-        if arcadeServerId then
-            rednet.send(arcadeServerId, {
-                type = "submit_score", 
-                game = gameName, 
-                user = username, 
-                score = score.me * 100 -- Bonus for winning
-            }, "ArcadeGames")
-        end
+        persist.wins = persist.wins + 1
+        saveGame()
+        socket:submitScore(username, persist.wins)
     end
 
     sleep(2)
