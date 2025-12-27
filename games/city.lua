@@ -55,8 +55,9 @@ local state = {
     },
     buildings = {}, 
     running = true,
-    mode = "view", -- view, build
-    selectedBuildIdx = 1
+    mode = "view", -- view, build, system
+    selectedBuildIdx = 1,
+    lastAutoSave = os.epoch("utc")
 }
 
 -- Helper: Check if building can be placed
@@ -147,6 +148,92 @@ local function simulationTick()
             end
         end
     end
+end
+
+--==============================================================================
+-- PERSISTENCE
+--==============================================================================
+local SAVE_DIR = "games/saves/"
+
+local function saveGame(slotName)
+    if not fs.exists(SAVE_DIR) then fs.makeDir(SAVE_DIR) end
+    
+    local data = {
+        w = MAP_W, h = MAP_H,
+        mapData = {}, -- Store strictly necessary data (char, fg, bg, solid, resource)
+        buildings = state.buildings,
+        resources = state.resources,
+        timestamp = os.epoch("utc")
+    }
+    
+    -- Serialize Map (Simple RLE or just flat list for now)
+    -- Optimized: Only save NON-GROUND tiles to save space?
+    -- For Alpha: Naive full dump is safest.
+    for y=1, MAP_H do
+        data.mapData[y] = {}
+        for x=1, MAP_W do
+            local tile = state.map:get(x, y)
+            -- Save key properties so we can reconstruct TILES references
+            local tType = "GROUND"
+            if tile == TILES.ROCK then tType = "ROCK"
+            elseif tile == TILES.ORE then tType = "ORE"
+            elseif tile == TILES.WATER then tType = "WATER" end
+            data.mapData[y][x] = tType
+        end
+    end
+    
+    local path = SAVE_DIR .. "city_" .. slotName .. ".save"
+    local f = fs.open(path, "w")
+    f.write(textutils.serialize(data))
+    f.close()
+    
+    -- UI Feedback
+    local w, h = term.getSize()
+    term.setCursorPos(1, h-1)
+    term.setTextColor(colors.lime)
+    term.write("Saved to " .. slotName .. "!")
+    os.sleep(0.5) -- Brief pause
+end
+
+local function loadGame(slotName)
+    local path = SAVE_DIR .. "city_" .. slotName .. ".save"
+    if not fs.exists(path) then return false end
+    
+    local f = fs.open(path, "r")
+    local data = textutils.unserialize(f.readAll())
+    f.close()
+    
+    if not data then return false end
+    
+    -- Restore State
+    state.resources = data.resources
+    state.buildings = data.buildings -- Note: 'def' reference might be broken if not handled!
+    
+    -- Fix Building Def References (they were serialized as tables, need to link back to STRUCTURES)
+    -- Actually, serialization saves a COPY of the table. We need to reunite them with logic objects?
+    -- For this simple engine, the 'def' table just holds data. But if we add logic later...
+    -- Re-link 'def' based on name just to be safe/clean.
+    for _, b in ipairs(state.buildings) do
+        for _, s in ipairs(STRUCTURES) do
+            if s.name == b.def.name then
+                b.def = s -- Pointer restoration
+                break
+            end
+        end
+    end
+    
+    -- Rebuild Map
+    state.map = Engine.newMap(data.w, data.h, TILES.GROUND)
+    for y=1, data.h do
+        for x=1, data.w do
+            local tType = data.mapData[y][x]
+            if TILES[tType] then
+                state.map:set(x, y, TILES[tType])
+            end
+        end
+    end
+    
+    return true
 end
 
 --==============================================================================
@@ -241,9 +328,9 @@ local function main()
         
         -- 4b. Draw Build Menu
         if state.mode == "build" then
+            -- ... (Existing Build Menu Code) ...
             local bw, bh = 30, #STRUCTURES + 4
             local bx, by = w - bw - 1, 3
-            
             -- Frame
             term.setTextColor(colors.white)
             term.setBackgroundColor(colors.black)
@@ -251,9 +338,7 @@ local function main()
                 term.setCursorPos(bx, by+i)
                 term.write(string.rep(" ", bw))
             end
-            
             term.setCursorPos(bx+1, by+1); term.write("-- Build Menu (TAB) --")
-            
             for i, struc in ipairs(STRUCTURES) do
                 term.setCursorPos(bx+1, by+1+i)
                 if i == state.selectedBuildIdx then
@@ -262,14 +347,32 @@ local function main()
                     term.setTextColor(colors.gray); term.write("  ")
                 end
                 term.write(struc.name)
-                -- Cost display?
             end
-            
-            -- Desc
             local sel = STRUCTURES[state.selectedBuildIdx]
             term.setCursorPos(bx+1, by+bh-1)
             term.setTextColor(colors.lightGray)
             term.write(sel.desc:sub(1, bw-2))
+            
+        elseif state.mode == "system" then
+            -- System Menu Overlay
+            local mw, mh = 26, 10
+            local mx, my = math.floor((w-mw)/2), math.floor((h-mh)/2)
+            
+            -- Draw Box
+            paintutils.drawFilledBox(mx, my, mx+mw, my+mh, colors.blue)
+            paintutils.drawBox(mx, my, mx+mw, my+mh, colors.white)
+            
+            term.setTextColor(colors.white)
+            term.setBackgroundColor(colors.blue)
+            term.setCursorPos(mx+2, my+1); term.write("== SYSTEM MENU ==")
+            
+            term.setCursorPos(mx+2, my+3); term.write("[R] Resume")
+            term.setCursorPos(mx+2, my+4); term.write("-- SAVE (1-3) --")
+            term.setCursorPos(mx+2, my+5); term.write("[1] Auto  [2] Slot2  [3] Slot3")
+            term.setCursorPos(mx+2, my+6); term.write("-- LOAD (F1-F3) --")
+            term.setCursorPos(mx+2, my+7); term.write("[F1] Auto [F2] Slot2 [F3] Slot3")
+            
+            term.setCursorPos(mx+2, my+9); term.write("[Q] Quit Game")
         end
         
         -- 5. Input
@@ -279,48 +382,91 @@ local function main()
             simulationTick()
             timerId = os.startTimer(1)
             
-        elseif event == "key" then
-            local key = p1
-            if key == keys.q then
-                state.running = false
-            elseif key == keys.up and state.cursor.y > 1 then
-                state.cursor.y = state.cursor.y - 1
-            elseif key == keys.down and state.cursor.y < MAP_H then
-                state.cursor.y = state.cursor.y + 1
-            elseif key == keys.left and state.cursor.x > 1 then
-                state.cursor.x = state.cursor.x - 1
-            elseif key == keys.right and state.cursor.x < MAP_W then
-                state.cursor.x = state.cursor.x + 1
-            elseif key == keys.tab then
-                state.mode = (state.mode == "view") and "build" or "view"
-            elseif state.mode == "build" then
-                -- Build Controls
-                if key == keys.w then -- Cycle up
-                     state.selectedBuildIdx = state.selectedBuildIdx - 1
-                     if state.selectedBuildIdx < 1 then state.selectedBuildIdx = #STRUCTURES end
-                elseif key == keys.s then -- Cycle down
-                     state.selectedBuildIdx = state.selectedBuildIdx + 1
-                     if state.selectedBuildIdx > #STRUCTURES then state.selectedBuildIdx = 1 end
-                elseif key == keys.enter then
-                     -- Place
-                     local bDef = STRUCTURES[state.selectedBuildIdx]
-                     local valid, reason = canPlace(bDef, state.cursor.x, state.cursor.y)
-                     if valid then
-                         -- Deduct Cost
-                         for res, amt in pairs(bDef.cost) do state.resources[res] = state.resources[res] - amt end
-                         -- Add Building
-                         table.insert(state.buildings, { 
-                            x=state.cursor.x, 
-                            y=state.cursor.y, 
-                            def=bDef, 
-                            lastTick=os.epoch("utc") 
-                         })
-                     end
-                end
+            -- Auto Save Logic (Every 60s)
+            local now = os.epoch("utc")
+            if (now - (state.lastAutoSave or 0)) > 60000 then
+                 saveGame("auto")
+                 state.lastAutoSave = now
             end
             
-            -- Camera Follow
-            state.camera:centerOn(state.cursor.x, state.cursor.y, MAP_W, MAP_H)
+        elseif event == "key" then
+            local key = p1
+            
+            if state.mode == "system" then
+                -- SYSTEM MENU CONTROLS
+                if key == keys.r or key == keys.esc then
+                    state.mode = "view"
+                elseif key == keys.q then
+                    saveGame("auto") -- Save on quit
+                    state.running = false
+                elseif key == keys.one then
+                    saveGame("auto")
+                elseif key == keys.two then
+                    saveGame("slot2")
+                elseif key == keys.three then
+                    saveGame("slot3")
+                
+                -- Shift+Number to LOAD? Or separate menu? 
+                -- Let's keep it simple: Number = Save, Shift+Number = Load? 
+                -- Wait, keyboard helper needed. For this Alpha, let's just do:
+                -- S + 1/2/3 = Save, L + 1/2/3 = Load
+                elseif key == keys.l then
+                     -- Ideally show "Press 1-3 to Load..."
+                     -- Stub for logic: Load Slot 2 immediately for test?
+                     -- Let's stick to user request: "3 save slots".
+                     -- Simple Keybinding for now:
+                     -- F1: Load Auto, F2: Load Slot 2, F3: Load Slot 3
+                end
+                
+                -- HOTFIX Input for Alpha
+                if key == keys.f1 then loadGame("auto"); state.mode="view" end
+                if key == keys.f2 then loadGame("slot2"); state.mode="view" end
+                if key == keys.f3 then loadGame("slot3"); state.mode="view" end
+                
+            else
+                -- GAMEPLAY CONTROLS
+                if key == keys.esc then
+                    state.mode = "system"
+                elseif key == keys.q then -- Legacy Quit
+                    state.mode = "system"
+                    
+                elseif key == keys.up and state.cursor.y > 1 then
+                    state.cursor.y = state.cursor.y - 1
+                elseif key == keys.down and state.cursor.y < MAP_H then
+                    state.cursor.y = state.cursor.y + 1
+                elseif key == keys.left and state.cursor.x > 1 then
+                    state.cursor.x = state.cursor.x - 1
+                elseif key == keys.right and state.cursor.x < MAP_W then
+                    state.cursor.x = state.cursor.x + 1
+                elseif key == keys.tab then
+                    state.mode = (state.mode == "view") and "build" or "view"
+                elseif state.mode == "build" then
+                     -- ... (Build controls existing) ... 
+                     if key == keys.w then 
+                         state.selectedBuildIdx = state.selectedBuildIdx - 1
+                         if state.selectedBuildIdx < 1 then state.selectedBuildIdx = #STRUCTURES end
+                    elseif key == keys.s then 
+                         state.selectedBuildIdx = state.selectedBuildIdx + 1
+                         if state.selectedBuildIdx > #STRUCTURES then state.selectedBuildIdx = 1 end
+                    elseif key == keys.enter then
+                         -- Place logic (from before)
+                         local bDef = STRUCTURES[state.selectedBuildIdx]
+                         local valid, reason = canPlace(bDef, state.cursor.x, state.cursor.y)
+                         if valid then
+                             for res, amt in pairs(bDef.cost) do state.resources[res] = state.resources[res] - amt end
+                             table.insert(state.buildings, { 
+                                x=state.cursor.x, 
+                                y=state.cursor.y, 
+                                def=bDef, 
+                                lastTick=os.epoch("utc") 
+                             })
+                         end
+                    end
+                end
+                
+                -- Camera Follow
+                state.camera:centerOn(state.cursor.x, state.cursor.y, MAP_W, MAP_H)
+            end
         end
     end
 end
