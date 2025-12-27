@@ -84,27 +84,22 @@ function system.updateAll(context)
     local function uiCallback(msg)
         term.setCursorPos(2, y + 1)
         term.clearLine()
+        if #msg > 48 then msg = msg:sub(1, 45) .. "..." end
         term.write(msg)
-        if #msg > 48 then -- Simple truncation
-             term.setCursorPos(2, y + 1)
-             term.write(msg:sub(1, 45) .. "...")
-        end
     end
     
-    -- We assume we are the 'client' package.
-    -- Ideally, we'd know our package type, but for a standard client, 'client' is safe.
-    -- If this was an ATM, it might be different, but system.lua is shared.
-    -- Maybe we can infer or pass it? For now, standard 'client' is the main use case for this menu.
-    
+    -- "client" package is the standard user OS suite definition
     local success = updater.install_package("client", uiCallback)
     if success then
-        updatesFound = true
-    else
-        term.setCursorPos(2, y + 1); term.setTextColor(colors.red); term.write("Update failed.")
+        term.setCursorPos(2, y + 1); term.clearLine(); term.write("System Update Complete.")
+        os.sleep(1)
+        term.setCursorPos(2, y + 2); term.setTextColor(colors.yellow); term.write("Reboot Recommended!")
         term.setTextColor(theme.text)
+    else
+        term.setCursorPos(2, y + 1); term.clearLine(); term.write("System Update Failed.")
     end
-
-    context.showMessage("Update Status", updatesFound and "System successfully updated!" or "All components are up to date.")
+    
+    context.showMessage("Update Check Done", "Update process finished.")
 end
 
 function system.run(context)
