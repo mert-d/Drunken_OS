@@ -1,13 +1,17 @@
 --[[
-    Invaders (Gem Standard v1.7)
+    Invaders (Gem Standard v1.8)
     by Gemini Gem
 
     Purpose:
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 7.1
--- ... rest of the floppa bird game code
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local sharedTheme = require("lib.theme")
+
+local currentVersion = 7.2
+-- ... rest of the invaders game code
 
 --==============================================================================
 -- Main Game Function (to be run inside pcall)
@@ -25,22 +29,17 @@ local function mainGame(...)
     local score, lives, gameOver, level = 0, 3, false, 1 -- **NEW**: Added level tracking
     local alienDirection, alienMoveTimer, alienDropTimer = 1, 0, 0
 
-    local hasColor = term.isColor and term.isColor()
-    local function safeColor(colorName, fallbackColor)
-        if hasColor and colors[colorName] ~= nil then return colors[colorName] end
-        return fallbackColor
-    end
-
+    -- Use shared theme colors
     local theme = {
-        bg = safeColor("black", colors.black),
-        windowBg = safeColor("darkGray", colors.gray),
-        title = safeColor("green", colors.lime),
-        prompt = safeColor("cyan", colors.cyan),
-        player = safeColor("lime", colors.white),
-        alien = safeColor("red", colors.white),
-        bullet = safeColor("yellow", colors.white),
-        bomb = safeColor("orange", colors.white),
-        text = safeColor("white", colors.white),
+        bg = sharedTheme.bg,
+        windowBg = sharedTheme.windowBg,
+        title = sharedTheme.game.target,
+        prompt = sharedTheme.prompt,
+        player = sharedTheme.game.player,
+        alien = sharedTheme.game.enemy,
+        bullet = sharedTheme.game.gold,
+        bomb = sharedTheme.game.damage,
+        text = sharedTheme.text,
     }
 
     local function getSafeSize()

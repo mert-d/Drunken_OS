@@ -1,12 +1,16 @@
 --[[
-    Drunken Doom (v2.0 PRO)
+    Drunken Doom (v2.1 PRO)
     by Antigravity & MuhendizBey
     Purpose:
     A pseudo-3D raycasting engine for Drunken OS.
     Navigate a 3D environment rendered in ASCII/Colors.
 ]]
 
-local gameVersion = 1.5
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local sharedTheme = require("lib.theme")
+
+local gameVersion = 1.6
 local saveFile = ".doom_save"
 
 -- Load arguments (username)
@@ -46,28 +50,25 @@ local moveSpeed = 4.0 -- Units per second
 local sprintMult = 2.0 -- Sprint multiplier
 local showMinimap = false -- Toggle with 'M'
 
--- Theme & Colors
-local hasColor = term.isColor and term.isColor()
-local function safeColor(c, f) return (hasColor and colors[c]) and colors[c] or f end
-
--- Color mapping for term.blit
-local colorToBlit = {
+-- Color mapping for term.blit (use from shared theme)
+local colorToBlit = sharedTheme.colorToBlit or {
     [colors.white] = "0", [colors.orange] = "1", [colors.magenta] = "2", [colors.lightBlue] = "3",
     [colors.yellow] = "4", [colors.lime] = "5", [colors.pink] = "6", [colors.gray] = "7",
     [colors.lightGray] = "8", [colors.cyan] = "9", [colors.purple] = "a", [colors.blue] = "b",
     [colors.brown] = "c", [colors.green] = "d", [colors.red] = "e", [colors.black] = "f"
 }
 
+-- Use shared theme colors
 local theme = {
-    bg = colors.black,
-    wall_near = colors.white,
-    wall_mid = colors.lightGray,
-    wall_far = colors.gray,
-    floor = colors.brown,
-    ceiling = colors.blue,
-    text = colors.yellow,
-    minimap_wall = colors.white,
-    minimap_player = colors.red,
+    bg = sharedTheme.bg,
+    wall_near = sharedTheme.text,
+    wall_mid = sharedTheme.game.floor,
+    wall_far = sharedTheme.game.wall,
+    floor = sharedTheme.game.box,
+    ceiling = sharedTheme.highlightBg,
+    text = sharedTheme.game.gold,
+    minimap_wall = sharedTheme.text,
+    minimap_player = sharedTheme.game.enemy,
 }
 
 local function getMapChar(x, y)

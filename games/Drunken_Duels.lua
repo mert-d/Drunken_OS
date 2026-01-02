@@ -1,5 +1,5 @@
 --[[
-    Drunken Duels (v1.0)
+    Drunken Duels (v1.1)
     by Gemini Gem
 
     Purpose:
@@ -7,7 +7,11 @@
     Challenge a friend over Rednet and battle for dominance!
 ]]
 
-local gameVersion = 2.1
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local sharedTheme = require("lib.theme")
+
+local gameVersion = 2.2
 local P2P_Socket = require("lib.p2p_socket")
 local saveFile = ".duels_save"
 
@@ -67,21 +71,18 @@ local function mainGame(...)
     local socket = P2P_Socket.new(gameName, gameVersion, "DrunkenDuels_Game")
     local isSpectator = false
 
-    -- Theme & Colors
-    local hasColor = term.isColor and term.isColor()
-    local function safeColor(c, f) return (hasColor and colors[c]) and colors[c] or f end
-
+    -- Use shared theme colors
     local theme = {
-        bg = colors.black,
-        text = colors.white,
-        border = colors.lightGray,
-        player = safeColor("lime", colors.white),
-        opponent = safeColor("red", colors.white),
-        header = safeColor("blue", colors.gray),
-        hp = colors.red,
-        en = colors.blue,
-        charge = colors.yellow,
-        active = colors.cyan
+        bg = sharedTheme.bg,
+        text = sharedTheme.text,
+        border = sharedTheme.game.floor,
+        player = sharedTheme.game.energy,
+        opponent = sharedTheme.game.enemy,
+        header = sharedTheme.highlightBg,
+        hp = sharedTheme.game.damage,
+        en = sharedTheme.highlightBg,
+        charge = sharedTheme.game.gold,
+        active = sharedTheme.prompt
     }
 
     local particles = {}

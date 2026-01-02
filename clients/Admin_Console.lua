@@ -4,6 +4,10 @@
     Verified Authorization required.
 ]]
 
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local utils = require("lib.utils")
+
 local args = {...}
 local username = args[1]
 local adminServerId = tonumber(args[2])
@@ -34,26 +38,8 @@ local function drawWindow(title)
     term.setTextColor(colors.white)
 end
 
-local function wordWrap(text, width)
-    local lines = {}
-    for line in text:gmatch("[^\n]+") do
-        if #line <= width then
-            table.insert(lines, line)
-        else
-            local currentLine = ""
-            for word in line:gmatch("[^%s]+") do
-                if #currentLine + #word + 1 > width then
-                    table.insert(lines, currentLine)
-                    currentLine = word
-                else
-                    currentLine = currentLine == "" and word or (currentLine .. " " .. word)
-                end
-            end
-            table.insert(lines, currentLine)
-        end
-    end
-    return lines
-end
+-- Use shared wordWrap from lib/utils
+local wordWrap = utils.wordWrap
 
 drawWindow("Remote Admin Console")
 local history = {}

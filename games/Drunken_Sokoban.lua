@@ -1,5 +1,5 @@
 --[[
-    Drunken Sokoban (v1.0)
+    Drunken Sokoban (v1.1)
     by Gemini Gem
 
     Purpose:
@@ -7,7 +7,11 @@
     Push all crates onto the target spots to win!
 ]]
 
-local gameVersion = 1.2
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local sharedTheme = require("lib.theme")
+
+local gameVersion = 1.3
 
 local function mainGame(...)
     local args = {...}
@@ -16,22 +20,19 @@ local function mainGame(...)
     local gameName = "DrunkenSokoban"
     local arcadeServerId = nil
 
-    -- Theme & Colors
-    local hasColor = term.isColor and term.isColor()
-    local function safeColor(c, f) return (hasColor and colors[c]) and colors[c] or f end
-
+    -- Use shared theme colors
     local theme = {
-        bg = colors.black,
-        text = colors.white,
-        border = colors.cyan,
-        player = safeColor("yellow", colors.white),
-        box = safeColor("orange", colors.brown),
-        target = safeColor("lime", colors.green),
-        wall = safeColor("gray", colors.lightGray),
-        boxOnTarget = safeColor("green", colors.lime),
-        highlightBg = colors.blue,
-        highlightText = colors.white,
-        prompt = colors.yellow,
+        bg = sharedTheme.bg,
+        text = sharedTheme.text,
+        border = sharedTheme.prompt,
+        player = sharedTheme.game.gold,
+        box = sharedTheme.game.box,
+        target = sharedTheme.game.target,
+        wall = sharedTheme.game.wall,
+        boxOnTarget = sharedTheme.game.energy,
+        highlightBg = sharedTheme.highlightBg,
+        highlightText = sharedTheme.highlightText,
+        prompt = sharedTheme.game.gold,
     }
 
     -- Level Data (Simple 1st Level)

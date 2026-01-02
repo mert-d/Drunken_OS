@@ -1,5 +1,5 @@
 --[[
-    Drunken Dungeons (v1.0)
+    Drunken Dungeons (v1.1)
     by Gemini Gem & MuhendizBey
 
     Purpose:
@@ -7,12 +7,16 @@
     Explore procedural dungeons, fight monsters, and collect gold.
 ]]
 
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local sharedTheme = require("lib.theme")
+
 local P2P_Socket = require("lib.p2p_socket")
-local gameVersion = 2.2 -- Version: 2.2
+local gameVersion = 2.3 -- Version: 2.3
 local saveFile = ".dungeon_save"
 
--- Color mapping for term.blit
-local colorToBlit = {
+-- Color mapping for term.blit (use from shared theme)
+local colorToBlit = sharedTheme.colorToBlit or {
     [colors.white] = "0", [colors.orange] = "1", [colors.magenta] = "2", [colors.lightBlue] = "3",
     [colors.yellow] = "4", [colors.lime] = "5", [colors.pink] = "6", [colors.gray] = "7",
     [colors.lightGray] = "8", [colors.cyan] = "9", [colors.purple] = "a", [colors.blue] = "b",
@@ -62,19 +66,16 @@ local function mainGame(...)
     local MAP_W = math.min(w - 6, 40)
     local MAP_H = math.min(h - 9, 15)
 
-    -- Theme & Colors
-    local hasColor = term.isColor and term.isColor()
-    local function safeColor(c, f) return (hasColor and colors[c]) and colors[c] or f end
-
+    -- Use shared theme colors
     local theme = {
-        bg = colors.black,
-        wall = safeColor("gray", colors.white),
-        floor = safeColor("lightGray", colors.gray),
-        player = safeColor("yellow", colors.white),
-        enemy = safeColor("red", colors.white),
-        gold = safeColor("gold", colors.white),
-        text = colors.white,
-        border = colors.cyan,
+        bg = sharedTheme.bg,
+        wall = sharedTheme.game.wall,
+        floor = sharedTheme.game.floor,
+        player = sharedTheme.game.gold,
+        enemy = sharedTheme.game.enemy,
+        gold = sharedTheme.game.gold,
+        text = sharedTheme.text,
+        border = sharedTheme.prompt,
     }
 
     -- Game Constants

@@ -1,6 +1,45 @@
 local utils = {}
-utils._VERSION = 1.0
+utils._VERSION = 1.1
 local theme = require("lib.theme")
+
+---
+-- Returns a color that's safe to use on the current terminal.
+-- Falls back to a specified color on non-color terminals.
+-- @param colorName string: The color name (e.g., "lime", "red").
+-- @param fallback number: The fallback color value for non-color terminals.
+-- @return number: The safe color value to use.
+function utils.safeColor(colorName, fallback)
+    local hasColor = term.isColor and term.isColor()
+    if hasColor and colors[colorName] ~= nil then 
+        return colors[colorName] 
+    end
+    return fallback or colors.white
+end
+
+---
+-- Displays a simple loading indicator with a message.
+-- Can be used while waiting for network operations.
+-- @param message string: The loading message to display.
+-- @param context table: Optional context with theme/term overrides.
+function utils.showLoading(message, context)
+    local w, h = term.getSize()
+    local t = (context and context.theme) or theme
+    
+    term.setBackgroundColor(t.bg or colors.black)
+    term.clear()
+    
+    -- Title bar
+    term.setBackgroundColor(t.titleBg or colors.blue)
+    term.setCursorPos(1, 1)
+    term.clearLine()
+    
+    -- Message centered
+    term.setBackgroundColor(t.bg or colors.black)
+    term.setTextColor(t.text or colors.white)
+    local displayMsg = message or "Loading..."
+    term.setCursorPos(math.floor((w - #displayMsg) / 2) + 1, math.floor(h / 2))
+    term.write(displayMsg)
+end
 
 function utils.drawWindow(title, context)
     local w, h = term.getSize()

@@ -54,6 +54,10 @@ local ChatModule = require("servers.modules.chat")
 local AuthModule = require("servers.modules.auth")
 local MailModule = require("servers.modules.mail")
 
+-- Load shared libraries
+local DB = require("lib.db")
+local utils = require("lib.utils")
+
 --==============================================================================
 -- Configuration & State
 --==============================================================================
@@ -104,8 +108,14 @@ local dbPointers = {
     [GAMES_CODE_DB] = function() return gameCode end
 }
 
+-- Dirty tracker will be created after logActivity is defined
+local dbTracker = nil
 local function queueSave(dbPath)
-    dbDirty[dbPath] = true
+    if dbTracker then
+        dbTracker.queueSave(dbPath)
+    else
+        dbDirty[dbPath] = true
+    end
 end
 
 --==============================================================================
@@ -123,38 +133,8 @@ local theme = {
     statusBarText = hasColor and colors.white or colors.white
 }
 
----
--- Wraps long lines of text to fit within a specified width.
--- Handles both explicit newlines and long strings of words.
--- @param text The string to wrap.
--- @param width The maximum width of each line.
--- @return {table} A table of strings, each representing a wrapped line.
-local function wordWrap(text, width)
-    local lines = {}
-    -- Iterate through each explicit line in the text
-    for line in text:gmatch("[^\n]+") do
-        if #line <= width then
-            -- Line already fits, just add it
-            table.insert(lines, line)
-        else
-            -- Line is too long, wrap it by words
-            local currentLine = ""
-            for word in line:gmatch("[^%s]+") do
-                if #currentLine + #word + 1 > width then
-                    -- Adding this word would exceed width, start a new line
-                    table.insert(lines, currentLine)
-                    currentLine = word
-                else
-                    -- Append word to the current line
-                    currentLine = currentLine == "" and word or (currentLine .. " " .. word)
-                end
-            end
-            -- Add the last piece of the line
-            table.insert(lines, currentLine)
-        end
-    end
-    return lines
-end
+-- Use shared wordWrap from lib/utils
+local wordWrap = utils.wordWrap
 
 local function parseVersion(content)
     if not content then return 0 end
@@ -292,80 +272,24 @@ end
 -- Data Persistence Functions
 --==============================================================================
 
----
--- Saves a Lua table to a file using an atomic write pattern to prevent corruption.
--- @param path The file path to save to.
--- @param data The table to save.
--- @return {boolean} True on success, false on failure.
+-- Use shared database functions from lib/db
 local function saveTableToFile(path, data)
-    local tempPath = path .. ".tmp"
-    local file, err_open = fs.open(tempPath, "w")
-    if not file then
-        logActivity("Could not open temporary file " .. tempPath .. ": " .. tostring(err_open), true)
-        return false
-    end
-
-    local success, err_write = pcall(function()
-        file.write(textutils.serialize(data))
-        file.close()
-    end)
-
-    if not success then
-        logActivity("Failed to write to temporary file " .. tempPath .. ': ' .. tostring(err_write), true)
-        fs.delete(tempPath) -- Clean up the failed temp file
-        return false
-    end
-
-    -- This section makes the write atomic.
-    if fs.exists(path) then
-        fs.delete(path)
-    end
-    fs.move(tempPath, path)
-    
-    return true
+    return DB.saveTableToFile(path, data, logActivity)
 end
 
----
--- Loads a Lua table from a file, with recovery logic for interrupted saves.
--- @param path The file path to load from.
--- @return {table} The loaded table, or an empty table on failure.
 local function loadTableFromFile(path)
-    local tempPath = path .. ".tmp"
-    -- Recovery: If the main file is gone but the temp file exists, the last write was interrupted after delete but before move.
-    if not fs.exists(path) and fs.exists(tempPath) then
-        logActivity("Found incomplete save, restoring from " .. tempPath, false)
-        fs.move(tempPath, path)
-    end
-
-    if fs.exists(path) then
-        local file, err_open = fs.open(path, "r")
-        if file then
-            local data = file.readAll()
-            file.close()
-            local success, result = pcall(textutils.unserialize, data)
-            if success and type(result) == "table" then
-                return result
-            else
-                logActivity("Corrupted data in " .. path .. ". A new file will be created.", true)
-            end
-        else
-            logActivity("Could not open " .. path .. " for reading: " .. tostring(err_open), true)
-        end
-    end
-    return {}
+    return DB.loadTableFromFile(path, logActivity)
 end
 
 local function persistenceLoop()
+    -- Initialize tracker now that logActivity is defined
+    if not dbTracker then
+        dbTracker = DB.createDirtyTracker(dbPointers, logActivity)
+    end
+    
     while true do
         sleep(30) -- Save every 30 seconds if dirty
-        for path, isDirty in pairs(dbDirty) do
-            if isDirty and dbPointers[path] then
-                logActivity("Background saving " .. path .. "...")
-                if saveTableToFile(path, dbPointers[path]()) then
-                    dbDirty[path] = false
-                end
-            end
-        end
+        dbTracker.backgroundSave()
     end
 end
 

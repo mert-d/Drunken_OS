@@ -1,5 +1,5 @@
 --[[
-    Snake (v1.1)
+    Snake (v1.2)
     by MuhendizBey
 
     Purpose:
@@ -7,7 +7,11 @@
     Updated for auto-updater compatibility.
 ]]
 
-local currentVersion = 7.1
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local sharedTheme = require("lib.theme")
+
+local currentVersion = 7.2
 
 --==============================================================================
 -- Main Game Function (to be run inside pcall)
@@ -28,18 +32,13 @@ local function mainGame(...)
 
     local snake, fruit, direction, score, gameOver = {}, {}, {1, 0}, 0, false
 
-    local hasColor = term.isColor and term.isColor()
-    local function safeColor(colorName, fallbackColor)
-        if hasColor and colors[colorName] ~= nil then return colors[colorName] end
-        return fallbackColor
-    end
-
+    -- Use shared theme colors
     local theme = {
-        bg = safeColor("black", colors.black),
-        windowBg = safeColor("darkGray", colors.gray),
-        snake = safeColor("lime", colors.white),
-        fruit = safeColor("red", colors.white),
-        text = safeColor("white", colors.white),
+        bg = sharedTheme.bg,
+        windowBg = sharedTheme.windowBg,
+        snake = sharedTheme.game.snake,
+        fruit = sharedTheme.game.fruit,
+        text = sharedTheme.text,
     }
 
     local function getSafeSize()

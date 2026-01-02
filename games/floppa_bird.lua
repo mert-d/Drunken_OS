@@ -1,12 +1,16 @@
 --[[
-    Floppa Bird (Gem Standard v1.6)
+    Floppa Bird (Gem Standard v1.7)
     by Gemini Gem
 
     Purpose:
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 7.1
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local sharedTheme = require("lib.theme")
+
+local currentVersion = 7.2
 -- ... rest of the floppa bird game code
 --==============================================================================
 -- Main Game Function (to be run inside pcall)
@@ -23,20 +27,15 @@ local function mainGame(...)
     local score, gameOver = 0, false
     local gravity, flapStrength, pipeSpeed = 0.5, -2, 1
 
-    local hasColor = term.isColor and term.isColor()
-    local function safeColor(colorName, fallbackColor)
-        if hasColor and colors[colorName] ~= nil then return colors[colorName] end
-        return fallbackColor
-    end
-
+    -- Use shared theme colors
     local theme = {
-        bg = safeColor("black", colors.black),
-        windowBg = safeColor("darkGray", colors.gray),
-        title = safeColor("green", colors.lime),
-        prompt = safeColor("cyan", colors.cyan),
-        player = safeColor("yellow", colors.white),
-        pipe = safeColor("green", colors.white),
-        text = safeColor("white", colors.white),
+        bg = sharedTheme.bg,
+        windowBg = sharedTheme.windowBg,
+        title = sharedTheme.game.target,
+        prompt = sharedTheme.prompt,
+        player = sharedTheme.game.gold,
+        pipe = sharedTheme.game.target,
+        text = sharedTheme.text,
     }
 
     local function getSafeSize()

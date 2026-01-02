@@ -1,5 +1,5 @@
 --[[
-    Drunken Pong (v1.0)
+    Drunken Pong (v1.1)
     by Gemini Gem
 
     Purpose:
@@ -7,7 +7,11 @@
     Battle a friend over Rednet in a classic game of Pong!
 ]]
 
-local gameVersion = 2.1
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local sharedTheme = require("lib.theme")
+
+local gameVersion = 2.2
 local P2P_Socket = require("lib.p2p_socket")
 local saveFile = ".pong_save"
 
@@ -33,19 +37,16 @@ local function mainGame(...)
     local socket = P2P_Socket.new(gameName, gameVersion, "DrunkenPong_Game")
     local isHost = false
 
-    -- Theme & Colors
-    local hasColor = term.isColor and term.isColor()
-    local function safeColor(c, f) return (hasColor and colors[c]) and colors[c] or f end
-
+    -- Use shared theme colors
     local theme = {
-        bg = colors.black,
-        text = colors.white,
-        border = safeColor("cyan", colors.blue),
-        player = safeColor("lime", colors.white),
-        opponent = safeColor("red", colors.white),
-        ball = safeColor("yellow", colors.white),
-        trail = safeColor("gray", colors.lightGray),
-        powerup = safeColor("purple", colors.magenta)
+        bg = sharedTheme.bg,
+        text = sharedTheme.text,
+        border = sharedTheme.prompt,
+        player = sharedTheme.game.energy,
+        opponent = sharedTheme.game.enemy,
+        ball = sharedTheme.game.gold,
+        trail = sharedTheme.game.wall,
+        powerup = sharedTheme.game.charge
     }
 
     -- Visual Effects State

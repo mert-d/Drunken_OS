@@ -1,5 +1,5 @@
 --[[
-    Drunken Sweeper (v1.0)
+    Drunken Sweeper (v1.1)
     by Gemini Gem
 
     Purpose:
@@ -7,7 +7,11 @@
     Clear the board without hitting any mines!
 ]]
 
-local gameVersion = 1.1
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local sharedTheme = require("lib.theme")
+
+local gameVersion = 1.2
 
 local function mainGame(...)
     local args = {...}
@@ -17,19 +21,16 @@ local function mainGame(...)
     local gameName = "DrunkenSweeper"
     local arcadeServerId = nil
 
-    -- Theme & Colors
-    local hasColor = term.isColor and term.isColor()
-    local function safeColor(c, f) return (hasColor and colors[c]) and colors[c] or f end
-
+    -- Use shared theme colors
     local theme = {
-        bg = colors.black,
-        text = colors.white,
-        border = colors.cyan,
-        hidden = safeColor("gray", colors.lightGray),
-        revealed = safeColor("lightGray", colors.gray),
-        mine = safeColor("red", colors.white),
-        flag = safeColor("orange", colors.white),
-        cursor = safeColor("yellow", colors.white),
+        bg = sharedTheme.bg,
+        text = sharedTheme.text,
+        border = sharedTheme.prompt,
+        hidden = sharedTheme.game.wall,
+        revealed = sharedTheme.game.floor,
+        mine = sharedTheme.game.enemy,
+        flag = sharedTheme.game.charge,
+        cursor = sharedTheme.game.gold,
     }
 
     local numColors = {

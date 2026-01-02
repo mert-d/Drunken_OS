@@ -1,12 +1,16 @@
 --[[
-    Pocket Tetris (Gem Standard v1.8)
+    Pocket Tetris (Gem Standard v1.9)
     by Gemini Gem
 
     Purpose:
     Updated for Drunken OS v12.0 distribution.
 ]]
 
-local currentVersion = 7.1
+-- Load shared libraries
+package.path = "/?.lua;" .. package.path
+local sharedTheme = require("lib.theme")
+
+local currentVersion = 7.2
 -- ... rest of the tetris game code
 
 --==============================================================================
@@ -29,22 +33,15 @@ local boardWidth, boardHeight = 10, 18
 local score, level, linesCleared, gameOver = 0, 1, 0, false
 local currentPiece, nextPiece = nil, nil
 
--- A check to see if the computer supports color.
-local hasColor = term.isColor and term.isColor()
-local function safeColor(colorName, fallbackColor)
-    if hasColor and colors[colorName] ~= nil then return colors[colorName] end
-    return fallbackColor
-end
-
--- The color theme, consistent with the mail client.
+-- Use shared theme colors
 local theme = {
-    bg = safeColor("black", colors.black),
-    text = safeColor("white", colors.white),
-    windowBg = safeColor("darkGray", colors.gray),
-    title = safeColor("green", colors.lime),
-    prompt = safeColor("cyan", colors.cyan),
-    statusBarBg = safeColor("gray", colors.lightGray),
-    statusBarText = safeColor("white", colors.white),
+    bg = sharedTheme.bg,
+    text = sharedTheme.text,
+    windowBg = sharedTheme.windowBg,
+    title = sharedTheme.game.target,
+    prompt = sharedTheme.prompt,
+    statusBarBg = sharedTheme.statusBarBg,
+    statusBarText = sharedTheme.statusBarText,
 }
 
 -- Tetromino shapes and colors

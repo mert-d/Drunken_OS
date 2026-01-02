@@ -13,6 +13,10 @@
 --==============================================================================
 package.path = "/?.lua;" .. package.path
 
+-- Load shared libraries
+local DB = require("lib.db")
+local sharedTheme = require("lib.theme")
+
 local GAMES_DB = "games.db"
 local SCORES_DB = "scores.db"
 local LOG_FILE = "arcade.log"
@@ -50,24 +54,13 @@ local function queueSave(dbPath)
     dbDirty[dbPath] = true
 end
 
+-- Use shared database functions from lib/db
 local function saveTableToFile(path, data)
-    local f = fs.open(path, "w")
-    if f then
-        f.write(textutils.serialize(data))
-        f.close()
-        return true
-    end
-    return false
+    return DB.saveTableToFile(path, data)
 end
 
 local function loadTableFromFile(path)
-    if fs.exists(path) then
-        local f = fs.open(path, "r")
-        local data = textutils.unserialize(f.readAll())
-        f.close()
-        return data or {}
-    end
-    return {}
+    return DB.loadTableFromFile(path)
 end
 
 local function logActivity(msg, isErr)
@@ -569,17 +562,11 @@ local function main()
                 sleep(60)
             end,
             function()
-                -- Persistence Loop
+                -- Persistence Loop using DB tracker
+                local tracker = DB.createDirtyTracker(dbPointers, logActivity)
                 while true do
                     sleep(30)
-                    for path, isDirty in pairs(dbDirty) do
-                        if isDirty and dbPointers[path] then
-                            logActivity("Background saving " .. path .. "...")
-                            if saveTableToFile(path, dbPointers[path]()) then
-                                dbDirty[path] = false
-                            end
-                        end
-                    end
+                    tracker.backgroundSave()
                 end
             end
         )

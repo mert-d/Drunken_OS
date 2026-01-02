@@ -18,6 +18,10 @@ local programDir = fs.getDir(shell.getRunningProgram())
 package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
 local crypto = require("lib.sha1_hmac")
 
+-- Load shared libraries
+local DB = require("lib.db")
+local sharedTheme = require("lib.theme")
+
 --==============================================================================
 -- Configuration & State
 --==============================================================================
@@ -62,16 +66,13 @@ local AUDIT_SECRET_KEY = nil
 -- UI & Theme Configuration
 --==============================================================================
 
-local hasColor = term.isColor and term.isColor()
-local function safeColor(colorName, fallbackColor)
-    if hasColor and colors[colorName] ~= nil then return colors[colorName] end
-    return fallbackColor
-end
+-- Use safeColor from shared theme
+local safeColor = sharedTheme.safeColor
 
 local theme = {
     bg = safeColor("black", colors.black),
     text = safeColor("white", colors.white),
-    windowBg = safeColor("darkGray", colors.gray),
+    windowBg = safeColor("gray", colors.gray),
     title = safeColor("lightBlue", colors.lightBlue),
     prompt = safeColor("cyan", colors.cyan),
     statusBarBg = safeColor("gray", colors.lightGray),
@@ -268,77 +269,23 @@ end
 -- Data Persistence & Core Logic
 --==============================================================================
 
----
--- Performs atomic write of a table to a JSON file.
--- Uses a temporary file and 'fs.move' to ensure data integrity during power failures.
--- @param path The target file path.
--- @param data The table to serialize.
--- @return {boolean} Success status.
+-- Use shared database functions from lib/db (JSON variant for BankServer)
 local function saveTableToFile(path, data)
-    local tempPath = path .. ".tmp"
-    local file, err_open = fs.open(tempPath, "w")
-    if not file then
-        logActivity("Could not open temporary file " .. tempPath .. ": " .. tostring(err_open), true)
-        return false
-    end
-
-    local success, err_write = pcall(function()
-        file.write(textutils.serializeJSON(data))
-        file.close()
-    end)
-
-    if not success then
-        logActivity("Failed to write to temporary file " .. tempPath .. ': ' .. tostring(err_write), true)
-        fs.delete(tempPath) -- Clean up the failed temp file
-        return false
-    end
-
-    -- This section makes the write atomic.
-    if fs.exists(path) then
-        fs.delete(path)
-    end
-    fs.move(tempPath, path)
-    
-    return true
+    return DB.saveTableToFileJSON(path, data, logActivity)
 end
 
 local function loadTableFromFile(path)
-    local tempPath = path .. ".tmp"
-    -- Recovery: If the main file is gone but the temp file exists, the last write was interrupted after delete but before move.
-    if not fs.exists(path) and fs.exists(tempPath) then
-        logActivity("Found incomplete save, restoring from " .. tempPath, false)
-        fs.move(tempPath, path)
-    end
-
-    if fs.exists(path) then
-        local file, err_open = fs.open(path, "r")
-        if file then
-            local data = file.readAll()
-            file.close()
-            local success, result = pcall(textutils.unserializeJSON, data)
-            if success and type(result) == "table" then
-                return result
-            else
-                logActivity("Corrupted data in " .. path .. ". A new file will be created.", true)
-            end
-        else
-            logActivity("Could not open " .. path .. " for reading: " .. tostring(err_open), true)
-        end
-    end
-    return {}
+    return DB.loadTableFromFileJSON(path, logActivity)
 end
 
 local function persistenceLoop()
+    local tracker = DB.createDirtyTracker(dbPointers, logActivity)
+    -- Replace global queueSave with tracker version
+    _G.bankQueueSave = tracker.queueSave
+    
     while true do
         sleep(30)
-        for path, isDirty in pairs(dbDirty) do
-            if isDirty and dbPointers[path] then
-                logActivity("Background saving DB: " .. path)
-                if saveTableToFile(path, dbPointers[path]()) then
-                    dbDirty[path] = false
-                end
-            end
-        end
+        tracker.backgroundSave()
     end
 end
 
