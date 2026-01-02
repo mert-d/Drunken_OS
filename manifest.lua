@@ -6,7 +6,7 @@
 ]]
 
 return {
-    version = 1.1,
+    version = 1.2,
 
     -- Files common to almost all client-side installations
     shared = {
@@ -32,6 +32,9 @@ return {
                 "servers/modules/auth.lua",
                 "servers/modules/mail.lua",
                 "lib/sha1_hmac.lua",
+                "lib/db.lua",
+                "lib/utils.lua",
+                "lib/theme.lua",
                 "clients/Admin_Console.lua",
                 -- HyperAuthClient Dependencies
                 "HyperAuthClient/config.lua",
@@ -68,7 +71,9 @@ return {
             main = "servers/Drunken_OS_BankServer.lua",
             files = {
                 "servers/Drunken_OS_BankServer.lua",
-                "lib/sha1_hmac.lua"
+                "lib/sha1_hmac.lua",
+                "lib/db.lua",
+                "lib/theme.lua"
             },
             include_shared = false,
             needs_setup = true,
@@ -163,7 +168,9 @@ return {
              main = "servers/Drunken_Arcade_Server.lua",
              files = {
                 "servers/Drunken_Arcade_Server.lua",
-                "lib/sha1_hmac.lua"
+                "lib/sha1_hmac.lua",
+                "lib/db.lua",
+                "lib/theme.lua"
              },
              include_shared = false
         }
