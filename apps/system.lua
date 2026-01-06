@@ -6,7 +6,7 @@
 local updater = require("lib.updater")
 local theme = require("lib.theme")
 local system = {}
-local appVersion = 1.8 -- Bump version for theme fix
+local appVersion = 1.9 -- Game-only updates, system updates at boot
 
 local function getParent(context)
     return context.parent
@@ -33,11 +33,11 @@ function system.changeNickname(context)
 end
 
 function system.updateAll(context)
-    context.drawWindow("System Update")
+    context.drawWindow("Game Updates")
     local y = 4
     local updatesFound = false
     
-    -- 1. Check for Arcade Game Updates
+    -- Only check for Arcade Game Updates (System updates happen at boot)
     term.setCursorPos(2, y); term.write("Checking Arcade Server...")
     local arcadeServer = rednet.lookup("ArcadeGames", "arcade.server")
     if arcadeServer then
@@ -47,6 +47,7 @@ function system.updateAll(context)
             local gamesDir = fs.combine(context.programDir, "games")
             if not fs.exists(gamesDir) then fs.makeDir(gamesDir) end
             
+            y = y + 1
             for filename, serverVer in pairs(response.versions) do
                 local cleanName = filename:gsub("^games/", "")
                 local path = fs.combine(gamesDir, cleanName)
@@ -62,7 +63,9 @@ function system.updateAll(context)
                 
                 if serverVer > localVer then
                     updatesFound = true
-                    term.setCursorPos(2, y + 1); term.clearLine(); term.write("Updating Game: " .. cleanName)
+                    term.setCursorPos(2, y); term.clearLine()
+                    term.write("Updating: " .. cleanName)
+                    y = y + 1
                     rednet.send(arcadeServer, {type = "get_game_update", filename = filename}, "ArcadeGames")
                     local _, update = rednet.receive("ArcadeGames", 5)
                     if update and update.code then
@@ -71,35 +74,26 @@ function system.updateAll(context)
                     end
                 end
             end
+            
+            if not updatesFound then
+                term.setCursorPos(2, y); term.write("All games are up to date!")
+            else
+                term.setCursorPos(2, y); term.write("Game updates complete!")
+            end
+        else
+            term.setCursorPos(2, y + 1); term.write("No response from Arcade Server.")
         end
     else
         term.setCursorPos(2, y); term.setTextColor(colors.red); term.write("Arcade Server offline.")
-        term.setTextColor(theme.text); y = y + 1
-    end
-
-    -- 2. Check for System Updates via Manifest (Mainframe)
-    y = y + 2
-    term.setCursorPos(2, y); term.write("Checking System Files...")
-    
-    local function uiCallback(msg)
-        term.setCursorPos(2, y + 1)
-        term.clearLine()
-        if #msg > 48 then msg = msg:sub(1, 45) .. "..." end
-        term.write(msg)
-    end
-    
-    -- "client" package is the standard user OS suite definition
-    local success = updater.install_package("client", uiCallback)
-    if success then
-        term.setCursorPos(2, y + 1); term.clearLine(); term.write("System Update Complete.")
-        os.sleep(1)
-        term.setCursorPos(2, y + 2); term.setTextColor(colors.yellow); term.write("Reboot Recommended!")
         term.setTextColor(theme.text)
-    else
-        term.setCursorPos(2, y + 1); term.clearLine(); term.write("System Update Failed.")
     end
     
-    context.showMessage("Update Check Done", "Update process finished.")
+    y = y + 2
+    term.setCursorPos(2, y); term.setTextColor(colors.gray)
+    term.write("Note: System updates happen at boot.")
+    term.setTextColor(theme.text)
+    
+    sleep(2)
 end
 
 function system.run(context)

@@ -23,7 +23,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 16.0
+local currentVersion = 16.1
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -695,10 +695,7 @@ local function mainMenu()
                 end
             end
         end
-    end
 end
-
-    end
 end
 
 -- Helper to keep track of location (Stubbed for now)
