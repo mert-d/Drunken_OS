@@ -23,7 +23,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 16.3
+local currentVersion = 16.4
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -485,7 +485,6 @@ local function main()
             -- Helper to keep track of location (Stubbed for now)
 local currentApp = nil
 local running = true
-local currentVersion = "1.0.0"
 local favorites = {} -- Loaded from disk
 
 -- Notification State
@@ -597,11 +596,11 @@ local function mainMenu()
         -- Separator?
         
         -- B. Core Folders
-        table.insert(mainOptions, { label = "📂 All Apps", isFolder = true })
-        table.insert(mainOptions, { label = "🛍️ App Store", path = "apps/store.lua", isApp = true }) -- Quick Access?
-        table.insert(mainOptions, { label = "⚙️ System", path = "apps/system.lua", isApp = true })
-        table.insert(mainOptions, { label = "🚪 Shutdown", action = os.shutdown })
-        table.insert(mainOptions, { label = "🔄 Reboot", action = os.reboot })
+        table.insert(mainOptions, { label = "[+] All Apps", isFolder = true })
+        table.insert(mainOptions, { label = "[S] App Store", path = "apps/store.lua", isApp = true })
+        table.insert(mainOptions, { label = "[*] System", path = "apps/system.lua", isApp = true })
+        table.insert(mainOptions, { label = "[X] Shutdown", action = os.shutdown })
+        table.insert(mainOptions, { label = "[R] Reboot", action = os.reboot })
 
         local selected = 1
         local inFolder = false
@@ -663,16 +662,15 @@ local function mainMenu()
                 if choice.action == "back" then
                     inFolder = false; selected = 1
                 elseif choice.isFolder then
-                    inFolder = choice.label:gsub("📂 ", ""); selected = 1
+                    inFolder = choice.label:gsub("%[%+%] ", ""); selected = 1
                 elseif choice.isApp then
-                    -- Run App
-                    local env = setmetatable({parent = context}, {__index = _G})
-                    local fn, err = loadfile(choice.path, "t", env)
+                    -- Run App with full environment including require
+                    local appPath = fs.combine(context.programDir or "", choice.path)
+                    if not fs.exists(appPath) then appPath = choice.path end
+                    
+                    local fn, err = loadfile(appPath)
                     if fn then
-                        -- Protect pcall
-                        local ok, err2 = pcall(function()
-                            if env.run then env.run(context) else fn(context) end
-                        end)
+                        local ok, err2 = pcall(fn, context)
                         if not ok then
                             context.showMessage("App Crash", err2)
                         end
