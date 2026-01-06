@@ -23,7 +23,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 16.1
+local currentVersion = 16.2
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -49,7 +49,7 @@ local utils -- Delayed require
 local wordWrap -- Delayed assign
 local printCentered -- Delayed assign
 
-local colorToBlit = theme.colorToBlit
+local colorToBlit -- Delayed assign (set after theme loads)
 
 -- Global OS State: Stores session info, server IDs, and user data.
 local state = {
@@ -122,14 +122,13 @@ end
 
 local function drawMenu(options, selected, startX, startY)
     local w, h = term.getSize()
-    local blit_text = {}
-    local blit_fg = {}
-    local blit_bg = {}
-
-    local fg_hex = colorToBlit[theme.text]
-    local bg_hex = colorToBlit[theme.bg]
-    local hfg_hex = colorToBlit[theme.highlightText]
-    local hbg_hex = colorToBlit[theme.highlightBg]
+    
+    -- Access colorToBlit from loaded theme
+    local blitMap = colorToBlit or (theme and theme.colorToBlit) or {}
+    local fg_hex = blitMap[theme.text] or "0"
+    local bg_hex = blitMap[theme.bg] or "f"
+    local hfg_hex = blitMap[theme.highlightText] or "f"
+    local hbg_hex = blitMap[theme.highlightBg] or "3"
 
     for i, opt in ipairs(options) do
         term.setCursorPos(startX, startY + i - 1)
@@ -447,6 +446,7 @@ local function main()
             -- Load shared libraries now that we know they exist
             if not theme then theme = require("lib.theme") end
             if not utils then utils = require("lib.utils") end
+            colorToBlit = theme.colorToBlit
             wordWrap = utils.wordWrap
             printCentered = utils.printCentered
 
