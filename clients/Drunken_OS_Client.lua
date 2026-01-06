@@ -23,7 +23,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 16.4
+local currentVersion = 16.5
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -664,21 +664,15 @@ local function mainMenu()
                 elseif choice.isFolder then
                     inFolder = choice.label:gsub("%[%+%] ", ""); selected = 1
                 elseif choice.isApp then
-                    -- Run App with full environment including require
-                    local appPath = fs.combine(context.programDir or "", choice.path)
-                    if not fs.exists(appPath) then appPath = choice.path end
-                    
-                    local fn, err = loadfile(appPath)
-                    if fn then
-                        local ok, err2 = pcall(fn, context)
-                        if not ok then
-                            context.showMessage("App Crash", err2)
-                        end
+                    -- Run App using app_loader which has proper environment
+                    local appName = choice.path:match("apps/(.+)%.lua$")
+                    if appName then
+                        state.appLoader.run(appName, context)
                     else
-                        context.showMessage("Load Error", err)
+                        context.showMessage("Error", "Invalid app path: " .. choice.path)
                     end
-                    -- Refresh favorites on return needed?
-                    break -- breaks inner loop, reloads outer loop (refresh favs)
+                    -- Refresh favorites on return
+                    break -- breaks inner loop, reloads outer loop
                 elseif choice.action then
                     choice.action()
                 end 
