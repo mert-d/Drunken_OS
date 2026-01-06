@@ -23,7 +23,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 16.2
+local currentVersion = 16.3
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -564,8 +564,7 @@ local function mainMenu()
     loadFavorites()
     
     while true do
-        theme.clear()
-        theme.drawTitleBar("Drunken OS " .. currentVersion)
+        drawWindow("Drunken OS v" .. currentVersion)
         
         -- Build Menu Options
         local menuItems = {}
@@ -609,8 +608,7 @@ local function mainMenu()
         
         -- Navigation Loop
         while true do
-            theme.clear()
-            theme.drawTitleBar("Drunken OS " .. version)
+            drawWindow("Drunken OS v" .. currentVersion)
             
             local currentList = mainOptions
             local viewingFolder = nil
