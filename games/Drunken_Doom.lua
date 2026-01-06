@@ -10,7 +10,7 @@
 package.path = "/?.lua;" .. package.path
 local sharedTheme = require("lib.theme")
 
-local gameVersion = 1.6
+local gameVersion = 1.7
 local saveFile = ".doom_save"
 
 -- Load arguments (username)
@@ -219,7 +219,7 @@ local function draw(score, hp, lastFrameTime)
 
     -- Sprite Rendering
     for _, obj in ipairs(objects) do
-        if obj.active then
+        if obj.active and obj.x and obj.y then
             local vecX = obj.x - playerX
             local vecY = obj.y - playerY
             local distance = math.sqrt(vecX*vecX + vecY*vecY)
@@ -468,7 +468,7 @@ local function main(...)
 
         -- AI & Collision
         for _, obj in ipairs(objects) do
-            if obj.active then
+            if obj.active and obj.x and obj.y then
                 if obj.pain and obj.pain > 0 then obj.pain = obj.pain - frameTime end
                 
                 local d = math.sqrt((obj.x-playerX)^2 + (obj.y-playerY)^2)

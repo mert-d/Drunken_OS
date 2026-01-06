@@ -12,7 +12,7 @@ package.path = "/?.lua;" .. package.path
 local sharedTheme = require("lib.theme")
 
 local P2P_Socket = require("lib.p2p_socket")
-local gameVersion = 2.3 -- Version: 2.3
+local gameVersion = 2.4 -- Version: 2.4
 local saveFile = ".dungeon_save"
 
 -- Color mapping for term.blit (use from shared theme)
@@ -552,15 +552,15 @@ end
             statsBoxY = 5
         end
 
-        -- Stats Box
+        -- Stats Box (ASCII compatible)
         term.setCursorPos(math.floor(w/2 - 10), statsBoxY)
-        term.setTextColor(colors.gray); term.write("╔═══════════════════╗")
+        term.setTextColor(colors.gray); term.write("+-------------------+")
         term.setCursorPos(math.floor(w/2 - 10), statsBoxY + 1)
-        term.write("║ "); term.setTextColor(theme.gold); term.write("Gold: " .. persist.gold); term.setCursorPos(math.floor(w/2 + 9), statsBoxY + 1); term.setTextColor(colors.gray); term.write("║")
+        term.write("| "); term.setTextColor(theme.gold); term.write("Gold: " .. persist.gold); term.setCursorPos(math.floor(w/2 + 9), statsBoxY + 1); term.setTextColor(colors.gray); term.write("|")
         term.setCursorPos(math.floor(w/2 - 10), statsBoxY + 2)
-        term.write("║ "); term.setTextColor(colors.cyan); term.write("Class: " .. (class or "None")); term.setCursorPos(math.floor(w/2 + 9), statsBoxY + 2); term.setTextColor(colors.gray); term.write("║")
+        term.write("| "); term.setTextColor(colors.cyan); term.write("Class: " .. (class or "None")); term.setCursorPos(math.floor(w/2 + 9), statsBoxY + 2); term.setTextColor(colors.gray); term.write("|")
         term.setCursorPos(math.floor(w/2 - 10), statsBoxY + 3)
-        term.write("╚═══════════════════╝")
+        term.write("+-------------------+")
 
         -- Options
         local opts = {
