@@ -1153,20 +1153,16 @@ function adminCommands.makecard(args)
 
     -- The rest of the function remains the same.
     -- This creates the hidden data file on the card.
-    -- NOTE: This assumes you have a way to get the user's password hash.
-    -- For now, we'll create the card, but you may need a separate
-    -- "set password" step if the hash isn't available here.
     if not accounts[user] then
         print("Warning: User does not have a bank account yet. Creating one.")
         accounts[user] = {
-            -- You need a secure way to get this hash. Placeholder for now.
-            pass_hash = "placeholder_hash_needs_to_be_set",
+            pin_hash = nil,
             balance = 0
         }
         saveTableToFile(ACCOUNTS_DB, accounts)
     end
     
-    local cardData = { pass_hash = accounts[user].pass_hash }
+    local cardData = { owner = user, issuer = "BankServer", issue_date = os.time() }
     local cardFile = fs.open(mount_path .. "/.card_data", "w")
     if cardFile then
         cardFile.write(textutils.serialize(cardData))
