@@ -173,6 +173,31 @@ end
 
 context.clear = function() term.clear(); term.setCursorPos(1,1) end
 
+local MERCHANT_CONFIG_FILE = "merchant.conf"
+
+local function getMerchantName()
+    local path = fs.combine(programDir, MERCHANT_CONFIG_FILE)
+    if fs.exists(path) then
+        local handle, err = fs.open(path, "r")
+        if not handle then return nil end
+        local name = handle.readAll()
+        handle.close()
+        -- Return nil if the name is just whitespace or empty
+        if name and not name:match("^%s*$") then
+            return name
+        end
+    end
+    return nil
+end
+
+local function setMerchantName(name)
+    local path = fs.combine(programDir, MERCHANT_CONFIG_FILE)
+    local handle = fs.open(path, "w")
+    handle.write(name)
+    handle.close()
+end
+
+
 -- Main Bootstrap
 local function main()
     -- Rednet
@@ -185,18 +210,22 @@ local function main()
     
     -- Lookup Servers
     context.parent.mailServerId = rednet.lookup("SimpleMail", "mail.server")
-    -- context.parent.bankServerId = rednet.lookup("DB_Bank", "bank.server") -- Handled inside apps usually
     
-    if not context.parent.mailServerId then
-        -- Proceed anyway? might fail networking calls
+    -- Setup Merchant Identity
+    local merchantName = getMerchantName()
+    if not merchantName then
+        drawFrame("Merchant POS Setup")
+        merchantName = context.readInput("Enter Merchant Name: ", 4)
+        if not merchantName or merchantName:match("^%s*$") then
+            print("Merchant name cannot be empty.")
+            return
+        end
+        setMerchantName(merchantName)
+        context.showMessage("Setup Complete", "Merchant name set to: " .. merchantName)
     end
-    
-    -- Login (Simplified)
-    -- Since this is a dedicated POS, we might hardcode or ask once.
-    -- Re-using apps.loginOrRegister?
-    if not apps.loginOrRegister(context) then
-        return
-    end
+
+    context.parent.username = merchantName
+    context.parent.nickname = merchantName
     
     -- Run App
     apps.merchantPOS(context)
