@@ -84,6 +84,7 @@ local theme = {
 
 local currentScreen = "main"
 local selectedMenuItem = 1
+local ratesPage = 1
 local needsRedraw = true
 
 --==============================================================================
@@ -262,6 +263,59 @@ local function drawLogScreen()
     monitor.setBackgroundColor(theme.statusBarBg); monitor.setCursorPos(1, h); monitor.write(string.rep(" ", w))
     monitor.setTextColor(theme.statusBarText); local footerText = "Press any key to return to main menu"; monitor.setCursorPos(math.floor((w - #footerText) / 2) + 1, h); monitor.write(footerText)
     
+    needsRedraw = false
+end
+
+local function drawRatesScreen()
+    if not monitor then return end
+    local w, h = monitor.getSize()
+    monitor.setBackgroundColor(theme.windowBg); monitor.clear()
+    monitor.setBackgroundColor(theme.title); monitor.setCursorPos(1, 1); monitor.write(string.rep(" ", w))
+    monitor.setTextColor(colors.white);
+    local titleText = " Current Market Rates "
+    monitor.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); monitor.write(titleText)
+
+    -- Sort keys
+    local keys_list = {}
+    for k in pairs(currencyRates) do table.insert(keys_list, k) end
+    table.sort(keys_list)
+
+    -- Pagination logic
+    local itemsPerPage = h - 4 -- Header + Title + Footer + Margin
+    local totalPages = math.ceil(#keys_list / itemsPerPage)
+    if totalPages < 1 then totalPages = 1 end
+    if ratesPage > totalPages then ratesPage = totalPages end
+    if ratesPage < 1 then ratesPage = 1 end
+
+    -- Header
+    monitor.setBackgroundColor(theme.windowBg)
+    monitor.setTextColor(theme.highlightBg) -- Use a distinct color for headers
+    monitor.setCursorPos(2, 3)
+    monitor.write(string.format("%-12s %8s %8s", "Item", "Price", "Stock"))
+
+    -- List
+    monitor.setTextColor(theme.text)
+    local startIdx = (ratesPage - 1) * itemsPerPage + 1
+    local y = 4
+    for i = startIdx, math.min(startIdx + itemsPerPage - 1, #keys_list) do
+        local name = keys_list[i]
+        local data = currencyRates[name]
+        local stock = currentStock[name] or 0
+        -- Truncate name if too long
+        local nameDisp = name
+        if #nameDisp > 12 then nameDisp = nameDisp:sub(1, 11) .. "." end
+
+        monitor.setCursorPos(2, y)
+        monitor.write(string.format("%-12s $%7d %8d", nameDisp, data.current, stock))
+        y = y + 1
+    end
+
+    -- Footer
+    monitor.setBackgroundColor(theme.statusBarBg); monitor.setCursorPos(1, h); monitor.write(string.rep(" ", w))
+    monitor.setTextColor(theme.statusBarText)
+    local footerText = string.format("< Page %d/%d > | Arrows to Nav | Enter to Return", ratesPage, totalPages)
+    monitor.setCursorPos(math.floor((w - #footerText) / 2) + 1, h); monitor.write(footerText)
+
     needsRedraw = false
 end
 
@@ -1359,6 +1413,8 @@ local function guiHandler()
                 drawMainMenu()
             elseif currentScreen == "log" then
                 drawLogScreen()
+            elseif currentScreen == "rates" then
+                drawRatesScreen()
             end
         end
 
@@ -1374,7 +1430,9 @@ local function guiHandler()
                     needsRedraw = true
                 elseif p1 == keys.enter then
                     if selectedMenuItem == 1 then -- View Rates
-                        -- Placeholder for rates screen
+                        currentScreen = "rates"
+                        ratesPage = 1
+                        needsRedraw = true
                     elseif selectedMenuItem == 2 then -- View Log
                         currentScreen = "log"
                         needsRedraw = true
@@ -1388,6 +1446,30 @@ local function guiHandler()
             elseif currentScreen == "log" then
                 currentScreen = "main"
                 needsRedraw = true
+            elseif currentScreen == "rates" then
+                if p1 == keys.enter or p1 == keys.backspace then
+                    currentScreen = "main"
+                    needsRedraw = true
+                elseif p1 == keys.left then
+                    if ratesPage > 1 then
+                        ratesPage = ratesPage - 1
+                        needsRedraw = true
+                    end
+                elseif p1 == keys.right then
+                    if monitor then
+                        local _, h = monitor.getSize()
+                        local itemsPerPage = h - 4
+                        local count = 0
+                        for _ in pairs(currencyRates) do count = count + 1 end
+                        local totalPages = math.ceil(count / itemsPerPage)
+                        if totalPages < 1 then totalPages = 1 end
+
+                        if ratesPage < totalPages then
+                            ratesPage = ratesPage + 1
+                            needsRedraw = true
+                        end
+                    end
+                end
             end
         elseif event == "monitor_touch" then
             if currentScreen == "main" and p2 >= 9 and p2 <= 12 then
