@@ -66,6 +66,47 @@ function DrunkenOS.UI.showMessage(title, message)
     term.clear()
 end
 
+--- Draws a vertical menu and handles user selection.
+-- @param options table: List of menu options (strings).
+-- @param selected number: Initial selected index (default 1).
+-- @param x number: X position (default 2).
+-- @param y number: Y position (default 2).
+-- @return number: The index of the selected option.
+function DrunkenOS.UI.drawMenu(options, selected, x, y)
+    selected = selected or 1
+    x = x or 2
+    y = y or 2
+
+    while true do
+        for i, opt in ipairs(options) do
+            term.setCursorPos(x, y + i - 1)
+            if i == selected then
+                term.setTextColor(theme.highlightText)
+                term.setBackgroundColor(theme.highlightBg)
+            else
+                term.setTextColor(theme.text)
+                term.setBackgroundColor(theme.bg)
+            end
+            term.write(" " .. opt .. " ")
+        end
+
+        -- Reset colors after drawing
+        term.setTextColor(theme.text)
+        term.setBackgroundColor(theme.bg)
+
+        local _, key = os.pullEvent("key")
+        if key == keys.up then
+            selected = selected - 1
+            if selected < 1 then selected = #options end
+        elseif key == keys.down then
+            selected = selected + 1
+            if selected > #options then selected = 1 end
+        elseif key == keys.enter then
+            return selected
+        end
+    end
+end
+
 --==============================================================================
 -- NETWORK MODULE: Simplified Networking
 --==============================================================================
