@@ -208,32 +208,6 @@ end
 
 local function liveMonitor()
     clear()
-    drawHeader("Clerk Terminal - Live Security Monitor")
-    print("\nListening for Audit Events (Press 'q' to exit)...")
-    
-    while true do
-        local id, msg = rednet.receive(5)
-        if id then
-            if msg and msg.type == "security_event" then
-                local prefix = msg.isAlert and "[!]" or "[i]"
-                local color = msg.isAlert and colors.red or colors.white
-                term.setTextColor(color)
-                print(string.format("%s %s", prefix, msg.event))
-                term.setTextColor(colors.white)
-            end
-        end
-        
-        local event, key = os.queueEvent("dummy") -- Non-blocking check hack
-        os.pullEvent() -- Clear dummy
-        
-        -- Non-blocking input handling is hard without parallel API
-        -- We will rely on built-in event loop for simplicity
-        -- Actually, rednet.receive returns on keypress if we don't filter? No.
-    end
-end
--- To fix Live Monitor, we need parallel
-local function runMonitor()
-    clear()
     drawHeader("Live Security Monitor (Press 'Q' to quit)")
     
     local function listen()
@@ -533,7 +507,7 @@ local function main()
         if choice == 1 then lookupAccount()
         elseif choice == 2 then viewHistory()
         elseif choice == 3 then runManagementMenu()
-        elseif choice == 4 then runMonitor()
+        elseif choice == 4 then liveMonitor()
         elseif choice == 5 then 
             clear()
             print("Logging out...")
