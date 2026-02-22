@@ -185,12 +185,22 @@ local function performAudit()
 
     drawDashboard("VERIFYING")
 
+    local timestamp = os.epoch("utc")
+
     -- Fetch Ledger
-    rednet.send(bankServerId, { type = "get_ledger" }, BANK_PROTOCOL)
+    rednet.send(bankServerId, {
+        type = "get_ledger",
+        timestamp = timestamp,
+        signature = crypto.hmac_hex(SECRET_KEY, "get_ledger" .. timestamp)
+    }, BANK_PROTOCOL)
     local _, ledgerMsg = rednet.receive(BANK_PROTOCOL, 5)
     
     -- Fetch Accounts
-    rednet.send(bankServerId, { type = "get_all_accounts" }, BANK_PROTOCOL)
+    rednet.send(bankServerId, {
+        type = "get_all_accounts",
+        timestamp = timestamp,
+        signature = crypto.hmac_hex(SECRET_KEY, "get_all_accounts" .. timestamp)
+    }, BANK_PROTOCOL)
     local _, accountsMsg = rednet.receive(BANK_PROTOCOL, 5)
 
     if not ledgerMsg or not ledgerMsg.ledger or not accountsMsg or not accountsMsg.accounts then

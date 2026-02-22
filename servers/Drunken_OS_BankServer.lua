@@ -507,13 +507,25 @@ end
 
 -- Handles a request for the full ledger (Auditor access only).
 function bankHandlers.get_ledger(senderId, message)
-    -- Ideally we check a secret key here, but for now we assume the Auditor protocol is secure enough 
-    -- or we add a shared key check if needed.
+    -- Verify Auditor Signature
+    if not message.signature or not message.timestamp or crypto.hmac_hex(AUDIT_SECRET_KEY, message.type .. message.timestamp) ~= message.signature then
+        logActivity("SUSPICIOUS: Unauthorized Auditor ledger request from " .. tostring(senderId), true)
+        rednet.send(senderId, { success = false, reason = "Unauthorized" }, BANK_PROTOCOL)
+        return
+    end
+
     rednet.send(senderId, { type = "ledger_response", ledger = ledger }, BANK_PROTOCOL)
 end
 
 -- Handles a request for the full accounts database (Auditor access only).
 function bankHandlers.get_all_accounts(senderId, message)
+    -- Verify Auditor Signature
+    if not message.signature or not message.timestamp or crypto.hmac_hex(AUDIT_SECRET_KEY, message.type .. message.timestamp) ~= message.signature then
+        logActivity("SUSPICIOUS: Unauthorized Auditor account database request from " .. tostring(senderId), true)
+        rednet.send(senderId, { success = false, reason = "Unauthorized" }, BANK_PROTOCOL)
+        return
+    end
+
     rednet.send(senderId, { type = "all_accounts_response", accounts = accounts }, BANK_PROTOCOL)
 end
 
