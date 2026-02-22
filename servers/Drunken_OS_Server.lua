@@ -1584,6 +1584,7 @@ local function main()
     rednet.host("SimpleChat_Internal", "chat.server.internal")
     rednet.host("Drunken_Admin_Internal", "admin.server.internal")
     rednet.host("auth.secure.v1_Internal", "auth.client.internal")
+    rednet.host(AUTH_INTERLINK_PROTOCOL, "interlink.server.internal")
     logActivity("Mainframe Server v12.0 (Internal Only) Initialized.")
     mainEventLoop()
 end
