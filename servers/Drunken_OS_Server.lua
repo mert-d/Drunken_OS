@@ -1187,6 +1187,30 @@ function adminCommands.sync(a)
         saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
     end
     
+    if target == "manifest" or target == "all" then
+        logActivity("Syncing Manifest...")
+        local url = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/installer/manifest.lua"
+        local response = http.get(url)
+        if response then
+            local code = response.readAll()
+            response.close()
+            if code and #code > 0 then
+                local f = fs.open("manifest.lua", "w")
+                if f then
+                    f.write(code)
+                    f.close()
+                    local func = load(code, "manifest", "t", {})
+                    if func then
+                        manifest = func()
+                        logActivity("Manifest updated to v" .. (manifest.version or "?"))
+                    end
+                end
+            end
+        else
+            logActivity("Failed to pull manifest.lua from GitHub", true)
+        end
+    end
+    
     if target == "games" or target == "all" then
        logActivity("Note: Game syncing has been migrated to the Arcade Server.", true)
     end
