@@ -21,6 +21,7 @@ local crypto = require("lib.sha1_hmac")
 -- Load shared libraries
 local DB = require("lib.db")
 local sharedTheme = require("lib.theme")
+local utils = require("lib.utils")
 
 --==============================================================================
 -- Configuration & State
@@ -31,7 +32,8 @@ local mainServerId = nil
 local wired_modem_name, wireless_modem_name = nil, nil
 local adminInput = ""
 local logHistory = {}
-local monitor = nil
+local uiDirty = true
+local wordWrap = utils.wordWrap
 local startupComplete = false -- Flag to control logging to terminal
 
 -- Database file paths
@@ -85,7 +87,6 @@ local theme = {
 local currentScreen = "main"
 local selectedMenuItem = 1
 local ratesPage = 1
-local needsRedraw = true
 
 --==============================================================================
 -- Logging Functions
@@ -109,9 +110,7 @@ local function logActivity(message, isError)
     table.insert(logHistory, logEntry)
     if #logHistory > 200 then table.remove(logHistory, 1) end
     
-    if currentScreen == "log" then
-        needsRedraw = true
-    end
+    uiDirty = true
 end
 
 
@@ -963,65 +962,64 @@ local function parseAdminArgs(args)
 end
 
 function adminCommands.help()
-    print("--- Bank Admin Commands ---")
-    print("balance <user>")
-    print("setbalance <user> <amount>")
-    print("give <user> <amount>")
-    print("makecard <user>")
-    print("addcurrency <item_name> <base_rate>")
-    print("delcurrency <item_name>")
-    print("listrates")
-    print("settarget <item_name> <target_amount>")
-    print("exit - Closes the terminal and returns to the GUI.")
+    logActivity("--- Bank Admin Commands ---")
+    logActivity("balance <user>")
+    logActivity("setbalance <user> <amount>")
+    logActivity("give <user> <amount>")
+    logActivity("makecard <user>")
+    logActivity("addcurrency <item_name> <base_rate>")
+    logActivity("delcurrency <item_name>")
+    logActivity("listrates")
+    logActivity("settarget <item_name> <target_amount>")
+    logActivity("setmerchant <user> <true/false>")
 end
 
 function adminCommands.balance(args)
     local _, user = parseAdminArgs(args)
-    if not user then print("Usage: balance <user>"); return end
+    if not user then logActivity("Usage: balance <user>"); return end
     
-    -- THE FIX: Check if the account exists before trying to read from it.
     if accounts[user] then
-        print("Balance for " .. user .. ": $" .. accounts[user].balance)
+        logActivity("Balance for " .. user .. ": $" .. accounts[user].balance)
     else
-        print("Error: Account for user '" .. user .. "' does not exist.")
+        logActivity("Error: Account for user '" .. user .. "' does not exist.")
     end
 end
 
 function adminCommands.setbalance(args)
     local _, user, amount = parseAdminArgs(args)
     amount = tonumber(amount)
-    if not user or not amount then print("Usage: setbalance <user> <amount>"); return end
+    if not user or not amount then logActivity("Usage: setbalance <user> <amount>"); return end
 
     if accounts[user] then
         accounts[user].balance = amount
         if saveTableToFile(ACCOUNTS_DB, accounts) then
             logTransaction(user, "ADMIN_SET", { note = "Administrative set" }, amount)
             broadcastSecurityEvent(string.format("ADMIN: %s SET $%d", user, amount), amount)
-            print("Set balance for " .. user .. " to $" .. amount)
+            logActivity("Set balance for " .. user .. " to $" .. amount)
         else
-            print("Error: Database write failed.")
+            logActivity("Error: Database write failed.")
         end
     else
-        print("Error: Account for user '" .. user .. "' does not exist.")
+        logActivity("Error: Account for user '" .. user .. "' does not exist.")
     end
 end
 
 function adminCommands.give(args)
     local _, user, amount = parseAdminArgs(args)
     amount = tonumber(amount)
-    if not user or not amount then print("Usage: give <user> <amount>"); return end
+    if not user or not amount then logActivity("Usage: give <user> <amount>"); return end
 
     if accounts[user] then
         accounts[user].balance = accounts[user].balance + amount
         if saveTableToFile(ACCOUNTS_DB, accounts) then
             logTransaction(user, "ADMIN_GIVE", { note = "Administrative give" }, amount)
             broadcastSecurityEvent(string.format("ADMIN: %s +$%d", user, amount), amount)
-            print("Gave $" .. amount .. " to " .. user .. ". New balance: $" .. accounts[user].balance)
+            logActivity("Gave $" .. amount .. " to " .. user .. ". New balance: $" .. accounts[user].balance)
         else
-            print("Error: Database write failed.")
+            logActivity("Error: Database write failed.")
         end
     else
-        print("Error: Account for user '" .. user .. "' does not exist.")
+        logActivity("Error: Account for user '" .. user .. "' does not exist.")
     end
 end
 
@@ -1029,12 +1027,12 @@ function adminCommands.adjust(args)
     local _, user, action, amount = parseAdminArgs(args)
     amount = tonumber(amount)
     if not user or not action or not amount then 
-        print("Usage: adjust <user> <set|add|sub> <amount>")
+        logActivity("Usage: adjust <user> <set|add|sub> <amount>")
         return 
     end
 
     if not accounts[user] then
-        print("Error: Account for user '" .. user .. "' does not exist.")
+        logActivity("Error: Account for user '" .. user .. "' does not exist.")
         return
     end
 
@@ -1044,27 +1042,27 @@ function adminCommands.adjust(args)
     if action == "set" then newBalance = amount
     elseif action == "add" then newBalance = oldBalance + amount
     elseif action == "sub" then newBalance = oldBalance - amount
-    else print("Invalid action. Use set, add, or sub."); return end
+    else logActivity("Invalid action. Use set, add, or sub."); return end
 
     accounts[user].balance = newBalance
     if saveTableToFile(ACCOUNTS_DB, accounts) then
         local diff = newBalance - oldBalance
         logTransaction(user, "ADMIN_ADJUST", { action = action, prev = oldBalance }, diff)
         broadcastSecurityEvent(string.format("ADMIN: %s ADJ %s%d", user, (diff >= 0 and "+" or ""), diff), math.abs(diff))
-        print("Adjustment complete. New balance for " .. user .. ": $" .. newBalance)
+        logActivity("Adjustment complete. New balance for " .. user .. ": $" .. newBalance)
     else
-        print("Error: Database write failed.")
+        logActivity("Error: Database write failed.")
     end
 end
 
 function adminCommands.makecard(args)
     local _, user = parseAdminArgs(args)
     if not user then
-        print("Usage: makecard <username>")
+        logActivity("Usage: makecard <username>")
         return
     end
 
-    print("Verifying user with Mainframe...")
+    logActivity("Verifying user with Mainframe...")
     rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
     
     -- Custom timeout loop to prevent parallel rednet.receive collision
@@ -1095,43 +1093,41 @@ function adminCommands.makecard(args)
     end
 
     if not response then
-        print("Error: Verification timed out. Mainframe unresponsive.")
+        logActivity("Error: Verification timed out. Mainframe unresponsive.")
         return
     end
     
     -- Print exactly what we got for diagnostic purposes
-    print("[DEBUG] Received from ID " .. tostring(replySender) .. ": " .. textutils.serializeJSON(response))
+    logActivity("[DEBUG] Received reply: " .. textutils.serializeJSON(response))
 
     if not response.exists then
-        print("Error: Mainframe reports user '" .. user .. "' does not exist.")
+        logActivity("Error: Mainframe reports user '" .. user .. "' does not exist.")
         return
     end
 
-    print("User verified. Please insert a blank disk.")
+    logActivity("User verified. Please insert a blank disk.")
     local disk = peripheral.find("drive")
     if not disk then
-        print("Error: No disk drive attached to this server.")
+        logActivity("Error: No disk drive attached to this server.")
         return
     end
 
     if not disk.isDiskPresent() then
-        print("Error: No disk in the drive.")
+        logActivity("Error: No disk in the drive.")
         return
     end
 
     local mount_path = disk.getMountPath()
     if not mount_path then
-        print("Error: Could not get disk mount path.")
+        logActivity("Error: Could not get disk mount path.")
         return
     end
 
     -- FIX: Set the label to the format the ATM expects.
     disk.setDiskLabel("DrunkenBeard_Card_" .. user)
 
-    -- The rest of the function remains the same.
-    -- This creates the hidden data file on the card.
     if not accounts[user] then
-        print("Warning: User does not have a bank account yet. Creating one.")
+        logActivity("Warning: User does not have a bank account yet. Creating one.")
         accounts[user] = {
             pin_hash = nil,
             balance = 0
@@ -1144,79 +1140,75 @@ function adminCommands.makecard(args)
     if cardFile then
         cardFile.write(textutils.serialize(cardData))
         cardFile.close()
-        print("Successfully created bank card for " .. user)
+        logActivity("Successfully created bank card for " .. user)
     else
-        print("Error: Could not write data file to disk.")
+        logActivity("Error: Could not write data file to disk.")
     end
 end
 
--- NEW: Re-engineered to save the currency name inside the file.
 function adminCommands.addcurrency(args)
     local _, itemName, baseRate = parseAdminArgs(args)
-    if not itemName or not baseRate then print("Usage: addcurrency <item_name> <base_rate>"); return end
-    if currencyRates[itemName] then print("Currency '" .. itemName .. "' already exists."); return end
+    if not itemName or not baseRate then logActivity("Usage: addcurrency <item_name> <base_rate>"); return end
+    if currencyRates[itemName] then logActivity("Currency '" .. itemName .. "' already exists."); return end
     if not fs.isDir(CURRENCIES_DIR) then fs.makeDir(CURRENCIES_DIR) end
 
-    -- THE FIX: We create a "safe" filename by replacing the colon,
-    -- but store the *real* name inside the file's data.
     local safeFileName = itemName:gsub(":", "_") .. ".json"
     
     local newCurrency = {
-        name = itemName, -- The actual name with the colon
+        name = itemName,
         base = baseRate,
         current = baseRate,
         target = nil
     }
 
     if saveTableToFile(fs.combine(CURRENCIES_DIR, safeFileName), newCurrency) then
-        -- Also add it to our live currency table
         currencyRates[itemName] = newCurrency
-        print("Added new currency '" .. itemName .. "' with base rate $" .. baseRate)
+        logActivity("Added new currency '" .. itemName .. "' with base rate $" .. baseRate)
     else
-        print("Failed to save new currency.")
+        logActivity("Failed to save new currency.")
     end
 end
 
 function adminCommands.delcurrency(args)
     local _, itemName = parseAdminArgs(args)
-    if not itemName then print("Usage: delcurrency <item_name>"); return end
-    if not currencyRates[itemName] then print("Currency '" .. itemName .. "' does not exist."); return end
+    if not itemName then logActivity("Usage: delcurrency <item_name>"); return end
+    if not currencyRates[itemName] then logActivity("Currency '" .. itemName .. "' does not exist."); return end
     currencyRates[itemName] = nil
     
     local path = fs.combine(CURRENCIES_DIR, itemName .. ".json")
     if fs.exists(path) then fs.delete(path) end
     
-    print("Removed currency '" .. itemName .. "'.")
+    logActivity("Removed currency '" .. itemName .. "'.")
 end
 
 function adminCommands.listrates()
-    print("--- Current Exchange Rates ---")
+    logActivity("--- Current Exchange Rates ---")
     for name, data in pairs(currencyRates) do
         local stock = currentStock[name] or 0
         local target = data.target and ("/" .. data.target) or "/N/A"
-        print(string.format("- %s: $%d (Base: $%d) | Stock: %d%s", name, data.current, data.base, stock, target))
+        logActivity(string.format("- %s: $%d (Base: $%d) | Stock: %d%s", name, data.current, data.base, stock, target))
     end
 end
 
 function adminCommands.settarget(args)
     local _, itemName, targetAmount = parseAdminArgs(args)
-    if not itemName or not targetAmount then print("Usage: settarget <item_name> <target_amount>"); return end
-    if not currencyRates[itemName] then print("Currency '" .. itemName .. "' does not exist."); return end
+    if not itemName or not targetAmount then logActivity("Usage: settarget <item_name> <target_amount>"); return end
+    if not currencyRates[itemName] then logActivity("Currency '" .. itemName .. "' does not exist."); return end
     
     currencyRates[itemName].target = targetAmount
     if saveTableToFile(fs.combine(CURRENCIES_DIR, itemName .. ".json"), currencyRates[itemName]) then
-        print("Set target stock for '" .. itemName .. "' to " .. targetAmount)
+        logActivity("Set target stock for '" .. itemName .. "' to " .. targetAmount)
     else
-        print("Failed to set target.")
+        logActivity("Failed to set target.")
     end
 end
 
 function adminCommands.setmerchant(args)
     local _, user, value = parseAdminArgs(args)
-    if not user or not value then print("Usage: setmerchant <user> <true/false>"); return end
+    if not user or not value then logActivity("Usage: setmerchant <user> <true/false>"); return end
     
     if not accounts[user] then
-        print("Error: Account for user '" .. user .. "' does not exist.")
+        logActivity("Error: Account for user '" .. user .. "' does not exist.")
         return
     end
 
@@ -1224,37 +1216,107 @@ function adminCommands.setmerchant(args)
     accounts[user].is_merchant = is_merchant
     
     if saveTableToFile(ACCOUNTS_DB, accounts) then
-        print("User '" .. user .. "' merchant status set to: " .. tostring(is_merchant))
+        logActivity("User '" .. user .. "' merchant status set to: " .. tostring(is_merchant))
     else
-        print("Error: Database write failed.")
+        logActivity("Error: Database write failed.")
     end
 end
 
 local function handleAdminCommand(command)
     local args = {}; for arg in string.gmatch(command, "[^%s]+") do table.insert(args, arg) end
     local cmd = args[1]
-    if cmd == "exit" then return false end -- Signal to exit terminal
-    if adminCommands[cmd] then adminCommands[cmd](args) else print("Unknown command. Type 'help'.") end
-    return true -- Continue terminal session
+    if cmd == "exit" then return false end
+    if adminCommands[cmd] then adminCommands[cmd](args) else logActivity("Unknown command. Type 'help'.") end
+    return true
 end
 
-local function adminTerminal()
-    term.setBackgroundColor(colors.black)
-    term.setTextColor(colors.white)
+local function redrawAdminUI()
+    local w, h = term.getSize()
+    term.setBackgroundColor(theme.windowBg)
     term.clear()
-    term.setCursorPos(1,1)
-    print("Bank Admin Terminal. Type 'exit' to return to GUI.")
-    
+
+    -- Title Bar
+    term.setBackgroundColor(theme.title)
+    term.setCursorPos(1, 1)
+    term.write((" "):rep(w))
+    term.setTextColor(colors.white)
+    local title = " Bank Server Admin Console "
+    term.setCursorPos(math.floor((w - #title) / 2) + 1, 1)
+    term.write(title)
+
+    -- Status Bar
+    term.setBackgroundColor(theme.statusBarBg)
+    term.setTextColor(theme.statusBarText)
+    term.setCursorPos(1, h)
+    term.write((" "):rep(w))
+    local status = "RUNNING | Type 'help' for commands"
+    term.setCursorPos(2, h)
+    term.write(status)
+
+    -- Log Area
+    term.setBackgroundColor(theme.windowBg)
+    term.setTextColor(theme.text)
+    local logAreaHeight = h - 4
+    local displayLines = {}
+    for i = #logHistory, 1, -1 do
+        local wrappedLines = wordWrap(logHistory[i], w - 2)
+        for j = #wrappedLines, 1, -1 do
+            table.insert(displayLines, 1, " " .. wrappedLines[j])
+            if #displayLines >= logAreaHeight then break end
+        end
+        if #displayLines >= logAreaHeight then break end
+    end
+    for i = 1, math.min(#displayLines, logAreaHeight) do
+        term.setCursorPos(1, 1 + i)
+        term.write(displayLines[i])
+    end
+
+    -- Input Area
+    term.setCursorPos(1, h - 2)
+    term.write(('-'):rep(w))
+    term.setCursorPos(1, h - 1)
+    term.setTextColor(theme.prompt)
+    term.write("> ")
+    term.setTextColor(theme.text)
+    term.write(adminInput)
+end
+
+local function uiRenderLoop()
     while true do
-        term.write("> ")
-        local input = read()
-        if not handleAdminCommand(input) then
+        if uiDirty then
+            redrawAdminUI()
+            uiDirty = false
+        end
+        sleep(0.05)
+    end
+end
+
+local function handleTerminalInput(event, p1)
+    if event == "key" then
+        if p1 == keys.enter then
+            if adminInput ~= "" then
+                logActivity("Local cmd: " .. adminInput)
+                handleAdminCommand(adminInput)
+                adminInput = ""
+            end
+        elseif p1 == keys.backspace then
+            adminInput = adminInput:sub(1, -2)
+        end
+    elseif event == "char" then
+        adminInput = adminInput .. p1
+    end
+    uiDirty = true
+end
+
+local function adminPrompt()
+    while true do
+        local event, p1 = os.pullEvent()
+        if event == "key" or event == "char" then
+            handleTerminalInput(event, p1)
+        elseif event == "terminate" then
             break
         end
     end
-    
-    currentScreen = "main"
-    needsRedraw = true
 end
 
 --==============================================================================
@@ -1387,7 +1449,7 @@ local function main()
     startupComplete = true -- Stop logging to the physical terminal
     
     -- Run the main loops. The Bank Server now operates entirely through the admin terminal.
-    parallel.waitForAny(networkListener, adminTerminal, persistenceLoop)
+    parallel.waitForAny(networkListener, adminPrompt, uiRenderLoop, persistenceLoop)
     
     computerTerm.clear()
     computerTerm.setCursorPos(1,1)

@@ -24,14 +24,12 @@ local PROTOCOL_MAP = {
     ["SimpleChat"] = "SimpleChat_Internal",
     ["Drunken_Admin"] = "Drunken_Admin_Internal",
     ["auth.secure.v1"] = "auth.secure.v1_Internal", -- Isolated internal name to prevent loops
-    ["Drunken_Auth_Interlink"] = "Drunken_Auth_Interlink", -- Inter-server protocol
 }
 
 -- Protocols that should NOT be wrapped in a proxy table (for sensitive/encrypted traffic)
 local TRANSPARENT_PROTOCOLS = {
     ["auth.secure.v1"] = true,
     ["auth.secure.v1_Internal"] = true,
-    ["Drunken_Auth_Interlink"] = true, -- Raw payload to Mainframe
 }
 
 -- Host Mappings: Public Hostname -> Public Protocol
@@ -39,7 +37,6 @@ local HOST_MAP = {
     ["mail.server"] = "SimpleMail",
     ["chat.server"] = "SimpleChat",
     ["admin.server"] = "Drunken_Admin",
-    ["interlink.server"] = "Drunken_Auth_Interlink",
 }
 
 -- Reversed Map for Internal -> Public relay
