@@ -1,7 +1,9 @@
 --[[
     Engine Verification Script
+    Version: 1.0
     Tests the Performance and API of lib/engine.lua
 ]]
+local gameVersion = 1.0
 
 local Engine = require("lib.engine")
 local width, height = 100, 100

@@ -23,7 +23,7 @@ local crypto = require("lib.sha1_hmac")
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 16.6
+local currentVersion = 16.7
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -223,6 +223,7 @@ local function installDependencies()
     end
 
     -- Load the updater to manage remaining dependencies
+    package.loaded["lib.updater"] = nil
     local ok_upd, updaterOrError = pcall(require, "lib.updater")
     if not ok_upd then
         print("Error: Could not load updater library: " .. tostring(updaterOrError))
@@ -235,12 +236,14 @@ local function installDependencies()
     local success = updater.install_package("client", function(msg) print("- " .. msg) end)
     
     if success then
-        -- We don't necessarily know if meaningful changes happened, so we assume yes for safety 
-        -- or we could modify updater to return 'updated' bool. 
-        -- For now, let's just proceed. If updater updated key files it might have overwritten running code?
-        -- Safest is to just reload context or potentially reboot if core libs changed.
-        -- Given the complexity, let's assume we proceed unless vital errors occurred.
-        print("System integrity verified.")
+        -- Clear package.loaded cache so updated libraries take effect immediately
+        local libs = {"lib.sha1_hmac", "lib.drunken_os_apps", "lib.app_loader", "lib.theme", "lib.utils", "lib.p2p_socket", "lib.sdk"}
+        for _, lib in ipairs(libs) do package.loaded[lib] = nil end
+        
+        -- Reset local references so they are re-required in main()
+        crypto, apps, state.appLoader, theme, utils = nil, nil, nil, nil, nil
+        
+        print("System integrity verified. Hot-reloaded libraries.")
         return true
     else
         print("Manifest sync failed. Running in offline/cached mode.")

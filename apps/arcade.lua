@@ -19,8 +19,10 @@ local function parseGameInfo(path)
     local content = f.readAll()
     f.close()
     
-    local version = tonumber(content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")) or 1.0
-    local author = content:match("%-%-%s*by%s+([%w%s]+)") or "Unknown"
+    local version = tonumber(content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or content:match("[Vv]ersion:?%s*([%d%.]+)")) or 1.0
+    local author_raw = content:match("by%s+([A-Z][A-Za-z%s&_]+)") or "Unknown"
+    local author = author_raw:gsub("^%s*(.-)%s*$", "%1") -- trim whitespace
+    if author:len() > 30 then author = author:sub(1, 30) end -- limit length just in case
     local protocol = content:match('P2P_Socket%.new%s*%(%s*".-",%s*[%d%.]+,%s*"([^"]+)"') 
                   or content:match('rednet%.host%s*%(%s*"([^"]+)"') 
                   or "Unknown"

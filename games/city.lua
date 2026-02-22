@@ -1,5 +1,6 @@
 --[[
     Drunken City Builder (Alpha)
+    Version: 1.0
     A strategy game for Drunken OS.
     
     Controls:

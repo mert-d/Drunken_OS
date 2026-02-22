@@ -6,7 +6,7 @@
 ]]
 
 return {
-    version = 1.3,
+    version = 1.4,
 
     -- Files common to almost all client-side installations
     shared = {
@@ -200,7 +200,10 @@ return {
         "games/Drunken_Dungeons.lua",
         "games/Drunken_Pong.lua",
         "games/Drunken_Sokoban.lua",
+        "games/Drunken_Sudoku.lua",
         "games/Drunken_Sweeper.lua",
+        "games/city.lua",
+        "games/engine_test.lua",
         "games/floppa_bird.lua",
         "games/invaders.lua",
         "games/snake.lua",
