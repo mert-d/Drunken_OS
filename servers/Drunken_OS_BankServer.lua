@@ -194,130 +194,7 @@ local function logTransaction(user, txType, details, amount, target)
     logActivity("Transaction logged: " .. txType .. " (Hash: " .. (entry.hash:sub(1,8)) .. "...)")
 end
 
---==============================================================================
--- Graphical UI Functions
---==============================================================================
 
-local function drawMainMenu()
-    if not monitor then return end
-    local w, h = monitor.getSize()
-    monitor.setBackgroundColor(theme.windowBg)
-    monitor.clear()
-    
-    monitor.setBackgroundColor(theme.title)
-    monitor.setCursorPos(1, 1); monitor.write(string.rep(" ", w))
-    monitor.setTextColor(colors.white)
-    local titleText = " Drunken OS Bank Server "
-    monitor.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1)
-    monitor.write(titleText)
-
-    monitor.setBackgroundColor(theme.windowBg)
-    monitor.setTextColor(theme.text)
-    monitor.setCursorPos(3, 3); monitor.write("System Status: "); monitor.setTextColor(colors.green); monitor.write("ONLINE")
-    monitor.setTextColor(theme.text)
-    monitor.setCursorPos(3, 4); monitor.write("Mainframe Link: "); monitor.setTextColor(mainServerId and colors.green or colors.red); monitor.write(mainServerId and "CONNECTED" or "DISCONNECTED")
-    
-    local numAccounts = 0; for _ in pairs(accounts) do numAccounts = numAccounts + 1 end
-    monitor.setCursorPos(3, 5); monitor.write("Managed Accounts: " .. numAccounts)
-    local numCurrencies = 0; for _ in pairs(currencyRates) do numCurrencies = numCurrencies + 1 end
-    monitor.setCursorPos(3, 6); monitor.write("Tracked Currencies: " .. numCurrencies)
-
-    local menuOptions = { "View Rates & Stock", "View Server Log", "Open Admin Terminal", "Shutdown Server" }
-    for i, option in ipairs(menuOptions) do
-        monitor.setCursorPos(3, 8 + i)
-        if i == selectedMenuItem then
-            monitor.setBackgroundColor(theme.highlightBg); monitor.setTextColor(theme.highlightText)
-            monitor.write("> " .. option .. string.rep(" ", w - 6 - #option))
-        else
-            monitor.setBackgroundColor(theme.windowBg); monitor.setTextColor(theme.text)
-            monitor.write("  " .. option .. string.rep(" ", w - 6 - #option))
-        end
-    end
-
-    monitor.setBackgroundColor(theme.statusBarBg)
-    monitor.setCursorPos(1, h); monitor.write(string.rep(" ", w))
-    monitor.setTextColor(theme.statusBarText)
-    local footerText = "Use UP/DOWN & ENTER or Click to Navigate"
-    monitor.setCursorPos(math.floor((w - #footerText) / 2) + 1, h)
-    monitor.write(footerText)
-    
-    needsRedraw = false
-end
-
-local function drawLogScreen()
-    if not monitor then return end
-    local w, h = monitor.getSize()
-    monitor.setBackgroundColor(theme.windowBg); monitor.clear()
-    monitor.setBackgroundColor(theme.title); monitor.setCursorPos(1, 1); monitor.write(string.rep(" ", w))
-    monitor.setTextColor(colors.white); local titleText = " Live Server Log "; monitor.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); monitor.write(titleText)
-    
-    local logAreaHeight = h - 2
-    local y = h - 1
-    for i = #logHistory, 1, -1 do
-        if y < 2 then break end
-        local line = logHistory[i]
-        monitor.setCursorPos(2, y); monitor.write(string.sub(line, 1, w-2))
-        y = y - 1
-    end
-
-    monitor.setBackgroundColor(theme.statusBarBg); monitor.setCursorPos(1, h); monitor.write(string.rep(" ", w))
-    monitor.setTextColor(theme.statusBarText); local footerText = "Press any key to return to main menu"; monitor.setCursorPos(math.floor((w - #footerText) / 2) + 1, h); monitor.write(footerText)
-    
-    needsRedraw = false
-end
-
-local function drawRatesScreen()
-    if not monitor then return end
-    local w, h = monitor.getSize()
-    monitor.setBackgroundColor(theme.windowBg); monitor.clear()
-    monitor.setBackgroundColor(theme.title); monitor.setCursorPos(1, 1); monitor.write(string.rep(" ", w))
-    monitor.setTextColor(colors.white);
-    local titleText = " Current Market Rates "
-    monitor.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); monitor.write(titleText)
-
-    -- Sort keys
-    local keys_list = {}
-    for k in pairs(currencyRates) do table.insert(keys_list, k) end
-    table.sort(keys_list)
-
-    -- Pagination logic
-    local itemsPerPage = h - 4 -- Header + Title + Footer + Margin
-    local totalPages = math.ceil(#keys_list / itemsPerPage)
-    if totalPages < 1 then totalPages = 1 end
-    if ratesPage > totalPages then ratesPage = totalPages end
-    if ratesPage < 1 then ratesPage = 1 end
-
-    -- Header
-    monitor.setBackgroundColor(theme.windowBg)
-    monitor.setTextColor(theme.highlightBg) -- Use a distinct color for headers
-    monitor.setCursorPos(2, 3)
-    monitor.write(string.format("%-12s %8s %8s", "Item", "Price", "Stock"))
-
-    -- List
-    monitor.setTextColor(theme.text)
-    local startIdx = (ratesPage - 1) * itemsPerPage + 1
-    local y = 4
-    for i = startIdx, math.min(startIdx + itemsPerPage - 1, #keys_list) do
-        local name = keys_list[i]
-        local data = currencyRates[name]
-        local stock = currentStock[name] or 0
-        -- Truncate name if too long
-        local nameDisp = name
-        if #nameDisp > 12 then nameDisp = nameDisp:sub(1, 11) .. "." end
-
-        monitor.setCursorPos(2, y)
-        monitor.write(string.format("%-12s $%7d %8d", nameDisp, data.current, stock))
-        y = y + 1
-    end
-
-    -- Footer
-    monitor.setBackgroundColor(theme.statusBarBg); monitor.setCursorPos(1, h); monitor.write(string.rep(" ", w))
-    monitor.setTextColor(theme.statusBarText)
-    local footerText = string.format("< Page %d/%d > | Arrows to Nav | Enter to Return", ratesPage, totalPages)
-    monitor.setCursorPos(math.floor((w - #footerText) / 2) + 1, h); monitor.write(footerText)
-
-    needsRedraw = false
-end
 
 --==============================================================================
 -- Data Persistence & Core Logic
@@ -1448,89 +1325,7 @@ local function networkListener()
     end
 end
 
-local function guiHandler()
-    local refreshTimer = os.startTimer(1)
-    
-    while true do
-        if needsRedraw then
-            if currentScreen == "main" then
-                drawMainMenu()
-            elseif currentScreen == "log" then
-                drawLogScreen()
-            elseif currentScreen == "rates" then
-                drawRatesScreen()
-            end
-            needsRedraw = false
-        end
 
-        local event, p1, p2, p3 = os.pullEvent()
-        
-        if event == "timer" and p1 == refreshTimer then
-            refreshTimer = os.startTimer(1)
-            -- Force a redraw check every second
-            if currentScreen == "main" then needsRedraw = true end
-        elseif event == "key" then
-            if currentScreen == "main" then
-                local menuSize = 4
-                if p1 == keys.up then
-                    selectedMenuItem = (selectedMenuItem == 1) and menuSize or selectedMenuItem - 1
-                    needsRedraw = true
-                elseif p1 == keys.down then
-                    selectedMenuItem = (selectedMenuItem == menuSize) and 1 or selectedMenuItem + 1
-                    needsRedraw = true
-                elseif p1 == keys.enter then
-                    if selectedMenuItem == 1 then -- View Rates
-                        currentScreen = "rates"
-                        ratesPage = 1
-                        needsRedraw = true
-                    elseif selectedMenuItem == 2 then -- View Log
-                        currentScreen = "log"
-                        needsRedraw = true
-                    elseif selectedMenuItem == 3 then -- Open Terminal
-                        currentScreen = "terminal"
-                        adminTerminal()
-                    elseif selectedMenuItem == 4 then -- Shutdown
-                        return -- End the GUI handler
-                    end
-                end
-            elseif currentScreen == "log" then
-                currentScreen = "main"
-                needsRedraw = true
-            elseif currentScreen == "rates" then
-                if p1 == keys.enter or p1 == keys.backspace then
-                    currentScreen = "main"
-                    needsRedraw = true
-                elseif p1 == keys.left then
-                    if ratesPage > 1 then
-                        ratesPage = ratesPage - 1
-                        needsRedraw = true
-                    end
-                elseif p1 == keys.right then
-                    if monitor then
-                        local _, h = monitor.getSize()
-                        local itemsPerPage = h - 4
-                        local count = 0
-                        for _ in pairs(currencyRates) do count = count + 1 end
-                        local totalPages = math.ceil(count / itemsPerPage)
-                        if totalPages < 1 then totalPages = 1 end
-
-                        if ratesPage < totalPages then
-                            ratesPage = ratesPage + 1
-                            needsRedraw = true
-                        end
-                    end
-                end
-            end
-        elseif event == "monitor_touch" then
-            if currentScreen == "main" and p2 >= 9 and p2 <= 12 then
-                selectedMenuItem = p2 - 8
-                os.queueEvent("key", keys.enter)
-            end
-        elseif event == "terminate" then
-            return
-        end
-    end
-end
 
 local function main()
     local computerTerm = term.current()
@@ -1548,11 +1343,7 @@ local function main()
         return
     end
 
-    monitor = peripheral.find("monitor")
-    if not monitor then
-        print("FATAL: No advanced monitor attached. GUI cannot start.")
-        return
-    end
+    -- Monitor initialization removed.
 
     loadAllData()
     
@@ -1594,20 +1385,13 @@ local function main()
     rednet.host("DB_Bank_Internal", "bank.server.internal")
     
     startupComplete = true -- Stop logging to the physical terminal
+    
+    -- Run the main loops. The Bank Server now operates entirely through the admin terminal.
+    parallel.waitForAny(networkListener, adminTerminal, persistenceLoop)
+    
     computerTerm.clear()
     computerTerm.setCursorPos(1,1)
-    computerTerm.write("Bank Server started successfully.\nGUI is now active on the attached monitor.")
-    
-    -- Redirect all terminal I/O to the monitor for the GUI
-    term.redirect(monitor)
-    
-    -- Run the main loops
-    parallel.waitForAny(networkListener, guiHandler, persistenceLoop)
-    
-    -- When the loops exit (on shutdown), restore the original terminal
-    term.redirect(computerTerm)
-    monitor.setBackgroundColor(colors.black)
-    monitor.clear()
+    print("Bank Server shut down.")
     term.clear()
     term.setCursorPos(1,1)
     print("Bank Server has shut down.")
