@@ -67,6 +67,7 @@ local users, lists, games, chatHistory, gameList, pendingAuths, pendingApps = {}
 local userLocations = {} -- Stores latest (x, y, z) for each user
 local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
+local uiDirty = true
 local mailCountCache = {} -- Cache for unread mail counts
 local manifest = {} -- Manifest table
 if fs.exists("manifest.lua") then
@@ -262,9 +263,8 @@ local function logActivity(message, isError)
         file.close()
     end
     
-    -- Refresh UIs
-    redrawAdminUI()
-    if monitor then redrawMonitorUI() end
+    -- Refresh UIs on next frame
+    uiDirty = true
 end
 
 
@@ -290,6 +290,17 @@ local function persistenceLoop()
     while true do
         sleep(30) -- Save every 30 seconds if dirty
         dbTracker.backgroundSave()
+    end
+end
+
+local function uiRenderLoop()
+    while true do
+        if uiDirty then
+            redrawAdminUI()
+            if monitor then redrawMonitorUI() end
+            uiDirty = false
+        end
+        sleep(0.05) -- Max 20 FPS redraw handling to prevent CPU blocking
     end
 end
 
@@ -1522,7 +1533,7 @@ local function handleTerminalInput(event, p1)
     elseif event == "char" then
         adminInput = adminInput .. p1
     end
-    redrawAdminUI()
+    uiDirty = true
 end
 
 local function mainEventLoop()
@@ -1547,7 +1558,7 @@ local function mainEventLoop()
         end
     end
 
-    parallel.waitForAny(adminPrompt, rednetListener, persistenceLoop)
+    parallel.waitForAny(adminPrompt, rednetListener, persistenceLoop, uiRenderLoop)
 end
 
 local function main()
