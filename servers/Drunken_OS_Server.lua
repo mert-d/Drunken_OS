@@ -1133,7 +1133,7 @@ function adminCommands.sync(a)
     
     if target == "libs" or target == "all" then
         logActivity("Syncing Libraries...")
-        local libs = { "lib/drunken_os_apps.lua", "lib/sha1_hmac.lua", "lib/updater.lua", "lib/app_loader.lua" }
+        local libs = { "lib/drunken_os_apps.lua", "lib/sha1_hmac.lua", "lib/updater.lua", "lib/app_loader.lua", "lib/theme.lua", "lib/utils.lua", "lib/sdk.lua", "lib/p2p_socket.lua" }
         local baseUrl = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
         
         for _, path in ipairs(libs) do
