@@ -546,26 +546,7 @@ function mailHandlers.get_manifest(senderId, message)
     rednet.send(senderId, { type="manifest_response", manifest=manifest }, "SimpleMail")
 end
 
-function mailHandlers.get_file(senderId, message)
-    local path = message.path
-    -- Security Check: Don't allow climbing up directories
-    if path:find("%.%.") then
-        rednet.send(senderId, { success=false, error="Invalid Path" }, "SimpleMail")
-        return
-    end
-
-    if fs.exists(path) and not fs.isDir(path) then
-        local f = fs.open(path, "r")
-        if f then
-            local content = f.readAll()
-            f.close()
-            rednet.send(senderId, { success=true, code=content }, "SimpleMail")
-            return
-        end
-    end
-    rednet.send(senderId, { success=false, error="File not found" }, "SimpleMail")
-    rednet.send(senderId, { success=false, error="File not found" }, "SimpleMail")
-end
+    -- Duplicate get_file removed
 
 function mailHandlers.submit_app(senderId, message)
     -- { type="submit_app", name="...", code="...", description="...", author="..." }
