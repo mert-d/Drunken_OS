@@ -122,7 +122,7 @@ function arcade.run(context)
             
             -- Separator
             term.setBackgroundColor(theme.bg)
-            term.setTextColor(context.theme.mutedText or colors.gray)
+            term.setTextColor(theme.mutedText or colors.gray)
             for i=3, h-2 do
                 term.setCursorPos(21, i); term.write("|")
             end
@@ -135,7 +135,7 @@ function arcade.run(context)
                 -- Info
                 term.setTextColor(theme.prompt)
                 term.setCursorPos(xBase, 3); term.write(game.name)
-                term.setTextColor(context.theme.mutedText or colors.gray)
+                term.setTextColor(theme.mutedText or colors.gray)
                 term.setCursorPos(xBase, 4); term.write("v" .. game.version .. " by " .. game.author)
                 
                 -- Leaderboard
@@ -168,7 +168,7 @@ function arcade.run(context)
                             term.write(string.format("[%d] %s", lob.id, lob.user))
                         end
                     end
-                    term.setTextColor(context.theme.mutedText or colors.gray)
+                    term.setTextColor(theme.mutedText or colors.gray)
                     term.setCursorPos(xBase, 16); term.write("Press J to Join ID")
                 else
                     term.setCursorPos(xBase, 13); term.write("No matches found.")
@@ -180,14 +180,14 @@ function arcade.run(context)
              local game = games[selectedIdx]
              if game then
                 term.setCursorPos(2, h-2)
-                term.setTextColor(context.theme.mutedText or colors.gray)
+                term.setTextColor(theme.mutedText or colors.gray)
                 term.write(game.name .. " v" .. game.version)
              end
         end
         
         -- Controls Footer
         term.setCursorPos(2, 18)
-        term.setTextColor(context.theme.mutedText or colors.gray)
+        term.setTextColor(theme.mutedText or colors.gray)
         term.write("[ENTER] Play  [L] Refresh  [Q] Quit")
         
         -- Input Handling

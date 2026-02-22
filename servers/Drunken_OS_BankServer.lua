@@ -1415,6 +1415,8 @@ local function networkListener()
 end
 
 local function guiHandler()
+    local refreshTimer = os.startTimer(1)
+    
     while true do
         if needsRedraw then
             if currentScreen == "main" then
@@ -1424,10 +1426,16 @@ local function guiHandler()
             elseif currentScreen == "rates" then
                 drawRatesScreen()
             end
+            needsRedraw = false
         end
 
         local event, p1, p2, p3 = os.pullEvent()
-        if event == "key" then
+        
+        if event == "timer" and p1 == refreshTimer then
+            refreshTimer = os.startTimer(1)
+            -- Force a redraw check every second
+            if currentScreen == "main" then needsRedraw = true end
+        elseif event == "key" then
             if currentScreen == "main" then
                 local menuSize = 4
                 if p1 == keys.up then
