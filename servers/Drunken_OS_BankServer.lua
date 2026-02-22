@@ -1191,7 +1191,10 @@ function adminCommands.makecard(args)
     rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
     local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
 
-    if not response or not response.exists then
+    if not response then
+        print("Error: Verification timed out. Mainframe unresponsive.")
+        return
+    elseif not response.exists then
         print("Error: Mainframe reports user '" .. user .. "' does not exist.")
         return
     end
@@ -1540,21 +1543,22 @@ local function main()
     print("Found Wireless Modem on: " .. wireless_modem_name)
     print("Found Wired Modem on: " .. wired_modem_name)
 
-    print("Identifying Mainframe via secure wired link...")
-    local wired_periph = peripheral.wrap(wired_modem_name)
-    local remote_names = wired_periph.getNamesRemote()
-    for _, name in ipairs(remote_names) do
-        if peripheral.getType(name) == "computer" then
-            mainServerId = peripheral.call(name, "getID")
-            break
-        end
-    end
-
-    if not mainServerId then print("FATAL: No computer found on the other side of the wired modem."); return end
-    print("Mainframe located via wired link at ID " .. mainServerId)
-
     print("Opening wired modem...")
     rednet.open(wired_modem_name)
+
+    print("Identifying Mainframe via secure interlink protocol...")
+    -- Poll until the mainframe responds to avoid startup race conditions
+    for i=1, 5 do
+        mainServerId = rednet.lookup(AUTH_INTERLINK_PROTOCOL)
+        if mainServerId then break end
+        sleep(1)
+    end
+
+    if not mainServerId then 
+        print("FATAL: Mainframe did not respond to protocol lookup on wired network.\nIs the Mainframe running and connected?")
+        return 
+    end
+    print("Mainframe located via wired link at ID " .. mainServerId)
     
     rednet.host("DB_Bank_Internal", "bank.server.internal")
     
