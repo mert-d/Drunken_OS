@@ -13,7 +13,7 @@ This file documents the core architectural constraints and patterns. **All Agent
 - **Single Source of Truth**:
   - Colors/Theme -> `lib/theme.lua` (Do not hardcode `colors.black` in apps).
   - UI Helpers -> `lib/utils.lua` (Do not copy-paste `wordWrap`).
-  - Manifest -> `installer/manifest.json` (Do not hardcode file lists in `install.lua`).
+  - Manifest -> `installer/manifest.lua` (Do not hardcode file lists in `install.lua`).
 
 ## 3. Networking & P2P
 

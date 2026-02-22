@@ -385,6 +385,249 @@ end
 -- Program Entry Point
 --==============================================================================
 
+local currentApp = nil
+local running = true
+local favorites = {} -- Loaded from disk
+
+-- Notification State
+local notification = {
+    active = false,
+    title = "",
+    message = "",
+    color = colors.blue,
+    timerId = nil
+}
+
+-- Load/Save Favorites (Existing)
+local function loadFavorites()
+    if fs.exists(".favorites") then
+        local f = fs.open(".favorites", "r")
+        favorites = textutils.unserialize(f.readAll()) or {}
+        f.close()
+    end
+end
+local function saveFavorites()
+    local f = fs.open(".favorites", "w")
+    f.write(textutils.serialize(favorites))
+    f.close()
+end
+
+-- Helper: Draw Notification Toast
+local function drawNotification()
+    if not notification.active then return end
+    
+    local w, h = term.getSize()
+    local msg = notification.message
+    local width = #msg + 4
+    if width < 20 then width = 20 end
+    local x = w - width - 1
+    local y = 2 -- Below top bar
+    
+    -- Draw Box
+    paintutils.drawFilledBox(x, y, x+width, y+2, notification.color)
+    term.setCursorPos(x, y)
+    term.setTextColor(colors.white)
+    term.setBackgroundColor(notification.color)
+    
+    -- Title (Center or Left?)
+    term.setCursorPos(x+1, y)
+    term.write(notification.title)
+    
+    -- Message
+    term.setCursorPos(x+1, y+1)
+    term.write(msg)
+    
+    -- Border/Shadow? (Optional polish)
+end
+
+-- Helper: Trigger Notification
+local function showNotification(title, msg, color)
+    notification.active = true
+    notification.title = title or "System"
+    notification.message = msg or ""
+    notification.color = color or colors.blue
+    
+    if notification.timerId then os.cancelTimer(notification.timerId) end
+    notification.timerId = os.startTimer(4) -- 4 Seconds
+end
+
+local function toggleFavorite(appName)
+    if favorites[appName] then
+        favorites[appName] = nil
+    else
+        favorites[appName] = true
+    end
+    saveFavorites()
+end
+
+-- Refactored Main Menu
+local function mainMenu()
+    loadFavorites()
+    
+    while true do
+        context.drawWindow("Drunken OS v" .. currentVersion)
+        
+        -- Build Menu Options
+        local menuItems = {}
+        
+        -- 1. Favorites Section
+        local hasFavs = false
+        for appName, _ in pairs(favorites) do
+            -- Verify app still exists
+            local path = "apps/" .. appName .. ".lua" -- Assumption based on naming convention
+            -- Actually, we need to map Display Name -> Filename.
+            -- Our 'all_apps' list is just paths. display names are derived.
+            -- Let's iterate all installed apps and match.
+            hasFavs = true
+        end
+        
+        -- Construct list: { label="Display", action=func, isApp=true, path=... }
+        local mainOptions = {}
+        
+        -- A. Favorites
+        for _, path in ipairs(fs.list("apps")) do
+            if not fs.isDir("apps/"..path) then
+                local name = path:gsub("%.lua$", "")
+                local label = name:gsub("_", " ")
+                if favorites[label] then
+                   table.insert(mainOptions, { label = "★ " .. label, path = "apps/"..path, isApp = true }) 
+                end
+            end
+        end
+        
+        -- Separator?
+        
+        -- B. Core Folders
+        table.insert(mainOptions, { label = "[+] All Apps", isFolder = true })
+        table.insert(mainOptions, { label = "[S] App Store", path = "apps/store.lua", isApp = true })
+        table.insert(mainOptions, { label = "[*] System", path = "apps/system.lua", isApp = true })
+        table.insert(mainOptions, { label = "[X] Shutdown", action = os.shutdown })
+        table.insert(mainOptions, { label = "[R] Reboot", action = os.reboot })
+
+        local selected = 1
+        local inFolder = false
+        
+        -- Navigation Loop
+        while true do
+            context.drawWindow("Drunken OS v" .. currentVersion)
+            
+            local currentList = mainOptions
+            local viewingFolder = nil
+            
+            if inFolder == "All Apps" then
+                viewingFolder = "All Apps"
+                currentList = {}
+                 -- Populate All Apps
+                for _, path in ipairs(fs.list("apps")) do
+                    if not fs.isDir("apps/"..path) then
+                        local name = path:gsub("%.lua$", "")
+                        local label = name:gsub("_", " ")
+                        -- Skip system/store/hidden? No, show all using folder.
+                        table.insert(currentList, { label = label, path = "apps/"..path, isApp = true })
+                    end
+                end
+                table.insert(currentList, { label = "⬅ Back", action = "back" })
+            end
+            
+            -- Draw Menu
+            local y = 4
+            if viewingFolder then 
+                term.setCursorPos(2, 3); term.setTextColor(colors.yellow); term.write("Folder: " .. viewingFolder) 
+            end
+            
+            for i, opt in ipairs(currentList) do
+                term.setCursorPos(2, y)
+                if i == selected then
+                    term.setTextColor(theme.highlightText)
+                    term.setBackgroundColor(theme.highlightBg)
+                    term.write(" " .. opt.label .. string.rep(" ", 20 - #opt.label) .. " ")
+                    term.setBackgroundColor(theme.bg)
+                    
+                    -- Show Hint
+                    if opt.isApp and viewingFolder == "All Apps" then
+                        term.setCursorPos(2, 18)
+                        term.setTextColor(theme.mutedText or colors.gray)
+                        term.write("Press 'F' to Pin/Unpin")
+                    end
+                else
+                    term.setTextColor(theme.text)
+                    term.write(" " .. opt.label .. " ")
+                end
+                y = y + 1
+            end
+            
+            local event, key = os.pullEvent("key")
+            if key == keys.up then selected = (selected == 1) and #currentList or selected - 1
+            elseif key == keys.down then selected = (selected == #currentList) and 1 or selected + 1
+            elseif key == keys.enter then
+                local choice = currentList[selected]
+                if choice.action == "back" then
+                    inFolder = false; selected = 1
+                elseif choice.isFolder then
+                    inFolder = choice.label:gsub("%[%+%] ", ""); selected = 1
+                elseif choice.isApp then
+                    -- Run App using app_loader which has proper environment
+                    local appName = choice.path:match("apps/(.+)%.lua$")
+                    if appName then
+                        state.appLoader.run(appName, context)
+                    else
+                        context.showMessage("Error", "Invalid app path: " .. choice.path)
+                    end
+                    -- Refresh favorites on return
+                    break -- breaks inner loop, reloads outer loop
+                elseif choice.action then
+                    choice.action()
+                end 
+            elseif key == keys.f and inFolder == "All Apps" then
+                local choice = currentList[selected]
+                if choice.isApp then
+                   -- Toggle Favorite
+                   toggleFavorite(choice.label)
+                   context.showMessage("Favorites", "Toggled " .. choice.label)
+                end
+            end
+        end
+    end
+end
+
+-- Helper to keep track of location (Stubbed for now)
+local function gpsHeartbeat()
+    while true do
+        sleep(60)
+    end
+end
+
+-- Background Listener for Merchant Requests & Broadcasts
+local function backgroundListener()
+    local lastSync = 0
+    while true do
+        local now = os.epoch("utc") / 1000
+        -- Fast poll for rednet messages
+        local senderId, message, protocol = rednet.receive(nil, 0.5)
+        
+        if protocol == "DB_Merchant_Req" and message then
+            if message.type == "payment_request" and message.target == state.username then
+                if not state.pendingInvoices then state.pendingInvoices = {} end
+                table.insert(state.pendingInvoices, message)
+                local speaker = peripheral.find("speaker")
+                if speaker then speaker.playNote("pling", 1, 2) end
+            end
+        elseif protocol == "DB_Shop_Broadcast" and message and message.menu then
+            state.nearbyShop = message
+        end
+        
+        -- Occasional sync (Mail/Unread count) every 10 seconds
+        if now - lastSync > 10 then
+            rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
+            local _, response = rednet.receive("SimpleMail", 1)
+            if response and response.count then
+                state.unreadCount = response.count
+            end
+            lastSync = now
+        end
+    end
+end
+
 local function showSplashScreen()
     term.clear(); term.setCursorPos(1,1)
     term.setTextColor(colors.orange)
@@ -482,249 +725,7 @@ local function main()
                 state.apps.showMessage(state, "Message of the Day", motd_response.motd)
             end
             
-            -- Helper to keep track of location (Stubbed for now)
-local currentApp = nil
-local running = true
-local favorites = {} -- Loaded from disk
-
--- Notification State
-local notification = {
-    active = false,
-    title = "",
-    message = "",
-    color = colors.blue,
-    timerId = nil
-}
-
--- Load/Save Favorites (Existing)
-local function loadFavorites()
-    if fs.exists(".favorites") then
-        local f = fs.open(".favorites", "r")
-        favorites = textutils.unserialize(f.readAll()) or {}
-        f.close()
-    end
-end
-local function saveFavorites()
-    local f = fs.open(".favorites", "w")
-    f.write(textutils.serialize(favorites))
-    f.close()
-end
-
--- Helper: Draw Notification Toast
-local function drawNotification()
-    if not notification.active then return end
-    
-    local w, h = term.getSize()
-    local msg = notification.message
-    local width = #msg + 4
-    if width < 20 then width = 20 end
-    local x = w - width - 1
-    local y = 2 -- Below top bar
-    
-    -- Draw Box
-    paintutils.drawFilledBox(x, y, x+width, y+2, notification.color)
-    term.setCursorPos(x, y)
-    term.setTextColor(colors.white)
-    term.setBackgroundColor(notification.color)
-    
-    -- Title (Center or Left?)
-    term.setCursorPos(x+1, y)
-    term.write(notification.title)
-    
-    -- Message
-    term.setCursorPos(x+1, y+1)
-    term.write(msg)
-    
-    -- Border/Shadow? (Optional polish)
-end
-
--- Helper: Trigger Notification
-local function showNotification(title, msg, color)
-    notification.active = true
-    notification.title = title or "System"
-    notification.message = msg or ""
-    notification.color = color or colors.blue
-    
-    if notification.timerId then os.cancelTimer(notification.timerId) end
-    notification.timerId = os.startTimer(4) -- 4 Seconds
-end
-
-local function toggleFavorite(appName)
-    if favorites[appName] then
-        favorites[appName] = nil
-    else
-        favorites[appName] = true
-    end
-    saveFavorites()
-end
-
--- Refactored Main Menu
-local function mainMenu()
-    loadFavorites()
-    
-    while true do
-        drawWindow("Drunken OS v" .. currentVersion)
-        
-        -- Build Menu Options
-        local menuItems = {}
-        
-        -- 1. Favorites Section
-        local hasFavs = false
-        for appName, _ in pairs(favorites) do
-            -- Verify app still exists
-            local path = "apps/" .. appName .. ".lua" -- Assumption based on naming convention
-            -- Actually, we need to map Display Name -> Filename.
-            -- Our 'all_apps' list is just paths. display names are derived.
-            -- Let's iterate all installed apps and match.
-            hasFavs = true
-        end
-        
-        -- Construct list: { label="Display", action=func, isApp=true, path=... }
-        local mainOptions = {}
-        
-        -- A. Favorites
-        for _, path in ipairs(fs.list("apps")) do
-            if not fs.isDir("apps/"..path) then
-                local name = path:gsub("%.lua$", "")
-                local label = name:gsub("_", " ")
-                if favorites[label] then
-                   table.insert(mainOptions, { label = "★ " .. label, path = "apps/"..path, isApp = true }) 
-                end
-            end
-        end
-        
-        -- Separator?
-        
-        -- B. Core Folders
-        table.insert(mainOptions, { label = "[+] All Apps", isFolder = true })
-        table.insert(mainOptions, { label = "[S] App Store", path = "apps/store.lua", isApp = true })
-        table.insert(mainOptions, { label = "[*] System", path = "apps/system.lua", isApp = true })
-        table.insert(mainOptions, { label = "[X] Shutdown", action = os.shutdown })
-        table.insert(mainOptions, { label = "[R] Reboot", action = os.reboot })
-
-        local selected = 1
-        local inFolder = false
-        
-        -- Navigation Loop
-        while true do
-            drawWindow("Drunken OS v" .. currentVersion)
-            
-            local currentList = mainOptions
-            local viewingFolder = nil
-            
-            if inFolder == "All Apps" then
-                viewingFolder = "All Apps"
-                currentList = {}
-                 -- Populate All Apps
-                for _, path in ipairs(fs.list("apps")) do
-                    if not fs.isDir("apps/"..path) then
-                        local name = path:gsub("%.lua$", "")
-                        local label = name:gsub("_", " ")
-                        -- Skip system/store/hidden? No, show all using folder.
-                        table.insert(currentList, { label = label, path = "apps/"..path, isApp = true })
-                    end
-                end
-                table.insert(currentList, { label = "⬅ Back", action = "back" })
-            end
-            
-            -- Draw Menu
-            local y = 4
-            if viewingFolder then 
-                term.setCursorPos(2, 3); term.setTextColor(colors.yellow); term.write("Folder: " .. viewingFolder) 
-            end
-            
-            for i, opt in ipairs(currentList) do
-                term.setCursorPos(2, y)
-                if i == selected then
-                    term.setTextColor(theme.highlightText)
-                    term.setBackgroundColor(theme.highlightBg)
-                    term.write(" " .. opt.label .. string.rep(" ", 20 - #opt.label) .. " ")
-                    term.setBackgroundColor(theme.bg)
-                    
-                    -- Show Hint
-                    if opt.isApp and viewingFolder == "All Apps" then
-                        term.setCursorPos(2, 18)
-                        term.setTextColor(colors.gray)
-                        term.write("Press 'F' to Pin/Unpin")
-                    end
-                else
-                    term.setTextColor(theme.text)
-                    term.write(" " .. opt.label .. " ")
-                end
-                y = y + 1
-            end
-            
-            local event, key = os.pullEvent("key")
-            if key == keys.up then selected = (selected == 1) and #currentList or selected - 1
-            elseif key == keys.down then selected = (selected == #currentList) and 1 or selected + 1
-            elseif key == keys.enter then
-                local choice = currentList[selected]
-                if choice.action == "back" then
-                    inFolder = false; selected = 1
-                elseif choice.isFolder then
-                    inFolder = choice.label:gsub("%[%+%] ", ""); selected = 1
-                elseif choice.isApp then
-                    -- Run App using app_loader which has proper environment
-                    local appName = choice.path:match("apps/(.+)%.lua$")
-                    if appName then
-                        state.appLoader.run(appName, context)
-                    else
-                        context.showMessage("Error", "Invalid app path: " .. choice.path)
-                    end
-                    -- Refresh favorites on return
-                    break -- breaks inner loop, reloads outer loop
-                elseif choice.action then
-                    choice.action()
-                end 
-            elseif key == keys.f and inFolder == "All Apps" then
-                local choice = currentList[selected]
-                if choice.isApp then
-                   -- Toggle Favorite
-                   toggleFavorite(choice.label)
-                   context.showMessage("Favorites", "Toggled " .. choice.label)
-                end
-            end
-        end
-end
-end
-
--- Helper to keep track of location (Stubbed for now)
-local function gpsHeartbeat()
-    while true do
-        sleep(60)
-    end
-end
-
--- Background Listener for Merchant Requests & Broadcasts
-local function backgroundListener()
-                local lastSync = 0
-                while true do
-                    local now = os.epoch("utc") / 1000
-                    -- Fast poll for rednet messages
-                    local senderId, message, protocol = rednet.receive(nil, 0.5)
-                    
-                    if protocol == "DB_Merchant_Req" and message then
-                        if message.type == "payment_request" and message.target == state.username then
-                            if not state.pendingInvoices then state.pendingInvoices = {} end
-                            table.insert(state.pendingInvoices, message)
-                            local speaker = peripheral.find("speaker")
-                            if speaker then speaker.playNote("pling", 1, 2) end
-                        end
-                    elseif protocol == "DB_Shop_Broadcast" and message and message.menu then
-                        state.nearbyShop = message
-                    end
-                    
-                    -- Occasional sync (Mail/Unread count) every 10 seconds
-                    if now - lastSync > 10 then
-                        rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
-                        local _, response = rednet.receive("SimpleMail", 1)
-                        if response and response.count then
-                            state.unreadCount = response.count
-                        end
-                        lastSync = now
-                    end
-                end
-            end
+            -- Background listeners extracted to core scope
 
             parallel.waitForAny(mainMenu, gpsHeartbeat, backgroundListener)
             

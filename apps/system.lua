@@ -84,12 +84,12 @@ function system.updateAll(context)
             term.setCursorPos(2, y + 1); term.write("No response from Arcade Server.")
         end
     else
-        term.setCursorPos(2, y); term.setTextColor(colors.red); term.write("Arcade Server offline.")
+        term.setCursorPos(2, y); term.setTextColor(context.theme.errorText or colors.red); term.write("Arcade Server offline.")
         term.setTextColor(theme.text)
     end
     
     y = y + 2
-    term.setCursorPos(2, y); term.setTextColor(colors.gray)
+    term.setCursorPos(2, y); term.setTextColor(context.theme.mutedText or colors.gray)
     term.write("Note: System updates happen at boot.")
     term.setTextColor(theme.text)
     

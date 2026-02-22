@@ -39,7 +39,7 @@ local function drawMenu()
     
     term.setBackgroundColor(theme.bg)
     term.setCursorPos(2, h-2)
-    term.setTextColor(colors.gray)
+    term.setTextColor(context.theme.mutedText or colors.gray)
     term.write("Press ENTER to Apply. REBOOT required.")
 end
 
@@ -59,7 +59,7 @@ while true do
         
         -- Flash Feedback
         term.setCursorPos(2, h-2)
-        term.setTextColor(colors.lime)
+        term.setTextColor(context.theme.successText or colors.lime)
         term.clearLine()
         term.write("Theme Saved! Rebooting...")
         os.sleep(1)

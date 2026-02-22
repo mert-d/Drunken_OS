@@ -21,21 +21,21 @@ local function getFileInfo(path, filename)
     
     if info.isDir then
         info.icon = ">"
-        info.color = colors.lightBlue
+        info.color = context.theme.highlightText or colors.lightBlue
     elseif info.ext == ".lua" then
         if fullPath:match("games/") then
             info.icon = "*"
-            info.color = colors.green
+            info.color = context.theme.successText or colors.green
         else
             info.icon = "-"
-            info.color = colors.yellow
+            info.color = context.theme.warningText or colors.yellow
         end
     elseif info.ext == ".dat" or info.ext == ".db" or info.ext == ".json" then
         info.icon = "o"
-        info.color = colors.purple
+        info.color = context.theme.linkText or colors.purple
     else
         info.icon = " "
-        info.color = colors.white
+        info.color = context.theme.text or colors.white
     end
     return info
 end
@@ -55,7 +55,7 @@ function files.fileActionModal(context, file, isCloud)
     while true do
         context.drawWindow(file.name)
         local w, h = context.getSafeSize()
-        term.setCursorPos(2, 4); term.setTextColor(colors.gray)
+        term.setCursorPos(2, 4); term.setTextColor(context.theme.mutedText or colors.gray)
         term.write(string.format("Type: %s | Size: %d b", file.isDir and "Folder" or (file.ext ~= "" and file.ext or "File"), file.size))
         
         context.drawMenu(options, selected, 2, 6)
@@ -86,7 +86,7 @@ function files.run(context)
             for i, f in ipairs(cloudFiles) do
                 f.ext = f.name:match("^.+(%.%w+)$") or ""
                 f.icon = f.isDir and ">" or "-"
-                f.color = f.isDir and colors.lightBlue or colors.white
+                f.color = f.isDir and (context.theme.highlightText or colors.lightBlue) or (context.theme.text or colors.white)
             end
         else
             context.showMessage("Error", "Cloud Offline"); storageMode = "Local"
@@ -97,18 +97,18 @@ function files.run(context)
         local files = {}
         if storageMode == "Local" then
             local rawFiles = fs.list(currentPath)
-            if currentPath ~= "" then table.insert(files, { name = "..", isDir = true, icon = "<", color = colors.gray }) end
+            if currentPath ~= "" then table.insert(files, { name = "..", isDir = true, icon = "<", color = context.theme.mutedText or colors.gray }) end
             for _, f in ipairs(rawFiles) do table.insert(files, getFileInfo(currentPath, f)) end
         else
             files = cloudFiles
-            if #files == 0 then table.insert(files, { name = "(Cloud Empty)", icon = " ", color = colors.gray, disabled = true }) end
+            if #files == 0 then table.insert(files, { name = "(Cloud Empty)", icon = " ", color = context.theme.mutedText or colors.gray, disabled = true }) end
         end
 
         context.drawWindow("Files: " .. storageMode)
         local w, h = context.getSafeSize()
-        term.setCursorPos(2, 2); term.setTextColor(storageMode == "Local" and colors.white or colors.gray); term.write("[Local]")
-        term.setCursorPos(10, 2); term.setTextColor(storageMode == "Cloud" and colors.white or colors.gray); term.write("[Cloud]")
-        term.setCursorPos(2, 3); term.setTextColor(colors.cyan); term.write("/" .. currentPath)
+        term.setCursorPos(2, 2); term.setTextColor(storageMode == "Local" and (context.theme.text or colors.white) or (context.theme.mutedText or colors.gray)); term.write("[Local]")
+        term.setCursorPos(10, 2); term.setTextColor(storageMode == "Cloud" and (context.theme.text or colors.white) or (context.theme.mutedText or colors.gray)); term.write("[Cloud]")
+        term.setCursorPos(2, 3); term.setTextColor(context.theme.highlightText or colors.cyan); term.write("/" .. currentPath)
         
         local listHeight = h - 5
         selected = math.max(1, math.min(selected, #files))

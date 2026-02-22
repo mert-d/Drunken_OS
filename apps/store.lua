@@ -62,8 +62,8 @@ function store.run(context)
             for i, appName in ipairs(apps) do
                  if appName == "Exit" then
                      term.setCursorPos(2, y)
-                     if i == cursor then term.setTextColor(colors.cyan); term.write("> " .. appName)
-                     else term.setTextColor(colors.white); term.write("  " .. appName) end
+                     if i == cursor then term.setTextColor(context.theme.highlightText or colors.cyan); term.write("> " .. appName)
+                     else term.setTextColor(context.theme.text or colors.white); term.write("  " .. appName) end
                  else
                      local isInstalled = updater.is_installed(listing[appName]) -- Pass path? No, updater.is_installed is stubbed false
                      -- Actually let's use fs.exists since we have the path in 'listing'
@@ -72,15 +72,15 @@ function store.run(context)
                      
                      term.setCursorPos(2, y)
                      if i == cursor then 
-                        term.setTextColor(colors.cyan)
+                        term.setTextColor(context.theme.highlightText or colors.cyan)
                         term.write("> " .. appName)
                      else 
-                        term.setTextColor(colors.white)
+                        term.setTextColor(context.theme.text or colors.white)
                         term.write("  " .. appName) 
                      end
                      
                      term.setCursorPos(20, y)
-                     term.setTextColor(installed and colors.green or colors.gray)
+                     term.setTextColor(installed and (context.theme.successText or colors.green) or (context.theme.mutedText or colors.gray))
                      term.write(installed and "[INSTALLED]" or "[GET]")
                  end
                  y = y + 1

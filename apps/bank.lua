@@ -131,11 +131,11 @@ function bank.pay(context)
         
         local shop = getParent(context).nearbyShop
         if shop then
-             term.setCursorPos(2, 6); term.setTextColor(colors.green)
+             term.setCursorPos(2, 6); term.setTextColor(context.theme.successText or colors.green)
              term.write("Nearby: " .. shop.name)
              term.setTextColor(context.theme.text)
         else
-             term.setCursorPos(2, 6); term.setTextColor(colors.gray)
+             term.setCursorPos(2, 6); term.setTextColor(context.theme.mutedText or colors.gray)
              term.write("Searching for shops...")
              term.setTextColor(context.theme.text)
         end
@@ -148,7 +148,7 @@ function bank.pay(context)
             context.drawWindow("Pay Merchant")
             term.setCursorPos(2, 4); term.write("Balance: $" .. balance)
             if shop then
-                term.setCursorPos(2, 6); term.setTextColor(colors.green)
+                term.setCursorPos(2, 6); term.setTextColor(context.theme.successText or colors.green)
                 term.write("Nearby: " .. shop.name)
                 term.setTextColor(context.theme.text)
             end
