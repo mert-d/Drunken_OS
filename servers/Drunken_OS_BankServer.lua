@@ -1189,7 +1189,27 @@ function adminCommands.makecard(args)
 
     print("Verifying user with Mainframe...")
     rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
-    local replySender, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
+    
+    -- Custom timeout loop to prevent parallel rednet.receive collision
+    local timeoutTimer = os.startTimer(5)
+    local response = nil
+    local replySender = nil
+    
+    while true do
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "rednet_message" then
+            local sender = p1
+            local msg = p2
+            local proto = p3
+            if proto == AUTH_INTERLINK_PROTOCOL and type(msg) == "table" and msg.exists ~= nil then
+                response = msg
+                replySender = sender
+                break
+            end
+        elseif event == "timer" and p1 == timeoutTimer then
+            break -- Timeout reached
+        end
+    end
 
     if not response then
         print("Error: Verification timed out. Mainframe unresponsive.")
