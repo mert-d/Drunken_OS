@@ -1194,13 +1194,19 @@ function adminCommands.makecard(args)
     local timeoutTimer = os.startTimer(5)
     local response = nil
     local replySender = nil
-    
+
     while true do
         local event, p1, p2, p3 = os.pullEvent()
         if event == "rednet_message" then
             local sender = p1
             local msg = p2
             local proto = p3
+            
+            -- Proxy Unwrapping
+            if type(msg) == "table" and msg.proxy_response then
+                msg = msg.proxy_response
+            end
+
             if proto == AUTH_INTERLINK_PROTOCOL and type(msg) == "table" and msg.exists ~= nil then
                 response = msg
                 replySender = sender
