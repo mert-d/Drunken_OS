@@ -6,7 +6,7 @@
 ]]
 
 return {
-    version = 1.2,
+    version = 1.3,
 
     -- Files common to almost all client-side installations
     shared = {

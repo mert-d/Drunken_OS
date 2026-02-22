@@ -7,7 +7,7 @@ local theme = require("lib.theme")
 local utils = require("lib.utils")
 local P2P_Socket = require("lib.p2p_socket")
 local arcade = {}
-local arcadeVersion = 2.3 -- Bumped for join fix
+local arcadeVersion = 2.4 -- Bumped for join fix
 
 local function getParent(context)
     return context.parent

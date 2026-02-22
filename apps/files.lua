@@ -4,7 +4,7 @@
 ]]
 
 local files = {}
-local appVersion = 1.2
+local appVersion = 1.3
 
 local function getParent(context)
     return context.parent

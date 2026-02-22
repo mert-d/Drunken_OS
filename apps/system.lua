@@ -6,7 +6,7 @@
 local updater = require("lib.updater")
 local theme = require("lib.theme")
 local system = {}
-local appVersion = 1.9 -- Game-only updates, system updates at boot
+local appVersion = 2.0 -- Game-only updates, system updates at boot
 
 local function getParent(context)
     return context.parent
