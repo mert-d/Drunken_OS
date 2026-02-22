@@ -1189,12 +1189,17 @@ function adminCommands.makecard(args)
 
     print("Verifying user with Mainframe...")
     rednet.send(mainServerId, { type = "user_exists_check", user = user }, AUTH_INTERLINK_PROTOCOL)
-    local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
+    local replySender, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 5)
 
     if not response then
         print("Error: Verification timed out. Mainframe unresponsive.")
         return
-    elseif not response.exists then
+    end
+    
+    -- Print exactly what we got for diagnostic purposes
+    print("[DEBUG] Received from ID " .. tostring(replySender) .. ": " .. textutils.serializeJSON(response))
+
+    if not response.exists then
         print("Error: Mainframe reports user '" .. user .. "' does not exist.")
         return
     end
