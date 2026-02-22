@@ -75,7 +75,8 @@ return {
                 "servers/Drunken_OS_BankServer.lua",
                 "lib/sha1_hmac.lua",
                 "lib/db.lua",
-                "lib/theme.lua"
+                "lib/theme.lua",
+                "lib/utils.lua"
             },
             include_shared = false,
             needs_setup = true,
