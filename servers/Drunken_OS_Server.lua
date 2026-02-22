@@ -405,12 +405,22 @@ function mailHandlers.get_file(senderId, message)
          return
     end
 
+    -- Attempt 1: Check memory cache (programCode)
+    -- Map path (e.g., "clients/Drunken_OS_Client.lua", "lib/theme.lua") to module name
+    local moduleName = path:match("([^/]+)%.lua$")
+    if moduleName and programCode[moduleName] then
+        rednet.send(senderId, { success = true, path = path, code = programCode[moduleName] }, "SimpleMail")
+        logActivity("Served cached file '" .. path .. "' to " .. senderId)
+        return
+    end
+
+    -- Attempt 2: Check local disk
     if fs.exists(path) and not fs.isDir(path) then
         local f = fs.open(path, "r")
         local content = f.readAll()
         f.close()
         rednet.send(senderId, { success = true, path = path, code = content }, "SimpleMail")
-        logActivity("Served file '" .. path .. "' to " .. senderId)
+        logActivity("Served local file '" .. path .. "' to " .. senderId)
     else
         rednet.send(senderId, { success = false, reason = "File not found" }, "SimpleMail")
         logActivity("Client " .. senderId .. " requested missing file: " .. path, true)
