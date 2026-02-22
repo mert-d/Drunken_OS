@@ -285,7 +285,7 @@ local function getFileContent(path)
     end
 
     -- Fallback to remote download
-    local url = GITHUB_REPO_URL .. path
+    local url = GITHUB_REPO_URL .. path .. "?v=" .. tostring(os.epoch("utc"))
     print("Downloading " .. path .. "...")
     local response = http.get(url)
     if response and response.getResponseCode() == 200 then
