@@ -617,7 +617,9 @@ function mailHandlers.admin_action(senderId, message)
     
     local result = "Invalid Action"
     if action == "approve" then
-        result = adminCommands.approve({ "approve", id })
+        local args = { "approve", id }
+        if message.overwrite then table.insert(args, "overwrite") end
+        result = adminCommands.approve(args)
     elseif action == "reject" then
         result = adminCommands.reject({ "reject", id })
     end
@@ -1256,12 +1258,22 @@ end
 
 function adminCommands.approve(args)
     local subId = args[2]
+    local overwrite = args[3] == "overwrite"
+
     if not subId or not pendingApps[subId] then
-        return "Usage: approve <id> (ID not found)"
+        return "Usage: approve <id> [overwrite] (ID not found)"
     end
     
     local app = pendingApps[subId]
     local filename = "apps/" .. app.name .. ".lua"
+
+    -- We now add to 'store' instead of 'all_apps' to make it Optional/On-Demand
+    if not manifest.store then manifest.store = {} end
+
+    -- Check uniqueness or overwrite
+    if manifest.store[app.name] and not overwrite then
+        return "App '" .. app.name .. "' already exists. Use 'approve " .. subId .. " overwrite' to replace it."
+    end
     
     -- 1. Save File Locally
     -- Ensure apps dir exists
@@ -1271,10 +1283,6 @@ function adminCommands.approve(args)
     f.close()
     
     -- 2. Update Manifest (Dynamic!)
-    -- We now add to 'store' instead of 'all_apps' to make it Optional/On-Demand
-    if not manifest.store then manifest.store = {} end
-    
-    -- Check uniqueness or overwrite
     manifest.store[app.name] = filename
     
     -- Just saving manifest to disk is enough if we reload it?
