@@ -1351,6 +1351,70 @@ function adminCommands.deladmin(args)
     end
 end
 
+function adminCommands.setupauth(args)
+    -- Temporarily take over the screen for an interactive prompt
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    
+    term.setCursorPos(1, 2)
+    term.setTextColor(colors.yellow)
+    term.write("=== HyperAuth Setup Initialization ===")
+    term.setTextColor(colors.white)
+    
+    term.setCursorPos(1, 4)
+    term.write("Enter Protocol Name:")
+    term.setCursorPos(1, 5)
+    term.setTextColor(colors.cyan)
+    local protocol = read()
+    term.setTextColor(colors.white)
+    
+    term.setCursorPos(1, 7)
+    term.write("Enter Client ID:")
+    term.setCursorPos(1, 8)
+    term.setTextColor(colors.cyan)
+    local client_id = read()
+    term.setTextColor(colors.white)
+    
+    term.setCursorPos(1, 10)
+    term.write("Enter Shared Secret:")
+    term.setCursorPos(1, 11)
+    term.setTextColor(colors.cyan)
+    local secret = read()
+    term.setTextColor(colors.white)
+    
+    if protocol == "" or client_id == "" or secret == "" then
+        return "Setup aborted: All fields are required."
+    end
+    
+    -- Generate new configuration file
+    local configCode = string.format([[
+return {
+  PROTOCOL_NAME = "%s",
+
+  CLIENT_ID     = "%s",
+  SHARED_SECRET = "%s",
+
+  KNOWN_SERVER_ID         = nil,
+  DEFAULT_TIMEOUT_SECONDS = 6,
+}
+]], protocol, client_id, secret)
+
+    if not fs.exists("HyperAuthClient") then
+        fs.makeDir("HyperAuthClient")
+    end
+    
+    local f = fs.open("HyperAuthClient/config.lua", "w")
+    if f then
+        f.write(configCode)
+        f.close()
+        return "HyperAuth configuration successfully written! Please reboot."
+    else
+        return "Error: Could not write to HyperAuthClient/config.lua"
+    end
+end
+
+
 local function executeAdminCommand(command)
     local output = {}
     local oldPrint = print
