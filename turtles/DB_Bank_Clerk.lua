@@ -167,27 +167,6 @@ local function handleDeposit(atmId, deposit_side, vault_side)
     end
 end
 
-local function depositToVault(vault_side)
-    if vault_side == "top" then
-        for i = 1, 16 do
-            turtle.select(i)
-            if turtle.getItemCount(i) > 0 then turtle.dropUp() end
-        end
-    elseif vault_side == "bottom" then
-        for i = 1, 16 do
-            turtle.select(i)
-            if turtle.getItemCount(i) > 0 then turtle.dropDown() end
-        end
-    else -- Horizontal
-        turnTo(vault_side)
-        for i = 1, 16 do
-            turtle.select(i)
-            if turtle.getItemCount(i) > 0 then turtle.drop() end
-        end
-        turnToFront(vault_side)
-    end
-end
-
 local function handleDispense(atmId, itemToDispense, count, vault_side, deposit_side)
     logActivity("Initiating 'Internal Shuffle' withdrawal for "..count.." "..itemToDispense)
 
@@ -294,9 +273,9 @@ local function main()
                 handleDeposit(senderId, deposit_side, vault_side)
             elseif message.type == "request_dispense" then
                 handleDispense(senderId, message.item_name, message.count, vault_side, deposit_side)
-            -- THE FIX: Respond to the ATM's setup ping.
+            -- THE FIX: Respond to the ATM's setup ping with a 'pong' message.
             elseif message.type == "ping" then
-                logActivity("Received setup ping from ID " .. senderId .. ". Responding.")
+                logActivity("Received setup ping from ID " .. senderId .. ". Responding with pong.")
                 rednet.send(senderId, { type = "pong" }, protocol)
             end
         end

@@ -12,7 +12,7 @@
 -- Helper Functions
 --==============================================================================
 
-local run_setup_wizard -- Forward declaration
+local runSetupWizard -- Forward declaration
 
 local function showMessage(message)
     term.clear()
@@ -85,7 +85,7 @@ local function doInstallation()
 
     -- Run the setup wizard if needed
     if config.needs_setup then
-        run_setup_wizard(config.setup_type)
+        runSetupWizard(config.setup_type)
     end
 
     -- Create the startup file
@@ -129,12 +129,47 @@ local function doInstallation()
     os.reboot()
 end
 
-run_setup_wizard = function(setup_type)
+runSetupWizard = function(setup_type)
     if setup_type == "atm" then
         showMessage("Running ATM setup wizard...")
-        print("Please enter the ID of the Bank Clerk Turtle:")
-        local turtleId = read()
-        local config = { turtleClerkId = tonumber(turtleId) }
+
+        local turtleId = nil
+        while not turtleId do
+            print("Please enter the ID of the Bank Clerk Turtle:")
+            local input = read()
+            local id = tonumber(input)
+
+            if not id then
+                print("Invalid ID. Please enter a number.")
+            else
+                print("Verifying connection to Turtle " .. id .. "...")
+
+                -- Open rednet if not already open
+                local modem = peripheral.find("modem")
+                if modem then
+                    rednet.open(peripheral.getName(modem))
+                    rednet.send(id, { type = "ping" }, "DB_ATM_Turtle")
+
+                    local senderId, response = rednet.receive("DB_ATM_Turtle", 5)
+                    if response and response.type == "pong" then
+                        print("Connection verified!")
+                        turtleId = id
+                    else
+                        print("No response from Turtle. Is it on and in range?")
+                        print("Retry? (y/n)")
+                        if read():lower() ~= "y" then
+                            print("Proceeding without verification...")
+                            turtleId = id
+                        end
+                    end
+                else
+                    print("No modem found! Cannot verify. Proceeding anyway...")
+                    turtleId = id
+                end
+            end
+        end
+
+        local config = { turtleClerkId = turtleId }
         local file = fs.open("/atm.conf", "w")
         file.write(textutils.serialize(config))
         file.close()

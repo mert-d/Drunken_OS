@@ -109,6 +109,17 @@ return {
             include_shared = true
         },
 
+        -- Vault Clerk Turtle
+        bank_clerk_turtle = {
+            name = "Vault Clerk Turtle",
+            type = "turtle",
+            main = "turtles/DB_Bank_Clerk.lua",
+            files = {
+                "turtles/DB_Bank_Clerk.lua"
+            },
+            include_shared = false
+        },
+
         -- Auditor Turtle
         auditor = {
             name = "Auditor Turtle",
