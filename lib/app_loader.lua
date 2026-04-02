@@ -5,6 +5,7 @@
 ]]
 
 local loader = {}
+loader._VERSION = 1.3
 
 ---
 -- Dynamically loads and runs an applet from the /apps directory.

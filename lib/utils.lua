@@ -43,14 +43,15 @@ end
 
 function utils.drawWindow(title, context)
     local w, h = term.getSize()
-    term.setBackgroundColor(theme.bg)
+    local t = (context and context.theme) or theme  -- Respect passed theme, fall back to module default
+    term.setBackgroundColor(t.bg)
     term.clear()
     
     -- Title Bar
     term.setCursorPos(1, 1)
-    term.setBackgroundColor(theme.titleBg)
+    term.setBackgroundColor(t.titleBg)
     term.clearLine()
-    term.setTextColor(theme.titleText)
+    term.setTextColor(t.titleText)
     
     local titleText = " " .. (title or "Window") .. " "
     term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1)
@@ -58,12 +59,12 @@ function utils.drawWindow(title, context)
     
     -- Footer/Status Bar (Optional, mimic standard look)
     term.setCursorPos(1, h)
-    term.setBackgroundColor(theme.titleBg) -- or gray
+    term.setBackgroundColor(t.titleBg)
     term.clearLine()
     
     -- Reset
-    term.setBackgroundColor(theme.bg)
-    term.setTextColor(theme.text)
+    term.setBackgroundColor(t.bg)
+    term.setTextColor(t.text)
 end
 
 -- Universal word-wrap

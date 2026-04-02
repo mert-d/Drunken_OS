@@ -7,7 +7,7 @@
     Terminal) to check for updates and self-install from the Mainframe.
 ]]
 local updater = {}
-updater._VERSION = 1.1
+updater._VERSION = 1.2
 
 ---
 -- Checks for a newer version of a program or library and installs it if available.
