@@ -153,26 +153,26 @@ local function simulationTick()
                 -- Special Export Logic
                 if state.resources.alloys >= 10 then
                     -- Get Username
-                    local username = nil
+                    local username, token = nil, nil
                     if fs.exists(".session") then
                         local f = fs.open(".session", "r")
                         local data = textutils.unserialize(f.readAll())
                         f.close()
-                        if data then username = data.username end
+                        if data then 
+                            username = data.username 
+                            token = data.session_token
+                        end
                     end
                     
-                    if username then
+                    if username and token then
                         -- Check Bank
                         state.resources.alloys = state.resources.alloys - 10
                         netProd.alloys = (netProd.alloys or 0) - 10
                         -- Send to Bank
-                        -- We use rednet globally
                         peripheral.find("modem", rednet.open)
                         local bankId = rednet.lookup("DB_Bank", "bank.server")
                         if bankId then
-                            rednet.send(bankId, { type="city_export", user=username, resource="alloys", count=10 }, "DB_Bank")
-                            -- Visual Feedback?
-                            -- playSound("entity.arrow.hit_player", 0.5, 2.0)
+                            rednet.send(bankId, { type="city_export", user=username, session_token=token, resource="alloys", count=10 }, "DB_Bank")
                         end
                     end
                 end

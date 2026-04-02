@@ -28,11 +28,13 @@ local utils = require("lib.utils")
 --==============================================================================
 
 local accounts, currencyRates, currentStock = {}, {}, {}
+local ledger = {}
 local mainServerId = nil
 local wired_modem_name, wireless_modem_name = nil, nil
 local adminInput = ""
 local logHistory = {}
 local uiDirty = true
+local needsRedraw = false
 local wordWrap = utils.wordWrap
 local startupComplete = false -- Flag to control logging to terminal
 
@@ -52,8 +54,13 @@ local dbPointers = {
     [LEDGER_FILE] = function() return ledger end
 }
 
+local dbTracker = nil
 local function queueSave(dbPath)
-    dbDirty[dbPath] = true
+    if dbTracker then
+        dbTracker.queueSave(dbPath)
+    else
+        dbDirty[dbPath] = true
+    end
 end
 
 -- Rednet Protocols
@@ -114,22 +121,7 @@ local function logActivity(message, isError)
 end
 
 
-local function logTransaction(username, transaction_type, data)
-    local logEntry = {
-        timestamp = os.time(),
-        type = transaction_type,
-        user = username,
-        data = data
-    }
-    if not fs.exists(LOGS_DIR) then fs.makeDir(LOGS_DIR) end
-    if not fs.exists(TRANSACTIONS_DIR) then fs.makeDir(TRANSACTIONS_DIR) end
 
-    local file = fs.open(TRANSACTIONS_DIR .. "/master.log", "a")
-    if file then
-        file.writeLine(textutils.serializeJSON(logEntry))
-        file.close()
-    end
-end
 
 --==============================================================================
 -- Ledger & Integrity System
@@ -146,7 +138,7 @@ local function loadLedger()
             file.close()
             local data = textutils.unserialize(content)
             if data and type(data) == "table" then 
-                ledger = data 
+                for i, v in ipairs(data) do table.insert(ledger, v) end
                 if #ledger > 0 then
                     lastLedgerHash = ledger[#ledger].hash
                 end
@@ -170,7 +162,6 @@ local function logTransaction(user, txType, details, amount, target)
         amount = amount,
         target = target,
         details = details,
-        prevHash = lastLedgerHash,
         prevHash = lastLedgerHash,
         timestamp = timestamp,
         realTimestamp = os.epoch("utc") -- Added for precise verification
@@ -208,14 +199,25 @@ local function loadTableFromFile(path)
     return DB.loadTableFromFileJSON(path, logActivity)
 end
 
+--==============================================================================
+-- Session Verification (Inter-Server)
+--==============================================================================
+
+local function verifyTokenWithMainframe(user, token)
+    if not mainServerId or not user or not token then return false end
+    rednet.send(mainServerId, { type = "verify_session", user = user, session_token = token }, "SimpleMail")
+    local _, resp = rednet.receive("SimpleMail", 3)
+    return resp and resp.success
+end
+
 local function persistenceLoop()
-    local tracker = DB.createDirtyTracker(dbPointers, logActivity)
-    -- Replace global queueSave with tracker version
-    _G.bankQueueSave = tracker.queueSave
+    if not dbTracker then
+        dbTracker = DB.createDirtyTracker(dbPointers, logActivity)
+    end
     
     while true do
         sleep(30)
-        tracker.backgroundSave()
+        dbTracker.backgroundSave()
     end
 end
 
@@ -550,10 +552,17 @@ end
 -- Handles City Builder Exports (Virtual Resource -> Credits)
 function bankHandlers.city_export(senderId, message)
     local user = message.user
+    local token = message.session_token
     local resource = message.resource -- "alloys"
     local count = tonumber(message.count)
     
     if not user or not count or count <= 0 then return end
+    
+    -- Security: Verify Session
+    if not verifyTokenWithMainframe(user, token) then
+        rednet.send(senderId, { success = false, reason = "Auth failed" }, BANK_PROTOCOL)
+        return
+    end
     
     local account = accounts[user]
     if not account then return end
@@ -575,15 +584,26 @@ function bankHandlers.arcade_payout(senderId, message)
     local user = message.user
     local amount = tonumber(message.amount)
     local gameName = message.game or "Arcade"
+    local token = message.session_token
     
     if not user or not amount or amount <= 0 then return end
     
+    -- Security: Verify Sender is Arcade Server
+    local arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
+    if senderId ~= arcadeServerId then
+        logActivity("BLOCKED: Unauthorized payout attempt from ID " .. senderId, true)
+        rednet.send(senderId, { success = false, reason = "Unauthorized sender" }, BANK_PROTOCOL)
+        return
+    end
+
+    -- Security: Verify User Session
+    if not verifyTokenWithMainframe(user, token) then
+        rednet.send(senderId, { success = false, reason = "Auth failed" }, BANK_PROTOCOL)
+        return
+    end
+    
     local account = accounts[user]
     if not account then return end
-    
-    -- Verify Sender is Arcade Server?
-    -- For now, we trust the protocol/ID mapping or just allow it for this alpha phase.
-    -- Ideally: Check senderId against a known trusted list.
     
     account.balance = account.balance + amount
     queueSave(ACCOUNTS_DB)
@@ -751,60 +771,6 @@ function bankHandlers.save_db(senderId, message)
     queueSave(STOCK_DB)
 end
 
--- Handles a merchant payment with metadata logging.
-function bankHandlers.process_payment(senderId, message)
-    if not message or type(message.user) ~= "string" or type(message.recipient) ~= "string" then
-        rednet.send(senderId, { success = false, reason = "Invalid payment payload." }, BANK_PROTOCOL)
-        return
-    end
-    local sender, recipient = message.user, message.recipient
-    local amount = tonumber(message.amount)
-    local metadata = message.metadata or "Payment"
-    local pin_hash = message.pin_hash
-
-    if not amount or amount <= 0 then
-        rednet.send(senderId, { success = false, reason = "Invalid amount." }, BANK_PROTOCOL)
-        return
-    end
-
-    local senderAcc = accounts[sender]
-    if not senderAcc or senderAcc.pin_hash ~= pin_hash then
-        rednet.send(senderId, { success = false, reason = "Auth failed." }, BANK_PROTOCOL)
-        return
-    end
-
-    if senderAcc.balance < amount then
-        rednet.send(senderId, { success = false, reason = "Insufficient funds." }, BANK_PROTOCOL)
-        return
-    end
-
-    -- Verify Recipient
-    local recipientAcc = accounts[recipient]
-    if not recipientAcc then
-        -- Optional: Check Mainframe, but for payments usually we pay existing accounts
-        rednet.send(senderId, { success = false, reason = "Recipient account not found." }, BANK_PROTOCOL)
-        return
-    end
-
-    -- Execute Transaction
-    senderAcc.balance = senderAcc.balance - amount
-    recipientAcc.balance = recipientAcc.balance + amount
-
-    queueSave(ACCOUNTS_DB)
-    
-    local details = {
-        recipient = recipient,
-        sender = sender,
-        note = metadata
-    }
-    logTransaction(sender, "PAYMENT", details, amount)
-    logActivity("Payment: " .. sender .. " paid $" .. amount .. " to " .. recipient .. " (" .. metadata .. ")")
-    broadcastSecurityEvent("PAY: " .. sender .. " -> " .. recipient .. " $" .. amount, amount)
-
-    senderAcc.balance = senderAcc.balance -- Sync?
-    
-    rednet.send(senderId, { success = true, newBalance = senderAcc.balance }, BANK_PROTOCOL)
-end
 
 -- Handles a peer-to-peer money transfer.
 function bankHandlers.transfer(senderId, message)
@@ -827,7 +793,17 @@ function bankHandlers.transfer(senderId, message)
     end
 
     local senderAcc = accounts[sender]
-    if not senderAcc or senderAcc.balance < amount then
+    if not senderAcc then
+        rednet.send(senderId, { success = false, reason = "Account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    if senderAcc.pin_hash ~= message.pin_hash then
+        rednet.send(senderId, { success = false, reason = "Invalid PIN or auth failed." }, BANK_PROTOCOL)
+        return
+    end
+
+    if senderAcc.balance < amount then
         rednet.send(senderId, { success = false, reason = "Insufficient funds." }, BANK_PROTOCOL)
         return
     end

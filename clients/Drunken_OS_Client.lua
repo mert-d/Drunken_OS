@@ -731,7 +731,7 @@ local function main()
             
             -- Persist Session for SDK/Apps
             local f = fs.open(".session", "w")
-            f.write(textutils.serialize({ username = state.username }))
+            f.write(textutils.serialize({ username = state.username, session_token = state.session_token }))
             f.close()
             
             rednet.send(state.mailServerId, {type = "get_motd"}, "SimpleMail")

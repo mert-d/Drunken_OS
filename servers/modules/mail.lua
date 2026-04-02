@@ -13,7 +13,7 @@ local function saveItem(user, item, itemType, context)
     
     local dir = itemType .. "/" .. user
     if not fs.exists(dir) then fs.makeDir(dir) end
-    local id = os.time() .. "-" .. math.random(100, 999)
+    local id = tostring(os.epoch("utc")) .. "-" .. math.random(100, 999)
     if saveTableToFile(dir .. "/" .. id, item) then
         if itemType == "mail" then
             mailCountCache[user] = (mailCountCache[user] or 0) + 1

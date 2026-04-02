@@ -141,8 +141,6 @@ DrunkenOS.System = {}
 --- Gets the current logged-in username (if available in environment)
 -- @return string: Username or "Guest"
 function DrunkenOS.System.getUsername()
-    -- Check if we are running inside the OS client environment
-    -- The OS usually exposes 'state' or we can check a local session file
     if fs.exists(".session") then
         local f = fs.open(".session", "r")
         local data = textutils.unserialize(f.readAll())
@@ -150,6 +148,18 @@ function DrunkenOS.System.getUsername()
         return data and data.username or "Guest"
     end
     return "Guest"
+end
+
+--- Gets the current secure session token
+-- @return string|nil: The session string or nil
+function DrunkenOS.System.getSessionToken()
+    if fs.exists(".session") then
+        local f = fs.open(".session", "r")
+        local data = textutils.unserialize(f.readAll())
+        f.close()
+        return data and data.session_token or nil
+    end
+    return nil
 end
 
 return DrunkenOS

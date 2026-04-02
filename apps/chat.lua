@@ -66,7 +66,7 @@ function chat.run(context)
             local _, message = rednet.receive("SimpleChat")
             if message and message.from and message.text then
                 local formattedMessage = string.format("[%s]: %s", message.from, message.text)
-                if formattedMessage ~= lastMessage then
+                if formattedMessage ~= lastMessage and message.senderId ~= os.getComputerID() then
                     table.insert(history, formattedMessage)
                     if #history > 100 then
                         table.remove(history, 1)

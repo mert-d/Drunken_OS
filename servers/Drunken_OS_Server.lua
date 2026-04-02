@@ -594,7 +594,7 @@ end
 
 -- Admin Review Handlers
 function mailHandlers.admin_get_submissions(senderId, message)
-    if not message.username or not admins[message.username] then
+    if not verifySecureSession(message) or not admins[message.username] then 
         rednet.send(senderId, { success = false, reason = "Unauthorized" }, "SimpleMail")
         return
     end
@@ -607,7 +607,10 @@ function mailHandlers.admin_get_submissions(senderId, message)
 end
 
 function mailHandlers.admin_get_code(senderId, message)
-    if not message.username or not admins[message.username] then return end
+    if not verifySecureSession(message) or not admins[message.username] then
+        rednet.send(senderId, { success = false, reason = "Unauthorized" }, "SimpleMail")
+        return
+    end
     
     local app = pendingApps[message.id]
     if app then
@@ -617,8 +620,21 @@ function mailHandlers.admin_get_code(senderId, message)
     end
 end
 
+local function verifySecureSession(message)
+    local u = message.user or message.username
+    return u and users[u] and message.session_token and users[u].session_token == message.session_token
+end
+
+function mailHandlers.verify_session(senderId, message)
+    local success = verifySecureSession(message)
+    rednet.send(senderId, { success = success }, "SimpleMail")
+end
+
 function mailHandlers.admin_action(senderId, message)
-    if not message.username or not admins[message.username] then return end
+    if not verifySecureSession(message) or not admins[message.username] then 
+        rednet.send(senderId, { success = false, reason = "Unauthorized" }, "SimpleMail")
+        return 
+    end
     
     local action = message.action
     local id = message.id
@@ -720,6 +736,7 @@ end
 --==============================================================================
 
 function mailHandlers.list_cloud(senderId, message)
+    if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
     local user = message.user
     local path = "cloud/" .. user
     local files = {}
@@ -735,6 +752,7 @@ function mailHandlers.list_cloud(senderId, message)
 end
 
 function mailHandlers.sync_file(senderId, message)
+    if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
     local user = message.user
     local fileName = message.filename
     local content = message.content
@@ -760,6 +778,7 @@ function mailHandlers.sync_file(senderId, message)
 end
 
 function mailHandlers.download_cloud(senderId, message)
+    if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
     local user = message.user
     local fileName = message.filename
     local filePath = "cloud/" .. user .. "/" .. fileName
@@ -776,6 +795,7 @@ function mailHandlers.download_cloud(senderId, message)
 end
 
 function mailHandlers.delete_cloud(senderId, message)
+    if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
     local filePath = "cloud/" .. message.user .. "/" .. message.filename
     if fs.exists(filePath) then
         fs.delete(filePath)
@@ -1141,7 +1161,21 @@ function adminCommands.sync(a)
                 if f then
                     f.write(code)
                     f.close()
-                    local func = load(code, "manifest", "t", {})
+                    local env = {
+                        table = table,
+                        string = string,
+                        math = math,
+                        os = os,
+                        textutils = textutils,
+                        peripheral = peripheral,
+                        rednet = rednet,
+                        fs = fs,
+                        term = term,
+                        colors = colors,
+                        colours = colours,
+                        keys = keys
+                    }
+                    local func = load(code, "manifest", "t", env)
                     if func then
                         manifest = func()
                         logActivity("Manifest updated to v" .. (manifest.version or "?"))

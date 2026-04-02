@@ -44,7 +44,7 @@ local function getBankSession(context)
     local _, response = rednet.receive(BANK_PROTOCOL, 15)
 
     if response and response.success then
-        return bankServerId, pin_hash, response.balance, response.rates
+        return bankServerId, pin_hash, response.balance, response.rates or {}
     elseif response and response.reason == "setup_required" then
         context.showMessage("Setup Required", "Please visit an ATM to set up your PIN.")
         return nil, nil
@@ -184,7 +184,7 @@ function bank.pay(context)
                 local mailObj = {
                     from = getParent(context).username,
                     from_nickname = getParent(context).nickname,
-                    to = "MuhendizBey",
+                    to = "@all", -- Reports sent as broadcast/all admins or use a list
                     subject = "REPORT: " .. userToReport,
                     body = reason,
                     timestamp = os.time()

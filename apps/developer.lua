@@ -187,6 +187,7 @@ local function mainMenu(context)
                          rednet.send(server, { 
                              type = "admin_action", 
                              username = SDK.System.getUsername(), 
+                             session_token = SDK.System.getSessionToken(),
                              action = action:lower(), 
                              id = sub.id 
                          }, "SimpleMail")

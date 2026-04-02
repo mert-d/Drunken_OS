@@ -16,6 +16,7 @@ end
 local function parseGameInfo(path)
     if not fs.exists(path) then return nil end
     local f = fs.open(path, "r")
+    if not f then return nil end
     local content = f.readAll()
     f.close()
     
@@ -40,6 +41,7 @@ function arcade.run(context)
     local lastFetchTime = 0
     local cachedLeaderboard = nil
     local cachedLobbies = nil
+    local socketCache = {} -- Item #18: Cache sockets to avoid expensive re-init
     
     -- Load Games List
     if not fs.exists("games") then fs.makeDir("games") end
@@ -68,22 +70,21 @@ function arcade.run(context)
         if server then
             rednet.send(server, {type="get_board", game=game.filename}, "ArcadeGames")
             -- We don't wait here to avoid blocking UI too much, we check messages in loop
-            -- actually, for simplicity in v2.0, let's just do a quick peek-receive or standard receive with short timeout
-            local id, msg = rednet.receive("ArcadeGames", 0.2)
-            if msg and msg.type == "leaderboard_response" and msg.game == game.filename then
-                cachedLeaderboard = msg.board
-            end
-        else
-            cachedLeaderboard = "offline"
+        -- actually, for simplicity in v2.0, let's just do a quick peek-receive or standard receive with short timeout
+        local id, msg = rednet.receive("ArcadeGames", 0.05)
+        if msg and msg.type == "leaderboard_response" and msg.game == game.filename then
+            cachedLeaderboard = msg.board
         end
-        
+
         -- Get Lobbies
         -- Use P2P Socket logic (emulated or direct)
-        -- We instantiate a temporary socket to use its findLobbies logic if possible, 
-        -- but P2P_Socket requires protocol. We parsed it!
         if game.protocol and game.protocol ~= "Unknown" then
-            local tempSocket = P2P_Socket.new(game.filename, game.version, game.protocol)
-            local lobbies, err = tempSocket:findLobbies()
+            local socket = socketCache[game.filename]
+            if not socket then
+                socket = P2P_Socket.new(game.filename, game.version, game.protocol)
+                socketCache[game.filename] = socket
+            end
+            local lobbies, err = socket:findLobbies()
             cachedLobbies = lobbies or {}
         else
             cachedLobbies = {} -- Cannot scan without protocol
@@ -232,6 +233,8 @@ function arcade.run(context)
                  local run_shell = context.shell or _G.shell
                  -- Join directly
                  run_shell.run(games[selectedIdx].path, getParent(context).username, "join", tostring(id))
+             else
+                 context.showMessage("Lobby Join Error", "Lobby ID " .. (idStr or "nil") .. " not found.")
              end
 
         elseif p1 == keys.q or p1 == keys.tab then

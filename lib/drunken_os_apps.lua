@@ -40,10 +40,11 @@ local function completeAuthentication(context, user)
         getParent(context).nickname = response.nickname
         getParent(context).unreadCount = response.unreadCount or 0
         getParent(context).isAdmin = response.isAdmin or false
+        getParent(context).session_token = response.session_token
         if response.session_token then
             local sessionPath = fs.combine(context.programDir, ".session")
             local file = fs.open(sessionPath, "w")
-            if file then file.write(response.session_token); file.close() end
+            if file then file.write(textutils.serialize({ username = user, session_token = response.session_token })); file.close() end
         end
         context.showMessage("Success", "Authentication successful!")
         return true
@@ -73,7 +74,16 @@ function apps.loginOrRegister(context)
                         local sessionPath = fs.combine(context.programDir, ".session")
                         if fs.exists(sessionPath) then
                             local file = fs.open(sessionPath, "r")
-                            if file then session_token = file.readAll(); file.close() end
+                            if file then 
+                                local content = file.readAll()
+                                file.close() 
+                                local data = textutils.unserialize(content)
+                                if type(data) == "table" then
+                                    session_token = data.session_token
+                                else
+                                    session_token = content -- Legacy fallback
+                                end
+                            end
                         end
                         rednet.send(getParent(context).mailServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "SimpleMail")
                         local _, response = rednet.receive("SimpleMail", 15)
@@ -85,6 +95,7 @@ function apps.loginOrRegister(context)
                                 getParent(context).nickname = response.nickname
                                 getParent(context).unreadCount = response.unreadCount or 0
                                 getParent(context).isAdmin = response.isAdmin or false
+                                getParent(context).session_token = response.session_token
                             end
                         else
                             context.showMessage("Login Failed", (response and response.reason) or "No response.")

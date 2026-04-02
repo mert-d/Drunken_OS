@@ -91,7 +91,7 @@ function mail.viewInbox(context)
         return
     end
     
-    table.sort(inbox, function(a, b) return a.timestamp > b.timestamp end)
+    table.sort(inbox, function(a, b) return (a.timestamp or 0) > (b.timestamp or 0) end)
     local selected = 1
     local scroll = 1
     

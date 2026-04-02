@@ -11,12 +11,10 @@ local appVersion = 2.0 -- Game-only updates, system updates at boot
 local function getParent(context)
     return context.parent
 end
--- ... (keeping existing functions until updateAll)
 
+---
+-- Prompts the user to change their global nickname.
 function system.changeNickname(context)
-    -- ... (unchanged, but I need to be careful with replace_file_content range)
-    -- Actually, I shouldn't replace the whole file if I can avoid it.
-    -- I'll target the updateAll function specifically.
     context.drawWindow("Change Nickname")
     local new_nick = context.readInput("New nickname: ", 4)
     if new_nick and new_nick ~= "" then
@@ -85,13 +83,11 @@ function system.updateAll(context)
         end
     else
         term.setCursorPos(2, y); term.setTextColor(context.theme.errorText or colors.red); term.write("Arcade Server offline.")
-        term.setTextColor(theme.text)
+        term.setTextColor(context.theme.text)
     end
-    
-    y = y + 2
     term.setCursorPos(2, y); term.setTextColor(context.theme.mutedText or colors.gray)
     term.write("Note: System updates happen at boot.")
-    term.setTextColor(theme.text)
+    term.setTextColor(context.theme.text)
     
     sleep(2)
 end

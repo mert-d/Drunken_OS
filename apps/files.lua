@@ -79,7 +79,7 @@ function files.run(context)
 
     local function refreshCloud()
         context.drawWindow("Syncing...")
-        rednet.send(getParent(context).mailServerId, { type = "list_cloud", user = getParent(context).username }, "SimpleMail")
+        rednet.send(getParent(context).mailServerId, { type = "list_cloud", user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
         local _, response = rednet.receive("SimpleMail", 5)
         if response and response.files then
             cloudFiles = response.files
@@ -151,10 +151,10 @@ function files.run(context)
                     elseif action == "☁️ Sync to Cloud" then
                         local file = fs.open(fs.combine(currentPath, f.name), "r")
                         local content = file.readAll(); file.close()
-                        rednet.send(getParent(context).mailServerId, { type = "sync_file", user = getParent(context).username, filename = f.name, content = content }, "SimpleMail")
+                        rednet.send(getParent(context).mailServerId, { type = "sync_file", user = getParent(context).username, filename = f.name, content = content, session_token = getParent(context).session_token }, "SimpleMail")
                         local _, resp = rednet.receive("SimpleMail", 5); context.showMessage("Sync", (resp and resp.success) and "Uploaded!" or "Failed")
                     elseif action == "💾 Download Local" then
-                        rednet.send(getParent(context).mailServerId, { type = "download_cloud", user = getParent(context).username, filename = f.name }, "SimpleMail")
+                        rednet.send(getParent(context).mailServerId, { type = "download_cloud", user = getParent(context).username, filename = f.name, session_token = getParent(context).session_token }, "SimpleMail")
                         local _, resp = rednet.receive("SimpleMail", 10)
                         if resp and resp.success then
                             local file = fs.open(fs.combine(currentPath, f.name), "w")
@@ -165,7 +165,7 @@ function files.run(context)
                         if to and to ~= "" then
                             local content
                             if storageMode == "Cloud" then
-                                rednet.send(getParent(context).mailServerId, { type = "download_cloud", user = getParent(context).username, filename = f.name }, "SimpleMail")
+                                rednet.send(getParent(context).mailServerId, { type = "download_cloud", user = getParent(context).username, filename = f.name, session_token = getParent(context).session_token }, "SimpleMail")
                                 local _, resp = rednet.receive("SimpleMail", 5); content = resp and resp.content
                             else
                                 local file = fs.open(fs.combine(currentPath, f.name), "r"); content = file.readAll(); file.close()
@@ -179,7 +179,7 @@ function files.run(context)
                         end
                     elseif action == "🗑️ Delete" then
                         if storageMode == "Local" then fs.delete(fs.combine(currentPath, f.name))
-                        else rednet.send(getParent(context).mailServerId, { type = "delete_cloud", user = getParent(context).username, filename = f.name }, "SimpleMail")
+                        else rednet.send(getParent(context).mailServerId, { type = "delete_cloud", user = getParent(context).username, filename = f.name, session_token = getParent(context).session_token }, "SimpleMail")
                              rednet.receive("SimpleMail", 2); refreshCloud() end
                     end
                 end

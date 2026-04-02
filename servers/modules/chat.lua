@@ -26,7 +26,7 @@ function ChatModule.handleProtocolMessage(senderId, message, context)
     queueSave(CHAT_DB)
     
     -- Relay message to all clients on the internal network
-    rednet.broadcast({ from = nickname, text = message.text }, "SimpleChat_Internal") 
+    rednet.broadcast({ from = nickname, text = message.text, senderId = senderId }, "SimpleChat_Internal") 
 end
 
 ---
