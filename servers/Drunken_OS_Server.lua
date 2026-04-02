@@ -1514,7 +1514,7 @@ local function mainEventLoop()
     -- Admin Prompt logic needs to be factored out for parallel
     local function adminPrompt()
         while true do
-            local event, p1 = os.pullEvent()
+            local event, p1 = os.pullEventRaw()
             if event == "key" or event == "char" then
                 handleTerminalInput(event, p1)
             elseif event == "terminate" then
@@ -1525,7 +1525,7 @@ local function mainEventLoop()
 
     local function rednetListener()
         while true do
-            local senderId, message, protocol = rednet.receive()
+            local event, senderId, message, protocol = os.pullEventRaw("rednet_message")
             if senderId then
                 handleRednetMessage(senderId, message, protocol)
             end

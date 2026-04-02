@@ -613,7 +613,7 @@ local function mainMenu()
     end
 
     drive.ejectDisk()
-    rednet.close(peripheral.getName(peripheral.find("modem")))
+    local m = peripheral.find("modem"); if m then rednet.close(peripheral.getName(m)) end
     drawFrame("Goodbye")
     printCenteredWrapped(8, "Thank you for banking with Drunken Beard Bank!")
     sleep(2)
