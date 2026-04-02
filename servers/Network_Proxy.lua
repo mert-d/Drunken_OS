@@ -119,7 +119,7 @@ end
 
 local function dispatcher()
     while true do
-        local id, msg, protocol = rednet.receive()
+        local event, id, msg, protocol = os.pullEventRaw("rednet_message")
         
         if PROTOCOL_MAP[protocol] then
             -- Traffic coming from Wireless -> Proxy (Target: Internal)

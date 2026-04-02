@@ -44,6 +44,7 @@ local REQUIRED_APPS = {
 -- UI & Theme Helpers
 --==============================================================================
 
+local sdk = require("lib.sdk")
 local theme -- Delayed require
 local utils -- Delayed require
 local wordWrap -- Delayed assign
@@ -80,44 +81,17 @@ end
 -- This creates a consistent look and feel across all applications.
 -- @param title The text to display in the top title bar.
 local function drawWindow(title)
-    local w, h = term.getSize()
-    term.setBackgroundColor(theme.bg)
-    term.clear()
-    
-    -- Draw title and bottom borders
-    term.setBackgroundColor(theme.titleBg)
-    term.setCursorPos(1, 1); term.write(string.rep(" ", w))
-    term.setCursorPos(1, h); term.write(string.rep(" ", w))
-    -- Draw side borders
-    for i = 2, h - 1 do
-        term.setCursorPos(1, i); term.write(" ")
-        term.setCursorPos(w, i); term.write(" ")
-    end
-
-    -- Render the centered title text
-    term.setCursorPos(1, 1)
-    term.setTextColor(theme.titleText)
-    local titleText = " " .. (title or "Drunken OS") .. " "
-    local titleStart = math.floor((w - #titleText) / 2) + 1
-    term.setCursorPos(titleStart, 1)
-    term.write(titleText)
-    
-    term.setBackgroundColor(theme.bg)
-    term.setTextColor(theme.text)
+    -- Route through lib/utils.lua
+    -- utils and theme are loaded at top-level or main()
+    local ctx = { theme = theme }
+    utils.drawWindow(title, ctx)
 end
 
 -- printCentered moved to lib.utils
 
 local function showMessage(title, message)
-    drawWindow(title)
-    local w, h = term.getSize()
-    printCentered(4, message)
-    
-    local continueText = "Press any key to continue..."
-    term.setCursorPos(math.floor((w - #continueText) / 2) + 1, h - 2)
-    term.setTextColor(colors.gray)
-    term.write(continueText)
-    os.pullEvent("key")
+    -- Route through lib/sdk.lua
+    sdk.UI.showMessage(title, message)
 end
 
 local function drawMenu(options, selected, startX, startY)
@@ -350,10 +324,6 @@ end
 -- Login & Main Menu Logic
 --==============================================================================
 
--- Legacy local implementation moved to lib/drunken_os_apps.lua
-
--- Legacy loginOrRegister moved to lib/drunken_os_apps.lua
-
 local function runAdminConsole(context)
     if not state.isAdmin or not state.adminServerId then return end
     
@@ -381,8 +351,6 @@ local function runAdminConsole(context)
         context.showMessage("Error", "Shell API unavailable.")
     end
 end
-
--- Old mainMenu removed. See Refactored Main Menu below.
 
 --==============================================================================
 -- Program Entry Point

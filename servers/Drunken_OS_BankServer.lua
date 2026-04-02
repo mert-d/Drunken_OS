@@ -1047,7 +1047,7 @@ function adminCommands.makecard(args)
     local replySender = nil
 
     while true do
-        local event, p1, p2, p3 = os.pullEvent()
+        local event, p1, p2, p3 = os.pullEventRaw()
         if event == "rednet_message" then
             local sender = p1
             local msg = p2
@@ -1072,9 +1072,6 @@ function adminCommands.makecard(args)
         logActivity("Error: Verification timed out. Mainframe unresponsive.")
         return
     end
-    
-    -- Print exactly what we got for diagnostic purposes
-    logActivity("[DEBUG] Received reply: " .. textutils.serializeJSON(response))
 
     if not response.exists then
         logActivity("Error: Mainframe reports user '" .. user .. "' does not exist.")
@@ -1286,7 +1283,7 @@ end
 
 local function adminPrompt()
     while true do
-        local event, p1 = os.pullEvent()
+        local event, p1 = os.pullEventRaw()
         if event == "key" or event == "char" then
             handleTerminalInput(event, p1)
         elseif event == "terminate" then
@@ -1301,7 +1298,7 @@ end
 
 local function networkListener()
     while true do
-        local senderId, message, protocolReceived = rednet.receive()
+        local event, senderId, message, protocolReceived = os.pullEventRaw("rednet_message")
         
         -- Proxy Support: Extract original sender and message
         local origSender = senderId
