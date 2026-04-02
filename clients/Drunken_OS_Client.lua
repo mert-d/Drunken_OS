@@ -178,7 +178,7 @@ end
 
 state.crypto = crypto
 
-local context = {
+context = {
     drawWindow = drawWindow,
     drawMenu = drawMenu,
     readInput = readInput,
@@ -593,10 +593,22 @@ local function mainMenu()
     end
 end
 
--- Helper to keep track of location (Stubbed for now)
+-- GPS Heartbeat: Polls for location every 60 seconds and reports to the Mainframe.
+-- Falls back silently if GPS is unavailable (no satellites / no modem).
 local function gpsHeartbeat()
     while true do
         sleep(60)
+        if state.username and state.mailServerId then
+            local x, y, z = gps.locate(2) -- 2 second timeout
+            if x then
+                state.location = { x = x, y = y, z = z }
+                rednet.send(state.mailServerId, {
+                    type = "report_location",
+                    user = state.username,
+                    x = x, y = y, z = z
+                }, "SimpleMail")
+            end
+        end
     end
 end
 
@@ -736,9 +748,9 @@ local function main()
             if not state.username then
                 clear(); print("Goodbye!"); break
             end
-        end
-    end
-end
+        end -- else
+    end -- while true
+end -- main()
 
 
 main()

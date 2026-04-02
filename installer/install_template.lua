@@ -129,42 +129,48 @@ local function doInstallation()
     os.reboot()
 end
 
-runSetupWizard = function(setup_type)
+run_setup_wizard = function(setup_type)
+    local ATM_TURTLE_PROTOCOL = "DB_ATM_Turtle"
+
     if setup_type == "atm" then
         showMessage("Running ATM setup wizard...")
 
-        local turtleId = nil
-        while not turtleId do
-            print("Please enter the ID of the Bank Clerk Turtle:")
+        local modem = peripheral.find("modem")
+        if not modem then
+            print("Warning: No wireless modem found.")
+            print("Verification will be skipped.")
+        else
+            rednet.open(peripheral.getName(modem))
+        end
+
+        local turtleId
+        local verified = false
+
+        while not verified do
+            print("\nPlease enter the ID of the Bank Clerk Turtle:")
             local input = read()
-            local id = tonumber(input)
+            turtleId = tonumber(input)
 
-            if not id then
+            if not turtleId then
                 print("Invalid ID. Please enter a number.")
+            elseif not modem then
+                verified = true
             else
-                print("Verifying connection to Turtle " .. id .. "...")
+                print("Sending ping to Turtle " .. turtleId .. "...")
+                rednet.send(turtleId, { type = "ping" }, ATM_TURTLE_PROTOCOL)
 
-                -- Open rednet if not already open
-                local modem = peripheral.find("modem")
-                if modem then
-                    rednet.open(peripheral.getName(modem))
-                    rednet.send(id, { type = "ping" }, "DB_ATM_Turtle")
-
-                    local senderId, response = rednet.receive("DB_ATM_Turtle", 5)
-                    if response and response.type == "pong" then
-                        print("Connection verified!")
-                        turtleId = id
-                    else
-                        print("No response from Turtle. Is it on and in range?")
-                        print("Retry? (y/n)")
-                        if read():lower() ~= "y" then
-                            print("Proceeding without verification...")
-                            turtleId = id
-                        end
-                    end
+                local sender, message = rednet.receive(ATM_TURTLE_PROTOCOL, 5)
+                if sender == turtleId and type(message) == "table" and message.type == "pong" then
+                    print("Handshake successful! Turtle is online.")
+                    verified = true
                 else
-                    print("No modem found! Cannot verify. Proceeding anyway...")
-                    turtleId = id
+                    print("No response from turtle.")
+                    print("Retry ping? (y/n)")
+                    local choice = read():lower()
+                    if choice ~= "y" then
+                        print("Proceeding without verification...")
+                        verified = true
+                    end
                 end
             end
         end

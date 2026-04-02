@@ -290,6 +290,16 @@ local function persistenceLoop()
     while true do
         sleep(30) -- Save every 30 seconds if dirty
         dbTracker.backgroundSave()
+        
+        -- Garbage collect expired pending auth sessions (older than 10 in-game minutes)
+        -- Prevents memory leak when clients request 2FA but never complete it.
+        local now = os.time()
+        for user, auth in pairs(pendingAuths) do
+            if (now - auth.timestamp) > 10 then
+                pendingAuths[user] = nil
+                logActivity("Expired pending auth for '" .. user .. "'")
+            end
+        end
     end
 end
 
@@ -563,11 +573,7 @@ function mailHandlers.get_update(senderId, message)
     end
 end
 
-function mailHandlers.get_manifest(senderId, message)
-    rednet.send(senderId, { type="manifest_response", manifest=manifest }, "SimpleMail")
-end
-
-    -- Duplicate get_file removed
+    -- Duplicate handlers removed (get_manifest and get_file — see authoritative definitions above)
 
 function mailHandlers.submit_app(senderId, message)
     -- { type="submit_app", name="...", code="...", description="...", author="..." }
@@ -780,69 +786,9 @@ function mailHandlers.delete_cloud(senderId, message)
     end
 end
 
-function mailHandlers.fetch(senderId, message)
-    -- Use MailModule to fetch mail
-    local mail = {}
-    if MailModule and MailModule.loadMail then
-        mail = MailModule.loadMail(message.user)
-    end
-    rednet.send(senderId, { mail = mail }, "SimpleMail")
-end
-
-function mailHandlers.delete(senderId, message)
-    if deleteItem(message.user, message.id, "mail") then
-        logActivity(string.format("User '%s' deleted mail '%s'", message.user, message.id))
-    end
-end
-
-function mailHandlers.create_list(senderId, message)
-    if lists[message.name] then
-        rednet.send(senderId, { success = false, status = "List exists." }, "SimpleMail")
-    else
-        lists[message.name] = { message.creator }
-        queueSave(LISTS_DB)
-        rednet.send(senderId, { success = true, status = "List created." }, "SimpleMail")
-        logActivity(string.format("'%s' created list '%s'", message.creator, message.name))
-    end
-end
-
-function mailHandlers.join_list(senderId, message)
-    if not lists[message.name] then
-        rednet.send(senderId, { success = false, status = "List not found." }, "SimpleMail")
-        return
-    end
-    for _, member in ipairs(lists[message.name]) do
-        if member == message.user then
-            rednet.send(senderId, { success = false, status = "Already a member." }, "SimpleMail")
-            return
-        end
-    end
-    table.insert(lists[message.name], message.user)
-    queueSave(LISTS_DB)
-    rednet.send(senderId, { success = true, status = "Joined list." }, "SimpleMail")
-    logActivity(string.format("'%s' joined list '%s'", message.user, message.name))
-end
-
-function mailHandlers.get_lists(senderId, message)
-    rednet.send(senderId, { lists = lists }, "SimpleMail")
-end
-
-function mailHandlers.get_motd(senderId, message)
-    rednet.send(senderId, { motd = motd }, "SimpleMail")
-end
-
-function mailHandlers.get_chat_history(senderId, message)
-    ChatModule.handleGetHistory(senderId, message, { chatHistory = chatHistory })
-end
-
-function mailHandlers.get_unread_count(senderId, message)
-    -- Use the module-scoped function if available, otherwise 0
-    local count = 0
-    if MailModule and MailModule.getMailCount then
-         count = MailModule.getMailCount(message.user, {mailCountCache=mailCountCache})
-    end
-    rednet.send(senderId, { type = "unread_count_response", count = count }, "SimpleMail")
-end
+-- NOTE: fetch, delete, create_list, join_list, get_lists, get_motd, get_chat_history,
+-- and get_unread_count are handled by the module-delegating handlers defined above.
+-- Stale inline overrides removed to prevent silent overwrites and undefined-function crashes.
 
 function mailHandlers.report_location(senderId, message)
     if message.user and message.x and message.y and message.z then
@@ -870,27 +816,21 @@ end
 
 
 
-function mailHandlers.user_exists(senderId, message)
-    local exists = false
-    if message.recipient:sub(1,1) == "@" then
-        if message.recipient == "@all" or lists[message.recipient:sub(2)] then
-            exists = true
-        end
-    elseif users[message.recipient] then
-        exists = true
-    end
-    rednet.send(senderId, { exists = exists }, "SimpleMail")
-end
+-- NOTE: user_exists is handled by AuthModule.handleUserExists (see line ~670).
+-- Stale inline override removed — it referenced message.recipient instead of message.user
+-- and would have crashed with a nil index error.
 
 function mailHandlers.is_admin_check(senderId, message)
-    local senderUser = nil
-    for user, data in pairs(users) do
-        if data.session_token and rednet.lookup("SimpleMail", message.user) == senderId then
-            senderUser = user
-            break
-        end
+    -- Verify the claimed username by comparing the provided session token
+    -- against the stored token. rednet.lookup() cannot be used to verify
+    -- sender identity (it retrieves protocol hosts, not computer IDs).
+    local user = message.user
+    local token = message.session_token
+    local isAdmin = false
+    if user and users[user] and token and users[user].session_token == token then
+        isAdmin = admins[user] or false
     end
-    rednet.send(senderId, { isAdmin = (senderUser and admins[senderUser]) }, "SimpleMail")
+    rednet.send(senderId, { isAdmin = isAdmin }, "SimpleMail")
 end
 
 function mailHandlers.get_user_data(senderId, message)

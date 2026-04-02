@@ -100,6 +100,7 @@ theme.presets = {
 function theme.load()
     if fs.exists(CONFIG_FILE) then
         local f = fs.open(CONFIG_FILE, "r")
+        if not f then return end -- Guard: file exists but couldn't be opened
         local data = textutils.unserialize(f.readAll())
         f.close()
         if data then

@@ -156,7 +156,7 @@ local function handleDeposit(atmId, deposit_side, vault_side)
     end
     rednet.send(atmId, { type = "deposit_count", items = itemsInTurtle }, protocol)
     local _, message = rednet.receive(protocol, 15)
-    if message and message.type == "confirm_deposit" then
+    if type(message) == "table" and message.type == "confirm_deposit" then
         depositToVault(vault_side)
         rednet.send(atmId, { success = true, new_balance = message.new_balance }, protocol)
         logActivity("Successfully processed deposit.")
@@ -268,7 +268,7 @@ local function main()
 
     while true do
         local senderId, message, proto = rednet.receive()
-        if message and message.type and proto == protocol then
+        if type(message) == "table" and message.type and proto == protocol then
             if message.type == "request_deposit" then
                 handleDeposit(senderId, deposit_side, vault_side)
             elseif message.type == "request_dispense" then
