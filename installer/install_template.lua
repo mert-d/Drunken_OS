@@ -130,11 +130,52 @@ local function doInstallation()
 end
 
 run_setup_wizard = function(setup_type)
+    local ATM_TURTLE_PROTOCOL = "DB_ATM_Turtle"
+
     if setup_type == "atm" then
         showMessage("Running ATM setup wizard...")
-        print("Please enter the ID of the Bank Clerk Turtle:")
-        local turtleId = read()
-        local config = { turtleClerkId = tonumber(turtleId) }
+
+        local modem = peripheral.find("modem")
+        if not modem then
+            print("Warning: No wireless modem found.")
+            print("Verification will be skipped.")
+        else
+            rednet.open(peripheral.getName(modem))
+        end
+
+        local turtleId
+        local verified = false
+
+        while not verified do
+            print("\nPlease enter the ID of the Bank Clerk Turtle:")
+            local input = read()
+            turtleId = tonumber(input)
+
+            if not turtleId then
+                print("Invalid ID. Please enter a number.")
+            elseif not modem then
+                verified = true
+            else
+                print("Sending ping to Turtle " .. turtleId .. "...")
+                rednet.send(turtleId, { type = "ping" }, ATM_TURTLE_PROTOCOL)
+
+                local sender, message = rednet.receive(ATM_TURTLE_PROTOCOL, 5)
+                if sender == turtleId and type(message) == "table" and message.type == "pong" then
+                    print("Handshake successful! Turtle is online.")
+                    verified = true
+                else
+                    print("No response from turtle.")
+                    print("Retry ping? (y/n)")
+                    local choice = read():lower()
+                    if choice ~= "y" then
+                        print("Proceeding without verification...")
+                        verified = true
+                    end
+                end
+            end
+        end
+
+        local config = { turtleClerkId = turtleId }
         local file = fs.open("/atm.conf", "w")
         file.write(textutils.serialize(config))
         file.close()

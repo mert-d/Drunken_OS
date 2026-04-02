@@ -156,7 +156,7 @@ local function handleDeposit(atmId, deposit_side, vault_side)
     end
     rednet.send(atmId, { type = "deposit_count", items = itemsInTurtle }, protocol)
     local _, message = rednet.receive(protocol, 15)
-    if message and message.type == "confirm_deposit" then
+    if type(message) == "table" and message.type == "confirm_deposit" then
         depositToVault(vault_side)
         rednet.send(atmId, { success = true, new_balance = message.new_balance }, protocol)
         logActivity("Successfully processed deposit.")
@@ -164,27 +164,6 @@ local function handleDeposit(atmId, deposit_side, vault_side)
         returnItemsToDeposit(deposit_side)
         rednet.send(atmId, { success = false, reason = "Deposit cancelled or timed out by ATM." }, protocol)
         logActivity("Deposit failed. Returned items to barrel.")
-    end
-end
-
-local function depositToVault(vault_side)
-    if vault_side == "top" then
-        for i = 1, 16 do
-            turtle.select(i)
-            if turtle.getItemCount(i) > 0 then turtle.dropUp() end
-        end
-    elseif vault_side == "bottom" then
-        for i = 1, 16 do
-            turtle.select(i)
-            if turtle.getItemCount(i) > 0 then turtle.dropDown() end
-        end
-    else -- Horizontal
-        turnTo(vault_side)
-        for i = 1, 16 do
-            turtle.select(i)
-            if turtle.getItemCount(i) > 0 then turtle.drop() end
-        end
-        turnToFront(vault_side)
     end
 end
 
@@ -289,14 +268,14 @@ local function main()
 
     while true do
         local senderId, message, proto = rednet.receive()
-        if message and message.type and proto == protocol then
+        if type(message) == "table" and message.type and proto == protocol then
             if message.type == "request_deposit" then
                 handleDeposit(senderId, deposit_side, vault_side)
             elseif message.type == "request_dispense" then
                 handleDispense(senderId, message.item_name, message.count, vault_side, deposit_side)
             -- THE FIX: Respond to the ATM's setup ping.
             elseif message.type == "ping" then
-                logActivity("Received setup ping from ID " .. senderId .. ". Responding.")
+                logActivity("Received setup ping from ID " .. senderId .. ". Responding with pong.")
                 rednet.send(senderId, { type = "pong" }, protocol)
             end
         end
