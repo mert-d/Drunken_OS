@@ -12,7 +12,7 @@
 -- Helper Functions
 --==============================================================================
 
-local run_setup_wizard -- Forward declaration
+local runSetupWizard -- Forward declaration
 
 local function showMessage(message)
     term.clear()
@@ -85,7 +85,7 @@ local function doInstallation()
 
     -- Run the setup wizard if needed
     if config.needs_setup then
-        run_setup_wizard(config.setup_type)
+        runSetupWizard(config.setup_type)
     end
 
     -- Create the startup file

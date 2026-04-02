@@ -273,7 +273,7 @@ local function main()
                 handleDeposit(senderId, deposit_side, vault_side)
             elseif message.type == "request_dispense" then
                 handleDispense(senderId, message.item_name, message.count, vault_side, deposit_side)
-            -- THE FIX: Respond to the ATM's setup ping.
+            -- THE FIX: Respond to the ATM's setup ping with a 'pong' message.
             elseif message.type == "ping" then
                 logActivity("Received setup ping from ID " .. senderId .. ". Responding with pong.")
                 rednet.send(senderId, { type = "pong" }, protocol)
