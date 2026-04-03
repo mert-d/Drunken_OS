@@ -4,6 +4,11 @@
 
 This update consolidates shared utilities and standardizes theme usage across the entire codebase. **No data migration is required** - all existing databases and accounts remain compatible.
 
+### System Requirements
+
+- **Minecraft Version:** 1.18.2
+- **Mod Version:** CC:Restitched (1.100.8)
+
 ---
 
 ## For Existing Server Operators

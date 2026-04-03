@@ -66,7 +66,8 @@ Select the package type for your computer:
 
 ### Requirements
 
-- CC:Tweaked mod
+- Minecraft 1.18.2
+- CC:Restitched (1.100.8)
 - Wired or wireless modems for networking
 - Advanced Computer or Pocket Computer (color recommended)
 

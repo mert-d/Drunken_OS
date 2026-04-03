@@ -31,3 +31,4 @@ _Goal: Make it easy to create content for Drunken OS._
 
 - **Voice Chat**: Integration with a voice chat mod (if applicable) or simple TTS/beep codes.
 - **Hardware Integration**: Support for advanced peripherals (Printers, monitors, speakers).
+- [ ] **Dedicated Arcade Proxies**: Standalone proxy servers for arcade distribution.

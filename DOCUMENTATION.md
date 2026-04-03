@@ -15,7 +15,7 @@ Drunken OS follows a distributed architecture where a central **Mainframe** serv
 | **Arcade Server**    | `servers/Drunken_Arcade_Server.lua` | Specialized server for distributing and updating arcade games.                   |
 | **OS Client**        | `clients/Drunken_OS_Client.lua`     | The main user interface. Manages the app lifecycle, networking, and security.    |
 | **App Loader**       | `lib/app_loader.lua`                | Environment isolation for modular applets in the `apps/` directory.              |
-| **Network Proxy**    | `servers/Network_Proxy.lua`         | Bridges different Rednet networks, allowing secure communication across domains. |
+| **Network Proxy**    | `servers/Proxy_*.lua`         | Bridges different Rednet networks using `lib/proxy_base.lua` with `PROTOCOL_MAP` and `HOST_MAP`. |
 
 ---
 

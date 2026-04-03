@@ -93,3 +93,15 @@ Returns the username of the currently logged-in user.
 local user = SDK.System.getUsername()
 print("Hello, " .. user .. "!")
 ```
+
+---
+
+## 4. Application Sandboxing (Context)
+
+Apps in the `apps/` directory (e.g., `bank.lua`, `merchant.lua`) must rely on the `context` table passed down by the OS Client. Do not attempt to `require` core libraries or execute raw `term` manipulation directly.
+
+The `context` object provides:
+- `context.theme`: Centralized color themes.
+- `context.utils`: UI helpers (e.g., `wordWrap`).
+- `context.sdk`: The SDK module for UI/Network/System functions.
+- Sandbox-safe drawing methods like `context.drawWindow()`.
