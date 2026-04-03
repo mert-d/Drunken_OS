@@ -69,11 +69,11 @@ function arcade.run(context)
         local server = rednet.lookup("ArcadeGames", "arcade.server")
         if server then
             rednet.send(server, {type="get_board", game=game.filename}, "ArcadeGames")
-            -- We don't wait here to avoid blocking UI too much, we check messages in loop
-        -- actually, for simplicity in v2.0, let's just do a quick peek-receive or standard receive with short timeout
-        local id, msg = rednet.receive("ArcadeGames", 0.05)
-        if msg and msg.type == "leaderboard_response" and msg.game == game.filename then
-            cachedLeaderboard = msg.board
+            -- For simplicity in v2.0, do a quick receive with short timeout
+            local id, msg = rednet.receive("ArcadeGames", 0.05)
+            if msg and msg.type == "leaderboard_response" and msg.game == game.filename then
+                cachedLeaderboard = msg.board
+            end
         end
 
         -- Get Lobbies
