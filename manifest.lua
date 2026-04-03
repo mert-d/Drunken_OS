@@ -153,14 +153,14 @@ return {
             name = "Mainframe Proxy",
             type = "server",
             main = "servers/Proxy_Mainframe.lua",
-            files = { "servers/Proxy_Mainframe.lua", "lib/proxy_base.lua", "lib/sha1_hmac.lua" },
+            files = { "servers/Proxy_Mainframe.lua", "lib/proxy_base.lua" },
             include_shared = false
         },
         proxy_bank = {
             name = "Bank Proxy",
             type = "server",
             main = "servers/Proxy_Bank.lua",
-            files = { "servers/Proxy_Bank.lua", "lib/proxy_base.lua", "lib/sha1_hmac.lua" },
+            files = { "servers/Proxy_Bank.lua", "lib/proxy_base.lua" },
             include_shared = false
         },
         arcade_server = {
