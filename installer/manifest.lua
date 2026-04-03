@@ -61,7 +61,20 @@ return {
                 "apps/mail.lua",
                 "apps/merchant.lua",
                 "apps/system.lua",
-                "apps/store.lua"
+                "apps/store.lua",
+                -- Games
+                "games/Drunken_Doom.lua",
+                "games/Drunken_Duels.lua",
+                "games/Drunken_Dungeons.lua",
+                "games/Drunken_Pong.lua",
+                "games/Drunken_Sokoban.lua",
+                "games/Drunken_Sudoku.lua",
+                "games/Drunken_Sweeper.lua",
+                "games/city.lua",
+                "games/floppa_bird.lua",
+                "games/invaders.lua",
+                "games/snake.lua",
+                "games/tetris.lua"
             },
             include_shared = true
         },
