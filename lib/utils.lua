@@ -4,16 +4,10 @@ local theme = require("lib.theme")
 
 ---
 -- Returns a color that's safe to use on the current terminal.
--- Falls back to a specified color on non-color terminals.
--- @param colorName string: The color name (e.g., "lime", "red").
--- @param fallback number: The fallback color value for non-color terminals.
--- @return number: The safe color value to use.
+-- Delegates to theme.safeColor (canonical implementation).
+-- @deprecated Use theme.safeColor() directly.
 function utils.safeColor(colorName, fallback)
-    local hasColor = term.isColor and term.isColor()
-    if hasColor and colors[colorName] ~= nil then 
-        return colors[colorName] 
-    end
-    return fallback or colors.white
+    return theme.safeColor(colorName, fallback)
 end
 
 ---

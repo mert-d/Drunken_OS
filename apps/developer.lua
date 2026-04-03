@@ -166,7 +166,7 @@ local function mainMenu(context)
                              
                              SDK.UI.drawWindow("Running Test...")
                              sleep(0.5)
-                             theme.clear() -- Clear for app
+                             term.clear(); term.setCursorPos(1, 1) -- Clear for app
                              
                              local ok, err = pcall(function()
                                  shell.run(tempPath)

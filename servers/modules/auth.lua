@@ -56,7 +56,7 @@ local function requestAuthCode(username, password, nickname, senderId, purpose, 
         password = password,
         nickname = nickname,
         senderId = senderId,
-        timestamp = os.time()
+        timestamp = os.epoch("utc")
     }
     return true
 end

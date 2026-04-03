@@ -115,13 +115,13 @@ local function drawMenu(options, selected, startX, startY)
     end
 end
 
-local function readInput(prompt, y)
+local function readInput(prompt, y, isPassword)
     term.setCursorPos(2, y)
     term.setTextColor(theme.prompt)
     term.write(prompt)
     term.setTextColor(theme.text)
     term.setCursorBlink(true)
-    local input = read()
+    local input = read(isPassword and "*" or nil)
     term.setCursorBlink(false)
     return input
 end
@@ -152,18 +152,9 @@ end
 
 state.crypto = crypto
 
-context = {
-    drawWindow = drawWindow,
-    drawMenu = drawMenu,
-    readInput = readInput,
-    showMessage = showMessage,
-    clear = clear,
-    parent = state,
-    programDir = programDir,
-    wordWrap = wordWrap,
-    getSafeSize = getSafeSize,
-    theme = theme
-}
+-- Context is fully populated inside main() after libraries are loaded.
+-- Declared here at module scope so functions like drawWindow can reference it.
+context = {}
 
 --==============================================================================
 -- Installation & Update Functions
@@ -657,7 +648,7 @@ local function main()
         else
             -- Check again in loop, but strictly dependencies
             if not installDependencies() then
-                rednet.close("back")
+                rednet.close(peripheral.getName(peripheral.find("modem")))
                 return 
             end
 
@@ -705,7 +696,7 @@ local function main()
             rednet.send(state.mailServerId, {type = "get_motd"}, "SimpleMail")
             local _, motd_response = rednet.receive("SimpleMail", 3)
             if motd_response and motd_response.motd and motd_response.motd ~= "" then
-                state.apps.showMessage(state, "Message of the Day", motd_response.motd)
+                context.showMessage("Message of the Day", motd_response.motd)
             end
             
             -- Background listeners extracted to core scope

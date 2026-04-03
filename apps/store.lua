@@ -44,8 +44,6 @@ function store.run(context)
         
         table.insert(apps, "Exit")
         
-        local selected = context.drawMenu(apps, 1, 2, 4) or 1
-        
         -- Since drawMenu handles the loop in Drunken_OS_apps context usually
         -- Wait, 'drawMenu' in existing framework DOES NOT blocking return index usually
         -- In merchant/bank we implemented our own KEY LOOPS.
@@ -65,8 +63,6 @@ function store.run(context)
                      if i == cursor then term.setTextColor(context.theme.highlightText or colors.cyan); term.write("> " .. appName)
                      else term.setTextColor(context.theme.text or colors.white); term.write("  " .. appName) end
                  else
-                     local isInstalled = updater.is_installed(listing[appName]) -- Pass path? No, updater.is_installed is stubbed false
-                     -- Actually let's use fs.exists since we have the path in 'listing'
                      local path = listing[appName]
                      local installed = fs.exists(path)
                      

@@ -69,17 +69,7 @@ local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
 local uiDirty = true
 local mailCountCache = {} -- Cache for unread mail counts
-local manifest = {} -- Manifest table
-if fs.exists("manifest.lua") then
-    local f = fs.open("manifest.lua", "r")
-    if f then
-        local content = f.readAll()
-        f.close()
-        -- Safely load the table
-        local func = load(content, "manifest", "t", {})
-        if func then manifest = func() end
-    end
-end
+local manifest = {} -- Manifest table (loaded in loadAllData)
 local monitor = nil
 local ADMINS_DB = "admins.db" -- New database file for admins
 local USERS_DB = "users.db"
@@ -285,17 +275,22 @@ local function persistenceLoop()
     -- Initialize tracker now that logActivity is defined
     if not dbTracker then
         dbTracker = DB.createDirtyTracker(dbPointers, logActivity)
+        -- Drain any saves queued before tracker was initialized
+        for path, isDirty in pairs(dbDirty) do
+            if isDirty then dbTracker.queueSave(path) end
+        end
+        dbDirty = {}
     end
     
     while true do
         sleep(30) -- Save every 30 seconds if dirty
         dbTracker.backgroundSave()
         
-        -- Garbage collect expired pending auth sessions (older than 10 in-game minutes)
+        -- Garbage collect expired pending auth sessions (older than 10 minutes real time)
         -- Prevents memory leak when clients request 2FA but never complete it.
-        local now = os.time()
+        local now = os.epoch("utc")
         for user, auth in pairs(pendingAuths) do
-            if (now - auth.timestamp) > 10 then
+            if (now - (auth.timestamp or 0)) > 600000 then -- 10 minutes in ms
                 pendingAuths[user] = nil
                 logActivity("Expired pending auth for '" .. user .. "'")
             end
@@ -352,7 +347,7 @@ local function loadAllData()
     if fs.exists("games") then
         gameList = {}
         for _, file in ipairs(fs.list("games")) do
-            local name = file:gsub(".lua", "")
+            local name = file:gsub("%.lua$", "")
             name = name:gsub("_", " ")
             name = name:gsub("^%l", string.upper) -- Simple title casing
             table.insert(gameList, {name = name, file = "games/" .. file})
@@ -457,12 +452,7 @@ function mailHandlers.get_version(senderId, message)
             local f = fs.open(appPath, "r")
             if f then
                 local content = f.readAll(); f.close()
-                -- Extract version using multiple patterns
-                local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or
-                          content:match("local%s+appVersion%s*=%s*([%d%.]+)") or
-                          content:match("%(v([%d%.]+)%)") or
-                          content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
-                rednet.send(senderId, { version = tonumber(v) or 1.0 }, "SimpleMail")
+                rednet.send(senderId, { version = parseVersion(content) }, "SimpleMail")
             else
                 rednet.send(senderId, { version = 0 }, "SimpleMail")
             end
@@ -505,11 +495,7 @@ function mailHandlers.get_all_app_versions(senderId, message)
             local f = fs.open(path, "r")
             if f then
                 local content = f.readAll(); f.close()
-                local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or
-                          content:match("local%s+appVersion%s*=%s*([%d%.]+)") or
-                          content:match("%(v([%d%.]+)%)") or
-                          content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
-                versions["app." .. file:gsub("%.lua$", "")] = tonumber(v) or 1.0
+                versions["app." .. file:gsub("%.lua$", "")] = parseVersion(content)
             end
         end
     end
@@ -576,6 +562,11 @@ end
     -- Duplicate handlers removed (get_manifest and get_file — see authoritative definitions above)
 
 function mailHandlers.submit_app(senderId, message)
+    -- Validate required fields
+    if not message.name or not message.code or message.name == "" then
+        rednet.send(senderId, { success = false, reason = "Missing required fields (name, code)." }, "SimpleMail")
+        return
+    end
     -- { type="submit_app", name="...", code="...", description="...", author="..." }
     local subId = tostring(os.epoch("utc"))
     
@@ -591,6 +582,15 @@ function mailHandlers.submit_app(senderId, message)
     logActivity("New App Submission: " .. message.name .. " by " .. (message.author or "?"))
     rednet.send(senderId, { success = true, msg = "Submitted for review." }, "SimpleMail")
 end
+
+-- Shared Authentication Helper (must be defined before handlers that use it)
+local function verifySecureSession(message)
+    local u = message.user or message.username
+    return u and users[u] and message.session_token and users[u].session_token == message.session_token
+end
+
+-- Forward-declare adminCommands (populated later, used by admin_action handler)
+local adminCommands = {}
 
 -- Admin Review Handlers
 function mailHandlers.admin_get_submissions(senderId, message)
@@ -618,11 +618,6 @@ function mailHandlers.admin_get_code(senderId, message)
     else
         rednet.send(senderId, { success = false, reason = "Not found" }, "SimpleMail")
     end
-end
-
-local function verifySecureSession(message)
-    local u = message.user or message.username
-    return u and users[u] and message.session_token and users[u].session_token == message.session_token
 end
 
 function mailHandlers.verify_session(senderId, message)
@@ -762,6 +757,12 @@ function mailHandlers.sync_file(senderId, message)
         return
     end
 
+    -- Security: prevent directory traversal in filename
+    if fileName:find("%.\.%.") or fileName:find("/") or fileName:find("\\") then
+        rednet.send(senderId, { success = false, reason = "Invalid filename." }, "SimpleMail")
+        return
+    end
+
     local path = "cloud/" .. user
     if not fs.exists(path) then fs.makeDir(path) end
     
@@ -781,6 +782,10 @@ function mailHandlers.download_cloud(senderId, message)
     if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
     local user = message.user
     local fileName = message.filename
+    -- Security: prevent directory traversal in filename
+    if not fileName or fileName:find("%.\.%.") or fileName:find("/") or fileName:find("\\") then
+        rednet.send(senderId, { success = false, reason = "Invalid filename." }, "SimpleMail"); return
+    end
     local filePath = "cloud/" .. user .. "/" .. fileName
     
     if fs.exists(filePath) and not fs.isDir(filePath) then
@@ -796,7 +801,12 @@ end
 
 function mailHandlers.delete_cloud(senderId, message)
     if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
-    local filePath = "cloud/" .. message.user .. "/" .. message.filename
+    -- Security: prevent directory traversal in filename
+    local fileName = message.filename
+    if not fileName or fileName:find("%.\.%.") or fileName:find("/") or fileName:find("\\") then
+        rednet.send(senderId, { success = false, reason = "Invalid filename." }, "SimpleMail"); return
+    end
+    local filePath = "cloud/" .. message.user .. "/" .. fileName
     if fs.exists(filePath) then
         fs.delete(filePath)
         rednet.send(senderId, { success = true }, "SimpleMail")
@@ -817,17 +827,17 @@ function mailHandlers.report_location(senderId, message)
             y = message.y,
             z = message.z,
             dimension = message.dimension or "homeworld",
-            timestamp = os.time()
+            timestamp = os.epoch("utc")
         }
         -- No response needed for heartbeat to reduce traffic
     end
 end
 
 function mailHandlers.get_user_locations(senderId, message)
-    -- clean up old locations (> 5 mins in-game time)
-    local now = os.time()
+    -- clean up old locations (> 2 minutes real time)
+    local now = os.epoch("utc")
     for user, data in pairs(userLocations) do
-        if now - data.timestamp > 0.1 then -- 0.1 game days is roughly 2 mins real time
+        if now - (data.timestamp or 0) > 120000 then -- 2 minutes in ms
             userLocations[user] = nil
         end
     end
@@ -854,32 +864,28 @@ function mailHandlers.is_admin_check(senderId, message)
 end
 
 function mailHandlers.get_user_data(senderId, message)
-    local senderUser = nil
-    for user, data in pairs(users) do
-        if data.session_token and rednet.lookup("SimpleMail", user) == senderId then
-            senderUser = user
-            break
-        end
+    -- Verify admin identity via session token (not rednet.lookup which only finds hosts)
+    local adminUser = message.username
+    if not adminUser or not users[adminUser] or
+       not message.session_token or users[adminUser].session_token ~= message.session_token or
+       not admins[adminUser] then
+        rednet.send(senderId, { success = false, reason = "Insufficient permissions." }, "SimpleMail")
+        return
     end
 
-    if senderUser and admins[senderUser] then
-        local user = message.user
-        if users[user] then
-            rednet.send(senderId, { success = true, pass_hash = users[user].password }, "SimpleMail")
-        else
-            rednet.send(senderId, { success = false, reason = "User not found." }, "SimpleMail")
-        end
+    local user = message.user
+    if users[user] then
+        rednet.send(senderId, { success = true, pass_hash = users[user].password }, "SimpleMail")
     else
-        rednet.send(senderId, { success = false, reason = "Insufficient permissions." }, "SimpleMail")
+        rednet.send(senderId, { success = false, reason = "User not found." }, "SimpleMail")
     end
 end
 
 
 
 function mailHandlers.get_admin_tool(senderId, message)
-    -- Security Check: Only serve to admins
-    local user = message.user
-    if not user or not admins[user] then
+    -- Security Check: Verify session token AND admin status
+    if not verifySecureSession(message) or not admins[message.user or message.username] then
         rednet.send(senderId, { success = false, reason = "Unauthorized" }, "SimpleMail")
         return
     end
@@ -905,7 +911,7 @@ end
 -- the remote Admin Console tool.
 --==============================================================================
 
-local adminCommands = {}
+-- adminCommands table is forward-declared above (before mailHandlers.admin_action)
 
 ---
 -- Displays a list of available admin commands.
@@ -1088,11 +1094,8 @@ function adminCommands.sync(a)
                         appUpdated = appUpdated + 1
                         
                         -- Extract version for logging
-                        local v = code:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or
-                                  code:match("local%s+appVersion%s*=%s*([%d%.]+)") or
-                                  code:match("%(v([%d%.]+)%)") or
-                                  code:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
-                        logActivity("Synced " .. filename .. (v and (" (v" .. v .. ")") or ""))
+                        local v = parseVersion(code)
+                        logActivity("Synced " .. filename .. " (v" .. v .. ")")
                     end
                 end
             else
@@ -1559,7 +1562,7 @@ local function main()
     rednet.host("Drunken_Admin_Internal", "admin.server.internal")
     rednet.host("auth.secure.v1_Internal", "auth.client.internal")
     rednet.host(AUTH_INTERLINK_PROTOCOL, "interlink.server.internal")
-    logActivity("Mainframe Server v12.0 (Internal Only) Initialized.")
+    logActivity("Mainframe Server v12.1 (Internal Only) Initialized.")
     mainEventLoop()
 end
 

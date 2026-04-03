@@ -137,25 +137,8 @@ function updater.install_package(packageName, uiCallback)
     return true
 end
 
----
--- Checks if an optional app is currently installed.
--- @param appName {string} The name/key in manifest.store
-function updater.is_installed(appName)
-    -- This requires fetching manifest first to know the path?
-    -- Or we assume standard "apps/Name.lua"?
-    -- Ideally we ask the server or cache the manifest.
-    
-    -- For efficiency, let's assume the store logic passes the PATH or we rely on a quick manifest check.
-    -- But since this is a helper, let's do the robust thing: Fetch Manifest check.
-    -- ACTUALLY, that's too slow for a menu loop.
-    
-    -- COMPROMISE: We check standard paths.
-    -- Most store apps will be "apps/<File>.lua".
-    -- But we don't know <File> from <AppName> without the manifest lookup.
-    
-    -- Allow the caller to pass the mapped path if they have it (Store App will have it).
-    return false -- Stub, expect caller to use fs.exists if they have the path.
-end
+-- updater.is_installed was removed (stub that always returned false).
+-- Use fs.exists(path) directly instead.
 
 ---
 -- Installs a specific app from the On-Demand Store.

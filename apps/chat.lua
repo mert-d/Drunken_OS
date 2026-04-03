@@ -11,6 +11,10 @@ local function getParent(context)
 end
 
 function chat.run(context)
+    if not getParent(context).chatServerId then
+        context.showMessage("Error", "Chat server not found.")
+        return
+    end
     context.drawWindow("General Chat")
     term.setCursorPos(2, 4)
     term.write("Fetching history...")

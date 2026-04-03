@@ -117,8 +117,10 @@ function theme.save(presetName)
         
         -- Save to disk
         local f = fs.open(CONFIG_FILE, "w")
-        f.write(textutils.serialize(preset))
-        f.close()
+        if f then
+            f.write(textutils.serialize(preset))
+            f.close()
+        end
         return true
     end
     return false

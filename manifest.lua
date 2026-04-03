@@ -17,6 +17,7 @@ return {
         "lib/theme.lua",
         "lib/utils.lua",
         "lib/p2p_socket.lua",
+        "lib/sdk.lua",
         "manifest.lua"
     },
 
@@ -152,14 +153,14 @@ return {
             name = "Mainframe Proxy",
             type = "server",
             main = "servers/Proxy_Mainframe.lua",
-            files = { "servers/Proxy_Mainframe.lua", "lib/sha1_hmac.lua" },
+            files = { "servers/Proxy_Mainframe.lua", "lib/proxy_base.lua", "lib/sha1_hmac.lua" },
             include_shared = false
         },
         proxy_bank = {
             name = "Bank Proxy",
             type = "server",
             main = "servers/Proxy_Bank.lua",
-            files = { "servers/Proxy_Bank.lua", "lib/sha1_hmac.lua" },
+            files = { "servers/Proxy_Bank.lua", "lib/proxy_base.lua", "lib/sha1_hmac.lua" },
             include_shared = false
         },
         arcade_server = {
@@ -196,7 +197,6 @@ return {
         "games/Drunken_Sudoku.lua",
         "games/Drunken_Sweeper.lua",
         "games/city.lua",
-        "games/engine_test.lua",
         "games/floppa_bird.lua",
         "games/invaders.lua",
         "games/snake.lua",
