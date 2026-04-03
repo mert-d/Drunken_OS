@@ -29,3 +29,13 @@ This file documents the core architectural constraints and patterns. **All Agent
 
 - **Input Sanitization**: All `read()` inputs in Servers must be type-checked before use.
 - **Hardware IDs**: Users are bound to their Setup via `os.getComputerID()` checking in the Auth flow.
+
+## 6. Routing Layer Abstraction
+
+- **Pattern**: Proxy servers are lightweight wrappers.
+- **Constraint**: Instead of implementing full bridging logic, proxy servers must define `PROTOCOL_MAP` and `HOST_MAP` configurations and then call the centralized `ProxyBase.run()` dispatcher located in `lib/proxy_base.lua`.
+
+## 7. Event Loop & Concurrency
+
+- **Pattern**: Non-blocking I/O in server loops.
+- **Constraint**: Server loops must utilize `parallel.waitForAny()` and `os.pullEventRaw()` (or `os.pullEventRaw('rednet_message')`) to guarantee TPS safety and prevent blocking the game thread during event processing.
