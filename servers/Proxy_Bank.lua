@@ -8,6 +8,8 @@
     prevent high-volume reports from blocking OS communications.
 ]]
 
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. package.path
+
 local ProxyBase = require("lib.proxy_base")
 
 ProxyBase.run({
