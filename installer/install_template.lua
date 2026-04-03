@@ -129,7 +129,7 @@ local function doInstallation()
     os.reboot()
 end
 
-run_setup_wizard = function(setup_type)
+runSetupWizard = function(setup_type)
     local ATM_TURTLE_PROTOCOL = "DB_ATM_Turtle"
 
     if setup_type == "atm" then
