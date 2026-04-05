@@ -244,7 +244,7 @@ local function autoUpdateCheck()
     return false
 end
 
-function updateGames()
+local function updateGames()
     drawWindow("Game Updater")
     local y = 4
     term.setCursorPos(2, y); term.write("Fetching game list from server...")

@@ -8,7 +8,6 @@
 ]]
 
 local theme = require("lib.theme")
-local p2p = require("lib.p2p_socket")
 local DrunkenOS = { _VERSION = 1.0 }
 
 --==============================================================================
@@ -130,6 +129,7 @@ end
 -- @param gameId string: Unique ID for your game (e.g. "MyFloppyBird")
 -- @return table: A P2P Socket instance
 function DrunkenOS.Net.createGameSocket(gameId)
+    local p2p = require("lib.p2p_socket")
     return p2p.new(gameId, 1.0, gameId .. "_Proto")
 end
 

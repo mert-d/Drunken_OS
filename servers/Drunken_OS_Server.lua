@@ -238,23 +238,45 @@ end
 -- Automatically prunes history to prevent memory leaks (max 200 entries).
 -- @param message The message to log.
 -- @param isError (Optional) True if the message should be flagged as an error.
+local logBuffer = {}
+local logWriteIdx = 0
+local LOG_MAX = 200
+local logsDirExists = false
+
 local function logActivity(message, isError)
     local prefix = isError and "[ERROR] " or "[INFO] "
-    local logEntry = os.date("[%H:%M:%S] ") .. prefix .. message
+    local logEntryFull = os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message
+    local logEntryDisplay = logEntryFull:sub(12) -- Extract "[H:M:S] ..." for display
     
-    -- Update in-memory history
-    table.insert(logHistory, logEntry)
-    if #logHistory > 200 then table.remove(logHistory, 1) end
-    
-    -- Append to log file for persistence
-    local file = fs.open(LOG_FILE, "a")
-    if file then
-        file.writeLine(os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message)
-        file.close()
+    logWriteIdx = logWriteIdx + 1
+    logHistory[logWriteIdx] = logEntryDisplay
+    if logWriteIdx > LOG_MAX then
+        local newHistory = {}
+        for i = LOG_MAX - 99, LOG_MAX do
+            table.insert(newHistory, logHistory[i])
+        end
+        logHistory = newHistory
+        logWriteIdx = #logHistory
     end
     
-    -- Refresh UIs on next frame
+    table.insert(logBuffer, logEntryFull)
     uiDirty = true
+end
+
+local function flushLogs()
+    if #logBuffer == 0 then return end
+    if not logsDirExists then
+        if not fs.exists(LOGS_DIR) then fs.makeDir(LOGS_DIR) end
+        logsDirExists = true
+    end
+    local file = fs.open(LOG_FILE, "a")
+    if file then
+        for _, entry in ipairs(logBuffer) do
+            file.writeLine(entry)
+        end
+        file.close()
+    end
+    logBuffer = {}
 end
 
 
@@ -285,6 +307,7 @@ local function persistenceLoop()
     while true do
         sleep(30) -- Save every 30 seconds if dirty
         dbTracker.backgroundSave()
+        flushLogs()
         
         -- Garbage collect expired pending auth sessions (older than 10 minutes real time)
         -- Prevents memory leak when clients request 2FA but never complete it.
@@ -360,7 +383,7 @@ local function loadAllData()
         local f = fs.open("manifest.lua", "r")
         local content = f.readAll()
         f.close()
-        local func = load(content, "manifest", "t", {})
+        local func = load(content, "manifest", "t", { table = table, string = string, math = math })
         if func then 
             manifest = func() 
             logActivity("Manifest loaded (v" .. (manifest.version or "?") .. ")")
@@ -378,27 +401,32 @@ end
 -- Helper Closure for Context
 --==============================================================================
 
+local serverContext = nil
+
 local function getContext()
-    return {
-        users = users,
-        admins = admins,
-        lists = lists,
-        games = games,
-        chatHistory = chatHistory,
-        pendingAuths = pendingAuths,
-        mailCountCache = mailCountCache,
-        
-        queueSave = queueSave,
-        saveTableToFile = saveTableToFile,
-        logActivity = logActivity,
-        
-        getMailCount = function(u) return MailModule.getMailCount(u, {mailCountCache = mailCountCache}) end,
-        
-        USERS_DB = USERS_DB,
-        LISTS_DB = LISTS_DB,
-        CHAT_DB = CHAT_DB,
-        ADMINS_DB = ADMINS_DB
-    }
+    if not serverContext then
+        serverContext = {
+            users = users,
+            admins = admins,
+            lists = lists,
+            games = games,
+            chatHistory = chatHistory,
+            pendingAuths = pendingAuths,
+            mailCountCache = mailCountCache,
+            
+            queueSave = queueSave,
+            saveTableToFile = saveTableToFile,
+            logActivity = logActivity,
+            
+            getMailCount = function(u) return MailModule.getMailCount(u, {mailCountCache = mailCountCache}) end,
+            
+            USERS_DB = USERS_DB,
+            LISTS_DB = LISTS_DB,
+            CHAT_DB = CHAT_DB,
+            ADMINS_DB = ADMINS_DB
+        }
+    end
+    return serverContext
 end
 
 --==============================================================================
@@ -486,38 +514,46 @@ function mailHandlers.get_version(senderId, message)
     end
 end
 
-function mailHandlers.get_all_app_versions(senderId, message)
-    local versions = {}
-    local files = fs.list("apps/")
-    for _, file in ipairs(files) do
-        if not fs.isDir("apps/" .. file) and file:match("%.lua$") then
-            local path = "apps/" .. file
-            local f = fs.open(path, "r")
-            if f then
-                local content = f.readAll(); f.close()
-                versions["app." .. file:gsub("%.lua$", "")] = parseVersion(content)
-            end
-        end
-    end
-    rednet.send(senderId, { type = "app_versions_response", versions = versions }, "SimpleMail")
-end
+local appVersionCache = nil
 
-function mailHandlers.get_all_game_versions(senderId, message)
-    local versions = {}
-    if fs.exists("games/") then
-        local files = fs.list("games/")
+function mailHandlers.get_all_app_versions(senderId, message)
+    if not appVersionCache then
+        appVersionCache = {}
+        local files = fs.list("apps/")
         for _, file in ipairs(files) do
-            if not fs.isDir("games/" .. file) and file:match("%.lua$") then
-                local path = "games/" .. file
+            if not fs.isDir("apps/" .. file) and file:match("%.lua$") then
+                local path = "apps/" .. file
                 local f = fs.open(path, "r")
                 if f then
-                    versions[file] = parseVersion(f.readAll())
-                    f.close()
+                    local content = f.readAll(); f.close()
+                    appVersionCache["app." .. file:gsub("%.lua$", "")] = parseVersion(content)
                 end
             end
         end
     end
-    rednet.send(senderId, { type = "game_versions_response", versions = versions }, "SimpleMail")
+    rednet.send(senderId, { type = "app_versions_response", versions = appVersionCache }, "SimpleMail")
+end
+
+local gameVersionCache = nil
+
+function mailHandlers.get_all_game_versions(senderId, message)
+    if not gameVersionCache then
+        gameVersionCache = {}
+        if fs.exists("games/") then
+            local files = fs.list("games/")
+            for _, file in ipairs(files) do
+                if not fs.isDir("games/" .. file) and file:match("%.lua$") then
+                    local path = "games/" .. file
+                    local f = fs.open(path, "r")
+                    if f then
+                        gameVersionCache[file] = parseVersion(f.readAll())
+                        f.close()
+                    end
+                end
+            end
+        end
+    end
+    rednet.send(senderId, { type = "game_versions_response", versions = gameVersionCache }, "SimpleMail")
 end
 
 function mailHandlers.get_update(senderId, message)
@@ -777,7 +813,7 @@ function mailHandlers.sync_file(senderId, message)
     end
 
     -- Security: prevent directory traversal in filename
-    if fileName:find("%.\.%.") or fileName:find("/") or fileName:find("\\") then
+    if fileName:find("%.%.") or fileName:find("/") or fileName:find("\\") then
         rednet.send(senderId, { success = false, reason = "Invalid filename." }, "SimpleMail")
         return
     end
@@ -802,7 +838,7 @@ function mailHandlers.download_cloud(senderId, message)
     local user = message.user
     local fileName = message.filename
     -- Security: prevent directory traversal in filename
-    if not fileName or fileName:find("%.\.%.") or fileName:find("/") or fileName:find("\\") then
+    if not fileName or fileName:find("%.%.") or fileName:find("/") or fileName:find("\\") then
         rednet.send(senderId, { success = false, reason = "Invalid filename." }, "SimpleMail"); return
     end
     local filePath = "cloud/" .. user .. "/" .. fileName
@@ -822,7 +858,7 @@ function mailHandlers.delete_cloud(senderId, message)
     if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
     -- Security: prevent directory traversal in filename
     local fileName = message.filename
-    if not fileName or fileName:find("%.\.%.") or fileName:find("/") or fileName:find("\\") then
+    if not fileName or fileName:find("%.%.") or fileName:find("/") or fileName:find("\\") then
         rednet.send(senderId, { success = false, reason = "Invalid filename." }, "SimpleMail"); return
     end
     local filePath = "cloud/" .. message.user .. "/" .. fileName
@@ -1483,11 +1519,15 @@ local function handleRednetMessage(senderId, message, protocol)
 
     -- Dispatch to appropriate subsystem handler
     if protocol == "SimpleMail_Internal" and actualMsg and actualMsg.type and mailHandlers[actualMsg.type] then
-        -- Temporary rednet.send override allows handlers to remain stateless
-        local oldSend = rednet.send
-        rednet.send = sendResponse
-        mailHandlers[actualMsg.type](origSender, actualMsg)
-        rednet.send = oldSend
+        if isProxied then
+            -- Temporary rednet.send override allows handlers to remain stateless
+            local oldSend = rednet.send
+            rednet.send = sendResponse
+            mailHandlers[actualMsg.type](origSender, actualMsg)
+            rednet.send = oldSend
+        else
+            mailHandlers[actualMsg.type](origSender, actualMsg)
+        end
 
     elseif protocol == "SimpleChat_Internal" and actualMsg and actualMsg.from then
         ChatModule.handleProtocolMessage(senderId, actualMsg, {

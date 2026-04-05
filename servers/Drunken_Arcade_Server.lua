@@ -49,9 +49,14 @@ local startTime = os.time()
 
 local dbDirty = {}
 local dbPointers = {}
+local dbTracker = nil
 
 local function queueSave(dbPath)
-    dbDirty[dbPath] = true
+    if dbTracker then
+        dbTracker.queueSave(dbPath)
+    else
+        dbDirty[dbPath] = true
+    end
 end
 
 -- Use shared database functions from lib/db
@@ -63,17 +68,44 @@ local function loadTableFromFile(path)
     return DB.loadTableFromFile(path)
 end
 
+local logBuffer = {}
+local logWriteIdx = 0
+local LOG_MAX = 200
+local logsDirExists = false
+
 local function logActivity(msg, isErr)
     local timestamp = os.date("%H:%M:%S")
     local entry = string.format("[%s] %s%s", timestamp, isErr and "[ERROR] " or "", msg)
-    table.insert(logHistory, entry)
-    if #logHistory > 200 then table.remove(logHistory, 1) end
     
-    -- Persistent Log
-    if not fs.exists("logs") then fs.makeDir("logs") end
-    local f = fs.open(LOG_FILE, "a")
-    if f then f.writeLine(entry); f.close() end
+    logWriteIdx = logWriteIdx + 1
+    logHistory[logWriteIdx] = entry
+    if logWriteIdx > LOG_MAX then
+        local newHistory = {}
+        for i = LOG_MAX - 99, LOG_MAX do
+            table.insert(newHistory, logHistory[i])
+        end
+        logHistory = newHistory
+        logWriteIdx = #logHistory
+    end
+    
+    table.insert(logBuffer, entry)
     needsRedraw = true
+end
+
+local function flushLogs()
+    if #logBuffer == 0 then return end
+    if not logsDirExists then
+        if not fs.exists("logs") then fs.makeDir("logs") end
+        logsDirExists = true
+    end
+    local f = fs.open(LOG_FILE, "a")
+    if f then
+        for _, entry in ipairs(logBuffer) do
+            f.writeLine(entry)
+        end
+        f.close()
+    end
+    logBuffer = {}
 end
 
 local function drawWindow(title)
@@ -508,69 +540,78 @@ local function main()
     rednet.host("ArcadeGames", "arcade.server")
     logActivity("Arcade Server Online (Dual Protocol)")
     
-    while true do
-        redrawUI()
-        
-        -- Use parallel to handle both rednet and console input
-        parallel.waitForAny(
-            function()
-                local id, msg, proto = rednet.receive(nil, 1)
-                if id and (proto == "ArcadeGames_Internal" or proto == "ArcadeGames") and msg and msg.type then
-                    if gameHandlers[msg.type] then
-                        gameHandlers[msg.type](id, msg)
-                    end
-                end
-            end,
-            function()
-                local w, h = term.getSize()
-                -- Only show prompt area if on dashboard?
-                -- For now, let's just listen for keys for screen switching
-                local event, p1 = os.pullEvent()
-                if event == "key" then
-                    if p1 == keys.d then
-                        currentScreen = "dashboard"
-                        needsRedraw = true
-                    elseif p1 == keys.l then
-                        currentScreen = "logs"
-                        needsRedraw = true
-                    elseif p1 == keys.s then
-                        syncGames()
-                        needsRedraw = true
-                    elseif p1 == keys.enter then
-                        -- Enter command mode
-                        term.setCursorPos(2, h)
-                        term.setBackgroundColor(theme.statusBarBg)
-                        term.setTextColor(theme.statusBarText)
-                        term.write(string.rep(" ", w))
-                        term.setCursorPos(2, h)
-                        term.write("CMD: ")
-                        term.setCursorBlink(true)
-                        local cmd = read()
-                        term.setCursorBlink(false)
-                        if cmd and cmd ~= "" then
-                            handleCommand(cmd)
-                        end
-                        needsRedraw = true
-                    elseif p1 == keys.escape then
-                        error("Server shutdown")
-                    end
-                end
-            end,
-            function()
-                -- Lobby Cleanup (Auto-expire after 10 mins)
-                cleanupLobbies()
-                sleep(60)
-            end,
-            function()
-                -- Persistence Loop using DB tracker
-                local tracker = DB.createDirtyTracker(dbPointers, logActivity)
-                while true do
-                    sleep(30)
-                    tracker.backgroundSave()
+    -- Initialize the persistence tracker once, then drain any pre-init saves
+    dbTracker = DB.createDirtyTracker(dbPointers, logActivity)
+    for path, isDirty in pairs(dbDirty) do
+        if isDirty then dbTracker.queueSave(path) end
+    end
+    dbDirty = {}
+
+    -- Long-running coroutines (never restart on their own)
+    local function networkListener()
+        while true do
+            local id, msg, proto = rednet.receive(nil, 1)
+            if id and (proto == "ArcadeGames_Internal" or proto == "ArcadeGames") and msg and msg.type then
+                if gameHandlers[msg.type] then
+                    gameHandlers[msg.type](id, msg)
                 end
             end
-        )
+            -- Redraw opportunity after each message or timeout
+            redrawUI()
+        end
     end
+
+    local function inputListener()
+        while true do
+            local w, h = term.getSize()
+            local event, p1 = os.pullEvent()
+            if event == "key" then
+                if p1 == keys.d then
+                    currentScreen = "dashboard"
+                    needsRedraw = true
+                elseif p1 == keys.l then
+                    currentScreen = "logs"
+                    needsRedraw = true
+                elseif p1 == keys.s then
+                    syncGames()
+                    needsRedraw = true
+                elseif p1 == keys.enter then
+                    term.setCursorPos(2, h)
+                    term.setBackgroundColor(theme.statusBarBg)
+                    term.setTextColor(theme.statusBarText)
+                    term.write(string.rep(" ", w))
+                    term.setCursorPos(2, h)
+                    term.write("CMD: ")
+                    term.setCursorBlink(true)
+                    local cmd = read()
+                    term.setCursorBlink(false)
+                    if cmd and cmd ~= "" then
+                        handleCommand(cmd)
+                    end
+                    needsRedraw = true
+                elseif p1 == keys.escape then
+                    error("Server shutdown")
+                end
+            end
+        end
+    end
+
+    local function lobbyCleanupLoop()
+        while true do
+            sleep(60)
+            cleanupLobbies()
+        end
+    end
+
+    local function persistenceLoop()
+        while true do
+            sleep(30)
+            dbTracker.backgroundSave()
+            flushLogs()
+        end
+    end
+
+    parallel.waitForAny(networkListener, inputListener, lobbyCleanupLoop, persistenceLoop)
 end
 
 local ok, err = pcall(main)

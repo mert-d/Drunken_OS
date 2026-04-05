@@ -28,7 +28,8 @@ local utils = require("lib.utils")
 --==============================================================================
 
 local accounts, currencyRates, currentStock = {}, {}, {}
-local ledger = {}
+-- NOTE: `ledger` is declared in the Ledger & Integrity section below.
+-- Do NOT add a second declaration here — it shadows the real table and breaks dbPointers.
 local mainServerId = nil
 local wired_modem_name, wireless_modem_name = nil, nil
 local adminInput = ""
@@ -99,6 +100,11 @@ local ratesPage = 1
 -- Logging Functions
 --==============================================================================
 
+local logBuffer = {}
+local logWriteIdx = 0
+local LOG_MAX = 200
+local logsDirExists = false
+
 local function logActivity(message, isError)
     local prefix = isError and "[ERROR] " or "[INFO] "
     local logEntry = os.date("[%Y-%m-%d %H:%M:%S] ") .. prefix .. message
@@ -107,17 +113,35 @@ local function logActivity(message, isError)
         term.write(logEntry .. "\n")
     end
     
-    if not fs.exists(LOGS_DIR) then fs.makeDir(LOGS_DIR) end
-    local file = fs.open(LOG_FILE, "a")
-    if file then
-        file.writeLine(logEntry)
-        file.close()
+    logWriteIdx = logWriteIdx + 1
+    logHistory[logWriteIdx] = logEntry
+    if logWriteIdx > LOG_MAX then
+        local newHistory = {}
+        for i = LOG_MAX - 99, LOG_MAX do
+            table.insert(newHistory, logHistory[i])
+        end
+        logHistory = newHistory
+        logWriteIdx = #logHistory
     end
 
-    table.insert(logHistory, logEntry)
-    if #logHistory > 200 then table.remove(logHistory, 1) end
-    
+    table.insert(logBuffer, logEntry)
     uiDirty = true
+end
+
+local function flushLogs()
+    if #logBuffer == 0 then return end
+    if not logsDirExists then
+        if not fs.exists(LOGS_DIR) then fs.makeDir(LOGS_DIR) end
+        logsDirExists = true
+    end
+    local file = fs.open(LOG_FILE, "a")
+    if file then
+        for _, entry in ipairs(logBuffer) do
+            file.writeLine(entry)
+        end
+        file.close()
+    end
+    logBuffer = {}
 end
 
 
@@ -213,11 +237,17 @@ end
 local function persistenceLoop()
     if not dbTracker then
         dbTracker = DB.createDirtyTracker(dbPointers, logActivity)
+        -- Drain any saves queued before the tracker was initialized
+        for path, isDirty in pairs(dbDirty) do
+            if isDirty then dbTracker.queueSave(path) end
+        end
+        dbDirty = {}
     end
     
     while true do
         sleep(30)
         dbTracker.backgroundSave()
+        flushLogs()
     end
 end
 
@@ -268,6 +298,7 @@ local function adjustCurrencyRates()
             if new_price ~= data.current then
                 logActivity(string.format("'%s' price changed from $%d to $%d (Stock: %d/%d)", item, data.current, new_price, currentStock[item] or 0, data.target))
                 currencyRates[item].current = new_price
+                data._dirty = true
                 changed = true
             end
         end
@@ -275,8 +306,12 @@ local function adjustCurrencyRates()
 
     if changed then
         for itemName, data in pairs(currencyRates) do
-            if not saveTableToFile(fs.combine(CURRENCIES_DIR, itemName .. ".json"), data) then
-                 logActivity("Failed to save updated rate for " .. itemName, true)
+            if data._dirty then
+                if saveTableToFile(fs.combine(CURRENCIES_DIR, itemName .. ".json"), data) then
+                    data._dirty = nil
+                else
+                    logActivity("Failed to save updated rate for " .. itemName, true)
+                end
             end
         end
     end
@@ -477,10 +512,13 @@ function bankHandlers.clerk_get_history(senderId, message)
     local user = message.user
     local history = {}
     
-    -- Filter global ledger for this user
-    for _, entry in ipairs(ledger) do
+    -- Filter global ledger for this user (capped scan for performance)
+    local startIdx = math.max(1, #ledger - 1000)
+    for i = #ledger, startIdx, -1 do
+        local entry = ledger[i]
         if entry.user == user or (entry.details and entry.details.recipient == user) or (entry.details and entry.details.customer == user) or (entry.details and entry.details.merchant == user) then
             table.insert(history, entry)
+            if #history >= 50 then break end
         end
     end
     
@@ -579,6 +617,8 @@ function bankHandlers.city_export(senderId, message)
     end
 end
 
+local cachedArcadeServerId = nil
+
 -- Handles Arcade Leaderboard Payouts (Minting Prize Money)
 function bankHandlers.arcade_payout(senderId, message)
     local user = message.user
@@ -589,8 +629,10 @@ function bankHandlers.arcade_payout(senderId, message)
     if not user or not amount or amount <= 0 then return end
     
     -- Security: Verify Sender is Arcade Server
-    local arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
-    if senderId ~= arcadeServerId then
+    if not cachedArcadeServerId then
+        cachedArcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
+    end
+    if senderId ~= cachedArcadeServerId then
         logActivity("BLOCKED: Unauthorized payout attempt from ID " .. senderId, true)
         rednet.send(senderId, { success = false, reason = "Unauthorized sender" }, BANK_PROTOCOL)
         return
@@ -625,6 +667,8 @@ function bankHandlers.deposit(senderId, message)
     local total_value = 0
     local transaction_summary = {}
 
+    local transaction_data = {}
+
     for _, item in ipairs(items) do
         local rateInfo = nil
         local itemName = item.name or "unknown"
@@ -641,6 +685,7 @@ function bankHandlers.deposit(senderId, message)
             local value = item.count * rateInfo.current
             total_value = total_value + value
             table.insert(transaction_summary, string.format("%d %s for $%d", item.count, itemName, value))
+            transaction_data[itemName] = { count = item.count, value = value }
             
             -- THE FIX #1: Immediately update the internal stock count upon deposit.
             currentStock[itemName] = (currentStock[itemName] or 0) + item.count
@@ -653,13 +698,6 @@ function bankHandlers.deposit(senderId, message)
             queueSave(ACCOUNTS_DB)
             queueSave(STOCK_DB)
             rednet.send(senderId, { success = true, newBalance = accounts[user].balance, deposited_value = total_value }, BANK_PROTOCOL)
-            local transaction_data = {}
-            for _, item in ipairs(items) do
-                local rateInfo = currencyRates[item.name or "unknown"] or currencyRates[item.name:match("^minecraft:(.+)") or ""]
-                if rateInfo then
-                    transaction_data[item.name or "unknown"] = { count = item.count, value = item.count * rateInfo.current }
-                end
-            end
             logTransaction(user, "DEPOSIT", transaction_data, total_value)
             logActivity(string.format("Stock updated for deposit: %s", table.concat(transaction_summary, ", ")))
             broadcastSecurityEvent(string.format("DEP: %s +$%d", user, total_value), total_value)

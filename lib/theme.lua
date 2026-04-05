@@ -17,6 +17,7 @@ local theme = {
     _VERSION = 1.1,
     bg = colors.black,
     text = colors.white,
+    mutedText = safeColor("gray", colors.lightGray),
     prompt = colors.cyan,
     titleBg = colors.blue,
     titleText = colors.white,
@@ -96,6 +97,14 @@ theme.presets = {
     }
 }
 
+-- Keys that are safe to load from a config file (colors only)
+local SAFE_THEME_KEYS = {
+    bg=true, text=true, mutedText=true, prompt=true,
+    titleBg=true, titleText=true, highlightBg=true, highlightText=true,
+    errorBg=true, errorText=true, windowBg=true, border=true,
+    statusBarBg=true, statusBarText=true,
+}
+
 -- Methods
 function theme.load()
     if fs.exists(CONFIG_FILE) then
@@ -104,7 +113,9 @@ function theme.load()
         local data = textutils.unserialize(f.readAll())
         f.close()
         if data then
-            for k,v in pairs(data) do theme[k] = v end
+            for k,v in pairs(data) do
+                if SAFE_THEME_KEYS[k] then theme[k] = v end
+            end
         end
     end
 end
