@@ -155,8 +155,9 @@ function arcade.run(context)
         end
     end
     
-    -- Initial Fetch
-    if #games > 0 then fetchSideData(games[1]) end
+    -- Only fetch side data on desktop (wide) screens where the panel is visible
+    local needsSideRefresh = true
+    if #games > 0 and w > 30 then fetchSideData(games[1]); needsSideRefresh = false end
 
     while true do
         utils.drawWindow("DRUNKEN ARCADE", context)
@@ -184,6 +185,12 @@ function arcade.run(context)
         
         if w > 30 then
             -- DESKTOP LAYOUT (Split Screen)
+            
+            -- Lazy-fetch side data only when selection changed and on desktop
+            if needsSideRefresh and games[selectedIdx] then
+                fetchSideData(games[selectedIdx])
+                needsSideRefresh = false
+            end
             
             -- Separator
             term.setBackgroundColor(theme.bg)
@@ -261,13 +268,13 @@ function arcade.run(context)
             if selectedIdx > 1 then 
                 selectedIdx = selectedIdx - 1
                 if selectedIdx < scrollOffset + 1 then scrollOffset = scrollOffset - 1 end
-                fetchSideData(games[selectedIdx])
+                needsSideRefresh = true
             end
         elseif p1 == keys.down then
             if selectedIdx < #games then 
                 selectedIdx = selectedIdx + 1
                 if selectedIdx > scrollOffset + 14 then scrollOffset = scrollOffset + 1 end
-                fetchSideData(games[selectedIdx])
+                needsSideRefresh = true
             end
         elseif p1 == keys.enter then
             -- Launch Game
@@ -279,7 +286,7 @@ function arcade.run(context)
             end
             -- Redraw on return
         elseif p1 == keys.l then
-            fetchSideData(games[selectedIdx])
+            needsSideRefresh = true
         elseif p1 == keys.j and cachedLobbies and #cachedLobbies > 0 then
              -- Simple Join via ID input
              term.setCursorPos(23, 17)
