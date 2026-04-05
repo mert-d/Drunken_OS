@@ -43,23 +43,87 @@ function arcade.run(context)
     local cachedLobbies = nil
     local socketCache = {} -- Item #18: Cache sockets to avoid expensive re-init
     
+    -- Resolve games directory relative to programDir
+    local baseDir = (context and context.programDir) or ""
+    local gamesDir = fs.combine(baseDir, "games")
+    
     -- Load Games List
-    if not fs.exists("games") then fs.makeDir("games") end
-    local list = fs.list("games")
-    for _, file in ipairs(list) do
-        if file:match("%.lua$") then
-            local info = parseGameInfo("games/" .. file)
-            table.insert(games, {
-                name = file:gsub("%.lua$", ""):gsub("_", " "),
-                filename = file,
-                path = "games/" .. file,
-                version = info.version,
-                author = info.author,
-                protocol = info.protocol
-            })
+    local function loadGameList()
+        games = {}
+        if not fs.exists(gamesDir) then fs.makeDir(gamesDir) end
+        local list = fs.list(gamesDir)
+        for _, file in ipairs(list) do
+            if file:match("%.lua$") then
+                local fullPath = fs.combine(gamesDir, file)
+                local info = parseGameInfo(fullPath)
+                table.insert(games, {
+                    name = file:gsub("%.lua$", ""):gsub("_", " "),
+                    filename = file,
+                    path = fullPath,
+                    version = info and info.version or 1.0,
+                    author = info and info.author or "Unknown",
+                    protocol = info and info.protocol or "Unknown"
+                })
+            end
+        end
+        table.sort(games, function(a,b) return a.name < b.name end)
+    end
+    
+    -- Attempt to fetch games from Mainframe if none found locally
+    local function syncGamesFromServer()
+        local server = rednet.lookup("SimpleMail", "mail.server")
+        if not server then return false end
+        
+        -- Get the manifest to find game file paths
+        rednet.send(server, { type = "get_manifest" }, "SimpleMail")
+        local _, resp = rednet.receive("SimpleMail", 3)
+        if not resp or not resp.manifest then return false end
+        
+        local gameFiles = resp.manifest.all_games or {}
+        if #gameFiles == 0 and resp.manifest.packages and resp.manifest.packages.client then
+            -- Fallback: extract game paths from client package file list
+            for _, f in ipairs(resp.manifest.packages.client.files or {}) do
+                if f:match("^games/") then
+                    table.insert(gameFiles, f)
+                end
+            end
+        end
+        
+        if #gameFiles == 0 then return false end
+        
+        local downloaded = 0
+        for _, gamePath in ipairs(gameFiles) do
+            local filename = fs.getName(gamePath)
+            local localPath = fs.combine(gamesDir, filename)
+            if not fs.exists(localPath) then
+                rednet.send(server, { type = "get_file", path = gamePath }, "SimpleMail")
+                local _, fileData = rednet.receive("SimpleMail", 3)
+                if fileData and fileData.success and fileData.code then
+                    if not fs.exists(gamesDir) then fs.makeDir(gamesDir) end
+                    local f = fs.open(localPath, "w")
+                    if f then
+                        f.write(fileData.code)
+                        f.close()
+                        downloaded = downloaded + 1
+                    end
+                end
+            end
+        end
+        return downloaded > 0
+    end
+    
+    loadGameList()
+    
+    -- If no games found locally, try fetching from server
+    if #games == 0 then
+        utils.drawWindow("DRUNKEN ARCADE", context)
+        term.setCursorPos(2, 4)
+        term.setTextColor(theme.text)
+        term.write("No games found. Syncing from server...")
+        if syncGamesFromServer() then
+            loadGameList()
         end
     end
-    table.sort(games, function(a,b) return a.name < b.name end)
     
     local function fetchSideData(game)
         cachedLeaderboard = nil

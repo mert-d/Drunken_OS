@@ -278,19 +278,22 @@ function updateGames()
             if file then
                 local content = file.readAll()
                 file.close()
-                local foundVersion = string.match(content, "%-%-%s*Version:%s*([%d%.]+)")
-                if foundVersion then
-                    localVersion = tonumber(foundVersion)
-                end
+                -- Use same version parsing patterns as the server
+                local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)")
+                       or content:match("local%s+appVersion%s*=%s*([%d%.]+)")
+                       or content:match("%(v([%d%.]+)%)")
+                       or content:match("%-%-%s*[Vv]ersion:%s*([%d%.]+)")
+                localVersion = tonumber(v) or 0
             end
         end
         
         if serverVersion > localVersion then
             term.setCursorPos(4, y + 1); term.write("-> New version found! Downloading...")
-            rednet.send(state.mailServerId, {type = "get_game_update", program = filename}, "SimpleMail")
+            -- Use get_file which the Mainframe already handles (get_game_update doesn't exist)
+            rednet.send(state.mailServerId, {type = "get_file", path = "games/" .. filename}, "SimpleMail")
             local _, update = rednet.receive("SimpleMail", 10)
             
-            if update and update.code then
+            if update and update.success and update.code then
                 local file = fs.open(localPath, "w")
                 if file then
                     file.write(update.code)

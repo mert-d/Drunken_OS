@@ -561,6 +561,25 @@ end
 
     -- Duplicate handlers removed (get_manifest and get_file — see authoritative definitions above)
 
+-- Backwards compatibility: older clients send get_game_update instead of get_file
+function mailHandlers.get_game_update(senderId, message)
+    local filename = message.program or message.filename
+    if not filename or type(filename) ~= "string" then return end
+    -- Ensure we only serve from games/ directory
+    local path = "games/" .. filename
+    if fs.exists(path) and not fs.isDir(path) then
+        local f = fs.open(path, "r")
+        if f then
+            local code = f.readAll()
+            f.close()
+            rednet.send(senderId, { success = true, code = code }, "SimpleMail")
+            logActivity("Served game '" .. filename .. "' to client " .. senderId)
+            return
+        end
+    end
+    rednet.send(senderId, { success = false, code = nil }, "SimpleMail")
+end
+
 function mailHandlers.submit_app(senderId, message)
     -- Validate required fields
     if not message.name or not message.code or message.name == "" then
