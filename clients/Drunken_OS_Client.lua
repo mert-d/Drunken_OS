@@ -471,6 +471,7 @@ local function mainMenu()
 
         local selected = 1
         local inFolder = false
+        local cachedAllApps = nil
         
         -- Navigation Loop
         while true do
@@ -481,17 +482,20 @@ local function mainMenu()
             
             if inFolder == "All Apps" then
                 viewingFolder = "All Apps"
-                currentList = {}
-                 -- Populate All Apps
-                for _, path in ipairs(fs.list("apps")) do
-                    if not fs.isDir("apps/"..path) then
-                        local name = path:gsub("%.lua$", "")
-                        local label = name:gsub("_", " ")
-                        -- Skip system/store/hidden? No, show all using folder.
-                        table.insert(currentList, { label = label, path = "apps/"..path, isApp = true })
+                if not cachedAllApps then
+                    cachedAllApps = {}
+                     -- Populate All Apps
+                    for _, path in ipairs(fs.list("apps")) do
+                        if not fs.isDir("apps/"..path) then
+                            local name = path:gsub("%.lua$", "")
+                            local label = name:gsub("_", " ")
+                            -- Skip system/store/hidden? No, show all using folder.
+                            table.insert(cachedAllApps, { label = label, path = "apps/"..path, isApp = true })
+                        end
                     end
+                    table.insert(cachedAllApps, { label = "⬅ Back", action = "back" })
                 end
-                table.insert(currentList, { label = "⬅ Back", action = "back" })
+                currentList = cachedAllApps
             end
             
             -- Draw Menu

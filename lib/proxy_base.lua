@@ -43,6 +43,8 @@ function ProxyBase.run(config)
         if #logs > 100 then table.remove(logs, 1) end
     end
 
+    local internalIdCache = {}
+
     -- Forward: Wireless/External -> Internal/Wired
     local function forward(senderId, message, protocol)
         local internalProtocol = config.protocolMap[protocol]
@@ -50,7 +52,14 @@ function ProxyBase.run(config)
 
         log("REQ [" .. protocol .. "] from " .. senderId)
         
-        local internalId = rednet.lookup(internalProtocol)
+        local internalId = internalIdCache[internalProtocol]
+        if not internalId then
+            internalId = rednet.lookup(internalProtocol)
+            if internalId then
+                internalIdCache[internalProtocol] = internalId
+            end
+        end
+
         if not internalId then
             log("No internal server for " .. protocol, true)
             return
