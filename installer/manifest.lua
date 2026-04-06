@@ -5,6 +5,9 @@
     The Installer and Updater use this to know what to download.
 ]]
 
+---
+-- Global configuration structure detailing files bundled with each Drunken OS component.
+-- Ensures dependencies are mapped properly during fetching & installation.
 return {
     version = 1.4,
 

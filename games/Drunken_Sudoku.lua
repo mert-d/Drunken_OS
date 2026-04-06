@@ -41,6 +41,10 @@ local state = {
     won = false,
 }
 
+---
+-- Procedurally generates a valid Sudoku grid by creating a base configuration,
+-- applying random valid permutations (row/col shuffling within bands/stacks),
+-- and then carving out a precise number of holes to form a solvable puzzle puzzle.
 local function generateGrid()
     local base = {
       {1,2,3, 4,5,6, 7,8,9},

@@ -9,14 +9,11 @@ local appVersion = 1.0
 
 local developer = {}
 
---- Draws the main menu
+---
+-- Main routing logic and UI drawing for the Developer Portal.
+-- @param context table: The OS context object containing program environment info.
 local function mainMenu(context)
     -- Check Admin Status (Assume context has it or check sys)
-    -- Ideally we ask the server "Am I admin?" but for speed let's check local state or context.
-    -- context in Drunken_OS_Client has state.isAdmin? No, we didn't expose it to apps yet.
-    -- But Drunken_OS_Client.lua has 'state = { isAdmin = ... }'.
-    -- If we pass 'state' as 'context', we can access it.
-    -- Let's assume context.isAdmin exists. (If not, we default false).
     local isAdmin = context.isAdmin or false
 
     while true do
@@ -56,7 +53,6 @@ local function mainMenu(context)
                     f.write("SDK.UI.showMessage(\"Hello\", \"Welcome to my app!\")\n")
                     f.close()
                     SDK.UI.showMessage("Success", "Created " .. filename)
-                    -- Ideally open 'edit filename' shell command?
                     shell.run("edit", path)
                 end
             end
@@ -201,6 +197,9 @@ local function mainMenu(context)
     end
 end
 
+---
+-- Main entry point for the developer portal IDE.
+-- @param context table: The OS context object.
 function developer.run(context)
     mainMenu(context)
 end

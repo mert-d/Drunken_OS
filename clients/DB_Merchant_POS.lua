@@ -12,58 +12,12 @@ local context = {
     parent = {
         -- Minimum required parent properties for standalone run
         username = nil, 
-        -- If username is missing, library usually handles it or we might need a mini-login wrapper here
-        -- but usually this app is launched from Drunken_OS_Client which provides context.
-        -- If launched standalone, it might fail some "getParent(context)" calls if not structured carefully.
-        -- However, this is intended to be installed *alongside* the client libs.
-        -- Let's check: apps.merchantPOS calls getParent(context).userInfo.is_merchant
-        -- Realistically, this wrapper assumes it's running in an environment where it can access shared state or is bootstrapped.
-        -- BUT, if installed as a "Program", it needs its own bootstrap.
+        -- If username is missing, library usually handles it.
+        -- This wrapper is intended to be installed alongside the client libs.
     }
 }
 
--- Wait, apps library functions like apps.merchantPOS(context) rely HEAVILY on 'context' being a robust object 
--- with drawWindow, readInput, theme, etc.
--- The Drunken_OS_Client.lua creates this context.
--- If I just call apps.merchantPOS(context) with a nil context, it will crash.
--- 
--- SOLUTION: 
--- These wrappers are likely intended to be run *within* the Drunken OS Client environment (as part of the app menu).
--- BUT the user wants them in the *Installer*. This implies they are standalone programs on a disk/computer.
--- If so, they need to implement the FULL context interface (UI helpers, etc) OR they are just separate *files* that Drunken_OS_Client can *import*?
--- 
--- The user said "Merchant Business Suite... applications".
--- If they are separate programs, they need to duplicate the UI logic or require a "framework" runner.
--- `Drunken_OS_Client.lua` seems to be the main "OS" runner.
--- 
--- Let's look at `clients/DB_Bank_Clerk_Terminal.lua`. It has its own `drawHeader`, `drawMenu`, `main`. It is standalone.
--- `lib/drunken_os_apps.lua` functions take `context`.
--- 
--- If I make a wrapper, I must provide the `context` dependencies (UI, Networking, State).
--- Since `Drunken_OS_Client.lua` is 22kb and contains the framework, maybe I should just bundle a "Mini Client" 
--- OR checking `Drunken_OS_Client.lua` to see if it can run specific apps?
--- 
--- Actually, the `Drunken_OS_Client.lua` *is* the OS. 
--- "Merchant POS" might just be a *mode* of the Client?
--- User asked: "Master Installer ... containing these apps".
--- If I install "Merchant POS", I probably want a program that starts up DIRECTLY into the POS screen.
--- 
--- So I need to copy/reference enough UI logic to make `apps.merchantPOS(ctx)` work.
--- OR I modify `Drunken_OS_Client.lua` to accept arguments to boot into specific apps.
--- 
--- Let's try the "Boot Argument" approach? No, that requires modifying the Client.
--- Let's try the "Context Mock" approach. I can copy the UI helper functions from `Drunken_OS_Client` 
--- into a `lib/ui_context.lua`? Or just put them in the wrapper.
--- 
--- `Master_Installer` bundles dependencies. 
--- If I assume `clients/Drunken_OS_Client.lua` is present? No, separate install.
--- 
--- I will create a `lib/drunken_framework.lua`? No, too big refactor.
--- I will replicate the minimal `context` object in `DB_Merchant_POS.lua`.
--- It needs: drawWindow, drawMenu, readInput, showMessage, getSafeSize, etc.
--- And: parent.username, parent.mailServerId (rednet lookup), etc.
-
--- OK, I will construct a lightweight "OS Shell" in the wrapper that:
+-- Lightweight "OS Shell" in the wrapper that:
 -- 1. Sets up Rednet
 -- 2. Handles Login (essential for Merchant ID)
 -- 3. Defines the UI functions
@@ -175,6 +129,9 @@ context.clear = function() term.clear(); term.setCursorPos(1,1) end
 
 local MERCHANT_CONFIG_FILE = "merchant.conf"
 
+---
+-- Retrieves the registered merchant identity from local config.
+-- @return string|nil: The merchant username, or nil if unconfigured.
 local function getMerchantName()
     local path = fs.combine(programDir, MERCHANT_CONFIG_FILE)
     if fs.exists(path) then
@@ -199,6 +156,10 @@ end
 
 
 -- Main Bootstrap
+---
+-- Bootstraps the terminal as a Merchant Point Of Sale node.
+-- Prompts for initial merchant configuration if not present, and then
+-- hands execution over to the drunken_os_apps POS interface.
 local function main()
     -- Rednet
     local modem = peripheral.find("modem")

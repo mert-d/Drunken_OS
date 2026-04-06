@@ -245,6 +245,9 @@ end
 -- Main Program Loop
 --==============================================================================
 
+---
+-- Main application entry point for the Vault Clerk Turtle.
+-- Pairs the Turtle with the ATM machine, scanning peripherals to initialize the barrel layout. 
 local function main()
     term.clear(); term.setCursorPos(1,1)
     local modem_side, deposit_side, vault_side, err = findPeripherals()

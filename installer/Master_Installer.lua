@@ -75,14 +75,6 @@ local function buildProgramList()
             end
         end
         
-        -- We store the resolved file list as 'dependencies' for compatibility with existing installer logic
-        -- But wait, the existing logic expects 'dependencies' to NOT include the main file usually, 
-        -- or it handles it. Let's check createInstallDisk.
-        -- createInstallDisk: local allFiles = { program.path }; join dependencies...
-        
-        -- So 'dependencies' should be everything EXCEPT the main path? 
-        -- Or I can just override the logic later.
-        -- Let's just create a 'full_file_list' property and update createInstallDisk to use it.
         entry.full_file_list = allFiles
         
         table.insert(INSTALLABLE_PROGRAMS, entry)
@@ -372,9 +364,6 @@ local function createInstallDisk(program)
 
     local dependencies = {}
     
-    -- If we have full_file_list, gathering dependencies is slightly different because
-    -- we want to key them by path, and 'programCode' is already fetched above (though maybe unnecessary if it's in the list).
-    -- Actually, let's just use allFiles for everything.
     local allFiles = program.full_file_list or { program.path }
     if not program.full_file_list and program.dependencies then
         for _, dep in ipairs(program.dependencies) do table.insert(allFiles, dep) end
@@ -529,6 +518,9 @@ end
 -- Main Program Loop
 --==============================================================================
 
+---
+-- Main application entry point for the Master Installer GUI.
+-- Bootstraps the UI, fetches the latest manifest, and presents the installation options.
 local function main()
     showSplashScreen()
     if not fetchManifest() then

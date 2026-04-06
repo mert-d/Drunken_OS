@@ -256,6 +256,11 @@ local function setupPin()
     end
 end
 
+---
+-- Main authentication loop for the ATM.
+-- Retrieves PIN hash from the physical drive media and securely handshakes 
+-- with the main bank server to unlock the session.
+-- @return boolean: True if auth succeeds, false otherwise.
 local function login()
     local pin_hash = nil
     local login_success = false
@@ -291,7 +296,11 @@ local function login()
     return true
 end
 
--- NEW: Corrected deposit function with full handshake logic
+---
+-- Implements the 3-phase deposit protocol with physical turtles.
+-- 1. Signals Turtle to collect items.
+-- 2. Asks Server to valuate items.
+-- 3. Instructs Turtle to store items safely.
 local function deposit()
     drawFrame("Deposit")
     printCentered(6, "Requesting deposit from Vault Clerk...")
@@ -335,6 +344,11 @@ local function deposit()
 end
 
 
+---
+-- Implements the 3-phase withdrawal protocol with physical turtles.
+-- 1. Authorizes limit with the Bank Server.
+-- 2. Requests physical dispense from the Turtle.
+-- 3. Finalizes the transaction deduplication with the Server.
 local function withdraw()
     local options = {}
     local item_names = {}
@@ -619,6 +633,9 @@ local function mainMenu()
     sleep(2)
 end
 
+---
+-- Bootstraps the ATM hardware session.
+-- Locates the assigned Turtle Clerk and Bank Server on the network.
 local function runSession()
     local modem = peripheral.find("modem")
     if not modem then error("No modem attached.", 0) end

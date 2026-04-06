@@ -178,6 +178,14 @@ local function saveLedger()
     queueSave(LEDGER_FILE)
 end
 
+---
+-- Logs an immutable transaction entry into the global ledger and updates the hash chain.
+-- Generates a cryptographic SHA-1 hash binding the previous ledger hash with the current transaction data.
+-- @param user The username initiating the transaction.
+-- @param txType String representing the type ("login", "transfer", "PAYMENT", etc).
+-- @param details Additional context string or table.
+-- @param amount The numeric amount moved (if any).
+-- @param target The target username (if any).
 local function logTransaction(user, txType, details, amount, target)
     local timestamp = os.time()
     local entry = {
@@ -227,6 +235,11 @@ end
 -- Session Verification (Inter-Server)
 --==============================================================================
 
+---
+-- Interlinks with the Mainframe server to verify a user's session token securely.
+-- @param user The username attempting to authenticate.
+-- @param token The session token provided by the user.
+-- @return {boolean} True if the mainframe validated the token.
 local function verifyTokenWithMainframe(user, token)
     if not mainServerId or not user or not token then return false end
     rednet.send(mainServerId, { type = "verify_session", user = user, session_token = token }, "SimpleMail")
@@ -234,6 +247,8 @@ local function verifyTokenWithMainframe(user, token)
     return resp and resp.success
 end
 
+---
+-- Background thread that pulses every 30 seconds to flush dirty database tables to disk.
 local function persistenceLoop()
     if not dbTracker then
         dbTracker = DB.createDirtyTracker(dbPointers, logActivity)
@@ -360,7 +375,12 @@ function bankHandlers.login(senderId, message)
     end
 end
 
--- New: Broadcast security events to the Auditor Turtle
+---
+-- Broadcast security events (e.g., suspicious withdrawals) to the Auditor Turtle.
+-- Messages are signed using an HMAC hash to prevent spoofing.
+-- @param event Text description of the security event.
+-- @param amount Related transaction amount, if any.
+-- @param isAlert Boolean indicating if immediate attention is needed.
 local function broadcastSecurityEvent(event, amount, isAlert)
     if not AUDIT_SECRET_KEY then return end
     local timestamp = os.time()
@@ -449,14 +469,6 @@ function bankHandlers.verify_transaction(senderId, message)
         -- Entry details: { recipient="Merchant", ... } checks.
         -- We typically store transfer details in `details` table or `target` field.
         -- In `process_payment` (client side), we send bank: process_payment.
-        -- We need to check how `process_payment` logs usage.
-        
-        -- Let's look at how process_payment handler logs (we haven't read it yet but assume common sense)
-        -- Actually, we should check `bankHandlers.process_payment` or `transfer`.
-        
-        -- Assumption: `details` contains { recipient=..., sender=... }
-        -- And `entry.amount` is the amount.
-        
         if entry.amount == amount and (entry.type == "PAYMENT" or entry.type == "TRANSFER") then
             -- Check recipient in details
             if type(entry.details) == "table" and entry.details.recipient == merchant then

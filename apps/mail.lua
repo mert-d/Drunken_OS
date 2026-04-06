@@ -10,6 +10,10 @@ local function getParent(context)
     return context.parent
 end
 
+---
+-- Displays the UI to read a given mail message structure.
+-- Provides options to download attachments if present.
+-- @param context table: OS app context.
 function mail.readMail(context)
     local mailData = context.mail_to_read
     local w, h = context.getSafeSize()
@@ -72,6 +76,10 @@ function mail.readMail(context)
     end
 end
 
+---
+-- Connects to the mainframe to download the user's current inbox data.
+-- Displays it in an interactive scrolled list.
+-- @param context table: OS app context.
 function mail.viewInbox(context)
     getParent(context).unreadCount = 0
     context.drawWindow("Inbox")
@@ -140,6 +148,12 @@ function mail.viewInbox(context)
     end
 end
 
+---
+-- Triggers a text editor interface, compiles the result, and sends the message.
+-- @param context table: OS app context.
+-- @param to string: The recipient address.
+-- @param subject string: The mail theme.
+-- @param attachment table|nil: An optional file to embed within the mail.
 function mail.composeAndSend(context, to, subject, attachment)
     context.drawWindow("Compose Mail Body")
     local w, h = context.getSafeSize()
@@ -263,6 +277,10 @@ function mail.manageLists(context)
     end
 end
 
+---
+-- Main application point for the Mail applet.
+-- Contains top level routing to inbox, sending, and list management.
+-- @param context table: OS app context.
 function mail.run(context)
     local options = {"View Inbox", "Send Mail", "Mailing Lists", "Back"}
     local selected = 1

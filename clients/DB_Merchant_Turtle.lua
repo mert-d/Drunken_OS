@@ -1,7 +1,7 @@
+---
 -- Drunken OS Merchant Turtle (Vending/Fulfillment)
 -- Runs on a turtle paired with the Cashier PC
--- Protocol: DB_Merchant_Turtle
-
+-- Interacts over the DB_Merchant_Turtle protocol to dispense requested stock.
 local PROTOCOL = "DB_Merchant_Turtle"
 rednet.open("right") -- Assume modem is on right, or find it
 -- Quick peripheral check

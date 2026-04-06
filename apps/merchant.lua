@@ -28,6 +28,10 @@ local function saveCatalog(context, catalog)
     local f = fs.open(path, "w"); f.write(textutils.serialize(catalog)); f.close()
 end
 
+---
+-- Runs the persistent merchant broadcast loop for a cashier terminal.
+-- Constantly pings its location on rednet for local POS or shoppers.
+-- @param context table: OS app context.
 function merchant.cashier(context)
     local catalog = loadCatalog(context)
     local broadcasting = false
@@ -85,6 +89,10 @@ function merchant.cashier(context)
     end
 end
 
+---
+-- Interactive Point Of Sale terminal logic.
+-- Allows shop owners to compile a bill, and wait for confirmation of bank payment.
+-- @param context table: OS app context.
 function merchant.pos(context)
     local catalog = loadCatalog(context)
     local bill = {} -- { {name, price, count}, ... }
@@ -103,20 +111,6 @@ function merchant.pos(context)
             y = y + 1
         end
 
-        local selected = context.drawMenu(options, 1, 2, nill) -- Using nil for y to let it auto-place or modify drawMenu? 
-        -- Actually drawMenu usage in existing files usually takes (options, selected, x, y). 
-        -- Let's stick to the pattern used in cashier:
-        -- context.drawMenu(options, selected, 2, 4)
-        
-        -- Since drawMenu is blocking in `drunken_os_apps` usually, but here the loop handles keys?
-        -- Wait, look at `cashier` function nearby. It has its OWN loop for keys.
-        -- context.drawMenu likely just RENDERS.
-        -- Re-reading `cashier` code (Steps 1166):
-        -- while true do drawWindow; drawMenu; pullEvent end.
-        
-        -- So I need to replicate that loop here interactively.
-        -- Simpler approach: Use a sub-loop for the menu.
-        
         local menuSel = 1
         while true do
             context.drawWindow("Merchant POS | Total: $" .. total)
@@ -206,19 +200,6 @@ function merchant.pos(context)
             -- Find Bank Server
             local bankServerId = rednet.lookup("DB_Bank", "bank.server")
             
-            -- We need to know WHO is paying. 
-            -- The Bank App asks for "Recipient". The User types it.
-            -- The Merchant App needs to know the "Customer Name" to verify.
-            -- Add an input for "Customer Name" to search for?
-            -- Or just poll for ANY payment to US with exact amount?
-            -- The verify_transaction API requires `customer`.
-            -- Let's poll for RECENT payments to US with correct AMOUNT. 
-            
-            -- Wait, my verify_transaction handler requires `customer`.
-            -- I should probably relax that if I want "Any Customer".
-            -- But for security, asking the cashier "Who is paying?" is good.
-            -- Let's ask for the Customer Username.
-            
             local customer = context.readInput("Customer Name: ", 4)
             if not customer or customer == "" then break end
             
@@ -277,6 +258,9 @@ function merchant.pos(context)
     end
 end
 
+---
+-- Main Entry Point for Merchant Application. Defaults to cashier interface.
+-- @param context table: OS Application context.
 function merchant.run(context)
     merchant.cashier(context)
 end

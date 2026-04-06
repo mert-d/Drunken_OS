@@ -6,6 +6,10 @@
 local settings_app = {}
 local appVersion = 1.1
 
+---
+-- Main application entry point for the Settings control panel.
+-- Provides theme customisation requiring a system reboot.
+-- @param context table: OS app context.
 function settings_app.run(context)
     local theme = require("lib.theme")
     local w, h = term.getSize()

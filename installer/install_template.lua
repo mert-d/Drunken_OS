@@ -201,6 +201,9 @@ runSetupWizard = function(setup_type)
     end
 end
 
+---
+-- Main application entry point for the installation routine.
+-- Protected call wrapper for the doInstallation logic.
 local function main()
     local ok, err = pcall(doInstallation)
     if not ok then

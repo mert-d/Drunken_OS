@@ -116,6 +116,9 @@ end
 -- Features
 --==============================================================================
 
+---
+-- Prompts for a username and retrieves their account metadata from the Bank Server.
+-- Displays balance, PIN status, and account classification.
 local function lookupAccount()
     clear()
     drawHeader("Account Lookup")
@@ -144,6 +147,9 @@ local function lookupAccount()
     pause()
 end
 
+---
+-- Fetches and displays a truncated chronological history of all ledger events
+-- associated with a target username.
 local function viewHistory()
     clear()
     drawHeader("Transaction History")
@@ -206,6 +212,9 @@ local function viewHistory()
     pause()
 end
 
+---
+-- Spawns a background thread that passively listens to DB_Audit protocol broadcasts,
+-- drawing them to the terminal in realtime. Useful for detecting suspicious activity.
 local function liveMonitor()
     clear()
     drawHeader("Live Security Monitor (Press 'Q' to quit)")

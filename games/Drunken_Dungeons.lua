@@ -47,6 +47,9 @@ local function loadGame()
     return data
 end
 
+---
+-- Main application entry point for Drunken Dungeons.
+-- Sets up map generator, UI sizing, and handles core loops.
 local function mainGame(...)
     local args = {...}
     local username = args[1] or "Guest"
@@ -655,8 +658,6 @@ end
                 if menuSelected == 1 then
                     -- Play
                     selectClass() -- Ask for class before map gen
-                    -- Wait, old code called selectClass inside loop only for [1]?
-                    -- Old code: [1]->selectClass->break loop->generateMap
                     break
                 elseif menuSelected == 2 then
                     upgradeShop()

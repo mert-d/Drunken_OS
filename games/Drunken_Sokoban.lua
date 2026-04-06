@@ -13,6 +13,9 @@ local sharedTheme = require("lib.theme")
 
 local gameVersion = 1.3
 
+---
+-- Main application point for Drunken Sokoban. 
+-- Handles level parsing, character movement, and the world builder editor.
 local function mainGame(...)
     local args = {...}
     local username = args[1] or "Guest"

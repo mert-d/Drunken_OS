@@ -62,6 +62,9 @@ local classes = {
     }
 }
 
+---
+-- Main application entry point for Drunken Duels.
+-- Initializes P2P sockets and handles multiplayer matchups.
 local function mainGame(...)
     local args = {...}
     local username = args[1] or "Guest"
@@ -413,8 +416,6 @@ local function mainGame(...)
                     return false
                 end
                 
-                -- Simple selection: just pick the first for now (as in original)
-                -- Ideally we'd show a menu, but sticking to original flow
                 targetId = lobbies[1].id
             else
                 targetId = directTarget

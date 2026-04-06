@@ -35,6 +35,11 @@ function utils.showLoading(message, context)
     term.write(displayMsg)
 end
 
+---
+-- Clears the screen and draws a generic window shell wrapper with a title bar.
+-- Similar to DrunkenOS.UI.drawWindow, but works purely on passed context.
+-- @param title string: Text string to embed inside the Title bar.
+-- @param context table: Execution context containing theme configuration.
 function utils.drawWindow(title, context)
     local w, h = term.getSize()
     local t = (context and context.theme) or theme  -- Respect passed theme, fall back to module default
@@ -61,7 +66,12 @@ function utils.drawWindow(title, context)
     term.setTextColor(t.text)
 end
 
--- Universal word-wrap
+---
+-- Formats long strings into an array of lines wrapped perfectly safely 
+-- at spaces without fragmenting words.
+-- @param text string: Input text to wrap.
+-- @param maxWidth number: Maximum characters allowed per line string.
+-- @return table: Array of strings.
 function utils.wordWrap(text, maxWidth)
     local lines = {}
     for line in text:gmatch("[^\n]+") do
@@ -79,6 +89,11 @@ function utils.wordWrap(text, maxWidth)
     return lines
 end
 
+---
+-- Syntactic sugar to automatically text-wrap a generic message, calculate line offsets,
+-- and render it visually centered blockwise onto the terminal.
+-- @param startY number: Absolute Y coordinate position to start drawing the block.
+-- @param message string: The long text message to center.
 function utils.printCentered(startY, message)
     local w, h = term.getSize()
     -- USE W-2 to maximize space, and 3 column/row padding for frame

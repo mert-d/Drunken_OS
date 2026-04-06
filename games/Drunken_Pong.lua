@@ -29,6 +29,9 @@ local function saveGame()
     f.close()
 end
 
+---
+-- Main application entry point for Drunken Pong.
+-- Manages P2P connections and synchronizes the ball and paddle states.
 local function mainGame(...)
     local args = {...}
     local username = args[1] or "Guest"

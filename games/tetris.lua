@@ -17,6 +17,9 @@ local currentVersion = 7.2
 -- Main Game Function (to be run inside pcall)
 --==============================================================================
 
+---
+-- Main application entry point for Pocket Tetris.
+-- Implements tetromino generation, piece rotation, boundary checking, and line clearing algorithms.
 local function mainGame(...)
 
 local args = {...}

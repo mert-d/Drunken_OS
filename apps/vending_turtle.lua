@@ -30,14 +30,7 @@ while true do
                     turtle.select(slot)
                     local data = turtle.getItemDetail()
                     
-                    -- Loose logic: If data exists, drop it. 
-                    -- Real Vending typically has specific slots for specific items.
-                    -- Improvement: Just drop whatever is in slot 1? 
-                    -- No, let's look for match if name provided is standard Minecraft ID.
-                    
-                    -- For now, let's assume the Turtle is a "Generic Dispenser"
-                    -- and just drops 'count' items from Slot 1 onwards.
-                    -- OR (Better): Drop 1 item per 'Product' sold.
+                    -- Loose logic: If data exists, drop it.
                     
                     if data then
                         -- Optional: text/fuzzy match item.name?

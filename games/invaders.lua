@@ -17,6 +17,9 @@ local currentVersion = 7.2
 -- Main Game Function (to be run inside pcall)
 --==============================================================================
 
+---
+-- Main application entry point for Invaders.
+-- Manages alien formations, player movement, projectile collisions, and scoring.
 local function mainGame(...)
     local args = {...}
     local username = args[1] or "Guest" -- Fallback to Guest

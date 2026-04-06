@@ -114,6 +114,10 @@ context.parent = {
 }
 
 -- Main Bootstrap
+---
+-- Bootstraps the terminal as a Merchant Cashier node.
+-- Connects to Rednet, geolocates the terminal, and hands execution over
+-- to the drunken_os_apps Merchant Cashier interface.
 local function main()
     term.clear()
     local modem = peripheral.find("modem")

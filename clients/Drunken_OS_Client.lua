@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mobile Client (v15.1 - Performance Edition)
+    Drunken OS - Mobile Client (v16.7 - Performance Edition)
     by MuhendizBey
 ]]
 
@@ -71,6 +71,8 @@ local context = {} -- Shared context for modular apps
 
 -- wordWrap moved to lib.utils
 
+---
+-- Clears the terminal and resets the cursor to the top-left corner.
 local function clear()
     term.clear()
     term.setCursorPos(1,1)
@@ -89,11 +91,21 @@ end
 
 -- printCentered moved to lib.utils
 
+---
+-- Displays a standard message dialog to the user, pausing execution until acknowledged.
+-- @param title The title text of the message box.
+-- @param message The main content text to display.
 local function showMessage(title, message)
     -- Route through lib/sdk.lua
     sdk.UI.showMessage(title, message)
 end
 
+---
+-- Renders a multi-item vertical menu on screen, highlighting the selected item.
+-- @param options A table of string labels for the menu items.
+-- @param selected The index of the currently selected option.
+-- @param startX The initial X coordinate to draw the menu list.
+-- @param startY The initial Y coordinate to start the menu list.
 local function drawMenu(options, selected, startX, startY)
     local w, h = term.getSize()
     
@@ -115,6 +127,12 @@ local function drawMenu(options, selected, startX, startY)
     end
 end
 
+---
+-- Prompts the user for text input at a specific Y coordinate.
+-- @param prompt The prompt text displayed before the cursor.
+-- @param y The Y coordinate to draw the prompt on.
+-- @param isPassword Boolean determining whether typed characters should be masked with '*'.
+-- @return The string inputted by the user.
 local function readInput(prompt, y, isPassword)
     term.setCursorPos(2, y)
     term.setTextColor(theme.prompt)
@@ -218,6 +236,10 @@ local function installDependencies()
     return true
 end
 
+---
+-- Checks the Mainframe server to see if a newer version of the Drunken_OS_Client exists.
+-- If an update is available, it silently downloads it, overwrites the current program, and reboots.
+-- @return {boolean} True if an update was triggered (which calls os.reboot), false otherwise.
 local function autoUpdateCheck()
     rednet.send(state.mailServerId, { type = "get_version", program = programName }, "SimpleMail")
     local _, response = rednet.receive("SimpleMail", 3)
@@ -244,6 +266,9 @@ local function autoUpdateCheck()
     return false
 end
 
+---
+-- Synchronizes the local library of games with the server's master list.
+-- Checks local file versions and downloads newer versions from the Mainframe if necessary.
 local function updateGames()
     drawWindow("Game Updater")
     local y = 4
@@ -318,6 +343,9 @@ end
 -- Login & Main Menu Logic
 --==============================================================================
 
+---
+-- Attempts to download and execute the Admin Console tool from the server.
+-- @param context The shared UI state context, passed into the tool.
 local function runAdminConsole(context)
     if not state.isAdmin or not state.adminServerId then return end
     
@@ -425,7 +453,9 @@ local function toggleFavorite(appName)
     saveFavorites()
 end
 
--- Refactored Main Menu
+---
+-- Core OS shell navigation loop. Replaces standard terminal UI.
+-- Responsible for rendering favorites, app directories, and handling generic OS navigation keys.
 local function mainMenu()
     loadFavorites()
     
@@ -440,9 +470,6 @@ local function mainMenu()
         for appName, _ in pairs(favorites) do
             -- Verify app still exists
             local path = "apps/" .. appName .. ".lua" -- Assumption based on naming convention
-            -- Actually, we need to map Display Name -> Filename.
-            -- Our 'all_apps' list is just paths. display names are derived.
-            -- Let's iterate all installed apps and match.
             hasFavs = true
         end
         
@@ -578,7 +605,10 @@ local function gpsHeartbeat()
     end
 end
 
--- Background Listener for Merchant Requests & Broadcasts
+---
+-- Background Rednet Listener Thread.
+-- Constantly processes incoming messages across multiple protocols without interrupting UI.
+-- For example: Merchant payment requests, unread mail counts, or shop discovery broadcasts.
 local function backgroundListener()
     local lastSync = 0
     while true do
@@ -638,8 +668,7 @@ local function main()
     peripheral.find("modem", rednet.open)
     local connected, reason = findServers()
     
-    -- Try to update even if "findServers" failed (maybe we can reach mail server specifically?)
-    -- But findServers sets state.mailServerId, so we need it.
+    -- Check for updates.
     if connected then
          if autoUpdateCheck() then return end
     end

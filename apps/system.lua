@@ -30,6 +30,10 @@ function system.changeNickname(context)
     end
 end
 
+---
+-- Connects to the Arcade Server to check if locally installed arcade games
+-- have remote updates available, and auto-downloads them.
+-- @param context table: OS app context.
 function system.updateAll(context)
     context.drawWindow("Game Updates")
     local y = 4
@@ -92,6 +96,9 @@ function system.updateAll(context)
     sleep(2)
 end
 
+---
+-- Main routing logic for System utilities menu.
+-- @param context table: OS app context.
 function system.run(context)
     local options = {"Change Nickname", "Check for Updates", "Back"}
     local selected = 1

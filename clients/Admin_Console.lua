@@ -46,6 +46,9 @@ local history = {}
 local input = ""
 local w, h = getSafeSize()
 
+---
+-- Recompiles the terminal layout, including drawing the title frame 
+-- and formatting the history buffer with word wrapping to prevent overflow.
 local function redrawConsole()
     drawWindow("Remote Admin Console")
     local historyLines = {}

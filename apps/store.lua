@@ -8,6 +8,10 @@ local SDK = require("lib.sdk")
 local updater = require("lib.updater")
 local store = {}
 
+---
+-- Fetches the directory of available apps from the Mainframe.
+-- @param context table: OS app context.
+-- @return table|nil: A key-value manifest of app packages.
 local function fetchStoreListing(context)
     local serverId = nil
     if not rednet.isOpen() then SDK.Net.connect() end
@@ -29,6 +33,10 @@ local function fetchStoreListing(context)
     return nil
 end
 
+---
+-- Main application point for the App Store.
+-- Allows users to browse, install, and uninstall optional packages.
+-- @param context table: OS app context.
 function store.run(context)
     local listing = fetchStoreListing(context)
     if not listing then return end
@@ -43,13 +51,6 @@ function store.run(context)
         table.sort(apps)
         
         table.insert(apps, "Exit")
-        
-        -- Since drawMenu handles the loop in Drunken_OS_apps context usually
-        -- Wait, 'drawMenu' in existing framework DOES NOT blocking return index usually
-        -- In merchant/bank we implemented our own KEY LOOPS.
-        -- But here I passed `context` which implies `Drunken_OS_Apps` harness.
-        -- Let's check `apps/system.lua` or similar usage.
-        -- Assuming we need our own loop if we want nice install/uninstall status next to names.
         
         -- Custom Menu Loop for Install Status
         local cursor = 1

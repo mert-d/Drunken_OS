@@ -10,6 +10,10 @@ local function getParent(context)
     return context.parent
 end
 
+---
+-- Main application entry point for the universal Chat room.
+-- Starts parallel threads for typing input and receiving network messages.
+-- @param context table: The OS app context.
 function chat.run(context)
     if not getParent(context).chatServerId then
         context.showMessage("Error", "Chat server not found.")

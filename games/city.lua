@@ -260,8 +260,6 @@ local function loadGame(slotName)
     state.buildings = data.buildings -- Note: 'def' reference might be broken if not handled!
     
     -- Fix Building Def References (they were serialized as tables, need to link back to STRUCTURES)
-    -- Actually, serialization saves a COPY of the table. We need to reunite them with logic objects?
-    -- For this simple engine, the 'def' table just holds data. But if we add logic later...
     -- Re-link 'def' based on name just to be safe/clean.
     for _, b in ipairs(state.buildings) do
         for _, s in ipairs(STRUCTURES) do
@@ -317,6 +315,10 @@ end
 --==============================================================================
 -- MAIN LOOP
 --==============================================================================
+---
+-- Main application entry point for City Builder.
+-- Boots up the UI, handles map rendering, cursor selection,
+-- building placement, and logic ticks.
 local function main()
     -- Resolution Check
     local w, h = term.getSize()
@@ -456,15 +458,8 @@ local function main()
                 elseif key == keys.three then
                     saveGame("slot3")
                 
-                -- Shift+Number to LOAD? Or separate menu? 
-                -- Let's keep it simple: Number = Save, Shift+Number = Load? 
-                -- Wait, keyboard helper needed. For this Alpha, let's just do:
-                -- S + 1/2/3 = Save, L + 1/2/3 = Load
+                -- Load logic
                 elseif key == keys.l then
-                     -- Ideally show "Press 1-3 to Load..."
-                     -- Stub for logic: Load Slot 2 immediately for test?
-                     -- Let's stick to user request: "3 save slots".
-                     -- Simple Keybinding for now:
                      -- F1: Load Auto, F2: Load Slot 2, F3: Load Slot 3
                 end
                 

@@ -11,6 +11,10 @@ local function getParent(context)
     return context.parent
 end
 
+---
+-- Helper to perform the interactive PIN setup/login flow visually.
+-- @param context table: The OS app context.
+-- @return number, string, number, table: Returns (BankServerID, PIN Hash, Balance, CurrencyRates) on success.
 local function getBankSession(context)
     local bankServerId = nil
     context.drawWindow("Connecting...")
@@ -54,6 +58,10 @@ local function getBankSession(context)
     end
 end
 
+---
+-- Main application entry point for the Pocket Bank app.
+-- Shows balances, runs transfers, and lists currency values.
+-- @param context table: The OS app context.
 function bank.run(context)
     local bankServerId, pin_hash, balance, rates = getBankSession(context)
     if not bankServerId then return end
@@ -121,6 +129,10 @@ function bank.run(context)
     end
 end
 
+---
+-- External entry point for merchant checkouts.
+-- Activated contextually by POS terminals detecting nearby merchants.
+-- @param context table: The OS app context.
 function bank.pay(context)
     local bankServerId, pin_hash, balance = getBankSession(context)
     if not bankServerId then return end
@@ -178,9 +190,6 @@ function bank.pay(context)
             local userToReport = context.readInput("User: ", 4)
             if userToReport and userToReport ~= "" then
                 local reason = context.readInput("Reason: ", 6)
-                -- Need a way to call mail.composeAndSend without it being here?
-                -- For now, let's keep it simple or use a core helper if we have one.
-                -- Actually, we can just use rednet.send directly.
                 local mailObj = {
                     from = getParent(context).username,
                     from_nickname = getParent(context).nickname,

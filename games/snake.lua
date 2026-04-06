@@ -17,6 +17,9 @@ local currentVersion = 7.2
 -- Main Game Function (to be run inside pcall)
 --==============================================================================
 
+---
+-- Main application entry point for Drunken Snake.
+-- Handles snake body segment logic, fruit placement, and score submission.
 local function mainGame(...)
     local args = {...}
     local username = args[1]

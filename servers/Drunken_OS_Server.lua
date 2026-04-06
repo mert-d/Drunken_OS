@@ -127,6 +127,11 @@ local theme = {
 -- Use shared wordWrap from lib/utils
 local wordWrap = utils.wordWrap
 
+---
+-- Parses a Lua file content string to extract a numeric version string.
+-- Supported formats: `local appVersion = X.Y`, `(vX.Y)`, `-- Version: X.Y`.
+-- @param content The raw script content.
+-- @return {number} The parsed version, defaulting to 1.0 if not found.
 local function parseVersion(content)
     if not content then return 0 end
     local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or
@@ -263,6 +268,9 @@ local function logActivity(message, isError)
     uiDirty = true
 end
 
+---
+-- Flushes the in-memory log buffer to the 'server.log' persistent file.
+-- Created to batch disk writes and minimize main thread halting.
 local function flushLogs()
     if #logBuffer == 0 then return end
     if not logsDirExists then
@@ -289,10 +297,18 @@ local function saveTableToFile(path, data)
     return DB.saveTableToFile(path, data, logActivity)
 end
 
+---
+-- Helper to load a database file into memory, wrapped for error logging.
+-- @param path The database file path.
+-- @return {table} The deserialized table.
 local function loadTableFromFile(path)
     return DB.loadTableFromFile(path, logActivity)
 end
 
+---
+-- Background thread that periodically saves modified databases to disk.
+-- Employs a dirty-flag tracker to only serialize databases that have actually changed.
+-- Runs every 30 seconds.
 local function persistenceLoop()
     -- Initialize tracker now that logActivity is defined
     if not dbTracker then
@@ -321,6 +337,9 @@ local function persistenceLoop()
     end
 end
 
+---
+-- Background thread overseeing terminal repainting.
+-- Caps rendering at 20 FPS to prevent locking ComputerCraft's event loop when logs rapidly update.
 local function uiRenderLoop()
     while true do
         if uiDirty then
@@ -403,6 +422,10 @@ end
 
 local serverContext = nil
 
+---
+-- Creates and returns a shared state context.
+-- Required by the modular handlers (auth, chat, mail) to easily interface with global variables.
+-- @return {table} The server context table.
 local function getContext()
     if not serverContext then
         serverContext = {
@@ -1343,8 +1366,7 @@ function adminCommands.approve(args)
     -- 2. Update Manifest (Dynamic!)
     manifest.store[app.name] = filename
     
-    -- Just saving manifest to disk is enough if we reload it?
-    -- We need to save the manifest table back to manifest.lua
+    -- Save the manifest table back to manifest.lua
     local fMan = fs.open("manifest.lua", "w")
     fMan.write("return " .. textutils.serialize(manifest))
     fMan.close()
@@ -1554,6 +1576,10 @@ local function handleRednetMessage(senderId, message, protocol)
     end
 end
 
+---
+-- Processes character and key-press events from the local terminal to build admin commands.
+-- @param event The event type string ("key" or "char").
+-- @param p1 The keycode or character pressed.
 local function handleTerminalInput(event, p1)
     if event == "key" then
         if p1 == keys.enter then
@@ -1572,6 +1598,9 @@ local function handleTerminalInput(event, p1)
     uiDirty = true
 end
 
+---
+-- Orchestrates the core server threads concurrently using parallel.waitForAny.
+-- Includes the admin prompt, rednet listener, persistent save loop, and UI rendering loop.
 local function mainEventLoop()
     -- Admin Prompt logic needs to be factored out for parallel
     local function adminPrompt()
@@ -1597,6 +1626,12 @@ local function mainEventLoop()
     parallel.waitForAny(adminPrompt, rednetListener, persistenceLoop, uiRenderLoop)
 end
 
+---
+-- Server entry point sequence:
+-- 1. Load data from disk.
+-- 2. Detect and initialize external monitors.
+-- 3. Open modems and host rednet protocols.
+-- 4. Kick off the main event loop.
 local function main()
     loadAllData()
     

@@ -106,6 +106,8 @@ local SAFE_THEME_KEYS = {
 }
 
 -- Methods
+---
+-- Loads user-saved theme overrides from the local configuration file.
 function theme.load()
     if fs.exists(CONFIG_FILE) then
         local f = fs.open(CONFIG_FILE, "r")
@@ -120,6 +122,10 @@ function theme.load()
     end
 end
 
+---
+-- Saves a specific theme preset to the configuration file, and applies it to memory.
+-- @param presetName string: The name of the preset to apply.
+-- @return boolean: True if the preset was successfully saved and applied, false otherwise.
 function theme.save(presetName)
     local preset = theme.presets[presetName]
     if preset then

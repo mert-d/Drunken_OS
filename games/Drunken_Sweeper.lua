@@ -13,6 +13,9 @@ local sharedTheme = require("lib.theme")
 
 local gameVersion = 1.2
 
+---
+-- Main application point for Drunken Sweeper. 
+-- Sets up the game board, handles cursor interaction, flood fills, and win/loss logic.
 local function mainGame(...)
     local args = {...}
     local username = args[1] or "Guest"

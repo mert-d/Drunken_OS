@@ -338,6 +338,9 @@ local function draw(score, hp, lastFrameTime)
     term.write("+")
 end
 
+---
+-- Main application entry point for the Doom game.
+-- Initializes the raycaster and game loop.
 local function main(...)
     local args = {...}
     local username = args[1] or "Guest"

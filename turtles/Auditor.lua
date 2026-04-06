@@ -279,6 +279,9 @@ local function schedulerLoop()
     end
 end
 
+---
+-- Main application entry point for the Auditor Turtle.
+-- Initializes the secure ledger monitoring logic, hooks into the Rednet modem, and schedules periodic audits.
 local function main()
     -- Enable Auto-Update
     if updater and updater.check("Auditor", version) then

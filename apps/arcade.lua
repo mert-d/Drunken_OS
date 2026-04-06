@@ -13,6 +13,10 @@ local function getParent(context)
     return context.parent
 end
 
+---
+-- Helper to extract version, author, and network protocol from a raw game file.
+-- @param path string: File path to the game code.
+-- @return table|nil: Parsed metadata {version, author, protocol}.
 local function parseGameInfo(path)
     if not fs.exists(path) then return nil end
     local f = fs.open(path, "r")
@@ -31,6 +35,9 @@ local function parseGameInfo(path)
     return { version = version, author = author, protocol = protocol }
 end
 
+---
+-- Main application entry point for the Drunken Arcade.
+-- @param context table: The OS context providing UI and networking APIs.
 function arcade.run(context)
     local w, h = term.getSize()
     local selectedIdx = 1
@@ -248,7 +255,6 @@ function arcade.run(context)
             end
         else
             -- MOBILE LAYOUT (Pocket Computer)
-            -- Just show the list, and maybe basic info for selected item at bottom
              local game = games[selectedIdx]
              if game then
                 term.setCursorPos(2, h-2)
