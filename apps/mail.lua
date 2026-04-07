@@ -85,7 +85,7 @@ function mail.viewInbox(context)
     context.drawWindow("Inbox")
     term.setCursorPos(2, 4)
     term.write("Fetching mail...")
-    rednet.send(getParent(context).mailServerId, { type = "fetch", user = getParent(context).username }, "SimpleMail")
+    rednet.send(getParent(context).mailServerId, { type = "fetch", user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
     local _, response = rednet.receive("SimpleMail", 10)
     
     if not response or not response.mail then
@@ -138,7 +138,7 @@ function mail.viewInbox(context)
             context.mail_to_read = inbox[selected]
             mail.readMail(context)
         elseif key == keys.delete or key == keys.d then
-            rednet.send(getParent(context).mailServerId, {type = "delete", user = getParent(context).username, id = inbox[selected].id}, "SimpleMail")
+            rednet.send(getParent(context).mailServerId, {type = "delete", user = getParent(context).username, session_token = getParent(context).session_token, id = inbox[selected].id}, "SimpleMail")
             table.remove(inbox, selected)
             if #inbox == 0 then break end
             selected = math.max(1, math.min(selected, #inbox))
@@ -184,7 +184,7 @@ function mail.composeAndSend(context, to, subject, attachment)
         timestamp = os.time(),
         attachment = attachment
     }
-    rednet.send(getParent(context).mailServerId, { type = "send", mail = mailObj }, "SimpleMail")
+    rednet.send(getParent(context).mailServerId, { type = "send", mail = mailObj, session_token = getParent(context).session_token, user = getParent(context).username }, "SimpleMail")
     context.drawWindow("Sending...")
     local _, confirm = rednet.receive("SimpleMail", 10)
     context.showMessage("Server Response", (confirm and confirm.status) or "No response from server.")
@@ -219,7 +219,7 @@ function mail.manageLists(context)
             if selected == 1 then
                 context.drawWindow("All Lists")
                 term.setCursorPos(2, 4); term.write("Fetching lists...")
-                rednet.send(getParent(context).mailServerId, { type = "get_lists" }, "SimpleMail")
+                rednet.send(getParent(context).mailServerId, { type = "get_lists", user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
                 local _, response = rednet.receive("SimpleMail", 5)
                 if response and response.lists then
                     context.drawWindow("All Lists")
@@ -248,7 +248,7 @@ function mail.manageLists(context)
                 context.drawWindow("Create List")
                 local name = context.readInput("New list name: @", 4)
                 if name and name ~= "" then
-                    rednet.send(getParent(context).mailServerId, { type = "create_list", name = name, creator = getParent(context).username }, "SimpleMail")
+                    rednet.send(getParent(context).mailServerId, { type = "create_list", name = name, creator = getParent(context).username, user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
                     local _, r = rednet.receive("SimpleMail", 5)
                     if r and r.status then
                         context.showMessage("Server Response", r.status)
@@ -260,7 +260,7 @@ function mail.manageLists(context)
                 context.drawWindow("Join List")
                 local name = context.readInput("List to join: @", 4)
                 if name and name ~= "" then
-                    rednet.send(getParent(context).mailServerId, { type = "join_list", name = name, user = getParent(context).username }, "SimpleMail")
+                    rednet.send(getParent(context).mailServerId, { type = "join_list", name = name, user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
                     local _, r = rednet.receive("SimpleMail", 5)
                     if r and r.status then
                         context.showMessage("Server Response", r.status)

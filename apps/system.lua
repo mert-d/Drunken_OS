@@ -18,9 +18,9 @@ function system.changeNickname(context)
     context.drawWindow("Change Nickname")
     local new_nick = context.readInput("New nickname: ", 4)
     if new_nick and new_nick ~= "" then
-        rednet.send(getParent(context).mailServerId, { type = "set_nickname", user = getParent(context).username, new_nickname = new_nick }, "SimpleMail")
+        rednet.send(getParent(context).authServerId, { type = "set_nickname", user = getParent(context).username, new_nickname = new_nick, session_token = getParent(context).session_token }, "auth.secure.v1")
         context.drawWindow("Updating...")
-        local _, response = rednet.receive("SimpleMail", 15)
+        local _, response = rednet.receive("auth.secure.v1", 15)
         if response and response.success then
             getParent(context).nickname = response.new_nickname
             context.showMessage("Success", "Nickname updated!")

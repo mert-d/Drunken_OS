@@ -106,7 +106,7 @@ local function showSplashScreen()
     term.clear()
     term.setTextColor(colors.yellow)
     local art = {
-        "      _-_          ",
+        "       _-_          ",
         "    /~~   ~~\\      ",
         " /~~         ~~\\   ",
         "{               }  ",

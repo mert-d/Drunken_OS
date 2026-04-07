@@ -186,7 +186,7 @@ function files.run(context)
                             end
                             if content then
                                 local mailObj = { from = getParent(context).username, from_nickname = getParent(context).nickname, to = to, subject = "Shared File: " .. f.name, body = "Attached: " .. f.name, timestamp = os.time(), attachment = { name = f.name, content = content } }
-                                rednet.send(getParent(context).mailServerId, { type = "send", mail = mailObj }, "SimpleMail")
+                                rednet.send(getParent(context).mailServerId, { type = "send", mail = mailObj, session_token = getParent(context).session_token, user = getParent(context).username }, "SimpleMail")
                                 context.showMessage("Mail", "Sent!")
                             end
                         end

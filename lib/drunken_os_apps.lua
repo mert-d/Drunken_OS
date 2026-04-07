@@ -32,8 +32,8 @@ local function completeAuthentication(context, user)
 
     local token_clean = token_raw:gsub("%s+", "")
     context.drawWindow("Verifying Token...")
-    rednet.send(getParent(context).mailServerId, { type = "submit_auth_token", user = user, token = token_clean }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 10)
+    rednet.send(getParent(context).authServerId, { type = "submit_auth_token", user = user, token = token_clean }, "auth.secure.v1")
+    local _, response = rednet.receive("auth.secure.v1", 10)
 
     if response and response.success then
         getParent(context).username = user
@@ -85,8 +85,8 @@ function apps.loginOrRegister(context)
                                 end
                             end
                         end
-                        rednet.send(getParent(context).mailServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "SimpleMail")
-                        local _, response = rednet.receive("SimpleMail", 15)
+                        rednet.send(getParent(context).authServerId, { type = "login", user = user, pass = pass, session_token = session_token }, "auth.secure.v1")
+                        local _, response = rednet.receive("auth.secure.v1", 15)
                         if response and response.success then
                             if response.needs_auth then
                                 if not completeAuthentication(context, user) then getParent(context).username = nil end
@@ -110,8 +110,8 @@ function apps.loginOrRegister(context)
                     if nick and nick ~= "" then
                         local pass = context.readInput("Password: ", 9, true)
                         if pass and pass ~= "" then
-                            rednet.send(getParent(context).mailServerId, { type = "register", user = user, pass = pass, nickname = nick }, "SimpleMail")
-                            local _, response = rednet.receive("SimpleMail", 15)
+                            rednet.send(getParent(context).authServerId, { type = "register", user = user, pass = pass, nickname = nick }, "auth.secure.v1")
+                            local _, response = rednet.receive("auth.secure.v1", 15)
                             if response and response.success and response.needs_auth then
                                 if not completeAuthentication(context, user) then getParent(context).username = nil end
                             else

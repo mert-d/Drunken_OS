@@ -23,36 +23,9 @@ package.path = "/?.lua;" .. package.path
 -- API & Library Initialization
 --==============================================================================
 
--- Securely load the cryptography library. If it fails, the server cannot run.
-local ok_crypto, crypto = pcall(require, "lib.sha1_hmac")
-if not ok_crypto then
-    term.setBackgroundColor(colors.red); term.setTextColor(colors.white); term.clear(); term.setCursorPos(1, 1)
-    print("================ FATAL ERROR ================")
-    print("Required library 'lib/sha1_hmac.lua' not found!")
-    print("Please ensure the file exists at:")
-    print(" > /lib/sha1_hmac.lua")
-    print("=============================================")
-    print("Server shutting down.")
-    error("sha1_hmac library not found.", 0)
-end
-
--- Securely load the HyperAuthClient API. This is critical for authentication.
-local ok_auth, AuthClient = pcall(require, "HyperAuthClient/api/auth_client")
-if not ok_auth then
-    term.setBackgroundColor(colors.red); term.setTextColor(colors.white); term.clear(); term.setCursorPos(1, 1)
-    print("================ FATAL ERROR ================")
-    print("The HyperAuthClient API could not be found.")
-    print("Please ensure the file exists at:")
-    print(" > /HyperAuthClient/api/auth_client.lua")
-    print("=============================================")
-    print("Server shutting down.")
-    error("HyperAuthClient API not found.", 0)
-end
-
 -- Load internal server modules
 local ChatModule = require("servers.modules.chat")
-local AuthModule = require("servers.modules.auth")
-local MailModule = require("servers.modules.mail")
+-- AuthModule and MailModule logic moved to Microservices
 
 -- Load shared libraries
 local DB = require("lib.db")
@@ -63,17 +36,15 @@ local utils = require("lib.utils")
 --==============================================================================
 
 local admins = {} -- This will now be loaded from a file
-local users, lists, games, chatHistory, gameList, pendingAuths, pendingApps = {}, {}, {}, {}, {}, {}, {}
+local games, chatHistory, gameList, pendingApps = {}, {}, {}, {}
+local active_sessions = {} -- populated via Drunken_Auth_Interlink
 local userLocations = {} -- Stores latest (x, y, z) for each user
 local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
 local uiDirty = true
-local mailCountCache = {} -- Cache for unread mail counts
 local manifest = {} -- Manifest table (loaded in loadAllData)
 local monitor = nil
 local ADMINS_DB = "admins.db" -- New database file for admins
-local USERS_DB = "users.db"
-local LISTS_DB = "lists.db"
 local GAMES_DB = "games.db"
 local CHAT_DB = "chat.db"
 local UPDATER_DB = "updater.db"
@@ -82,15 +53,12 @@ local SUBMISSIONS_DB = "submissions.db"
 local MOTD_FILE = "motd.txt"
 local LOG_FILE = "server.log"
 local GAMES_CODE_DB = "games_code.db"
-local AUTH_SERVER_PROTOCOL = "auth.secure.v1_Internal"
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 local ADMIN_PROTOCOL = "Drunken_Admin"
 
 local dbDirty = {}
 local dbPointers = {
     [ADMINS_DB] = function() return admins end,
-    [USERS_DB] = function() return users end,
-    [LISTS_DB] = function() return lists end,
     [GAMES_DB] = function() return games end,
     [CHAT_DB] = function() return chatHistory end,
     [GAMELIST_DB] = function() return gameList end,
@@ -324,16 +292,7 @@ local function persistenceLoop()
         sleep(30) -- Save every 30 seconds if dirty
         dbTracker.backgroundSave()
         flushLogs()
-        
-        -- Garbage collect expired pending auth sessions (older than 10 minutes real time)
-        -- Prevents memory leak when clients request 2FA but never complete it.
-        local now = os.epoch("utc")
-        for user, auth in pairs(pendingAuths) do
-            if (now - (auth.timestamp or 0)) > 600000 then -- 10 minutes in ms
-                pendingAuths[user] = nil
-                logActivity("Expired pending auth for '" .. user .. "'")
-            end
-        end
+        -- GC and Mail Cache removed since they are outsourced to Microservices
     end
 end
 
@@ -364,8 +323,6 @@ local function loadAllData()
     end
     
     -- Load various entity databases
-    users = loadTableFromFile(USERS_DB)
-    lists = loadTableFromFile(LISTS_DB)
     games = loadTableFromFile(GAMES_DB)
     chatHistory = loadTableFromFile(CHAT_DB)
     -- Load clean
@@ -429,22 +386,14 @@ local serverContext = nil
 local function getContext()
     if not serverContext then
         serverContext = {
-            users = users,
             admins = admins,
-            lists = lists,
             games = games,
             chatHistory = chatHistory,
-            pendingAuths = pendingAuths,
-            mailCountCache = mailCountCache,
             
             queueSave = queueSave,
             saveTableToFile = saveTableToFile,
             logActivity = logActivity,
             
-            getMailCount = function(u) return MailModule.getMailCount(u, {mailCountCache = mailCountCache}) end,
-            
-            USERS_DB = USERS_DB,
-            LISTS_DB = LISTS_DB,
             CHAT_DB = CHAT_DB,
             ADMINS_DB = ADMINS_DB
         }
@@ -664,7 +613,7 @@ end
 -- Shared Authentication Helper (must be defined before handlers that use it)
 local function verifySecureSession(message)
     local u = message.user or message.username
-    return u and users[u] and message.session_token and users[u].session_token == message.session_token
+    return u and active_sessions[u] and message.session_token and active_sessions[u].token == message.session_token
 end
 
 -- Forward-declare adminCommands (populated later, used by admin_action handler)
@@ -766,31 +715,33 @@ function mailHandlers.user_exists(senderId, message)
     AuthModule.handleUserExists(senderId, message, getContext())
 end
 
-function mailHandlers.send(senderId, message)
-    MailModule.handleSend(senderId, message, getContext())
+local function proxyToInterlink(senderId, message)
+    if not verifySecureSession(message) then 
+        rednet.send(senderId, { success = false, reason = "Unauthorized session." }, "SimpleMail")
+        return 
+    end
+    local payload = {
+        forwarded = true,
+        type = message.type,
+        message = message,
+        original_senderId = senderId,
+        original_protocol = "SimpleMail"
+    }
+    rednet.broadcast(payload, AUTH_INTERLINK_PROTOCOL)
 end
 
--- ... Cloud handlers stay separately for now as they are file system ops ...
+function mailHandlers.send(senderId, message) proxyToInterlink(senderId, message) end
+function mailHandlers.fetch(senderId, message) proxyToInterlink(senderId, message) end
+function mailHandlers.delete(senderId, message) proxyToInterlink(senderId, message) end
+function mailHandlers.create_list(senderId, message) proxyToInterlink(senderId, message) end
+function mailHandlers.join_list(senderId, message) proxyToInterlink(senderId, message) end
+function mailHandlers.get_lists(senderId, message) proxyToInterlink(senderId, message) end
+function mailHandlers.get_unread_count(senderId, message) proxyToInterlink(senderId, message) end
 
-function mailHandlers.fetch(senderId, message)
-    MailModule.handleFetch(senderId, message, getContext())
-end
-
-function mailHandlers.delete(senderId, message)
-    MailModule.handleDelete(senderId, message, getContext())
-end
-
-function mailHandlers.create_list(senderId, message)
-    MailModule.handleCreateList(senderId, message, getContext())
-end
-
-function mailHandlers.join_list(senderId, message)
-    MailModule.handleJoinList(senderId, message, getContext())
-end
-
-function mailHandlers.get_lists(senderId, message)
-    MailModule.handleGetLists(senderId, message, getContext())
-end
+function mailHandlers.list_cloud(senderId, message) proxyToInterlink(senderId, message) end
+function mailHandlers.sync_file(senderId, message) proxyToInterlink(senderId, message) end
+function mailHandlers.download_cloud(senderId, message) proxyToInterlink(senderId, message) end
+function mailHandlers.delete_cloud(senderId, message) proxyToInterlink(senderId, message) end
 
 function mailHandlers.get_motd(senderId, message)
     rednet.send(senderId, { motd = motd }, "SimpleMail")
@@ -798,100 +749,6 @@ end
 
 function mailHandlers.get_chat_history(senderId, message)
     ChatModule.handleGetHistory(senderId, message, { chatHistory = chatHistory })
-end
-
-function mailHandlers.get_unread_count(senderId, message)
-    MailModule.handleGetUnreadCount(senderId, message, getContext())
-end
-
---==============================================================================
--- Cloud Storage Handlers (Pocket Edition Support)
---==============================================================================
-
-function mailHandlers.list_cloud(senderId, message)
-    if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
-    local user = message.user
-    local path = "cloud/" .. user
-    local files = {}
-    if fs.exists(path) and fs.isDir(path) then
-        for _, fileName in ipairs(fs.list(path)) do
-            local filePath = path .. "/" .. fileName
-            local size = fs.getSize(filePath)
-            table.insert(files, { name = fileName, size = size, isDir = fs.isDir(filePath) })
-        end
-    end
-    rednet.send(senderId, { type = "cloud_list_response", files = files }, "SimpleMail")
-    logActivity("User '" .. user .. "' listed their cloud storage.")
-end
-
-function mailHandlers.sync_file(senderId, message)
-    if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
-    local user = message.user
-    local fileName = message.filename
-    local content = message.content
-    
-    if not user or not fileName or not content then
-        rednet.send(senderId, { success = false, reason = "Incomplete sync data." }, "SimpleMail")
-        return
-    end
-
-    -- Security: prevent directory traversal in filename
-    if fileName:find("%.%.") or fileName:find("/") or fileName:find("\\") then
-        rednet.send(senderId, { success = false, reason = "Invalid filename." }, "SimpleMail")
-        return
-    end
-
-    local path = "cloud/" .. user
-    if not fs.exists(path) then fs.makeDir(path) end
-    
-    local filePath = path .. "/" .. fileName
-    local file = fs.open(filePath, "w")
-    if file then
-        file.write(content)
-        file.close()
-        rednet.send(senderId, { success = true, status = "File synced to cloud." }, "SimpleMail")
-        logActivity("Synced file '" .. fileName .. "' to cloud for user '" .. user .. "'")
-    else
-        rednet.send(senderId, { success = false, reason = "Server FS error." }, "SimpleMail")
-    end
-end
-
-function mailHandlers.download_cloud(senderId, message)
-    if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
-    local user = message.user
-    local fileName = message.filename
-    -- Security: prevent directory traversal in filename
-    if not fileName or fileName:find("%.%.") or fileName:find("/") or fileName:find("\\") then
-        rednet.send(senderId, { success = false, reason = "Invalid filename." }, "SimpleMail"); return
-    end
-    local filePath = "cloud/" .. user .. "/" .. fileName
-    
-    if fs.exists(filePath) and not fs.isDir(filePath) then
-        local file = fs.open(filePath, "r")
-        local content = file.readAll()
-        file.close()
-        rednet.send(senderId, { success = true, filename = fileName, content = content }, "SimpleMail")
-        logActivity("User '" .. user .. "' downloaded '" .. fileName .. "' from cloud.")
-    else
-        rednet.send(senderId, { success = false, reason = "File not found." }, "SimpleMail")
-    end
-end
-
-function mailHandlers.delete_cloud(senderId, message)
-    if not verifySecureSession(message) then rednet.send(senderId, { success = false, reason = "Auth failed." }, "SimpleMail"); return end
-    -- Security: prevent directory traversal in filename
-    local fileName = message.filename
-    if not fileName or fileName:find("%.%.") or fileName:find("/") or fileName:find("\\") then
-        rednet.send(senderId, { success = false, reason = "Invalid filename." }, "SimpleMail"); return
-    end
-    local filePath = "cloud/" .. message.user .. "/" .. fileName
-    if fs.exists(filePath) then
-        fs.delete(filePath)
-        rednet.send(senderId, { success = true }, "SimpleMail")
-        logActivity("User '" .. message.user .. "' deleted cloud file '" .. message.filename .. "'")
-    else
-        rednet.send(senderId, { success = false, reason = "File not found." }, "SimpleMail")
-    end
 end
 
 -- NOTE: fetch, delete, create_list, join_list, get_lists, get_motd, get_chat_history,
@@ -929,34 +786,19 @@ end
 -- and would have crashed with a nil index error.
 
 function mailHandlers.is_admin_check(senderId, message)
-    -- Verify the claimed username by comparing the provided session token
-    -- against the stored token. rednet.lookup() cannot be used to verify
-    -- sender identity (it retrieves protocol hosts, not computer IDs).
     local user = message.user
     local token = message.session_token
     local isAdmin = false
-    if user and users[user] and token and users[user].session_token == token then
+    if user and active_sessions[user] and token and active_sessions[user].token == token then
         isAdmin = admins[user] or false
     end
     rednet.send(senderId, { isAdmin = isAdmin }, "SimpleMail")
 end
 
 function mailHandlers.get_user_data(senderId, message)
-    -- Verify admin identity via session token (not rednet.lookup which only finds hosts)
-    local adminUser = message.username
-    if not adminUser or not users[adminUser] or
-       not message.session_token or users[adminUser].session_token ~= message.session_token or
-       not admins[adminUser] then
-        rednet.send(senderId, { success = false, reason = "Insufficient permissions." }, "SimpleMail")
-        return
-    end
-
-    local user = message.user
-    if users[user] then
-        rednet.send(senderId, { success = true, pass_hash = users[user].password }, "SimpleMail")
-    else
-        rednet.send(senderId, { success = false, reason = "User not found." }, "SimpleMail")
-    end
+    -- API Gateway proxy to get detailed user data from Auth Server (not implemented locally)
+    -- In this architecture, passwords are kept safely away from Mainframe.
+    rednet.send(senderId, { success = false, reason = "Password hashes are restricted to Auth Node." }, "SimpleMail")
 end
 
 
@@ -1553,15 +1395,23 @@ local function handleRednetMessage(senderId, message, protocol)
 
     elseif protocol == "SimpleChat_Internal" and actualMsg and actualMsg.from then
         ChatModule.handleProtocolMessage(senderId, actualMsg, {
-            users = users,
+            active_sessions = active_sessions,
             chatHistory = chatHistory,
             queueSave = queueSave,
             CHAT_DB = CHAT_DB
         }) 
 
-    elseif protocol == AUTH_INTERLINK_PROTOCOL and actualMsg.type == "user_exists_check" then
-        -- Cross-service communication for checking existence
-        sendResponse(senderId, { user = actualMsg.user, exists = (users[actualMsg.user] ~= nil) }, AUTH_INTERLINK_PROTOCOL)
+    elseif protocol == AUTH_INTERLINK_PROTOCOL then
+        if actualMsg.type == "session_authorized" then
+            active_sessions[actualMsg.user] = { token = actualMsg.session_token, nickname = actualMsg.nickname }
+            logActivity("Session registered for: " .. actualMsg.user)
+        elseif actualMsg.original_type then
+            -- This is a proxy response from the Mail/Auth server, forward it back!
+            local targetId = actualMsg.original_senderId
+            if targetId then
+                sendResponse(targetId, actualMsg, actualMsg.original_protocol or "SimpleMail")
+            end
+        end
 
     elseif protocol == "Drunken_Admin_Internal" and actualMsg.type == "execute_command" then
         -- Remote command execution for the Admin Console app

@@ -161,9 +161,15 @@ local function findServers()
     state.mailServerId = rednet.lookup("SimpleMail", "mail.server")
     -- Look for the Chat service
     state.chatServerId = rednet.lookup("SimpleChat", "chat.server")
+    -- Look for Auth service
+    state.authServerId = rednet.lookup("auth.secure.v1", "auth.server")
+    
     state.adminServerId = state.mailServerId -- Unified mainframe admin
+    
     if not state.mailServerId then
         return false, "Mainframe (mail.server) not found."
+    elseif not state.authServerId then
+        return false, "Auth Server (auth.server) not found."
     end
     return true
 end

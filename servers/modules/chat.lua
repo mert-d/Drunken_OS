@@ -11,13 +11,16 @@ local ChatModule = {}
 -- @param message The message table containing 'from' and 'text'.
 -- @param context A table containing server state references (users, chatHistory, queueSave, CHAT_DB).
 function ChatModule.handleProtocolMessage(senderId, message, context)
-    local users = context.users
+    local active_sessions = context.active_sessions
     local chatHistory = context.chatHistory
     local queueSave = context.queueSave
     local CHAT_DB = context.CHAT_DB
 
     -- Generic chat message processing
-    local nickname = users[message.from] and users[message.from].nickname or message.from
+    local nickname = message.from
+    if active_sessions and active_sessions[message.from] and active_sessions[message.from].nickname then
+        nickname = active_sessions[message.from].nickname
+    end
     local entry = string.format("[%s]: %s", nickname, message.text)
     
     table.insert(chatHistory, entry)
