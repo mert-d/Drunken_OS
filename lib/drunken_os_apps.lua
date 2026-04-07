@@ -151,7 +151,8 @@ setmetatable(apps, {
             startChat     = {"chat", "run"},
             enterArcade   = {"arcade", "run"},
             systemMenu    = {"system", "run"},
-            fileCommander = {"files", "run"}
+            fileCommander = {"files", "run"},
+            drunkenBites  = {"drunken_bites", "run"}
         }
 
         local map = legacyMapping[key]

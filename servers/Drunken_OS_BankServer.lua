@@ -969,6 +969,117 @@ function bankHandlers.process_payment(senderId, message)
     end
 end
 
+-- Handles a session-token-based restaurant charge (Restaurant Server acts as POS).
+-- Deducts funds from the customer and credits the restaurant owner's merchant account.
+function bankHandlers.restaurant_charge(senderId, message)
+    if not message or type(message.customer) ~= "string" or type(message.restaurant_owner) ~= "string" then
+        rednet.send(senderId, { success = false, reason = "Invalid restaurant charge payload." }, BANK_PROTOCOL)
+        return
+    end
+
+    local customer = message.customer
+    local owner = message.restaurant_owner
+    local amount = tonumber(message.amount)
+    local order_id = message.order_id or "unknown"
+    local session_token = message.session_token
+
+    if not amount or amount <= 0 then
+        rednet.send(senderId, { success = false, reason = "Invalid amount." }, BANK_PROTOCOL)
+        return
+    end
+
+    -- Security: Verify customer's session token with the Mainframe
+    if not verifyTokenWithMainframe(customer, session_token) then
+        logActivity("Restaurant charge BLOCKED: Invalid session for '" .. customer .. "'.", true)
+        rednet.send(senderId, { success = false, reason = "Customer authentication failed." }, BANK_PROTOCOL)
+        return
+    end
+
+    local customerAcc = accounts[customer]
+    if not customerAcc then
+        rednet.send(senderId, { success = false, reason = "Customer account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    local ownerAcc = accounts[owner]
+    if not ownerAcc then
+        rednet.send(senderId, { success = false, reason = "Restaurant owner account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    if not ownerAcc.is_merchant then
+        rednet.send(senderId, { success = false, reason = "Restaurant owner is not a verified merchant." }, BANK_PROTOCOL)
+        return
+    end
+
+    if customerAcc.balance < amount then
+        rednet.send(senderId, { success = false, reason = "Insufficient funds." }, BANK_PROTOCOL)
+        return
+    end
+
+    -- Atomic transaction
+    customerAcc.balance = customerAcc.balance - amount
+    ownerAcc.balance = ownerAcc.balance + amount
+
+    queueSave(ACCOUNTS_DB)
+    logTransaction(customer, "RESTAURANT_CHARGE", { merchant = owner, order_id = order_id }, amount)
+    logActivity(string.format("Restaurant Charge: $%d from '%s' for order '%s' -> '%s'.", amount, customer, order_id, owner))
+    broadcastSecurityEvent(string.format("REST_CHG: %s->%s $%d", customer, owner, amount), amount)
+    needsRedraw = true
+
+    rednet.send(senderId, { success = true, newBalance = customerAcc.balance }, BANK_PROTOCOL)
+end
+
+-- Handles a restaurant refund (e.g., missing ingredients, cancelled order).
+-- Deducts from the restaurant owner and credits the customer.
+function bankHandlers.restaurant_refund(senderId, message)
+    if not message or type(message.customer) ~= "string" or type(message.restaurant_owner) ~= "string" then
+        rednet.send(senderId, { success = false, reason = "Invalid restaurant refund payload." }, BANK_PROTOCOL)
+        return
+    end
+
+    local customer = message.customer
+    local owner = message.restaurant_owner
+    local amount = tonumber(message.amount)
+    local order_id = message.order_id or "unknown"
+    local reason = message.reason or "Order cancelled"
+
+    if not amount or amount <= 0 then
+        rednet.send(senderId, { success = false, reason = "Invalid refund amount." }, BANK_PROTOCOL)
+        return
+    end
+
+    local customerAcc = accounts[customer]
+    if not customerAcc then
+        rednet.send(senderId, { success = false, reason = "Customer account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    local ownerAcc = accounts[owner]
+    if not ownerAcc then
+        rednet.send(senderId, { success = false, reason = "Restaurant owner account not found." }, BANK_PROTOCOL)
+        return
+    end
+
+    -- Deduct from restaurant owner, credit customer
+    if ownerAcc.balance < amount then
+        logActivity("WARNING: Restaurant refund - owner '" .. owner .. "' has insufficient funds for full refund.", true)
+        -- Process partial refund with whatever the owner has
+        amount = ownerAcc.balance
+    end
+
+    ownerAcc.balance = ownerAcc.balance - amount
+    customerAcc.balance = customerAcc.balance + amount
+
+    queueSave(ACCOUNTS_DB)
+    logTransaction(customer, "RESTAURANT_REFUND", { merchant = owner, order_id = order_id, reason = reason }, amount)
+    logActivity(string.format("Restaurant Refund: $%d returned to '%s' for order '%s'. Reason: %s", amount, customer, order_id, reason))
+    broadcastSecurityEvent(string.format("REST_RFD: %s<-%s $%d", customer, owner, amount), amount)
+    needsRedraw = true
+
+    rednet.send(senderId, { success = true, refunded = amount }, BANK_PROTOCOL)
+end
+
 --==============================================================================
 -- Admin Command Handlers & Terminal
 --==============================================================================

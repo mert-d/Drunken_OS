@@ -57,6 +57,7 @@ return {
                 "apps/arcade.lua",
                 "apps/bank.lua",
                 "apps/chat.lua",
+                "apps/drunken_bites.lua",
                 "apps/files.lua",
                 "apps/mail.lua",
                 "apps/merchant.lua",
@@ -188,6 +189,44 @@ return {
                 "lib/theme.lua"
              },
              include_shared = false
+        },
+
+        -- Restaurant Automation System
+        restaurant_server = {
+            name = "Drunken Bites Restaurant Server",
+            type = "server",
+            main = "servers/Restaurant_Queue_Manager.lua",
+            files = {
+                "servers/Restaurant_Queue_Manager.lua",
+                "lib/db.lua",
+                "lib/theme.lua",
+                "lib/utils.lua"
+            },
+            include_shared = false,
+            needs_setup = true,
+            setup_type = "restaurant_server"
+        },
+        chef_turtle = {
+            name = "Chef Turtle",
+            type = "turtle",
+            main = "turtles/Chef_Turtle.lua",
+            files = {
+                "turtles/Chef_Turtle.lua"
+            },
+            include_shared = false,
+            needs_setup = true,
+            setup_type = "chef_turtle"
+        },
+        waiter_turtle = {
+            name = "Waiter Turtle",
+            type = "turtle",
+            main = "turtles/Waiter_Turtle.lua",
+            files = {
+                "turtles/Waiter_Turtle.lua"
+            },
+            include_shared = false,
+            needs_setup = true,
+            setup_type = "waiter_turtle"
         }
     },
 
@@ -196,6 +235,7 @@ return {
         "apps/arcade.lua",
         "apps/bank.lua",
         "apps/chat.lua",
+        "apps/drunken_bites.lua",
         "apps/files.lua",
         "apps/mail.lua",
         "apps/merchant.lua",
