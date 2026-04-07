@@ -25,27 +25,50 @@ return {
     },
 
     packages = {
-        -- Mainframe Server
+        -- Mainframe API Gateway
         server = {
-            name = "Drunken OS Server",
+            name = "Drunken OS Server Gateway",
             type = "server",
             main = "servers/Drunken_OS_Server.lua",
             files = {
                 "servers/Drunken_OS_Server.lua",
                 "servers/modules/chat.lua",
-                "servers/modules/auth.lua",
-                "servers/modules/mail.lua",
-                "lib/sha1_hmac.lua",
                 "lib/db.lua",
                 "lib/utils.lua",
                 "lib/theme.lua",
-                "clients/Admin_Console.lua",
+                "clients/Admin_Console.lua"
+            },
+            include_shared = false 
+        },
+
+        -- Auth Server
+        auth_server = {
+            name = "Drunken OS Auth Server",
+            type = "server",
+            main = "servers/Drunken_OS_AuthServer.lua",
+            files = {
+                "servers/Drunken_OS_AuthServer.lua",
+                "lib/sha1_hmac.lua",
+                "lib/db.lua",
                 -- HyperAuthClient Dependencies
                 "HyperAuthClient/config.lua",
                 "HyperAuthClient/api/auth_api.lua",
                 "HyperAuthClient/api/auth_client.lua",
                 "HyperAuthClient/encrypt/secure.lua",
                 "HyperAuthClient/encrypt/sha1.lua"
+            },
+            include_shared = false 
+        },
+
+        -- Mail & Cloud Server
+        mail_server = {
+            name = "Drunken OS Mail Server",
+            type = "server",
+            main = "servers/Drunken_OS_MailServer.lua",
+            files = {
+                "servers/Drunken_OS_MailServer.lua",
+                "lib/db.lua",
+                "lib/utils.lua"
             },
             include_shared = false 
         },
