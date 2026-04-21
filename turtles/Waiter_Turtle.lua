@@ -1,6 +1,6 @@
 --[[
     Drunken Bites - Waiter Turtle (v1.0)
-    by MuhendizBey & Gemini Gem
+    by MuhendizBey
 
     Purpose:
     A "dumb" delivery worker turtle. Picks up finished food from the

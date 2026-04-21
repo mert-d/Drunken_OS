@@ -1,6 +1,6 @@
 --[[
     Drunken Bites - Chef Turtle (v1.0)
-    by MuhendizBey & Gemini Gem
+    by MuhendizBey
 
     Purpose:
     A "dumb" worker turtle that listens for Work Orders from the
