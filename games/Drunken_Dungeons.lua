@@ -688,34 +688,33 @@ end
                                 -- HOST GAME
                                 if socket:hostGame(username) then
                                     print("Hosting... Waiting for Partner (Q to Cancel)...")
-                                    while true do
-                                        -- Non-blocking Event Loop for responsiveness
-                                        local event, p1, p2, p3 = os.pullEvent()
-                                        
-                                        if event == "key" and (p1 == keys.q or p1 == keys.tab) then
-                                            socket:stopHosting()
-                                            break
-                                        elseif event == "rednet_message" and p3 == socket.lobbyProtocol then
-                                            -- Manually handle handshake to inject seed
-                                            local id, msg = p1, p2
-                                            if msg.type == "match_join" then
-                                                socket.peerId = id
-                                                socket:stopHosting()
-                                                -- Send Accept with SEED
-                                                rednet.send(id, {
-                                                    type="match_accept", 
-                                                    version=socket.version,
-                                                    seed=sharedSeed
-                                                }, socket.lobbyProtocol)
-                                                
-                                                isMultiplayer = true
-                                                addLog("Partner Joined!", colors.lime)
-                                                selectClass()
-                                                break
+                                    local success = false
+                                    parallel.waitForAny(
+                                        function()
+                                            while true do
+                                                local msg = socket:waitForJoin(0.2, {seed = sharedSeed})
+                                                if msg then
+                                                    isMultiplayer = true
+                                                    addLog("Partner Joined!", colors.lime)
+                                                    success = true
+                                                    break
+                                                end
+                                            end
+                                        end,
+                                        function()
+                                            while true do
+                                                local event, p1 = os.pullEventRaw("key")
+                                                if p1 == keys.q or p1 == keys.tab then
+                                                    socket:stopHosting()
+                                                    break
+                                                end
                                             end
                                         end
+                                    )
+                                    if success then
+                                        selectClass()
+                                        break
                                     end
-                                    if isMultiplayer then break end
                                 else
                                     print("Failed to Host (Arcade Error)")
                                     sleep(1)

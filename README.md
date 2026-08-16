@@ -73,8 +73,9 @@ Select the package type for your computer:
 
 ## Documentation
 
-- [Installation Guide](docs/INSTALLATION_GUIDE.md) - Update and setup instructions
-- [Architecture](ARCHITECTURE.md) - Design principles and patterns
+- [Minecraft Setup Guide](docs/MINECRAFT_SETUP_GUIDE.md) - Complete step-by-step setup guide for players
+- [Installation Guide](docs/INSTALLATION_GUIDE.md) - Update and upgrade instructions for operators
+- [Architecture](docs/ARCHITECTURE.md) - Design principles and patterns
 
 ## Recent Updates (v1.2)
 

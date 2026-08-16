@@ -207,20 +207,29 @@ local function mainGame(...)
             socket:hostGame(username)
             drawLobby("Hosting... Waiting for Player...")
             
-            while true do
-                local msg = socket:waitForJoin(0.1)
-                if msg then
-                    opponentId = socket.peerId
-                    -- Socket handles accept
-                    return true
+            local success = false
+            parallel.waitForAny(
+                function()
+                    while true do
+                        local msg = socket:waitForJoin(0.2)
+                        if msg then
+                            opponentId = socket.peerId
+                            success = true
+                            break
+                        end
+                    end
+                end,
+                function()
+                    while true do
+                        local event, p1 = os.pullEventRaw("key")
+                        if p1 == keys.q or p1 == keys.tab then
+                            socket:stopHosting()
+                            break
+                        end
+                    end
                 end
-                
-                local tevt, tk = os.pullEventRaw()
-                if tevt == "key" and (tk == keys.q or tk == keys.tab) then 
-                    socket:stopHosting()
-                    return false 
-                end
-            end
+            )
+            return success
         else
             -- JOINING
             local targetId = nil

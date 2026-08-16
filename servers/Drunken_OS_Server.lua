@@ -712,7 +712,16 @@ function mailHandlers.submit_auth_token(senderId, message)
 end
 
 function mailHandlers.user_exists(senderId, message)
-    AuthModule.handleUserExists(senderId, message, getContext())
+    local authServerId = rednet.lookup("auth.secure.v1", "auth.server")
+    if authServerId then
+        rednet.send(authServerId, { type = "user_exists", user = message.user }, AUTH_INTERLINK_PROTOCOL)
+        local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 3)
+        if response and response.type == "user_exists_response" then
+            rednet.send(senderId, { success = true, exists = response.exists }, "SimpleMail")
+            return
+        end
+    end
+    rednet.send(senderId, { success = false, exists = false }, "SimpleMail")
 end
 
 local function proxyToInterlink(senderId, message)
@@ -1405,6 +1414,17 @@ local function handleRednetMessage(senderId, message, protocol)
         if actualMsg.type == "session_authorized" then
             active_sessions[actualMsg.user] = { token = actualMsg.session_token, nickname = actualMsg.nickname }
             logActivity("Session registered for: " .. actualMsg.user)
+        elseif actualMsg.type == "user_exists_check" then
+            local authServerId = rednet.lookup("auth.secure.v1", "auth.server")
+            if authServerId then
+                rednet.send(authServerId, { type = "user_exists", user = actualMsg.user }, AUTH_INTERLINK_PROTOCOL)
+                local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 3)
+                if response and response.type == "user_exists_response" then
+                    sendResponse(senderId, { exists = response.exists }, AUTH_INTERLINK_PROTOCOL)
+                    return
+                end
+            end
+            sendResponse(senderId, { exists = false }, AUTH_INTERLINK_PROTOCOL)
         elseif actualMsg.original_type then
             -- This is a proxy response from the Mail/Auth server, forward it back!
             local targetId = actualMsg.original_senderId

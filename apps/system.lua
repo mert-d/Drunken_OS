@@ -100,7 +100,7 @@ end
 -- Main routing logic for System utilities menu.
 -- @param context table: OS app context.
 function system.run(context)
-    local options = {"Change Nickname", "Check for Updates", "Back"}
+    local options = {"Change Nickname", "System Settings", "Check for Updates", "Back"}
     local selected = 1
     while true do
         context.drawWindow("System")
@@ -110,8 +110,15 @@ function system.run(context)
         elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
         elseif key == keys.enter then
             if selected == 1 then system.changeNickname(context)
-            elseif selected == 2 then system.updateAll(context)
-            elseif selected == 3 then break end
+            elseif selected == 2 then
+                local ok, loader = pcall(require, "lib.app_loader")
+                if ok then
+                    loader.run("settings", context)
+                else
+                    context.showMessage("Error", "Could not load settings app.")
+                end
+            elseif selected == 3 then system.updateAll(context)
+            elseif selected == 4 then break end
         elseif key == keys.tab then break end
     end
 end

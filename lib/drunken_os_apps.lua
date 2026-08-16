@@ -142,17 +142,19 @@ setmetatable(apps, {
     __index = function(t, key)
         -- Map of legacy functions to modular applets and entry points
         local legacyMapping = {
-            viewInbox     = {"mail", "viewInbox"},
-            sendMail      = {"mail", "sendMail"},
-            mailMenu      = {"mail", "run"},
-            manageLists   = {"mail", "manageLists"},
-            bankApp       = {"bank", "run"},
-            onlinePayment = {"bank", "pay"},
-            startChat     = {"chat", "run"},
-            enterArcade   = {"arcade", "run"},
-            systemMenu    = {"system", "run"},
-            fileCommander = {"files", "run"},
-            drunkenBites  = {"drunken_bites", "run"}
+            viewInbox       = {"mail", "viewInbox"},
+            sendMail        = {"mail", "sendMail"},
+            mailMenu        = {"mail", "run"},
+            manageLists     = {"mail", "manageLists"},
+            bankApp         = {"bank", "run"},
+            onlinePayment   = {"bank", "pay"},
+            startChat       = {"chat", "run"},
+            enterArcade     = {"arcade", "run"},
+            systemMenu      = {"system", "run"},
+            fileCommander   = {"files", "run"},
+            drunkenBites    = {"drunken_bites", "run"},
+            merchantCashier = {"merchant", "cashier"},
+            merchantPOS     = {"merchant", "pos"}
         }
 
         local map = legacyMapping[key]

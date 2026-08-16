@@ -251,7 +251,12 @@ end
 -- Background thread that pulses every 30 seconds to flush dirty database tables to disk.
 local function persistenceLoop()
     if not dbTracker then
-        dbTracker = DB.createDirtyTracker(dbPointers, logActivity)
+        local formats = {
+            [ACCOUNTS_DB] = "json",
+            [STOCK_DB] = "json",
+            [LEDGER_FILE] = "json"
+        }
+        dbTracker = DB.createDirtyTracker(dbPointers, logActivity, formats)
         -- Drain any saves queued before the tracker was initialized
         for path, isDirty in pairs(dbDirty) do
             if isDirty then dbTracker.queueSave(path) end

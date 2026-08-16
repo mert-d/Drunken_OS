@@ -159,9 +159,11 @@ end
 -- Creates a dirty tracker for lazy persistence.
 -- @param dbPointers table: Map of {[dbPath] = function() return dataTable end}
 -- @param logFn function: Optional logging function(message, isError).
+-- @param formats table|nil: Optional map of {[dbPath] = "json"|"lua"}
 -- @return table: Tracker with queueSave(path) and backgroundSave() methods
-function DB.createDirtyTracker(dbPointers, logFn)
+function DB.createDirtyTracker(dbPointers, logFn, formats)
     local dbDirty = {}
+    local fmtMap = formats or {}
     
     local tracker = {}
     
@@ -186,7 +188,9 @@ function DB.createDirtyTracker(dbPointers, logFn)
         for path, isDirty in pairs(dbDirty) do
             if isDirty and dbPointers[path] then
                 if logFn then logFn("Background saving " .. path .. "...") end
-                if DB.saveTableToFile(path, dbPointers[path](), logFn) then
+                local isJson = (fmtMap[path] == "json" or path:match("%.json$"))
+                local saveFunc = isJson and DB.saveTableToFileJSON or DB.saveTableToFile
+                if saveFunc(path, dbPointers[path](), logFn) then
                     dbDirty[path] = false
                 end
             end
@@ -198,7 +202,9 @@ function DB.createDirtyTracker(dbPointers, logFn)
     -- @return boolean: True on success.
     function tracker.forceSave(dbPath)
         if dbPointers[dbPath] then
-            local success = DB.saveTableToFile(dbPath, dbPointers[dbPath](), logFn)
+            local isJson = (fmtMap[dbPath] == "json" or dbPath:match("%.json$"))
+            local saveFunc = isJson and DB.saveTableToFileJSON or DB.saveTableToFile
+            local success = saveFunc(dbPath, dbPointers[dbPath](), logFn)
             if success then dbDirty[dbPath] = false end
             return success
         end

@@ -21,6 +21,7 @@ return {
         "lib/utils.lua",
         "lib/p2p_socket.lua",
         "lib/sdk.lua",
+        "lib/engine.lua",
         "manifest.lua"
     },
 
@@ -83,9 +84,11 @@ return {
                 "apps/arcade.lua",
                 "apps/bank.lua",
                 "apps/chat.lua",
+                "apps/drunken_bites.lua",
                 "apps/files.lua",
                 "apps/mail.lua",
                 "apps/merchant.lua",
+                "apps/settings.lua",
                 "apps/system.lua",
                 "apps/store.lua",
                 -- Games
@@ -199,6 +202,64 @@ return {
             },
             include_shared = true
         },
+
+        -- Restaurant Server
+        restaurant_server = {
+            name = "Restaurant Queue Manager",
+            type = "server",
+            main = "servers/Restaurant_Queue_Manager.lua",
+            files = {
+                "servers/Restaurant_Queue_Manager.lua",
+                "lib/db.lua",
+                "lib/theme.lua",
+                "lib/utils.lua"
+            },
+            include_shared = false
+        },
+
+        -- Chef Turtle
+        chef_turtle = {
+            name = "Drunken Bites Chef Turtle",
+            type = "turtle",
+            main = "turtles/Chef_Turtle.lua",
+            files = {
+                "turtles/Chef_Turtle.lua"
+            },
+            include_shared = false
+        },
+
+        -- Waiter Turtle
+        waiter_turtle = {
+            name = "Drunken Bites Waiter Turtle",
+            type = "turtle",
+            main = "turtles/Waiter_Turtle.lua",
+            files = {
+                "turtles/Waiter_Turtle.lua"
+            },
+            include_shared = false
+        },
+
+        -- Vending Turtle
+        vending_turtle = {
+            name = "Vending Turtle",
+            type = "turtle",
+            main = "apps/vending_turtle.lua",
+            files = {
+                "apps/vending_turtle.lua"
+            },
+            include_shared = false
+        },
+
+        -- Turtle Auth Terminal
+        turtle_auth_terminal = {
+            name = "Turtle Auth Terminal",
+            type = "turtle",
+            main = "turtles/Turtle_Auth_Terminal.lua",
+            files = {
+                "turtles/Turtle_Auth_Terminal.lua"
+            },
+            include_shared = false
+        },
         
         -- Specialized Networking
         proxy_mainframe = {
@@ -229,13 +290,14 @@ return {
         }
     },
 
-    -- Listing all apps and games for easy reference or future dynamic inclusion
     all_apps = {
         "apps/arcade.lua",
         "apps/bank.lua",
         "apps/chat.lua",
+        "apps/drunken_bites.lua",
         "apps/files.lua",
         "apps/mail.lua",
+        "apps/settings.lua",
         "apps/system.lua",
         "apps/store.lua"
     },
@@ -254,7 +316,6 @@ return {
         "games/Drunken_Sudoku.lua",
         "games/Drunken_Sweeper.lua",
         "games/city.lua",
-        "games/engine_test.lua",
         "games/floppa_bird.lua",
         "games/invaders.lua",
         "games/snake.lua",

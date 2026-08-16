@@ -2,9 +2,17 @@
 
 Welcome to the official documentation for **Drunken OS**, a modular, Rednet-based operating system designed for ComputerCraft. This repository contains a suite of servers, clients, libraries, and games designed to work together in a secure and networked environment.
 
+---
+
+## 📖 Setup & Installation Guides
+
+If you are a player looking to set up the system in Minecraft step-by-step, check out these guides:
+* **[Minecraft Setup Guide](docs/MINECRAFT_SETUP_GUIDE.md)**: A complete, beginner-friendly guide covering physical blocks, network setup, and installer disks.
+* **[Upgrade Guide](docs/INSTALLATION_GUIDE.md)**: Details for existing operators upgrading from older versions.
+
 ## 🏗️ Architecture Overview
 
-Drunken OS follows a distributed architecture where a central **Mainframe** serves as the source of truth for user data, mail, and updates, while **Clients** provide the interface for users to interact with services.
+Drunken OS follows a distributed architecture where a central **Mainframe** serves as the source of truth for user data, mail, and updates, while **Clients** provide the interface for users to interact with services. For detailed design rules, patterns, and decisions, please refer to the **[Architecture Decisions Guide](docs/ARCHITECTURE.md)**.
 
 ### Core Components
 

@@ -219,9 +219,9 @@ local function mainGame(...)
         local boxX = math.floor((w - boxWidth) / 2); local boxY = math.floor((h - boxHeight) / 2)
         for y = 0, boxHeight - 1 do term.setCursorPos(boxX, boxY + y); term.write(string.rep(" ", boxWidth)) end
         local title = "Game Over"
-        term.setCursorPos(boxX + math.floor((w - #title) / 2), boxY + 1); term.setTextColor(colors.red); term.write(title)
+        term.setCursorPos(boxX + math.floor((boxWidth - #title) / 2), boxY + 1); term.setTextColor(colors.red); term.write(title)
         local scoreText = "Final Score: " .. score
-        term.setCursorPos(boxX + math.floor((w - #scoreText) / 2), boxY + 3); term.setTextColor(theme.text); term.write(scoreText)
+        term.setCursorPos(boxX + math.floor((boxWidth - #scoreText) / 2), boxY + 3); term.setTextColor(theme.text); term.write(scoreText)
         if arcadeServerId then
             rednet.send(arcadeServerId, {type = "get_leaderboard", game = gameName}, "ArcadeGames")
             local _, response = rednet.receive("ArcadeGames", 3)

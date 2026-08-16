@@ -368,36 +368,44 @@ local function mainGame(...)
             socket:hostGame(username)
             drawLobby("Hosting... Waiting for Player...")
             
-            while true do
-                -- Listen using socket
-                local msg = socket:waitForJoin(0.1)
-                if msg then
-                    opponentId = socket.peerId
-                    
-                    -- Process handshake data
-                    oppStats.username = msg.user
-                    oppStats.class = msg.class
-                    local oData = classes[msg.class]
-                    oppStats.hp = oData.hp
-                    oppStats.maxHp = oData.hp
-                    oppStats.energy = oData.energy
-                    oppStats.maxEnergy = oData.energy
-                    oppStats.charge = 0
-                    oppStats.status = {}
-                    
-                    -- Socket handles the accept reply internally in waitForJoin
-                    return true
-                end
+            local success = false
+            parallel.waitForAny(
+                function()
+                    while true do
+                        local msg = socket:waitForJoin(0.2)
+                        if msg then
+                            opponentId = socket.peerId
+                            
+                            -- Process handshake data
+                            oppStats.username = msg.user
+                            oppStats.class = msg.class
+                            local oData = classes[msg.class]
+                            oppStats.hp = oData.hp
+                            oppStats.maxHp = oData.hp
+                            oppStats.energy = oData.energy
+                            oppStats.maxEnergy = oData.energy
+                            oppStats.charge = 0
+                            oppStats.status = {}
+                            
+                            success = true
+                            break
+                        end
 
-                -- Also check for spectators
-                socket:acceptSpectator(0.1)
-                
-                local tevt, tk = os.pullEventRaw()
-                if tevt == "key" and (tk == keys.q or tk == keys.tab) then 
-                    socket:stopHosting()
-                    return false 
+                        -- Also check for spectators
+                        socket:acceptSpectator(0.1)
+                    end
+                end,
+                function()
+                    while true do
+                        local event, p1 = os.pullEventRaw("key")
+                        if p1 == keys.q or p1 == keys.tab then
+                            socket:stopHosting()
+                            break
+                        end
+                    end
                 end
-            end
+            )
+            return success
         else
             -- JOINING (Standard or Direct)
             local targetId = nil

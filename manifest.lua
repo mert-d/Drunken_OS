@@ -5,6 +5,9 @@
     The Installer and Updater use this to know what to download.
 ]]
 
+---
+-- Global configuration structure detailing files bundled with each Drunken OS component.
+-- Ensures dependencies are mapped properly during fetching & installation.
 return {
     version = 1.4,
 
@@ -18,31 +21,55 @@ return {
         "lib/utils.lua",
         "lib/p2p_socket.lua",
         "lib/sdk.lua",
+        "lib/engine.lua",
         "manifest.lua"
     },
 
     packages = {
-        -- Mainframe Server
+        -- Mainframe API Gateway
         server = {
-            name = "Drunken OS Server",
+            name = "Drunken OS Server Gateway",
             type = "server",
             main = "servers/Drunken_OS_Server.lua",
             files = {
                 "servers/Drunken_OS_Server.lua",
                 "servers/modules/chat.lua",
-                "servers/modules/auth.lua",
-                "servers/modules/mail.lua",
-                "lib/sha1_hmac.lua",
                 "lib/db.lua",
                 "lib/utils.lua",
                 "lib/theme.lua",
-                "clients/Admin_Console.lua",
+                "clients/Admin_Console.lua"
+            },
+            include_shared = false 
+        },
+
+        -- Auth Server
+        auth_server = {
+            name = "Drunken OS Auth Server",
+            type = "server",
+            main = "servers/Drunken_OS_AuthServer.lua",
+            files = {
+                "servers/Drunken_OS_AuthServer.lua",
+                "lib/sha1_hmac.lua",
+                "lib/db.lua",
                 -- HyperAuthClient Dependencies
                 "HyperAuthClient/config.lua",
                 "HyperAuthClient/api/auth_api.lua",
                 "HyperAuthClient/api/auth_client.lua",
                 "HyperAuthClient/encrypt/secure.lua",
                 "HyperAuthClient/encrypt/sha1.lua"
+            },
+            include_shared = false 
+        },
+
+        -- Mail & Cloud Server
+        mail_server = {
+            name = "Drunken OS Mail Server",
+            type = "server",
+            main = "servers/Drunken_OS_MailServer.lua",
+            files = {
+                "servers/Drunken_OS_MailServer.lua",
+                "lib/db.lua",
+                "lib/utils.lua"
             },
             include_shared = false 
         },
@@ -61,7 +88,9 @@ return {
                 "apps/files.lua",
                 "apps/mail.lua",
                 "apps/merchant.lua",
+                "apps/settings.lua",
                 "apps/system.lua",
+                "apps/store.lua",
                 -- Games
                 "games/Drunken_Doom.lua",
                 "games/Drunken_Duels.lua",
@@ -122,6 +151,17 @@ return {
             include_shared = true
         },
 
+        -- Vault Clerk Turtle
+        bank_clerk_turtle = {
+            name = "Vault Clerk Turtle",
+            type = "turtle",
+            main = "turtles/DB_Bank_Clerk.lua",
+            files = {
+                "turtles/DB_Bank_Clerk.lua"
+            },
+            include_shared = false
+        },
+
         -- Auditor Turtle
         auditor = {
             name = "Auditor Turtle",
@@ -162,6 +202,64 @@ return {
             },
             include_shared = true
         },
+
+        -- Restaurant Server
+        restaurant_server = {
+            name = "Restaurant Queue Manager",
+            type = "server",
+            main = "servers/Restaurant_Queue_Manager.lua",
+            files = {
+                "servers/Restaurant_Queue_Manager.lua",
+                "lib/db.lua",
+                "lib/theme.lua",
+                "lib/utils.lua"
+            },
+            include_shared = false
+        },
+
+        -- Chef Turtle
+        chef_turtle = {
+            name = "Drunken Bites Chef Turtle",
+            type = "turtle",
+            main = "turtles/Chef_Turtle.lua",
+            files = {
+                "turtles/Chef_Turtle.lua"
+            },
+            include_shared = false
+        },
+
+        -- Waiter Turtle
+        waiter_turtle = {
+            name = "Drunken Bites Waiter Turtle",
+            type = "turtle",
+            main = "turtles/Waiter_Turtle.lua",
+            files = {
+                "turtles/Waiter_Turtle.lua"
+            },
+            include_shared = false
+        },
+
+        -- Vending Turtle
+        vending_turtle = {
+            name = "Vending Turtle",
+            type = "turtle",
+            main = "apps/vending_turtle.lua",
+            files = {
+                "apps/vending_turtle.lua"
+            },
+            include_shared = false
+        },
+
+        -- Turtle Auth Terminal
+        turtle_auth_terminal = {
+            name = "Turtle Auth Terminal",
+            type = "turtle",
+            main = "turtles/Turtle_Auth_Terminal.lua",
+            files = {
+                "turtles/Turtle_Auth_Terminal.lua"
+            },
+            include_shared = false
+        },
         
         -- Specialized Networking
         proxy_mainframe = {
@@ -189,48 +287,9 @@ return {
                 "lib/theme.lua"
              },
              include_shared = false
-        },
-
-        -- Restaurant Automation System
-        restaurant_server = {
-            name = "Drunken Bites Restaurant Server",
-            type = "server",
-            main = "servers/Restaurant_Queue_Manager.lua",
-            files = {
-                "servers/Restaurant_Queue_Manager.lua",
-                "lib/db.lua",
-                "lib/theme.lua",
-                "lib/utils.lua"
-            },
-            include_shared = false,
-            needs_setup = true,
-            setup_type = "restaurant_server"
-        },
-        chef_turtle = {
-            name = "Chef Turtle",
-            type = "turtle",
-            main = "turtles/Chef_Turtle.lua",
-            files = {
-                "turtles/Chef_Turtle.lua"
-            },
-            include_shared = false,
-            needs_setup = true,
-            setup_type = "chef_turtle"
-        },
-        waiter_turtle = {
-            name = "Waiter Turtle",
-            type = "turtle",
-            main = "turtles/Waiter_Turtle.lua",
-            files = {
-                "turtles/Waiter_Turtle.lua"
-            },
-            include_shared = false,
-            needs_setup = true,
-            setup_type = "waiter_turtle"
         }
     },
 
-    -- Listing all apps and games for easy reference or future dynamic inclusion
     all_apps = {
         "apps/arcade.lua",
         "apps/bank.lua",
@@ -238,8 +297,14 @@ return {
         "apps/drunken_bites.lua",
         "apps/files.lua",
         "apps/mail.lua",
-        "apps/merchant.lua",
-        "apps/system.lua"
+        "apps/settings.lua",
+        "apps/system.lua",
+        "apps/store.lua"
+    },
+    
+    -- Optional Apps (On-Demand Store)
+    store = {
+        ["Developer Portal"] = "apps/developer.lua"
     },
 
     all_games = {
