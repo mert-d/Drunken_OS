@@ -18,6 +18,179 @@ local GITHUB_REPO_URL = "https://raw.githubusercontent.com/mert-d/Drunken_OS/mai
 local MANIFEST_FILE = "installer/manifest.lua"
 local manifest = nil
 local INSTALLABLE_PROGRAMS = {}
+local CATEGORY_PACKAGES = {}
+
+-- Human-readable metadata and hardware descriptions for each package
+local PACKAGE_METADATA = {
+    client = {
+        category = "clients",
+        badge = "[CLIENT]",
+        hardware = "Pocket Computer or Advanced PC",
+        desc = "Full OS: 10 apps, 14 games, Create tools & NetRadar",
+        prompt = "PC: Insert Pocket Computer in drive and press ENTER."
+    },
+    remote_switch = {
+        category = "clients",
+        badge = "[SWITCH]",
+        hardware = "Advanced Computer + Wireless Modem",
+        desc = "Headless redstone node for base doors, sirens & machines",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    server = {
+        category = "servers",
+        badge = "[SERVER]",
+        hardware = "Advanced PC + Wired & Wireless Modem",
+        desc = "Mainframe Gateway: coordinates chat, auth, and app sync",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    auth_server = {
+        category = "servers",
+        badge = "[AUTH]",
+        hardware = "Advanced PC + Wired Modem",
+        desc = "Cryptographic authentication authority with SHA-1 tokens",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    bank_server = {
+        category = "servers",
+        badge = "[BANK]",
+        hardware = "Advanced PC + Wired Modem",
+        desc = "Double-entry banking ledger, player accounts & stock market",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    mail_server = {
+        category = "servers",
+        badge = "[MAIL]",
+        hardware = "Advanced PC + Wired Modem",
+        desc = "Player email messaging and cloud document storage",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    arcade_server = {
+        category = "servers",
+        badge = "[ARCADE]",
+        hardware = "Advanced PC + Wireless/Wired Modem",
+        desc = "Arcade distributor & leaderboards (bundles all 14 arcade games!)",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    proxy_mainframe = {
+        category = "servers",
+        badge = "[PROXY]",
+        hardware = "Advanced PC + Wired & Wireless Modem",
+        desc = "Wireless-to-wired network bridge for Mainframe, Chat & Mail",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    proxy_bank = {
+        category = "servers",
+        badge = "[PROXY]",
+        hardware = "Advanced PC + Wired & Wireless Modem",
+        desc = "Secure network bridge isolating internal bank vault network",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    atm = {
+        category = "commerce",
+        badge = "[ATM]",
+        hardware = "Advanced Computer + Monitor",
+        desc = "Public ATM kiosk for PIN deposits, withdrawals & balance check",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    clerk = {
+        category = "commerce",
+        badge = "[CLERK]",
+        hardware = "Advanced Computer (Bank staff desk)",
+        desc = "Bank staff workstation for issuing customer accounts & cards",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    merchant_cashier = {
+        category = "commerce",
+        badge = "[CASHIER]",
+        hardware = "Advanced Computer (Store counter)",
+        desc = "Retail merchant checkout counter accepting customer bank cards",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    merchant_pos = {
+        category = "commerce",
+        badge = "[POS]",
+        hardware = "Pocket Computer + Wireless Modem",
+        desc = "Roaming handheld point-of-sale checkout terminal for vendors",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    auditor = {
+        category = "turtles",
+        badge = "[TURTLE]",
+        hardware = "Advanced Turtle + Wired Modem",
+        desc = "Bank sentinel verifying SHA-1 ledger hash chains in real time",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    bank_clerk_turtle = {
+        category = "turtles",
+        badge = "[TURTLE]",
+        hardware = "Advanced Turtle (Bank vault)",
+        desc = "Automated vault teller dispensing physical currency and items",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    vending_turtle = {
+        category = "turtles",
+        badge = "[TURTLE]",
+        hardware = "Advanced Turtle + Chest",
+        desc = "Autonomous shop fulfillment robot dispensing purchased goods",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    turtle_auth_terminal = {
+        category = "turtles",
+        badge = "[TURTLE]",
+        hardware = "Advanced Turtle",
+        desc = "Turtle-based authentication validation terminal",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    restaurant_server = {
+        category = "restaurant",
+        badge = "[FOOD]",
+        hardware = "Advanced PC (Kitchen)",
+        desc = "Drunken Bites kitchen queue manager coordinating food orders",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    chef_turtle = {
+        category = "restaurant",
+        badge = "[CHEF]",
+        hardware = "Advanced Turtle + Furnaces",
+        desc = "Automated cooking robot preparing food recipes in furnaces",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    waiter_turtle = {
+        category = "restaurant",
+        badge = "[WAITER]",
+        hardware = "Advanced Turtle + GPS",
+        desc = "GPS-guided food delivery robot serving customer dining tables",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    }
+}
+
+local CATEGORY_DEFS = {
+    {
+        id = "clients",
+        name = "Clients & Handhelds",
+        desc = "Handheld Pocket OS, remote base switches, and desktop terminals"
+    },
+    {
+        id = "servers",
+        name = "Core Servers & Proxies",
+        desc = "Central mainframe, auth, bank, mail, arcade (14 games) & proxies"
+    },
+    {
+        id = "commerce",
+        name = "Commerce & Banking Kiosks",
+        desc = "Public ATM machines, merchant POS, and cashier counters"
+    },
+    {
+        id = "turtles",
+        name = "Autonomous Robots (Turtles)",
+        desc = "Bank auditor sentinel, vault clerk, vending dispenser turtle"
+    },
+    {
+        id = "restaurant",
+        name = "Restaurant Automation",
+        desc = "Drunken Bites kitchen queue manager, chef & waiter turtles"
+    }
+}
 
 local function fetchManifest()
     local localPaths = { "installer/manifest.lua", "manifest.lua", "/disk/installer/manifest.lua", "/disk/manifest.lua" }
@@ -65,10 +238,23 @@ end
 
 local function buildProgramList()
     INSTALLABLE_PROGRAMS = {}
+    CATEGORY_PACKAGES = {}
+    for _, cat in ipairs(CATEGORY_DEFS) do
+        CATEGORY_PACKAGES[cat.id] = {}
+    end
+
     if not manifest or not manifest.packages then return end
 
     -- Convert the key-value packages table into a sorted list
     for key, pkg in pairs(manifest.packages) do
+        local meta = PACKAGE_METADATA[key] or {
+            category = "misc",
+            badge = "[PKG]",
+            hardware = "ComputerCraft Machine",
+            desc = pkg.name,
+            prompt = "DISK: Insert blank floppy disk and press ENTER."
+        }
+
         local entry = {
             id = key, -- Store the key for reference
             name = pkg.name,
@@ -77,7 +263,12 @@ local function buildProgramList()
             files = pkg.files or {},
             include_shared = pkg.include_shared,
             needs_setup = pkg.needs_setup,
-            setup_type = pkg.setup_type
+            setup_type = pkg.setup_type,
+            badge = meta.badge,
+            hardware = meta.hardware,
+            desc = meta.desc,
+            prompt = meta.prompt,
+            category = meta.category
         }
         
         -- Resolve full dependency list including shared files
@@ -100,25 +291,37 @@ local function buildProgramList()
         entry.full_file_list = allFiles
         
         table.insert(INSTALLABLE_PROGRAMS, entry)
+
+        local catId = entry.category or "misc"
+        if not CATEGORY_PACKAGES[catId] then
+            CATEGORY_PACKAGES[catId] = {}
+        end
+        table.insert(CATEGORY_PACKAGES[catId], entry)
     end
 
     -- Sort by name
     table.sort(INSTALLABLE_PROGRAMS, function(a, b) return a.name < b.name end)
+    for catId, list in pairs(CATEGORY_PACKAGES) do
+        table.sort(list, function(a, b) return a.name < b.name end)
+    end
 end
 
 --==============================================================================
 -- Graphical UI & Theme
 --==============================================================================
 
+local isColor = term.isColor and term.isColor()
 local theme = {
     bg = colors.black,
     text = colors.white,
-    prompt = colors.yellow,
-    titleBg = colors.blue,
-    titleText = colors.white,
-    highlightBg = colors.cyan,
-    highlightText = colors.black,
-    errorBg = colors.red,
+    subText = isColor and colors.lightGray or colors.white,
+    prompt = isColor and colors.yellow or colors.white,
+    titleBg = isColor and colors.blue or colors.white,
+    titleText = isColor and colors.white or colors.black,
+    highlightBg = isColor and colors.cyan or colors.white,
+    highlightText = isColor and colors.black or colors.black,
+    badgeText = isColor and colors.yellow or colors.white,
+    errorBg = isColor and colors.red or colors.white,
     errorText = colors.white,
 }
 
@@ -230,56 +433,155 @@ local function showMessage(title, message, isError)
     os.pullEvent("key")
 end
 
-local function drawMenu(title, options)
+local function drawMenu(title, options, isCategoryMenu)
     local w, h = term.getSize()
     local selected = 1
     local scroll = 1
-    local listHeight = h - 6
+    local listHeight = math.max(4, h - 9)
 
     while true do
         drawWindow(title)
-        
+
+        -- Section Subtitle
+        term.setCursorPos(4, 3)
+        term.setTextColor(theme.prompt)
+        term.write(isCategoryMenu and "SELECT CATEGORY:" or "SELECT PACKAGE TO INSTALL:")
+
         -- Handle scrolling
         if selected < scroll then scroll = selected
         elseif selected >= scroll + listHeight then scroll = selected - listHeight + 1 end
+
         for i = scroll, math.min(scroll + listHeight - 1, #options) do
             local opt = options[i]
             local y = 4 + (i - scroll)
             term.setCursorPos(4, y)
 
+            local prefix = string.format("[%d] ", i)
+            if opt.isBack then prefix = "[B] "
+            elseif opt.isExit then prefix = "[Q] "
+            elseif i > 9 then prefix = "    " end
+
+            local badge = opt.badge or ""
+            local maxNameLen = w - 10 - #prefix - #badge
             local name = opt.name
-            if #name > w - 10 then name = name:sub(1, w - 13) .. "..." end
-            
+            if #name > maxNameLen then name = name:sub(1, maxNameLen - 3) .. "..." end
+
+            local spacing = w - 8 - #prefix - #name - #badge
+            if spacing < 1 then spacing = 1 end
+
             if i == selected then
                 term.setBackgroundColor(theme.highlightBg)
                 term.setTextColor(theme.highlightText)
-                term.write(" > " .. name .. string.rep(" ", w - 10 - #name) .. " ")
+                term.write(" > " .. prefix .. name .. string.rep(" ", spacing) .. badge .. " ")
             else
                 term.setBackgroundColor(theme.bg)
+                term.setTextColor(theme.prompt)
+                term.write("   " .. prefix)
                 term.setTextColor(theme.text)
-                term.write("   " .. name)
+                term.write(name)
+                term.setCursorPos(w - 3 - #badge, y)
+                term.setTextColor(theme.badgeText)
+                term.write(badge)
             end
         end
 
-        term.setBackgroundColor(theme.bg)
-        term.setTextColor(theme.prompt)
-        local current_selection = options[selected]
-        if current_selection.name == "Drunken OS Client" then
-            printCentered(h - 2, "PC: Insert Pocket Computer and ENTER.")
-        elseif current_selection.name == "Exit" then
-            printCentered(h - 2, "Press ENTER to exit.")
-        else
-            printCentered(h - 2, "DISK: Insert blank disk and ENTER.")
+        -- Detail info panel
+        local cur = options[selected]
+        if cur then
+            -- Divider
+            term.setBackgroundColor(theme.bg)
+            term.setTextColor(colors.gray)
+            term.setCursorPos(3, h - 5)
+            term.write(string.rep("-", w - 4))
+
+            -- Line h-4: Description
+            local desc = cur.desc or ""
+            if #desc > w - 6 then desc = desc:sub(1, w - 9) .. "..." end
+            term.setCursorPos(3, h - 4)
+            term.setTextColor(theme.subText)
+            term.write(" " .. desc)
+
+            -- Line h-3: Hardware target
+            local hw = cur.hardware or ""
+            if #hw > 0 then
+                term.setCursorPos(3, h - 3)
+                term.setTextColor(colors.cyan)
+                term.write(" Target: " .. hw:sub(1, w - 12))
+            end
+
+            -- Line h-2: Action prompt
+            local prompt = cur.prompt or (cur.name == "Drunken OS Client" and "PC: Insert Pocket Computer and ENTER." or (cur.isExit and "Press ENTER to exit." or (cur.isBack and "Press ENTER to return." or "DISK: Insert blank disk and ENTER.")))
+            term.setCursorPos(3, h - 2)
+            term.setTextColor(theme.prompt)
+            term.write(" " .. prompt:sub(1, w - 6))
         end
 
-        local _, key = os.pullEvent("key")
-        if key == keys.up then selected = (selected == 1) and #options or selected - 1
-        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-        elseif key == keys.enter then
-            term.setBackgroundColor(theme.bg)
-            term.setTextColor(theme.text)
-            return selected
-        elseif key == keys.q or key == keys.tab then return nil
+        -- Bottom Bar
+        term.setBackgroundColor(theme.titleBg)
+        term.setTextColor(theme.titleText)
+        term.setCursorPos(1, h)
+        local footer = isCategoryMenu and " [1-6/Arrows] Select | [ENTER] Open | [Q] Exit" or " [1-9/Arrows] Select | [ENTER] Burn Disk | [B/Q] Back"
+        term.write(footer .. string.rep(" ", math.max(0, w - #footer)))
+
+        -- Pull event (keyboard + mouse)
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "key" then
+            local key = p1
+            if key == keys.up then
+                selected = (selected == 1) and #options or selected - 1
+            elseif key == keys.down then
+                selected = (selected == #options) and 1 or selected + 1
+            elseif key == keys.pageUp then
+                selected = math.max(1, selected - listHeight)
+            elseif key == keys.pageDown then
+                selected = math.min(#options, selected + listHeight)
+            elseif key == keys.home then
+                selected = 1
+            elseif key == keys["end"] or key == keys.bottom then
+                selected = #options
+            elseif key == keys.enter or key == keys.numPadEnter then
+                term.setBackgroundColor(theme.bg)
+                term.setTextColor(theme.text)
+                return selected
+            elseif key == keys.q or key == keys.b or key == keys.backspace or key == keys.left then
+                return nil
+            end
+        elseif event == "char" then
+            local ch = p1:lower()
+            local num = tonumber(ch)
+            if num and num >= 1 and num <= #options then
+                selected = num
+                term.setBackgroundColor(theme.bg)
+                term.setTextColor(theme.text)
+                return selected
+            elseif ch == "q" or ch == "b" then
+                return nil
+            end
+        elseif event == "mouse_click" then
+            local button, cx, cy = p1, p2, p3
+            if button == 1 then
+                if cy >= 4 and cy < 4 + listHeight then
+                    local clicked = scroll + (cy - 4)
+                    if clicked >= 1 and clicked <= #options then
+                        if selected == clicked then
+                            term.setBackgroundColor(theme.bg)
+                            term.setTextColor(theme.text)
+                            return clicked
+                        else
+                            selected = clicked
+                        end
+                    end
+                elseif cy == h then
+                    if cx > w - 12 then return nil end
+                end
+            end
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir == -1 then
+                selected = math.max(1, selected - 1)
+            elseif dir == 1 then
+                selected = math.min(#options, selected + 1)
+            end
         end
     end
 end
@@ -524,15 +826,85 @@ end
 
 local function mainMenu()
     while true do
-        local options = {}
-        for _, v in ipairs(INSTALLABLE_PROGRAMS) do table.insert(options, v) end
-        table.insert(options, { name = "Exit" })
-        
-        local choice = drawMenu("Select a program to install:", options)
+        local catOptions = {}
+        for i, cat in ipairs(CATEGORY_DEFS) do
+            local count = CATEGORY_PACKAGES[cat.id] and #CATEGORY_PACKAGES[cat.id] or 0
+            table.insert(catOptions, {
+                name = cat.name,
+                badge = string.format("[%2d pkgs]", count),
+                desc = cat.desc,
+                hardware = string.format("%d packages configured", count),
+                prompt = "Press ENTER or [" .. i .. "] to view packages.",
+                catId = cat.id
+            })
+        end
 
-        if not choice or options[choice].name == "Exit" then break end
+        -- Check for any unmapped misc packages
+        if CATEGORY_PACKAGES["misc"] and #CATEGORY_PACKAGES["misc"] > 0 then
+            table.insert(catOptions, {
+                name = "Other Packages",
+                badge = string.format("[%2d pkgs]", #CATEGORY_PACKAGES["misc"]),
+                desc = "Additional or unclassified packages",
+                hardware = "Miscellaneous packages",
+                prompt = "Press ENTER to view packages.",
+                catId = "misc"
+            })
+        end
 
-        createInstallDisk(options[choice])
+        -- Option 6: Flat list of all packages
+        table.insert(catOptions, {
+            name = "View All Packages (Flat List)",
+            badge = string.format("[%2d pkgs]", #INSTALLABLE_PROGRAMS),
+            desc = "Browse all packages alphabetically without categories",
+            hardware = "Complete system distribution catalog",
+            prompt = "Press ENTER or [6] to browse full catalog.",
+            catId = "all"
+        })
+
+        -- Exit Option
+        table.insert(catOptions, {
+            name = "Exit Installer",
+            badge = "[EXIT]",
+            desc = "Return to ComputerCraft command line shell",
+            hardware = "Shutdown installer interface",
+            prompt = "Press ENTER or [Q] to exit.",
+            isExit = true
+        })
+
+        local choice = drawMenu("Drunken Master Installer (v16.8)", catOptions, true)
+        if not choice or catOptions[choice].isExit then break end
+
+        local selectedCat = catOptions[choice]
+
+        -- Submenu loop for chosen category
+        while true do
+            local pkgList = {}
+            if selectedCat.catId == "all" then
+                pkgList = INSTALLABLE_PROGRAMS
+            else
+                pkgList = CATEGORY_PACKAGES[selectedCat.catId] or {}
+            end
+
+            local subOptions = {}
+            for _, pkg in ipairs(pkgList) do
+                table.insert(subOptions, pkg)
+            end
+            table.insert(subOptions, {
+                name = "< Back to Categories",
+                badge = "[BACK]",
+                desc = "Return to the main category selection menu",
+                hardware = "",
+                prompt = "Press ENTER or [B] to return.",
+                isBack = true
+            })
+
+            local subChoice = drawMenu(selectedCat.name, subOptions, false)
+            if not subChoice or subOptions[subChoice].isBack then
+                break
+            end
+
+            createInstallDisk(subOptions[subChoice])
+        end
     end
 end
 
