@@ -1119,6 +1119,8 @@ function adminCommands.help()
     logActivity("settarget <item_name> <target_amount>")
     logActivity("setmerchant <user> <true/false>")
 end
+adminCommands.commands = adminCommands.help
+adminCommands["?"] = adminCommands.help
 
 function adminCommands.balance(args)
     local _, user = parseAdminArgs(args)
@@ -1492,7 +1494,7 @@ local function networkListener()
             end
         end
 
-        if protocolReceived == "DB_Bank_Internal" and actualMsg and actualMsg.type and bankHandlers[actualMsg.type] then
+        if (protocolReceived == "DB_Bank_Internal" or protocolReceived == BANK_PROTOCOL) and actualMsg and actualMsg.type and bankHandlers[actualMsg.type] then
             -- Override rednet.send temporarily to handle proxied responses
             local oldSend = rednet.send
             rednet.send = sendResponse
@@ -1561,33 +1563,41 @@ local function main()
             else
                 wired_modem_name = name
             end
+            rednet.open(name)
         end
     end
 
-    if not wireless_modem_name then print("FATAL: No wireless modem attached."); return end
-    if not wired_modem_name then print("FATAL: No wired modem for secure interlink."); return end
+    if not wired_modem_name and not wireless_modem_name then
+        print("FATAL: No modem attached (wired or wireless).")
+        return
+    end
     
-    print("Found Wireless Modem on: " .. wireless_modem_name)
-    print("Found Wired Modem on: " .. wired_modem_name)
-
-    print("Opening wired modem...")
-    rednet.open(wired_modem_name)
+    if wired_modem_name then
+        print("Found Wired Modem on: " .. wired_modem_name)
+    end
+    if wireless_modem_name then
+        print("Found Wireless Modem on: " .. wireless_modem_name)
+    end
 
     print("Identifying Mainframe via secure interlink protocol...")
     -- Poll until the mainframe responds to avoid startup race conditions
-    for i=1, 5 do
+    for i = 1, 8 do
         mainServerId = rednet.lookup(AUTH_INTERLINK_PROTOCOL)
         if mainServerId then break end
         sleep(1)
     end
 
     if not mainServerId then 
-        print("FATAL: Mainframe did not respond to protocol lookup on wired network.\nIs the Mainframe running and connected?")
+        print("FATAL: Mainframe did not respond to protocol lookup (" .. AUTH_INTERLINK_PROTOCOL .. ").")
+        print("Ensure the Mainframe is running and connected to the network.")
         return 
     end
-    print("Mainframe located via wired link at ID " .. mainServerId)
+    print("Mainframe located at ID " .. mainServerId)
     
     rednet.host("DB_Bank_Internal", "bank.server.internal")
+    if not wired_modem_name then
+        rednet.host(BANK_PROTOCOL, "bank.server")
+    end
     
     startupComplete = true -- Stop logging to the physical terminal
     
