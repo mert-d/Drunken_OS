@@ -43,7 +43,8 @@ return {
                 "lib/db.lua",
                 "lib/utils.lua",
                 "lib/theme.lua",
-                "clients/Admin_Console.lua"
+                "clients/Admin_Console.lua",
+                "manifest.lua"
             },
             include_shared = false 
         },

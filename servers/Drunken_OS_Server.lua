@@ -51,7 +51,8 @@ local UPDATER_DB = "updater.db"
 local GAMELIST_DB = "gamelist.db"
 local SUBMISSIONS_DB = "submissions.db"
 local MOTD_FILE = "motd.txt"
-local LOG_FILE = "server.log"
+local LOGS_DIR = "logs"
+local LOG_FILE = LOGS_DIR .. "/server.log"
 local GAMES_CODE_DB = "games_code.db"
 local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 local ADMIN_PROTOCOL = "Drunken_Admin"
@@ -242,7 +243,8 @@ end
 local function flushLogs()
     if #logBuffer == 0 then return end
     if not logsDirExists then
-        if not fs.exists(LOGS_DIR) then fs.makeDir(LOGS_DIR) end
+        local dir = LOGS_DIR or (LOG_FILE and fs.getDir(LOG_FILE)) or "logs"
+        if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
         logsDirExists = true
     end
     local file = fs.open(LOG_FILE, "a")
@@ -355,19 +357,37 @@ local function loadAllData()
     end
 
     -- Load Manifest
-    if fs.exists("manifest.lua") then
-        local f = fs.open("manifest.lua", "r")
+    local manifestPath = "manifest.lua"
+    if not fs.exists(manifestPath) and fs.exists("installer/manifest.lua") then
+        manifestPath = "installer/manifest.lua"
+    end
+
+    if fs.exists(manifestPath) then
+        local f = fs.open(manifestPath, "r")
         local content = f.readAll()
         f.close()
-        local func = load(content, "manifest", "t", { table = table, string = string, math = math })
+        local env = {
+            table = table,
+            string = string,
+            math = math,
+            os = os,
+            textutils = textutils,
+            pairs = pairs,
+            ipairs = ipairs,
+            tonumber = tonumber,
+            tostring = tostring
+        }
+        local func = load(content, "manifest", "t", env)
         if func then 
-            manifest = func() 
+            manifest = func() or {}
             logActivity("Manifest loaded (v" .. (manifest.version or "?") .. ")")
         else
-            logActivity("Error loading manifest.lua", true)
+            logActivity("Error loading " .. manifestPath, true)
+            manifest = manifest or {}
         end
     else
-        logActivity("manifest.lua not found!", true)
+        logActivity("Warning: manifest.lua not found (run 'sync manifest' to pull)", true)
+        manifest = manifest or {}
     end
 
     logActivity("Mainframe data loaded.")
@@ -851,6 +871,8 @@ function adminCommands.help()
     logActivity(" [Distribution] ")
     logActivity("   sync [all|client|libs|apps|games|auditor]")
 end
+adminCommands.commands = adminCommands.help
+adminCommands["?"] = adminCommands.help
 
 ---
 -- Lists all registered users and their nicknames.
