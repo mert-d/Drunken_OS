@@ -3,20 +3,21 @@
 -- Runs on a turtle paired with the Cashier PC
 -- Interacts over the DB_Merchant_Turtle protocol to dispense requested stock.
 local PROTOCOL = "DB_Merchant_Turtle"
-rednet.open("right") -- Assume modem is on right, or find it
--- Quick peripheral check
-if not peripheral.find("modem") then
-    print("Error: No modem found.")
-    return
+local function findAndOpenModem()
+    for _, face in ipairs({"top", "bottom", "left", "right", "front", "back"}) do 
+        if peripheral.getType(face) == "modem" then
+            rednet.open(face)
+            return face
+        end
+    end
+    return nil
 end
 
-local function findModem()
-    for _, face in ipairs(bit.band(0,0) and {} or {"top","bottom","left","right","front","back"}) do 
-        if peripheral.getType(face) == "modem" then return face end
-    end
+local modemSide = findAndOpenModem()
+if not modemSide then
+    print("Error: No modem found attached to turtle.")
+    return
 end
-local modemSide = findModem()
-if modemSide then rednet.open(modemSide) end
 
 term.clear()
 term.setCursorPos(1,1)

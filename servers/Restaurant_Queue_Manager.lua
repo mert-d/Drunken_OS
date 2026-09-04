@@ -19,7 +19,7 @@
 --==============================================================================
 
 local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua") .. ";" .. package.path
 local DB = require("lib.db")
 local sharedTheme = require("lib.theme")
 local utils = require("lib.utils")

@@ -22,6 +22,11 @@ return {
         "lib/p2p_socket.lua",
         "lib/sdk.lua",
         "lib/engine.lua",
+        "lib/dns.lua",
+        "lib/crypto_packet.lua",
+        "lib/transfer.lua",
+        "lib/rpc.lua",
+        "lib/score_cache.lua",
         "manifest.lua"
     },
 
@@ -34,6 +39,7 @@ return {
             files = {
                 "servers/Drunken_OS_Server.lua",
                 "servers/modules/chat.lua",
+                "servers/modules/auth.lua",
                 "lib/db.lua",
                 "lib/utils.lua",
                 "lib/theme.lua",
@@ -91,6 +97,11 @@ return {
                 "apps/settings.lua",
                 "apps/system.lua",
                 "apps/store.lua",
+                "apps/calc.lua",
+                "apps/notes.lua",
+                "apps/remote.lua",
+                "apps/radar.lua",
+                "clients/remote_switch.lua",
                 -- Games
                 "games/Drunken_Doom.lua",
                 "games/Drunken_Duels.lua",
@@ -103,9 +114,22 @@ return {
                 "games/floppa_bird.lua",
                 "games/invaders.lua",
                 "games/snake.lua",
-                "games/tetris.lua"
+                "games/tetris.lua",
+                "games/Drunken_Connect4.lua",
+                "games/Drunken_Battleship.lua"
             },
             include_shared = true
+        },
+
+        -- Base Automation Redstone Switch
+        remote_switch = {
+            name = "Drunken Remote Switch Node",
+            type = "client",
+            main = "clients/remote_switch.lua",
+            files = {
+                "clients/remote_switch.lua"
+            },
+            include_shared = false
         },
 
         -- Bank Server
@@ -243,9 +267,9 @@ return {
         vending_turtle = {
             name = "Vending Turtle",
             type = "turtle",
-            main = "apps/vending_turtle.lua",
+            main = "turtles/vending_turtle.lua",
             files = {
-                "apps/vending_turtle.lua"
+                "turtles/vending_turtle.lua"
             },
             include_shared = false
         },
@@ -299,12 +323,22 @@ return {
         "apps/mail.lua",
         "apps/settings.lua",
         "apps/system.lua",
-        "apps/store.lua"
+        "apps/store.lua",
+        "apps/calc.lua",
+        "apps/notes.lua",
+        "apps/remote.lua",
+        "apps/radar.lua"
     },
     
     -- Optional Apps (On-Demand Store)
     store = {
-        ["Developer Portal"] = "apps/developer.lua"
+        ["Developer Portal"] = "apps/developer.lua",
+        ["Drunken Remote"]   = "apps/remote.lua",
+        ["NetRadar"]         = "apps/radar.lua",
+        ["Calculator"]       = "apps/calc.lua",
+        ["Notes Scratchpad"] = "apps/notes.lua",
+        ["Connect 4"]        = "games/Drunken_Connect4.lua",
+        ["Battleship"]       = "games/Drunken_Battleship.lua"
     },
 
     all_games = {
@@ -319,6 +353,8 @@ return {
         "games/floppa_bird.lua",
         "games/invaders.lua",
         "games/snake.lua",
-        "games/tetris.lua"
+        "games/tetris.lua",
+        "games/Drunken_Connect4.lua",
+        "games/Drunken_Battleship.lua"
     }
 }

@@ -18,12 +18,16 @@ local paths = {
 }
 package.path = table.concat(paths, ";") .. ";" .. package.path
 local crypto = require("lib.sha1_hmac")
+local ok_dns, dns = pcall(require, "lib.dns")
+if ok_dns and dns and dns.patchRednet then
+    dns.patchRednet()
+end
 
 --==============================================================================
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 16.7
+local currentVersion = 16.8
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -33,11 +37,15 @@ local REQUIRED_LIBS = {
     { name = "app_loader" },
     { name = "theme" },
     { name = "utils" },
-    { name = "p2p_socket" }
+    { name = "p2p_socket" },
+    { name = "dns" },
+    { name = "crypto_packet" },
+    { name = "transfer" },
+    { name = "rpc" }
 }
 
 local REQUIRED_APPS = {
-    "mail", "bank", "files", "chat", "arcade", "system", "merchant"
+    "mail", "bank", "files", "chat", "arcade", "system", "merchant", "calc", "notes", "remote", "radar"
 }
 
 --==============================================================================
@@ -45,12 +53,11 @@ local REQUIRED_APPS = {
 --==============================================================================
 
 local sdk = require("lib.sdk")
-local theme -- Delayed require
-local utils -- Delayed require
-local wordWrap -- Delayed assign
-local printCentered -- Delayed assign
-
-local colorToBlit -- Delayed assign (set after theme loads)
+local theme = require("lib.theme")
+local utils = require("lib.utils")
+local wordWrap = utils.wordWrap
+local printCentered = utils.printCentered
+local colorToBlit = theme.colorToBlit
 
 -- Global OS State: Stores session info, server IDs, and user data.
 local state = {
@@ -493,7 +500,16 @@ local function mainMenu()
             end
         end
         
-        -- Separator?
+        -- Default shortcuts if no user favorites pinned yet
+        if not hasFavs then
+            local defaults = { "mail", "bank", "chat", "arcade", "files", "calc", "notes", "remote", "radar" }
+            for _, d in ipairs(defaults) do
+                local p = "apps/" .. d .. ".lua"
+                if fs.exists(p) then
+                    table.insert(mainOptions, { label = "★ " .. d:sub(1,1):upper() .. d:sub(2), path = p, isApp = true })
+                end
+            end
+        end
         
         -- B. Core Folders
         table.insert(mainOptions, { label = "[+] All Apps", isFolder = true })
@@ -506,8 +522,34 @@ local function mainMenu()
         local inFolder = false
         local cachedAllApps = nil
         
+        local function executeChoice(choice)
+            if not choice then return true end
+            if choice.action == "back" then
+                inFolder = false
+                selected = 1
+                return true
+            elseif choice.isFolder then
+                inFolder = choice.label:gsub("%[%+%] ", "")
+                selected = 1
+                return true
+            elseif choice.isApp then
+                local appName = choice.path:match("apps/(.+)%.lua$")
+                if appName then
+                    state.appLoader.run(appName, context)
+                else
+                    context.showMessage("Error", "Invalid app path: " .. choice.path)
+                end
+                return false -- break inner loop to reload on return
+            elseif choice.action then
+                choice.action()
+                return true
+            end
+            return true
+        end
+
         -- Navigation Loop
         while true do
+            local w, h = term.getSize()
             context.drawWindow("Drunken OS v" .. currentVersion)
             
             local currentList = mainOptions
@@ -517,13 +559,17 @@ local function mainMenu()
                 viewingFolder = "All Apps"
                 if not cachedAllApps then
                     cachedAllApps = {}
-                     -- Populate All Apps
-                    for _, path in ipairs(fs.list("apps")) do
-                        if not fs.isDir("apps/"..path) then
-                            local name = path:gsub("%.lua$", "")
-                            local label = name:gsub("_", " ")
-                            -- Skip system/store/hidden? No, show all using folder.
-                            table.insert(cachedAllApps, { label = label, path = "apps/"..path, isApp = true })
+                    -- Populate All Apps
+                    if fs.exists("apps") and fs.isDir("apps") then
+                        for _, path in ipairs(fs.list("apps")) do
+                            if not fs.isDir("apps/"..path) and path:match("%.lua$") then
+                                local name = path:gsub("%.lua$", "")
+                                local label = name:gsub("_", " ")
+                                -- Exclude daemon turtle scripts from GUI client
+                                if not name:find("turtle") then
+                                    table.insert(cachedAllApps, { label = label, path = "apps/"..path, isApp = true })
+                                end
+                            end
                         end
                     end
                     table.insert(cachedAllApps, { label = "⬅ Back", action = "back" })
@@ -532,60 +578,74 @@ local function mainMenu()
             end
             
             -- Draw Menu
-            local y = 4
+            local startY = 3
             if viewingFolder then 
-                term.setCursorPos(2, 3); term.setTextColor(colors.yellow); term.write("Folder: " .. viewingFolder) 
+                term.setCursorPos(2, startY)
+                term.setTextColor(colors.yellow)
+                term.write("Folder: " .. viewingFolder) 
+                startY = startY + 1
             end
             
+            local maxVisible = h - startY - 1
             for i, opt in ipairs(currentList) do
-                term.setCursorPos(2, y)
-                if i == selected then
-                    term.setTextColor(theme.highlightText)
-                    term.setBackgroundColor(theme.highlightBg)
-                    term.write(" " .. opt.label .. string.rep(" ", 20 - #opt.label) .. " ")
-                    term.setBackgroundColor(theme.bg)
-                    
-                    -- Show Hint
-                    if opt.isApp and viewingFolder == "All Apps" then
-                        term.setCursorPos(2, 18)
-                        term.setTextColor(theme.mutedText or colors.gray)
-                        term.write("Press 'F' to Pin/Unpin")
+                if i <= maxVisible then
+                    local y = startY + (i - 1)
+                    term.setCursorPos(2, y)
+                    if i == selected then
+                        term.setTextColor(theme.highlightText)
+                        term.setBackgroundColor(theme.highlightBg)
+                        local itemWidth = math.min(w - 3, 24)
+                        local displayLabel = opt.label
+                        if #displayLabel < itemWidth then
+                            displayLabel = displayLabel .. string.rep(" ", itemWidth - #displayLabel)
+                        end
+                        term.write(" " .. displayLabel .. " ")
+                        term.setBackgroundColor(theme.bg)
+                        
+                        -- Show Pin Hint
+                        if opt.isApp and viewingFolder == "All Apps" and h >= 16 then
+                            term.setCursorPos(2, h - 1)
+                            term.setTextColor(theme.mutedText or colors.gray)
+                            term.write("[F] Pin/Unpin Shortcut")
+                        end
+                    else
+                        term.setTextColor(theme.text)
+                        term.write(" " .. opt.label .. " ")
                     end
-                else
-                    term.setTextColor(theme.text)
-                    term.write(" " .. opt.label .. " ")
                 end
-                y = y + 1
             end
             
-            local event, key = os.pullEvent("key")
-            if key == keys.up then selected = (selected == 1) and #currentList or selected - 1
-            elseif key == keys.down then selected = (selected == #currentList) and 1 or selected + 1
-            elseif key == keys.enter then
-                local choice = currentList[selected]
-                if choice.action == "back" then
-                    inFolder = false; selected = 1
-                elseif choice.isFolder then
-                    inFolder = choice.label:gsub("%[%+%] ", ""); selected = 1
-                elseif choice.isApp then
-                    -- Run App using app_loader which has proper environment
-                    local appName = choice.path:match("apps/(.+)%.lua$")
-                    if appName then
-                        state.appLoader.run(appName, context)
-                    else
-                        context.showMessage("Error", "Invalid app path: " .. choice.path)
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                local key = p1
+                if key == keys.up then
+                    selected = (selected == 1) and #currentList or selected - 1
+                elseif key == keys.down then
+                    selected = (selected == #currentList) and 1 or selected + 1
+                elseif key == keys.enter then
+                    local choice = currentList[selected]
+                    if not executeChoice(choice) then break end
+                elseif key == keys.f and inFolder == "All Apps" then
+                    local choice = currentList[selected]
+                    if choice and choice.isApp then
+                        toggleFavorite(choice.label)
+                        context.showMessage("Favorites", "Toggled " .. choice.label)
                     end
-                    -- Refresh favorites on return
-                    break -- breaks inner loop, reloads outer loop
-                elseif choice.action then
-                    choice.action()
-                end 
-            elseif key == keys.f and inFolder == "All Apps" then
-                local choice = currentList[selected]
-                if choice.isApp then
-                   -- Toggle Favorite
-                   toggleFavorite(choice.label)
-                   context.showMessage("Favorites", "Toggled " .. choice.label)
+                end
+            elseif event == "mouse_click" then
+                local btn, clickX, clickY = p1, p2, p3
+                local clickedIdx = clickY - startY + 1
+                if clickedIdx >= 1 and clickedIdx <= #currentList then
+                    selected = clickedIdx
+                    local choice = currentList[selected]
+                    if not executeChoice(choice) then break end
+                end
+            elseif event == "mouse_scroll" then
+                local dir = p1
+                if dir < 0 then
+                    selected = (selected == 1) and #currentList or selected - 1
+                else
+                    selected = (selected == #currentList) and 1 or selected + 1
                 end
             end
         end
@@ -631,14 +691,34 @@ local function backgroundListener()
             end
         elseif protocol == "DB_Shop_Broadcast" and message and message.menu then
             state.nearbyShop = message
+        elseif protocol == "DrunkenRadar" and type(message) == "table" and message.type == "radar_ping" then
+            local myGps = state.location
+            if not myGps and gps and gps.locate then
+                local gx, gy, gz = gps.locate(0.2)
+                if gx and gy and gz then myGps = { x = math.floor(gx), y = math.floor(gy), z = math.floor(gz) } end
+            end
+            rednet.send(senderId, {
+                type = "radar_pong",
+                id = os.getComputerID(),
+                user = state.username or "Pocket User",
+                device = "Pocket",
+                label = os.getComputerLabel() or ("Pocket #" .. os.getComputerID()),
+                gps = myGps
+            }, "DrunkenRadar")
         end
         
-        -- Occasional sync (Mail/Unread count) every 10 seconds
+        -- Occasional sync (Mail/Unread count & Pending Game Scores) every 10 seconds
         if now - lastSync > 10 then
-            rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
-            local _, response = rednet.receive("SimpleMail", 1)
-            if response and response.count then
-                state.unreadCount = response.count
+            pcall(function()
+                local scoreCache = require("lib.score_cache")
+                scoreCache.syncPending()
+            end)
+            if state.mailServerId then
+                rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
+                local _, response = rednet.receive("SimpleMail", 0.5)
+                if response and response.count then
+                    state.unreadCount = response.count
+                end
             end
             lastSync = now
         end

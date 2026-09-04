@@ -137,7 +137,10 @@ local function mainGame(...)
         term.write(" " .. scoreText .. " ")
     end
 
-    local function submitScore() if arcadeServerId then rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames") end end
+    local scoreCache = require("lib.score_cache")
+    local function submitScore()
+        scoreCache.recordScore(gameName, score, username)
+    end
 
     local function showGameOverScreen()
         submitScore()
@@ -150,27 +153,42 @@ local function mainGame(...)
         term.setCursorPos(boxX + math.floor((boxWidth - #title) / 2), boxY + 1); term.setTextColor(colors.red); term.write(title)
         local scoreText = "Final Score: " .. score
         term.setCursorPos(boxX + math.floor((boxWidth - #scoreText) / 2), boxY + 3); term.setTextColor(theme.text); term.write(scoreText)
+        
+        local pb = scoreCache.getPersonalBest(gameName)
+        local pbText = "Personal Best: " .. pb
+        term.setCursorPos(boxX + math.floor((boxWidth - #pbText) / 2), boxY + 4); term.setTextColor(colors.yellow); term.write(pbText)
+
+        local sortedScores = nil
         if arcadeServerId then
             rednet.send(arcadeServerId, {type = "get_leaderboard", game = gameName}, "ArcadeGames")
-            local _, response = rednet.receive("ArcadeGames", 3)
+            local _, response = rednet.receive("ArcadeGames", 1.0)
             if response and response.leaderboard then
-                local sortedScores = {}; for user, s in pairs(response.leaderboard) do table.insert(sortedScores, {user = user, score = s}) end
+                sortedScores = {}
+                for user, s in pairs(response.leaderboard) do table.insert(sortedScores, {user = user, score = s}) end
                 table.sort(sortedScores, function(a,b) return a.score > b.score end)
-                local lbTitle = "--- Leaderboard ---"
-                term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2), boxY + 5); term.setTextColor(theme.title); term.write(lbTitle)
-                term.setTextColor(theme.text)
-                for i = 1, math.min(10, #sortedScores) do
-                    local entry = string.format("%2d. %-15s %d", i, sortedScores[i].user, sortedScores[i].score)
-                    term.setCursorPos(boxX + 2, boxY + 6 + i); term.write(entry)
-                end
             end
         end
-        local prompt = "Press any key to exit..."
+        if not sortedScores or #sortedScores == 0 then
+            sortedScores = scoreCache.getLocalLeaderboard(gameName)
+        end
+
+        if sortedScores and #sortedScores > 0 then
+            local lbTitle = "--- " .. (arcadeServerId and "Leaderboard" or "Local Bests") .. " ---"
+            term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2), boxY + 5); term.setTextColor(theme.title or colors.cyan); term.write(lbTitle)
+            term.setTextColor(theme.text)
+            for i = 1, math.min(6, #sortedScores) do
+                local entry = string.format("%2d. %-15s %d", i, sortedScores[i].user, sortedScores[i].score)
+                term.setCursorPos(boxX + 2, boxY + 5 + i); term.write(entry)
+            end
+        end
+        local prompt = "Press any key or Tap to exit..."
         term.setCursorPos(boxX + math.floor((boxWidth - #prompt) / 2), boxY + boxHeight - 2); term.setTextColor(theme.prompt); term.write(prompt)
 
-        -- **NEW**: Add a delay before listening for the exit key.
-        sleep(2)
-        os.pullEvent("key")
+        sleep(1.5)
+        while true do
+            local e = os.pullEvent()
+            if e == "key" or e == "mouse_click" then break end
+        end
     end
 
     local modem = peripheral.find("modem")
@@ -204,6 +222,8 @@ local function mainGame(...)
             else
                 player.dy = flapStrength
             end
+        elseif event == "mouse_click" then
+            player.dy = flapStrength
         elseif event == "timer" and p1 == gameTimer then
             updatePlayer()
             updatePipes()

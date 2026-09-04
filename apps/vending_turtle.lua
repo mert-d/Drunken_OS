@@ -1,54 +1,34 @@
 --[[
-    Drunken OS - Vending Turtle
-    Runs on a Turtle to dispense items when commanded by a Merchant PC.
+    Drunken OS - Vending Turtle Info Applet
+    Note: The active daemon worker is located at turtles/vending_turtle.lua
 ]]
 
-local PROTOCOL = "DB_Vending_Turtle"
-peripheral.find("modem", rednet.open)
+local app = {
+    _VERSION = 1.1,
+    name = "Vending Turtle",
+    author = "MuhendizBey"
+}
 
-print("Vending Turtle Online")
-print("My ID: " .. os.getComputerID())
-print("Listening on " .. PROTOCOL)
-
-while true do
-    local sender, msg = rednet.receive(PROTOCOL)
-    
-    if msg and msg.type == "dispense" then
-        print("Received Dispense Command from " .. sender)
-        local items = msg.items -- { {name, count, ...}, ... }
-        
-        if items then
-            for _, item in ipairs(items) do
-                -- Find item in inventory
-                -- Simplified: Assume Turtle is stocked and we just throw 'count' items.
-                -- Advanced: Check item name using turtle.getItemDetail()
-                
-                local remaining = item.count
-                for slot = 1, 16 do
-                    if remaining <= 0 then break end
-                    
-                    turtle.select(slot)
-                    local data = turtle.getItemDetail()
-                    
-                    -- Loose logic: If data exists, drop it.
-                    
-                    if data then
-                        -- Optional: text/fuzzy match item.name?
-                        -- For Drunken OS Alpha, just dispensing is cool enough.
-                        
-                        local dropAmt = math.min(remaining, data.count)
-                        turtle.drop(dropAmt)
-                        remaining = remaining - dropAmt
-                    end
-                end
-                
-                if remaining > 0 then
-                    print("Warning: Out of Stock for " .. item.name)
-                end
-            end
-            print("Dispense Complete")
-        end
-    elseif msg and msg.type == "ping" then
-        rednet.send(sender, { type = "pong" }, PROTOCOL)
+function app.run(context)
+    if context and context.drawWindow then
+        context.drawWindow("Vending Turtle")
+        local w, h = term.getSize()
+        term.setCursorPos(2, 4)
+        term.setTextColor(context.theme and context.theme.text or colors.white)
+        term.write("This application is a turtle worker daemon.")
+        term.setCursorPos(2, 6)
+        term.write("To run on a wireless turtle:")
+        term.setCursorPos(2, 7)
+        term.setTextColor(context.theme and context.theme.prompt or colors.yellow)
+        term.write("  turtles/vending_turtle")
+        term.setCursorPos(2, 9)
+        term.setTextColor(colors.lightGray)
+        term.write("Press any key to return...")
+        os.pullEvent("key")
+    else
+        print("Vending Turtle daemon is located at turtles/vending_turtle.lua")
     end
+    return true
 end
+
+return app

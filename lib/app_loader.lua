@@ -29,8 +29,16 @@ function loader.run(appName, context, entryPoint)
         end
     end
 
+    local function notify(title, msg)
+        if context and type(context.showMessage) == "function" then
+            context.showMessage(title, msg)
+        else
+            print("[" .. tostring(title) .. "] " .. tostring(msg))
+        end
+    end
+
     if not path then
-        context.showMessage("Error", "Application '" .. appName .. "' not found.")
+        notify("Error", "Application '" .. appName .. "' not found.")
         return false
     end
 
@@ -41,27 +49,37 @@ function loader.run(appName, context, entryPoint)
         multishell = multishell,
     }, { __index = _G })
 
-    local appFunc, loadErr = loadfile(path, env)
+    local appFunc, loadErr
+    if setfenv then
+        appFunc, loadErr = loadfile(path)
+        if appFunc then setfenv(appFunc, env) end
+    else
+        appFunc, loadErr = loadfile(path, "t", env)
+        if not appFunc then
+            appFunc, loadErr = loadfile(path, env)
+        end
+    end
+
     if not appFunc then
-        context.showMessage("Load Error", tostring(loadErr))
+        notify("Load Error", tostring(loadErr))
         return false
     end
 
     local ok, instance = pcall(appFunc)
     if not ok then
-        context.showMessage("Init Error", tostring(instance))
+        notify("Init Error", tostring(instance))
         return false
     end
 
     if type(instance) == "table" and instance[entryPoint] then
         local status, err = pcall(instance[entryPoint], context)
         if not status then
-            context.showMessage("Runtime Error", tostring(err))
+            notify("Runtime Error", tostring(err))
             return false
         end
         return true
     else
-        context.showMessage("Error", "Invalid applet structure: " .. appName)
+        notify("Error", "Invalid applet structure: " .. appName)
         return false
     end
 end

@@ -2,18 +2,19 @@
 -- Wrapper for the Merchant POS application in drunken_os_apps library
 
 local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua") .. ";" .. package.path
 
-local apps = require("drunken_os_apps")
+local apps = require("lib.drunken_os_apps")
+local sharedTheme = require("lib.theme")
+local utils = require("lib.utils")
 
 -- Mock context if running standalone
 local context = {
     programDir = programDir,
     parent = {
-        -- Minimum required parent properties for standalone run
-        username = nil, 
-        -- If username is missing, library usually handles it.
-        -- This wrapper is intended to be installed alongside the client libs.
+        mailServerId = nil,
+        username = nil,
+        nickname = nil
     }
 }
 

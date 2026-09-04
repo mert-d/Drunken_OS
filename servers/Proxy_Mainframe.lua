@@ -27,6 +27,7 @@ ProxyBase.run({
         ["mail.server"]  = "SimpleMail",
         ["chat.server"]  = "SimpleChat",
         ["admin.server"] = "Drunken_Admin",
+        ["auth.server"]  = "auth.secure.v1",
     },
 
     transparentProtocols = {

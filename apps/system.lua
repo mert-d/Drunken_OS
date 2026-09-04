@@ -9,7 +9,7 @@ local system = {}
 local appVersion = 2.0 -- Game-only updates, system updates at boot
 
 local function getParent(context)
-    return context.parent
+    return (context and context.parent) or context or {}
 end
 
 ---

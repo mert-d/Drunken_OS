@@ -10,6 +10,7 @@
 -- Load shared libraries
 package.path = "/?.lua;" .. package.path
 local sharedTheme = require("lib.theme")
+local scoreCache = require("lib.score_cache")
 
 local currentVersion = 7.2
 
@@ -126,15 +127,7 @@ local function mainGame(...)
     end
 
     local function submitScore() 
-        if arcadeServerId then 
-            rednet.send(arcadeServerId, {
-                type = "submit_score", 
-                game = gameName, 
-                user = username, 
-                score = score, 
-                timestamp = os.epoch("utc")
-            }, "ArcadeGames") 
-        end 
+        scoreCache.recordScore(gameName, score, username)
     end
 
     local function showGameOverScreen()
@@ -142,9 +135,25 @@ local function mainGame(...)
         local w, h = getSafeSize()
         term.setBackgroundColor(theme.windowBg); term.clear()
         local scoreText = "Game Over! Final Score: " .. score
-        term.setCursorPos(math.floor(w/2 - #scoreText/2), math.floor(h/2))
+        term.setCursorPos(math.floor(w/2 - #scoreText/2), math.floor(h/2) - 1)
+        term.setTextColor(theme.text)
         term.write(scoreText)
-        sleep(3)
+
+        local pbText = "Personal Best: " .. scoreCache.getPersonalBest(gameName)
+        term.setCursorPos(math.floor(w/2 - #pbText/2), math.floor(h/2) + 1)
+        term.setTextColor(colors.yellow)
+        term.write(pbText)
+
+        local hint = "Tap or press any key to exit"
+        term.setCursorPos(math.floor(w/2 - #hint/2), math.floor(h/2) + 3)
+        term.setTextColor(colors.gray)
+        term.write(hint)
+
+        sleep(0.5)
+        while true do
+            local e = os.pullEvent()
+            if e == "key" or e == "mouse_click" then break end
+        end
     end
 
     local modem = peripheral.find("modem")

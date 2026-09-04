@@ -13,7 +13,7 @@
 
 local version = 1.0
 local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua") .. ";" .. package.path
 
 local function safeRequire(mod)
     local ok, res = pcall(require, mod)

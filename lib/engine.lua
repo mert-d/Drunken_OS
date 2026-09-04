@@ -32,7 +32,7 @@ function Engine.newMap(width, height, defaultTile)
     for y = 1, height do
         self.data[y] = {}
         for x = 1, width do
-            self.data[y][x] = defaultTile or { char=" ", fg=colors.white, bg=colors.black }
+            self.data[y][x] = defaultTile or { char=" ", fg=(colors and colors.white) or 1, bg=(colors and colors.black) or 32768 }
         end
     end
     
@@ -115,16 +115,47 @@ local colorToHex = {
     [4096] = "c", [8192] = "d", [16384] = "e", [32768] = "f"
 }
 
+-- Delta buffer cache to eliminate redundant network terminal packets
+local lastFrame = {}
+local stats = { totalLines = 0, skippedLines = 0, drawnLines = 0 }
+
+---
+-- Invalidates the delta buffer cache, forcing an unconditional redraw on the next frame.
+function Renderer.invalidate()
+    lastFrame = {}
+end
+
+---
+-- Returns delta rendering metrics (for diagnostics and automated tests).
+function Renderer.getStats()
+    return {
+        totalLines = stats.totalLines,
+        skippedLines = stats.skippedLines,
+        drawnLines = stats.drawnLines
+    }
+end
+
+---
+-- Resets rendering performance counters.
+function Renderer.resetStats()
+    stats.totalLines = 0
+    stats.skippedLines = 0
+    stats.drawnLines = 0
+end
+
 --- Draws the map region visible to the camera
 -- Constructs a large display buffer and batches colors together to render 
 -- high framerate tiles without tearing using term.blit.
+-- Implements dirty-line delta checking to suppress redundant term.blit network packets.
 -- @param map table: The TileMap instance to render.
 -- @param camera table: The Camera acting as the viewport mask.
 -- @param offsetX number: Screen relative X coordinate to draw the output rect.
 -- @param offsetY number: Screen relative Y coordinate to draw the output rect.
-function Renderer.draw(map, camera, offsetX, offsetY)
+-- @param force boolean: (Optional) If true, bypasses delta check and redraws all lines.
+function Renderer.draw(map, camera, offsetX, offsetY, force)
     local offX = offsetX or 1
     local offY = offsetY or 1
+    if force then lastFrame = {} end
     
     for scrY = 0, camera.h - 1 do
         local worldY = camera.y + scrY
@@ -148,8 +179,21 @@ function Renderer.draw(map, camera, offsetX, offsetY)
             end
         end
         
-        term.setCursorPos(offX, offY + scrY)
-        term.blit(table.concat(lineTxt), table.concat(lineFg), table.concat(lineBg))
+        local txtStr = table.concat(lineTxt)
+        local fgStr = table.concat(lineFg)
+        local bgStr = table.concat(lineBg)
+        local lineKey = tostring(offX) .. ":" .. tostring(offY + scrY)
+        local prev = lastFrame[lineKey]
+        
+        stats.totalLines = stats.totalLines + 1
+        if not prev or prev.txt ~= txtStr or prev.fg ~= fgStr or prev.bg ~= bgStr then
+            term.setCursorPos(offX, offY + scrY)
+            term.blit(txtStr, fgStr, bgStr)
+            lastFrame[lineKey] = { txt = txtStr, fg = fgStr, bg = bgStr }
+            stats.drawnLines = stats.drawnLines + 1
+        else
+            stats.skippedLines = stats.skippedLines + 1
+        end
     end
 end
 

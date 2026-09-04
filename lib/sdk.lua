@@ -55,17 +55,21 @@ function DrunkenOS.UI.showMessage(title, message)
     
     term.setCursorPos(x + 1, y + 5)
     term.setTextColor(theme.prompt)
-    term.write("Press ENTER")
+    term.write("Press ENTER or Tap")
     while true do
-        local e, k = os.pullEvent("key")
-        if k == keys.enter then break end
+        local e, p1 = os.pullEvent()
+        if e == "key" and (p1 == keys.enter or p1 == keys.space or p1 == keys.esc) then
+            break
+        elseif e == "mouse_click" then
+            break
+        end
     end
     -- Reset
     term.setBackgroundColor(theme.bg)
     term.clear()
 end
 
---- Draws a vertical menu and handles user selection.
+--- Draws a vertical menu and handles user selection via Keyboard or Mouse/Touch.
 -- @param options table: List of menu options (strings).
 -- @param selected number: Initial selected index (default 1).
 -- @param x number: X position (default 2).
@@ -75,6 +79,11 @@ function DrunkenOS.UI.drawMenu(options, selected, x, y)
     selected = selected or 1
     x = x or 2
     y = y or 2
+
+    local maxLen = 0
+    for _, opt in ipairs(options) do
+        if #opt > maxLen then maxLen = #opt end
+    end
 
     while true do
         for i, opt in ipairs(options) do
@@ -86,22 +95,42 @@ function DrunkenOS.UI.drawMenu(options, selected, x, y)
                 term.setTextColor(theme.text)
                 term.setBackgroundColor(theme.bg)
             end
-            term.write(" " .. opt .. " ")
+            term.write(" " .. opt .. string.rep(" ", maxLen - #opt + 1))
         end
 
         -- Reset colors after drawing
         term.setTextColor(theme.text)
         term.setBackgroundColor(theme.bg)
 
-        local _, key = os.pullEvent("key")
-        if key == keys.up then
-            selected = selected - 1
-            if selected < 1 then selected = #options end
-        elseif key == keys.down then
-            selected = selected + 1
-            if selected > #options then selected = 1 end
-        elseif key == keys.enter then
-            return selected
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "key" then
+            local key = p1
+            if key == keys.up then
+                selected = selected - 1
+                if selected < 1 then selected = #options end
+            elseif key == keys.down then
+                selected = selected + 1
+                if selected > #options then selected = 1 end
+            elseif key == keys.enter then
+                return selected
+            end
+        elseif event == "mouse_click" then
+            local button, clickX, clickY = p1, p2, p3
+            local clickedIdx = clickY - y + 1
+            if clickedIdx >= 1 and clickedIdx <= #options then
+                if clickX >= x and clickX <= (x + maxLen + 3) then
+                    return clickedIdx
+                end
+            end
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir < 0 then
+                selected = selected - 1
+                if selected < 1 then selected = #options end
+            else
+                selected = selected + 1
+                if selected > #options then selected = 1 end
+            end
         end
     end
 end

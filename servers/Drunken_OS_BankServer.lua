@@ -15,7 +15,7 @@
 
 -- Load our new, centralized cryptography library.
 local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua") .. ";" .. package.path
 local crypto = require("lib.sha1_hmac")
 
 -- Load shared libraries
@@ -1092,13 +1092,17 @@ end
 local adminCommands = {}
 
 local function parseAdminArgs(args)
-    local command = table.remove(args, 1)
-    if not args or #args == 0 then return command, nil, nil end
-    local itemName = args[1]
-    local numberValue = tonumber(args[2])
-    if #args > 2 and not tonumber(args[2]) then
-        itemName = table.concat(args, " ", 1, 2)
-        numberValue = tonumber(args[3])
+    local copy = {}
+    if args then
+        for i = 1, #args do copy[i] = args[i] end
+    end
+    local command = table.remove(copy, 1)
+    if #copy == 0 then return command, nil, nil end
+    local itemName = copy[1]
+    local numberValue = tonumber(copy[2])
+    if #copy > 2 and not tonumber(copy[2]) then
+        itemName = table.concat(copy, " ", 1, 2)
+        numberValue = tonumber(copy[3])
     end
     return command, itemName, numberValue
 end

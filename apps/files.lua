@@ -7,7 +7,7 @@ local files = {}
 local appVersion = 1.3
 
 local function getParent(context)
-    return context.parent
+    return (context and context.parent) or context or {}
 end
 
 ---
@@ -57,6 +57,7 @@ function files.fileActionModal(context, file, isCloud)
         if not isCloud then table.insert(options, "☁️ Sync to Cloud") end
         if isCloud then table.insert(options, "💾 Download Local") end
         table.insert(options, "📧 Mail to...")
+        if not isCloud then table.insert(options, "📡 Beam (AirDrop)") end
     end
     table.insert(options, "🗑️ Delete")
     table.insert(options, "Cancel")
@@ -138,6 +139,10 @@ function files.run(context)
             term.setBackgroundColor(context.theme.bg)
         end
 
+        term.setCursorPos(2, h - 1)
+        term.setTextColor(context.theme.mutedText or colors.gray)
+        term.write("[R] AirDrop In  [Enter] Options")
+
         local event, key = os.pullEvent("key")
         if key == keys.up then selected = selected - 1
         elseif key == keys.down then selected = selected + 1
@@ -190,6 +195,72 @@ function files.run(context)
                                 context.showMessage("Mail", "Sent!")
                             end
                         end
+                    elseif action == "📡 Beam (AirDrop)" then
+                        local transfer = require("lib.transfer")
+                        if not rednet.isOpen() then
+                            local m = peripheral.find("modem")
+                            if m then rednet.open(peripheral.getName(m)) end
+                        end
+                        context.drawWindow("AirDrop - Pinging...")
+                        term.setCursorPos(2, 4); term.setTextColor(context.theme.prompt or colors.yellow)
+                        term.write("Scanning for nearby devices...")
+                        
+                        rednet.broadcast({ type = "airdrop_ping", user = getParent(context).username }, "DrunkenAirDrop")
+                        local devices = {}
+                        local scanTimer = os.startTimer(1.0)
+                        while true do
+                            local ev, p1, p2, p3 = os.pullEvent()
+                            if ev == "timer" and p1 == scanTimer then break
+                            elseif ev == "rednet_message" and p3 == "DrunkenAirDrop" and type(p2) == "table" and p2.type == "airdrop_pong" then
+                                table.insert(devices, { id = p1, name = p2.user or ("Device " .. p1) })
+                            end
+                        end
+                        
+                        local targetId = nil
+                        if #devices == 0 then
+                            context.drawWindow("AirDrop Target")
+                            term.setCursorPos(2, 4); term.setTextColor(colors.yellow)
+                            term.write("No beacon found. Enter Computer ID:")
+                            local idStr = context.readInput("Target ID: ", 6)
+                            targetId = tonumber(idStr)
+                        else
+                            local devNames = {}
+                            for _, d in ipairs(devices) do table.insert(devNames, string.format("[%d] %s", d.id, d.name)) end
+                            table.insert(devNames, "Enter Custom ID")
+                            local pick = context.drawMenu(devNames, 1, 2, 5)
+                            if pick <= #devices then
+                                targetId = devices[pick].id
+                            else
+                                local idStr = context.readInput("Target ID: ", 6)
+                                targetId = tonumber(idStr)
+                            end
+                        end
+                        
+                        if targetId then
+                            local fullP = fs.combine(currentPath, f.name)
+                            local fp = fs.open(fullP, "r")
+                            local data = fp.readAll()
+                            fp.close()
+                            
+                            context.drawWindow("AirDrop Streaming")
+                            term.setCursorPos(2, 4); term.setTextColor(context.theme.highlightText or colors.white)
+                            term.write("Beaming: " .. f.name)
+                            
+                            local success, err = transfer.sendStreaming(targetId, f.name, data, "DrunkenAirDrop", function(sent, total, idx, totChunks)
+                                local pct = math.floor((sent / total) * 100)
+                                term.setCursorPos(2, 6); term.setTextColor(context.theme.prompt or colors.yellow)
+                                term.write(string.format("Progress: %d%% (%d/%d B)", pct, sent, total))
+                                local barLen = math.min(18, math.floor(pct / 6))
+                                term.setCursorPos(2, 7)
+                                term.write("[" .. string.rep("=", barLen) .. string.rep(" ", 18 - barLen) .. "]")
+                            end)
+                            
+                            if success then
+                                context.showMessage("AirDrop", "File beamed successfully!")
+                            else
+                                context.showMessage("AirDrop Failed", err or "Transmission timed out.")
+                            end
+                        end
                     elseif action == "🗑️ Delete" then
                         if storageMode == "Local" then fs.delete(fs.combine(currentPath, f.name))
                         else rednet.send(getParent(context).mailServerId, { type = "delete_cloud", user = getParent(context).username, filename = f.name, session_token = getParent(context).session_token }, "SimpleMail")
@@ -197,7 +268,54 @@ function files.run(context)
                     end
                 end
             end
-        elseif key == keys.tab then break end
+        elseif key == keys.r and storageMode == "Local" then
+            -- AirDrop Receiver Mode
+            local transfer = require("lib.transfer")
+            if not rednet.isOpen() then
+                local m = peripheral.find("modem")
+                if m then rednet.open(peripheral.getName(m)) end
+            end
+            context.drawWindow("AirDrop Receiver")
+            term.setCursorPos(2, 4); term.setTextColor(context.theme.prompt or colors.yellow)
+            term.write("Listening for incoming beam...")
+            term.setCursorPos(2, 6); term.setTextColor(context.theme.mutedText or colors.gray)
+            term.write("Ready to receive files.")
+            term.setCursorPos(2, h - 1); term.write("Press [Q] to cancel.")
+            
+            local completedName, completedData = nil, nil
+            local receiver = transfer.createReceiver(
+                function(data, filename, senderId)
+                    completedName = filename
+                    completedData = data
+                end,
+                function(bytes, total, idx, totalChunks)
+                    term.setCursorPos(2, 8); term.setTextColor(colors.lime)
+                    term.write(string.format("Receiving: %d/%d bytes...", bytes, total))
+                end
+            )
+            
+            while not completedName do
+                local ev, p1, p2, p3 = os.pullEvent()
+                if ev == "key" and p1 == keys.q then break
+                elseif ev == "rednet_message" and p3 == "DrunkenAirDrop" then
+                    if type(p2) == "table" and p2.type == "airdrop_ping" then
+                        rednet.send(p1, { type = "airdrop_pong", user = getParent(context).username }, "DrunkenAirDrop")
+                    else
+                        receiver.handleMessage(p1, p2, p3)
+                    end
+                end
+            end
+            
+            if completedName and completedData then
+                local savePath = fs.combine(currentPath, completedName)
+                local fp = fs.open(savePath, "w")
+                if fp then
+                    fp.write(completedData)
+                    fp.close()
+                    context.showMessage("AirDrop Received", "Saved: " .. completedName)
+                end
+            end
+        elseif key == keys.tab or key == keys.q then break end
     end
 end
 

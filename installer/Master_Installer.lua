@@ -20,24 +20,46 @@ local manifest = nil
 local INSTALLABLE_PROGRAMS = {}
 
 local function fetchManifest()
-    print("Fetching manifest from GitHub...")
-    local url = GITHUB_REPO_URL .. MANIFEST_FILE .. "?t=" .. os.time()
-    local response = http.get(url)
-    if response and response.getResponseCode() == 200 then
-        local content = response.readAll()
-        response.close()
-        -- Safely load the manifest table
-        local func, err = load(content, "manifest", "t", {})
-        if func then
-            manifest = func()
-            print("Manifest loaded successfully.")
-            return true
+    local localPaths = { "installer/manifest.lua", "manifest.lua", "/disk/installer/manifest.lua", "/disk/manifest.lua" }
+
+    if http and http.get then
+        print("Fetching manifest from GitHub...")
+        local url = GITHUB_REPO_URL .. MANIFEST_FILE .. "?t=" .. os.time()
+        local ok_http, response = pcall(http.get, url)
+        if ok_http and response and response.getResponseCode() == 200 then
+            local content = response.readAll()
+            response.close()
+            local func, err = load(content, "manifest", "t", {})
+            if func then
+                manifest = func()
+                print("Manifest loaded successfully via HTTP.")
+                return true
+            else
+                print("Error parsing manifest Lua: " .. tostring(err))
+            end
         else
-            print("Error loading manifest Lua: " .. tostring(err))
+            print("HTTP download unavailable. Checking local manifest...")
         end
-    else
-        print("Failed to download manifest.")
     end
+
+    -- Local/Disk Fallback
+    for _, path in ipairs(localPaths) do
+        if fs.exists(path) then
+            local f = fs.open(path, "r")
+            if f then
+                local content = f.readAll()
+                f.close()
+                local func, err = load(content, "manifest", "t", {})
+                if func then
+                    manifest = func()
+                    print("Manifest loaded from local file: " .. path)
+                    return true
+                end
+            end
+        end
+    end
+
+    print("Failed to load manifest (HTTP failed and no local manifest found).")
     return false
 end
 

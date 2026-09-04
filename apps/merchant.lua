@@ -10,7 +10,7 @@ local MERCHANT_TURTLE_ID_FILE = "merchant_turtle.id"
 local MERCHANT_BROADCAST_PROTOCOL = "DB_Shop_Broadcast"
 
 local function getParent(context)
-    return context.parent
+    return (context and context.parent) or context or {}
 end
 
 local function loadCatalog(context)

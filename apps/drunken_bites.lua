@@ -8,7 +8,7 @@ local bites = {}
 bites._VERSION = 1.0
 local PROTOCOL = "Drunken_Restaurant_v1"
 
-local function getParent(ctx) return ctx.parent end
+local function getParent(ctx) return (ctx and ctx.parent) or ctx or {} end
 
 --- Discover server and fetch menu.
 local function fetchMenu(ctx)

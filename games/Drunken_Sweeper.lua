@@ -10,6 +10,7 @@
 -- Load shared libraries
 package.path = "/?.lua;" .. package.path
 local sharedTheme = require("lib.theme")
+local scoreCache = require("lib.score_cache")
 
 local gameVersion = 1.2
 
@@ -241,14 +242,21 @@ local function mainGame(...)
     if gameState == "won" then
         term.setTextColor(colors.lime); term.write("YOU WON!")
         local score = 1000 -- Basic score for now
-        local arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
-        if arcadeServerId then
-            rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames")
-        end
+        scoreCache.recordScore(gameName, score, username)
+        term.setCursorPos(math.floor(w/2 - 8), math.floor(h/2 + 3))
+        term.setTextColor(colors.yellow)
+        term.write("Personal Best: " .. scoreCache.getPersonalBest(gameName))
     else
         term.setTextColor(colors.red); term.write("GAME OVER")
     end
-    sleep(2)
+    term.setCursorPos(math.floor(w/2 - 11), math.floor(h/2 + 4))
+    term.setTextColor(colors.gray)
+    term.write("Tap or press key to exit")
+    sleep(0.5)
+    while true do
+        local e = os.pullEvent()
+        if e == "key" or e == "mouse_click" then break end
+    end
 end
 
 local ok, err = pcall(mainGame, ...)

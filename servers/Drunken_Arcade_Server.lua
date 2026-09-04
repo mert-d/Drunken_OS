@@ -590,7 +590,7 @@ local function main()
                     end
                     needsRedraw = true
                 elseif p1 == keys.escape then
-                    error("Server shutdown")
+                    return
                 end
             end
         end
@@ -612,10 +612,21 @@ local function main()
     end
 
     parallel.waitForAny(networkListener, inputListener, lobbyCleanupLoop, persistenceLoop)
+
+    -- Clean shutdown
+    dbTracker.backgroundSave()
+    flushLogs()
+    pcall(rednet.unhost, "ArcadeGames")
+    pcall(rednet.unhost, "ArcadeGames_Internal")
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("Arcade Server shut down cleanly.")
 end
 
 local ok, err = pcall(main)
-if not ok then
+if not ok and err and not err:find("Terminated") then
     term.setBackgroundColor(colors.black); term.clear(); term.setCursorPos(1,1)
     print("Arcade Server Error: " .. err)
 end

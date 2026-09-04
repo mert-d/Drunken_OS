@@ -57,12 +57,12 @@ end
 --- Lists available lobbies for this game from the Arcade
 -- @return table|nil: A list of lobbies { {id=1, user="Name"}, ... } or nil if failed
 function P2P_Socket:findLobbies()
-    if not self:checkArcade() then return nil, "Arcade Offline" end
+    if not self:checkArcade() then return nil, "Arcade Server Offline" end
     
     rednet.send(self.arcadeId, {type="list_lobbies"}, "ArcadeGames")
-    local _, reply = rednet.receive("ArcadeGames", 3)
+    local _, reply = rednet.receive("ArcadeGames", 1.2)
     
-    if not reply or not reply.lobbies then return nil, "No response" end
+    if not reply or not reply.lobbies then return nil, "Arcade Server Offline" end
     
     local options = {}
     for id, lob in pairs(reply.lobbies) do
@@ -214,11 +214,17 @@ function P2P_Socket:receive(timeout)
     return nil
 end
 
---- Submits a high score to the Arcade Server
+--- Submits a high score to the Arcade Server and local cache
 -- @param user string: The username
 -- @param score number: The score to submit
--- @return boolean: true if sent, false otherwise
+-- @return boolean: true if sent or queued, false otherwise
 function P2P_Socket:submitScore(user, score)
+    local ok, scoreCache = pcall(require, "lib.score_cache")
+    if ok and scoreCache then
+        scoreCache.recordScore(self.gameName, score, user)
+        return true
+    end
+
     if not self:checkArcade() then return false end
     
     rednet.send(self.arcadeId, {

@@ -1,8 +1,8 @@
 # 🏴‍☠️ Drunken OS: The Ultimate Minecraft Setup Guide 🚀
 
-Hello, fellow Minecrafter! Welcome to the step-by-step setup guide for **Drunken OS**. 
+Hello, fellow Minecrafter! Welcome to the step-by-step setup guide for **Drunken OS (Enterprise Edition v16.8)**. 
 
-Drunken OS is a super cool in-game operating system for the **ComputerCraft (CC: Tweaked / CC: Restitched)** mod. It adds a complete bank system, email messaging, global chat, shops, and a full arcade with 10 awesome games to your Minecraft world!
+Drunken OS is a complete operating system and network suite for the **ComputerCraft (CC: Tweaked / CC: Restitched)** mod. It adds a central bank, email messaging, global chat, merchant shops, base redstone automation, survival tools, and a full arcade with **14 awesome games** to your Minecraft world!
 
 Setting up servers can sound scary, but don't worry! If you can copy and paste commands, you can set this up in less than 10 minutes. Let's get started! 🌊
 
@@ -12,13 +12,13 @@ Setting up servers can sound scary, but don't worry! If you can copy and paste c
 
 Before you begin, gather these blocks and items from ComputerCraft and vanilla Minecraft:
 
-1. **Advanced Computers (Gold)**: You will need one for each server (Mainframe, Bank, Arcade, and Mail) and any desktop terminal you want.
-2. **Pocket Computer (Advanced)**: This is your in-game mobile phone! You will run the client on this to walk around your base and access your bank or read emails.
+1. **Advanced Computers (Gold)**: You will need one for each server (Mainframe, Bank, Arcade, and Mail), any base redstone switches, and any desktop terminals you want.
+2. **Pocket Computer (Advanced)**: This is your in-game mobile phone! You will run the client on this to walk around your base, access your bank, toggle base doors, or play games.
 3. **Disk Drives**: Used to write programs onto floppy disks.
 4. **Floppy Disks**: Get a stack of these! They will hold the installers.
 5. **Wired Modems & Networking Cables**: To connect all your backend servers together.
-6. **Wireless Modems**: Essential for your pocket computers and turtles to communicate over the air.
-7. **Advanced Turtles**: If you want to use the automated **Chef**, **Waiter**, or **Bank Clerk** robots!
+6. **Wireless Modems**: Essential for your pocket computers, remote switches, and turtles to communicate over the air.
+7. **Advanced Turtles**: If you want to use the automated **Chef**, **Waiter**, or **Bank Sentinel** robots!
 
 ---
 
@@ -26,7 +26,7 @@ Before you begin, gather these blocks and items from ComputerCraft and vanilla M
 
 Computers in Minecraft talk to each other using **Rednet** (a network protocol).
 * **Wired Network (Cables)**: Best for servers. It connects computers directly so nobody can intercept your bank data.
-* **Wireless Network (Wireless Modems)**: Best for Pocket Computers and Turtles so they can connect from anywhere nearby.
+* **Wireless Network (Wireless Modems)**: Best for Pocket Computers, Remote Switches, and Turtles so they can connect from anywhere nearby.
 
 > [!IMPORTANT]
 > **Newbie Rule #1:** A modem attached to a computer does nothing until you **Right-Click it**! Right-clicking turns it on (it will glow red). If you forget this, the computers won't be able to talk to each other!
@@ -41,10 +41,10 @@ First, we will build a dedicated "Installer Station" where we can write setup fi
 2. Place a **Disk Drive** directly next to it (touching any side).
 3. Right-click the computer to open its screen.
 4. Run the following command (type it exactly or copy and paste it into Minecraft):
-   ```
+   ```bash
    pastebin run <installer_code>
    ```
-   *(Note: replace `<installer_code>` with the pastebin code provided by your server admin or modpack).*
+   *(Note: replace `<installer_code>` with your installer code or run `installer/Master_Installer.lua`).*
 5. The screen will display the **Drunken Master Installer** menu!
 
 ---
@@ -60,10 +60,12 @@ Now we will write installers for all the servers onto floppy disks.
    * `Drunken Arcade Server` (The Arcade/Games Server)
    * `Drunken OS Mail Server` (The Mail/Cloud Storage Server)
    * `Drunken OS Auth Server` (The Secure Login Server)
-3. The computer will download the program from GitHub and write it to the disk.
+   * `Remote Switch Node` (Base Redstone Switch)
+   * `Drunken OS Client` (Pocket / Desktop Client)
+3. The computer will write the package to the disk.
 4. Once it says "Success", the disk drive will eject the floppy.
-5. **Take the disk out and rename it** in an anvil (e.g. name it "Mainframe Disk" or "Bank Disk") so you don't mix them up!
-6. Repeat this process for all 5 servers.
+5. **Take the disk out and rename it** in an anvil (e.g. name it "Mainframe Disk" or "Switch Disk") so you don't mix them up!
+6. Repeat this process for each disk.
 
 ---
 
@@ -103,18 +105,43 @@ Your servers need to be connected to the same local network using **Networking C
 
 Now that the network is running, you can set up your portable pocket phone!
 
-1. Hold an **Advanced Pocket Computer** in your hand, right-click to turn it on, and equip it with a **Wireless Modem** (put it in your crafting grid with a wireless modem).
-2. Start the pocket computer.
-3. Place a **Disk Drive** next to a computer linked to your installer station, insert a floppy, select `Drunken OS Client` from the installer menu, and write it to the disk.
-4. Insert that disk into a drive next to your pocket computer, boot it, and let it install!
-5. Once installed, start the client. It will automatically scan the wireless airwaves, find the Mainframe Server, and show the login screen.
-6. Select **Register** to create your username and password, then log in!
+1. Hold an **Advanced Pocket Computer** in your hand and craft it with a **Wireless Modem** in your crafting grid.
+2. Place a **Disk Drive** next to your installer station, insert a floppy, select `Drunken OS Client`, and write it to the disk.
+3. Insert that disk into a drive touching a desktop computer, or run the installer directly.
+4. Once installed, start the client. It will automatically scan the wireless airwaves, find the Mainframe Server, and show the login screen.
+5. Select **Register** to create your username and password, then log in!
 
 ---
 
-## 🤖 Step 6: Restaurant Automation & Turtles (Optional)
+## 🔴 Step 6: Control Base Doors & Machines with Drunken Remote
 
-Drunken OS includes a complete restaurant system where **Chef** and **Waiter** turtles automatically prepare and deliver food.
+You can control iron doors, blast doors, drawbridges, and Create mod machines right from your Pocket Computer:
+
+1. Place an **Advanced Computer** next to the redstone wire or door you want to control.
+2. Attach a **Wireless Modem** and **right-click it** (red ring glows).
+3. Insert your **Switch Disk** and turn on the computer.
+4. Follow the setup prompts:
+   - Name your switch (e.g. `Main Blast Door`).
+   - Pick the side touching your redstone (`front`, `back`, `left`, `right`, `top`, or `bottom`).
+   - Choose `toggle` (stays on/off) or `pulse` (activates for 2 seconds).
+   - Set access to `public` (anyone can toggle) or `private` (only you).
+5. Open the **Remote App** (`apps/remote.lua`) on your Pocket Computer. Your switch will show up automatically! Tap it or press its number to open the door wirelessly!
+
+---
+
+## 🧮 Step 7: Survival Utilities & Diagnostics
+
+Your Pocket Computer comes equipped with handy survival tools:
+* **Calculator (`apps/calc.lua`)**: Type arithmetic expressions, calculate 64-item Minecraft stack divisions (e.g. `250 = 3 stacks + 58`), and compute Create mod gear ratios.
+* **Notes (`apps/notes.lua`)**: Keep todo lists and waypoints. Tap the **Tag GPS** button to automatically stamp your current satellite coordinates!
+* **NetRadar (`apps/radar.lua`)**: See who is nearby! Scans for active players and base computers, shows exact 3D block distances, and pings server latency.
+* **Files AirDrop (`apps/files.lua`)**: Beam files directly to a friend's pocket computer over wireless rednet with zero server lag!
+
+---
+
+## 🤖 Step 8: Restaurant Automation & Turtles (Optional)
+
+Drunken OS includes an automated restaurant system where **Chef** and **Waiter** turtles automatically prepare and deliver food.
 
 ### 1. Setup the Restaurant Server
 Create an installation disk for the `Restaurant Queue Manager` package, and install it on a server computer connected to your wired network.
@@ -126,7 +153,7 @@ Create an installation disk for the `Restaurant Queue Manager` package, and inst
    * Run: `edit chef.conf` (or `edit waiter.conf`)
    * Change `server_id` to the **Computer ID** of your Restaurant Server computer.
    * Save the file (Press **Ctrl**, then **Enter**, then **Exit**).
-4. Reboot the turtle. It will pair with the Restaurant Server and wait for commands!
+4. Reboot the turtle. It will pair with the Restaurant Server and wait for cooking orders!
 
 ---
 
@@ -139,8 +166,8 @@ Create an installation disk for the `Restaurant Queue Manager` package, and inst
 * **Error: "Bank Server offline"**
   * Check your wired network cables. Make sure all server computers are linked via cables and their wired modems are turned on.
 * **"How do I scroll in lists?"**
-  * Use the **UP** and **DOWN** arrow keys on your keyboard, and press **ENTER** to select. Press **Q** or **TAB** to go back.
+  * Use the **UP** and **DOWN** arrow keys on your keyboard, and press **ENTER** to select. On Pocket Computers, you can also just tap the screen with your mouse! Press **Q** to go back.
 
 ---
 
-Have fun running your Minecraft town with **Drunken OS**! 🌾🍻
+Have fun running your Minecraft world with **Drunken OS**! 🌾🍻

@@ -2,9 +2,11 @@
 -- Wrapper for the Merchant Cashier application in drunken_os_apps library
 
 local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua;") .. package.path
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua") .. ";" .. package.path
 
-local apps = require("drunken_os_apps")
+local apps = require("lib.drunken_os_apps")
+local sharedTheme = require("lib.theme")
+local utils = require("lib.utils")
 
 -- Minimal UI Context Framework
 local w, h = term.getSize()
@@ -22,6 +24,12 @@ local theme = {
 local context = {}
 context.programDir = programDir
 context.theme = theme
+context.parent = {
+    mailServerId = nil,
+    username = nil,
+    nickname = nil,
+    location = nil
+}
 
 function context.getSafeSize() return w, h end
 

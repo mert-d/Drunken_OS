@@ -68,6 +68,7 @@ local function mainGame(...)
     local ball = { x = 0, y = 0, dx = 1, dy = 1 }
     local score = { me = 0, opp = 0 }
     local matchActive = false
+    local disconnected = false
 
     local function getSafeSize()
         local w, h = term.getSize()
@@ -296,13 +297,26 @@ local function mainGame(...)
     parallel.waitForAny(
         function() -- Input & Local Logic
             while matchActive do
-                local event, key = os.pullEvent()
+                local event, p1, p2, p3 = os.pullEvent()
                 if event == "key" then
+                    local key = p1
                     if (key == keys.w or key == keys.up) and myY > 1 then myY = myY - 1
                     elseif (key == keys.s or key == keys.down) and myY < INT_H - PADDLE_HEIGHT then myY = myY + 1
-                    elseif key == keys.q or key == keys.tab then matchActive = false end
-                    
+                    elseif key == keys.q or key == keys.tab then 
+                        matchActive = false
+                        socket:send({type="disconnect"})
+                        break
+                    end
                     -- Immediate Sync on move
+                    socket:send({type="move", y=myY})
+                elseif event == "mouse_click" then
+                    local btn, cx, cy = p1, p2, p3
+                    local sw, sh = getSafeSize()
+                    if cy < sh / 2 and myY > 1 then
+                        myY = math.max(1, myY - 2)
+                    elseif cy >= sh / 2 and myY < INT_H - PADDLE_HEIGHT then
+                        myY = math.min(INT_H - PADDLE_HEIGHT, myY + 2)
+                    end
                     socket:send({type="move", y=myY})
                 end
             end
@@ -409,9 +423,11 @@ local function mainGame(...)
             end
         end,
         function() -- Receiving
+            local lastRecv = os.epoch("utc")
             while matchActive do
                 local msg = socket:receive(0.5)
                 if msg then
+                    lastRecv = os.epoch("utc")
                     if msg.type == "move" then
                         oppY = msg.y
                     elseif msg.type == "sync" then
@@ -427,6 +443,17 @@ local function mainGame(...)
                             oppHeight = msg.myH
                             ballSpeed = msg.speed
                         end
+                    elseif msg.type == "disconnect" then
+                        disconnected = true
+                        matchActive = false
+                        break
+                    end
+                else
+                    -- 8 second timeout with no packets from peer
+                    if os.epoch("utc") - lastRecv > 8000 then
+                        disconnected = true
+                        matchActive = false
+                        break
                     end
                 end
             end
@@ -435,14 +462,21 @@ local function mainGame(...)
     
     -- Match Results & Score Submission
     drawGame()
-    term.setCursorPos(math.floor(w/2 - 5), math.floor(h/2 + 2))
-    print("Match Over!")
+    if disconnected then
+        term.setCursorPos(math.max(1, math.floor(w/2 - 14)), math.floor(h/2 + 2))
+        term.setTextColor(colors.red)
+        term.write("Opponent Disconnected / Left!")
+    else
+        term.setCursorPos(math.floor(w/2 - 5), math.floor(h/2 + 2))
+        term.setTextColor(colors.lime)
+        term.write("Match Over!")
 
-    -- Submit winners score
-    if score.me > score.opp then
-        persist.wins = persist.wins + 1
-        saveGame()
-        socket:submitScore(username, persist.wins)
+        -- Submit winners score
+        if score.me > score.opp then
+            persist.wins = persist.wins + 1
+            saveGame()
+            socket:submitScore(username, persist.wins)
+        end
     end
 
     sleep(2)

@@ -7,7 +7,7 @@ local chat = {}
 local appVersion = 1.1
 
 local function getParent(context)
-    return context.parent
+    return (context and context.parent) or context or {}
 end
 
 ---

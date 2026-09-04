@@ -8,7 +8,7 @@ local appVersion = 1.2
 local BANK_PROTOCOL = "DB_Bank"
 
 local function getParent(context)
-    return context.parent
+    return (context and context.parent) or context or {}
 end
 
 ---
@@ -20,14 +20,14 @@ local function getBankSession(context)
     context.drawWindow("Connecting...")
     term.setCursorPos(2, 4); term.write("Locating Bank Server...")
     
-    for i = 1, 3 do
+    for i = 1, 2 do
         bankServerId = rednet.lookup(BANK_PROTOCOL, "bank.server")
         if bankServerId then break end
-        sleep(1)
+        sleep(0.5)
     end
 
     if not bankServerId then
-        context.showMessage("Error", "Could not contact Bank Server.")
+        context.showMessage("Offline", "Bank Server is unreachable.\n(Server chunk may be unloaded).")
         return nil, nil
     end
 
@@ -45,7 +45,7 @@ local function getBankSession(context)
     
     context.drawWindow("Verifying...")
     rednet.send(bankServerId, { type = "login", user = getParent(context).username, pin_hash = pin_hash }, BANK_PROTOCOL)
-    local _, response = rednet.receive(BANK_PROTOCOL, 15)
+    local _, response = rednet.receive(BANK_PROTOCOL, 2.0)
 
     if response and response.success then
         return bankServerId, pin_hash, response.balance, response.rates or {}
@@ -53,7 +53,7 @@ local function getBankSession(context)
         context.showMessage("Setup Required", "Please visit an ATM to set up your PIN.")
         return nil, nil
     else
-        context.showMessage("Login Failed", (response and response.reason) or "No response.")
+        context.showMessage("Offline", (response and response.reason) or "Server didn't respond in time.\n(Chunk may be unloaded).")
         return nil, nil
     end
 end

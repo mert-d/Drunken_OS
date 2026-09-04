@@ -25,7 +25,7 @@ package.path = "/?.lua;" .. package.path
 
 -- Load internal server modules
 local ChatModule = require("servers.modules.chat")
--- AuthModule and MailModule logic moved to Microservices
+local AuthModule = require("servers.modules.auth")
 
 -- Load shared libraries
 local DB = require("lib.db")
@@ -387,15 +387,20 @@ local function getContext()
     if not serverContext then
         serverContext = {
             admins = admins,
+            users = users,
+            active_sessions = active_sessions,
             games = games,
             chatHistory = chatHistory,
             
             queueSave = queueSave,
             saveTableToFile = saveTableToFile,
             logActivity = logActivity,
+            sendResponse = sendResponse,
             
             CHAT_DB = CHAT_DB,
-            ADMINS_DB = ADMINS_DB
+            ADMINS_DB = ADMINS_DB,
+            USERS_DB = USERS_DB,
+            AUTH_INTERLINK_PROTOCOL = AUTH_INTERLINK_PROTOCOL
         }
     end
     return serverContext
@@ -712,16 +717,7 @@ function mailHandlers.submit_auth_token(senderId, message)
 end
 
 function mailHandlers.user_exists(senderId, message)
-    local authServerId = rednet.lookup("auth.secure.v1", "auth.server")
-    if authServerId then
-        rednet.send(authServerId, { type = "user_exists", user = message.user }, AUTH_INTERLINK_PROTOCOL)
-        local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 3)
-        if response and response.type == "user_exists_response" then
-            rednet.send(senderId, { success = true, exists = response.exists }, "SimpleMail")
-            return
-        end
-    end
-    rednet.send(senderId, { success = false, exists = false }, "SimpleMail")
+    AuthModule.handleUserExists(senderId, message, getContext())
 end
 
 local function proxyToInterlink(senderId, message)

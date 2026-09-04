@@ -9,6 +9,7 @@
 -- Load shared libraries
 package.path = "/?.lua;" .. package.path
 local sharedTheme = require("lib.theme")
+local scoreCache = require("lib.score_cache")
 
 local gameVersion = 1.7
 local saveFile = ".doom_save"
@@ -512,10 +513,15 @@ local function main(...)
     term.setBackgroundColor(colors.black); term.clear(); term.setCursorPos(1, 1)
     if hp <= 0 then term.setTextColor(colors.red); print("MISSION FAILED...") else print("Exiting Game...") end
     print("Final Score: " .. score)
-    sleep(2)
-    
-    if arcadeServerId then
-        rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames")
+    scoreCache.recordScore(gameName, score, username)
+    term.setTextColor(colors.yellow)
+    print("Personal Best: " .. scoreCache.getPersonalBest(gameName))
+    term.setTextColor(colors.gray)
+    print("Press any key or tap to exit...")
+    sleep(0.5)
+    while true do
+        local e = os.pullEvent()
+        if e == "key" or e == "mouse_click" then break end
     end
 end
 

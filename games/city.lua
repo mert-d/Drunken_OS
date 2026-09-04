@@ -486,37 +486,38 @@ local function main()
                 elseif key == keys.tab then
                     state.mode = (state.mode == "view") and "build" or "view"
                 elseif state.mode == "build" then
-                     -- ... (Build controls existing) ... 
-                     if key == keys.w then 
-                         state.selectedBuildIdx = state.selectedBuildIdx - 1
-                         if state.selectedBuildIdx < 1 then state.selectedBuildIdx = #STRUCTURES end
+                    -- Build controls
+                    if key == keys.w then 
+                        state.selectedBuildIdx = state.selectedBuildIdx - 1
+                        if state.selectedBuildIdx < 1 then state.selectedBuildIdx = #STRUCTURES end
                     elseif key == keys.s then 
-                         state.selectedBuildIdx = state.selectedBuildIdx + 1
-                         if state.selectedBuildIdx > #STRUCTURES then state.selectedBuildIdx = 1 end
+                        state.selectedBuildIdx = state.selectedBuildIdx + 1
+                        if state.selectedBuildIdx > #STRUCTURES then state.selectedBuildIdx = 1 end
                     elseif key == keys.enter then
-                     -- Place
-                     local bDef = STRUCTURES[state.selectedBuildIdx]
-                     local valid, reason = canPlace(bDef, state.cursor.x, state.cursor.y)
-                     if valid then
-                         -- Deduct Cost
-                         for res, amt in pairs(bDef.cost) do state.resources[res] = state.resources[res] - amt end
-                         -- Add Building
-                         table.insert(state.buildings, { 
-                            x=state.cursor.x, 
-                            y=state.cursor.y, 
-                            def=bDef, 
-                            lastTick=os.epoch("utc") 
-                         })
-                         playSound("entity.experience_orb.pickup", 1, 1.2) -- Pling!
-                     else
-                         -- Show Error (Flash UI? or just sound)
-                         playSound("block.note_block.bass", 1, 0.5) -- Buzz!
-                     end
+                        -- Place
+                        local bDef = STRUCTURES[state.selectedBuildIdx]
+                        local valid, reason = canPlace(bDef, state.cursor.x, state.cursor.y)
+                        if valid then
+                            -- Deduct Cost
+                            for res, amt in pairs(bDef.cost) do state.resources[res] = state.resources[res] - amt end
+                            -- Add Building
+                            table.insert(state.buildings, { 
+                                x=state.cursor.x, 
+                                y=state.cursor.y, 
+                                def=bDef, 
+                                lastTick=os.epoch("utc") 
+                            })
+                            playSound("entity.experience_orb.pickup", 1, 1.2) -- Pling!
+                        else
+                            -- Show Error
+                            playSound("block.note_block.bass", 1, 0.5) -- Buzz!
+                        end
+                    end
                 end
+                
+                -- Camera Follow
+                state.camera:centerOn(state.cursor.x, state.cursor.y, MAP_W, MAP_H)
             end
-            
-            -- Camera Follow
-            state.camera:centerOn(state.cursor.x, state.cursor.y, MAP_W, MAP_H)
         end
     end
 end

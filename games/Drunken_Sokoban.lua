@@ -10,6 +10,7 @@
 -- Load shared libraries
 package.path = "/?.lua;" .. package.path
 local sharedTheme = require("lib.theme")
+local scoreCache = require("lib.score_cache")
 
 local gameVersion = 1.3
 
@@ -761,7 +762,7 @@ local function mainGame(...)
         end
 
         rednet.send(arcadeServerId, { type = "list_community_maps", game = gameName }, "ArcadeGames")
-        local id, msg = rednet.receive("ArcadeGames", 3)
+        local id, msg = rednet.receive("ArcadeGames", 1.2)
         if not msg or not msg.maps then
             term.setTextColor(colors.red)
             term.setCursorPos(5, 5); term.write("No maps found.")
@@ -828,10 +829,10 @@ local function mainGame(...)
                 currentLevel = currentLevel + 1
                 if currentLevel > #levels then
                     print("Game Complete!")
-                    arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
-                    if arcadeServerId then
-                        rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = 1000 - moveCount}, "ArcadeGames")
-                    end
+                    local finalScore = math.max(10, 1000 - moveCount)
+                    scoreCache.recordScore(gameName, finalScore, username)
+                    term.setTextColor(colors.yellow)
+                    print("Personal Best: " .. scoreCache.getPersonalBest(gameName))
                     sleep(2)
                     return
                 end

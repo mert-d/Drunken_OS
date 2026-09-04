@@ -154,7 +154,11 @@ setmetatable(apps, {
             fileCommander   = {"files", "run"},
             drunkenBites    = {"drunken_bites", "run"},
             merchantCashier = {"merchant", "cashier"},
-            merchantPOS     = {"merchant", "pos"}
+            merchantPOS     = {"merchant", "pos"},
+            remoteApp       = {"remote", "run"},
+            remote          = {"remote", "run"},
+            netRadar        = {"radar", "run"},
+            radar           = {"radar", "run"}
         }
 
         local map = legacyMapping[key]

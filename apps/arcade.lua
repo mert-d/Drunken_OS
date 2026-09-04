@@ -6,11 +6,12 @@
 local theme = require("lib.theme")
 local utils = require("lib.utils")
 local P2P_Socket = require("lib.p2p_socket")
+local scoreCache = require("lib.score_cache")
 local arcade = {}
-local arcadeVersion = 2.4 -- Bumped for join fix
+local arcadeVersion = 2.5
 
 local function getParent(context)
-    return context.parent
+    return (context and context.parent) or context or {}
 end
 
 ---
@@ -140,10 +141,19 @@ function arcade.run(context)
         local server = rednet.lookup("ArcadeGames", "arcade.server")
         if server then
             rednet.send(server, {type="get_board", game=game.filename}, "ArcadeGames")
-            -- For simplicity in v2.0, do a quick receive with short timeout
             local id, msg = rednet.receive("ArcadeGames", 0.05)
             if msg and msg.type == "leaderboard_response" and msg.game == game.filename then
                 cachedLeaderboard = msg.board
+            end
+        end
+
+        if not cachedLeaderboard or #cachedLeaderboard == 0 then
+            local localBests = scoreCache.getLocalLeaderboard(game.filename)
+            if #localBests > 0 then
+                cachedLeaderboard = {}
+                for _, b in ipairs(localBests) do
+                    table.insert(cachedLeaderboard, { user = b.user, score = b.score, isLocal = true })
+                end
             end
         end
 

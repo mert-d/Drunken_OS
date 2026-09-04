@@ -564,6 +564,7 @@ local function mainGame(...)
     -- Start Match
     turn = isHost and 1 or 2
     local matchActive = true
+    local waitStart = os.epoch("utc")
     
     while matchActive do
         drawGame()
@@ -626,10 +627,10 @@ local function mainGame(...)
                 socket:send({type="move", move=move})
             end
             turn = 0
+            waitStart = os.epoch("utc")
         elseif turn == 0 or turn == 2 then
             -- Waiting logic
             if isHost then
-                -- Wait for guest move
                 -- Wait for guest move
                 local msg = socket:receive(0.5)
                 -- Also check for spectators mid-game
@@ -645,7 +646,6 @@ local function mainGame(...)
                     screenShake()
 
                     -- Sync state to guest
-                    -- Sync state to guest
                     socket:send({type="sync", myStats=oppStats, oppStats=myStats, logs=logs, ended=ended})
                     
                     if ended then matchActive = false end
@@ -653,9 +653,16 @@ local function mainGame(...)
                     myMove = nil
                     oppMove = nil
                     turn = 1
+                elseif msg and msg.type == "forfeit" then
+                    addLog("Opponent Forfeited!", colors.red)
+                    matchActive = false
+                elseif not msg then
+                    if os.epoch("utc") - waitStart > 45000 then
+                        addLog("Opponent Timed Out / Out of Range!", colors.red)
+                        matchActive = false
+                    end
                 end
             else
-                -- Wait for sync from host
                 -- Wait for sync from host
                 local msg = socket:receive(1)
                 if msg then
@@ -668,6 +675,11 @@ local function mainGame(...)
                         if not isSpectator then turn = 1 end
                     elseif msg.type == "forfeit" then
                         addLog("Opponent Forfeited!", colors.red)
+                        matchActive = false
+                    end
+                else
+                    if os.epoch("utc") - waitStart > 45000 then
+                        addLog("Host Timed Out / Out of Range!", colors.red)
                         matchActive = false
                     end
                 end

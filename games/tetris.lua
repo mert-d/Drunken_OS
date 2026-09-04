@@ -9,6 +9,7 @@
 -- Load shared libraries
 package.path = "/?.lua;" .. package.path
 local sharedTheme = require("lib.theme")
+local scoreCache = require("lib.score_cache")
 
 local currentVersion = 7.2
 -- ... rest of the tetris game code
@@ -247,7 +248,9 @@ end
 -- Leaderboard & Game Over Functions
 --==============================================================================
 
-local function submitScore() if arcadeServerId then rednet.send(arcadeServerId, {type = "submit_score", game = gameName, user = username, score = score}, "ArcadeGames") end end
+local function submitScore() 
+    scoreCache.recordScore(gameName, score, username)
+end
 
 local function showGameOverScreen()
     submitScore()
@@ -269,29 +272,47 @@ local function showGameOverScreen()
     local scoreText = "Final Score: " .. score
     term.setCursorPos(boxX + math.floor((boxWidth - #scoreText) / 2), boxY + 3); term.setTextColor(theme.text); term.write(scoreText)
 
+    local sortedScores = nil
+    local isOffline = false
     if arcadeServerId then
         rednet.send(arcadeServerId, {type = "get_leaderboard", game = gameName}, "ArcadeGames")
-        local _, response = rednet.receive("ArcadeGames", 3)
+        local _, response = rednet.receive("ArcadeGames", 0.8)
         if response and response.leaderboard then
-            local sortedScores = {}; for user, s in pairs(response.leaderboard) do table.insert(sortedScores, {user = user, score = s}) end
+            sortedScores = {}
+            for user, s in pairs(response.leaderboard) do table.insert(sortedScores, {user = user, score = s}) end
             table.sort(sortedScores, function(a,b) return a.score > b.score end)
-
-            local lbTitle = "--- Leaderboard ---"
-            term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2), boxY + 5); term.setTextColor(theme.title); term.write(lbTitle)
-
-            term.setTextColor(theme.text)
-            for i = 1, math.min(10, #sortedScores) do
-                local entry = string.format("%2d. %-15s %d", i, sortedScores[i].user, sortedScores[i].score)
-                term.setCursorPos(boxX + 2, boxY + 6 + i)
-                term.write(entry)
-            end
         end
     end
 
-    local prompt = "Press any key to exit..."
+    if not sortedScores or #sortedScores == 0 then
+        isOffline = true
+        sortedScores = scoreCache.getLocalLeaderboard(gameName)
+    end
+
+    local lbTitle = isOffline and "-- Local Best (Offline) --" or "--- Leaderboard ---"
+    term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2), boxY + 5); term.setTextColor(theme.title); term.write(lbTitle)
+
+    term.setTextColor(theme.text)
+    if #sortedScores == 0 then
+        local emptyMsg = "No high scores recorded yet"
+        term.setCursorPos(boxX + math.floor((boxWidth - #emptyMsg) / 2), boxY + 7)
+        term.write(emptyMsg)
+    else
+        for i = 1, math.min(7, #sortedScores) do
+            local entry = string.format("%2d. %-14s %d", i, tostring(sortedScores[i].user or "Player"):sub(1, 14), sortedScores[i].score or 0)
+            term.setCursorPos(boxX + 2, boxY + 6 + i)
+            term.write(entry)
+        end
+    end
+
+    local prompt = "Tap or press key to exit..."
     term.setCursorPos(boxX + math.floor((boxWidth - #prompt) / 2), boxY + boxHeight - 2); term.setTextColor(theme.prompt); term.write(prompt)
 
-    os.pullEvent("key")
+    sleep(0.5)
+    while true do
+        local e = os.pullEvent()
+        if e == "key" or e == "mouse_click" then break end
+    end
 end
 
 --==============================================================================

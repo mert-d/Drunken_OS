@@ -15,9 +15,65 @@
       backwards compatibility with all Drunken OS programs.
 ]]
 
-local bit = bit32
-local band, bor, bxor, bnot = bit.band, bit.bor, bit.bxor, bit.bnot
-local lshift, rshift, rol = bit.lshift, bit.rshift, bit.lrotate
+local bit = bit32 or _G.bit32 or _G.bit
+if not bit then
+  local ok, mod = pcall(require, "bit")
+  if ok and mod then bit = mod end
+end
+
+local band, bor, bxor, bnot, lshift, rshift, rol
+if bit then
+  band, bor, bxor, bnot = bit.band, bit.bor, bit.bxor, bit.bnot
+  lshift, rshift = bit.lshift, bit.rshift
+  rol = bit.lrotate or function(n, bits)
+    return bit.bor(bit.lshift(n, bits), bit.rshift(n, 32 - bits))
+  end
+else
+  -- Fallback for environments without bit32/bit (e.g. standard Lua 5.3/5.4)
+  local ok_native, native_funcs = pcall(load, [[
+    return {
+      band = function(...)
+        local res = 0xFFFFFFFF
+        for i=1, select("#", ...) do
+          res = (res & (select(i, ...))) & 0xFFFFFFFF
+        end
+        return res
+      end,
+      bor  = function(...)
+        local res = 0
+        for i=1, select("#", ...) do
+          res = (res | (select(i, ...))) & 0xFFFFFFFF
+        end
+        return res
+      end,
+      bxor = function(...)
+        local res = 0
+        for i=1, select("#", ...) do
+          res = (res ~ (select(i, ...))) & 0xFFFFFFFF
+        end
+        return res
+      end,
+      bnot = function(a)   return (~a) & 0xFFFFFFFF end,
+      lshift = function(a,b) return ((a << b) & 0xFFFFFFFF) end,
+      rshift = function(a,b)
+        if b >= 32 then return 0 end
+        return ((a >> b) & 0xFFFFFFFF)
+      end,
+      rol = function(n, bits)
+        n = n & 0xFFFFFFFF
+        bits = bits % 32
+        return (((n << bits) | (n >> (32 - bits))) & 0xFFFFFFFF)
+      end
+    }
+  ]])
+  if ok_native and native_funcs then
+    local nf = native_funcs()
+    band, bor, bxor, bnot = nf.band, nf.bor, nf.bxor, nf.bnot
+    lshift, rshift, rol = nf.lshift, nf.rshift, nf.rol
+  else
+    error("lib.sha1_hmac: No bitwise library (bit32/bit) or native bitwise operators found.", 0)
+  end
+end
 
 local H0 = {0x67452301,0xEFCDAB89,0x98BADCFE,0x10325476,0xC3D2E1F0}
 local K  = {0x5A827999,0x6ED9EBA1,0x8F1BBCDC,0xCA62C1D6}
@@ -62,8 +118,8 @@ local function sha1(s) return to_hex(sha1_raw(s)) end
 local function hmac_sha1_raw(key,msg)
   if #key>64 then key=sha1_raw(key) end
   if #key<64 then key=key..string.rep("\0",64-#key) end
-  local o=key:gsub(".",function(c)return string.char(bit.bxor(c:byte(),0x5c)) end)
-  local i=key:gsub(".",function(c)return string.char(bit.bxor(c:byte(),0x36)) end)
+  local o=key:gsub(".",function(c)return string.char(bxor(c:byte(),0x5c)) end)
+  local i=key:gsub(".",function(c)return string.char(bxor(c:byte(),0x36)) end)
   return sha1_raw(o..sha1_raw(i..msg))
 end
 local function hmac_sha1(key,msg) return to_hex(hmac_sha1_raw(key,msg)) end

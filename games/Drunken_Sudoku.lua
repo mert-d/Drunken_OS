@@ -215,6 +215,14 @@ local function checkWin()
     return true
 end
 
+local function handleWin()
+    state.won = true
+    local ok, scoreCache = pcall(require, "lib.score_cache")
+    if ok and scoreCache then
+        scoreCache.recordScore("Drunken_Sudoku", 500, username)
+    end
+end
+
 math.randomseed(os.epoch("utc"))
 generateGrid()
 state.won = false
@@ -233,9 +241,10 @@ while run do
 
     drawGrid()
     
-    local evt, key = os.pullEvent("key")
+    local evt, p1, p2, p3 = os.pullEvent()
     if evt == "key" then
-        if key == keys.q then
+        local key = p1
+        if key == keys.q or (state.won and key == keys.space) then
             run = false
         elseif not state.won then
             if key == keys.up and state.cursorY > 1 then state.cursorY = state.cursorY - 1
@@ -245,12 +254,12 @@ while run do
             elseif key >= keys.one and key <= keys.nine then
                 if not state.fixed[state.cursorY][state.cursorX] then
                     state.grid[state.cursorY][state.cursorX] = key - keys.one + 1
-                    if checkWin() then state.won = true end
+                    if checkWin() then handleWin() end
                 end
             elseif key >= keys.numPad1 and key <= keys.numPad9 then
                 if not state.fixed[state.cursorY][state.cursorX] then
                     state.grid[state.cursorY][state.cursorX] = key - keys.numPad1 + 1
-                    if checkWin() then state.won = true end
+                    if checkWin() then handleWin() end
                 end
             elseif key == keys.zero or key == keys.backspace or key == keys.delete or key == keys.space or key == keys.numPad0 then
                 if not state.fixed[state.cursorY][state.cursorX] then
@@ -258,6 +267,8 @@ while run do
                 end
             end
         end
+    elseif evt == "mouse_click" and state.won then
+        run = false
     end
 end
 

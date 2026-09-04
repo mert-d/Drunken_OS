@@ -7,7 +7,7 @@ local mail = {}
 local appVersion = 1.2
 
 local function getParent(context)
-    return context.parent
+    return (context and context.parent) or context or {}
 end
 
 ---
@@ -86,10 +86,10 @@ function mail.viewInbox(context)
     term.setCursorPos(2, 4)
     term.write("Fetching mail...")
     rednet.send(getParent(context).mailServerId, { type = "fetch", user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 10)
+    local _, response = rednet.receive("SimpleMail", 1.5)
     
     if not response or not response.mail then
-        context.showMessage("Error", (response and (response.reason or "Mail data missing")) or "No response (Timeout).")
+        context.showMessage("Offline", (response and (response.reason or "Mail data missing")) or "Mail server is unreachable.\n(Chunk may be unloaded).")
         return
     end
     
@@ -195,9 +195,9 @@ function mail.sendMail(context)
     local to = context.readInput("To: ", 4)
     if not to or to == "" then return end
     rednet.send(getParent(context).mailServerId, { type = "user_exists", user = to }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 3)
+    local _, response = rednet.receive("SimpleMail", 1.5)
     if not response or not response.exists then
-        context.showMessage("Error", (response and "Recipient '"..to.."' not found.") or "Connection timeout.")
+        context.showMessage("Offline", (response and "Recipient '"..to.."' not found.") or "Mail server offline or chunk unloaded.")
         return
     end
     local subject = context.readInput("Subject: ", 6)
