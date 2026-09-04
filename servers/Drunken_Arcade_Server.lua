@@ -445,7 +445,8 @@ local function syncGames()
         gamesToDownload = {
             "snake.lua", "tetris.lua", "invaders.lua", "floppa_bird.lua",
             "Drunken_Dungeons.lua", "Drunken_Duels.lua", "Drunken_Pong.lua",
-            "Drunken_Sweeper.lua", "Drunken_Sokoban.lua", "Drunken_Doom.lua"
+            "Drunken_Sweeper.lua", "Drunken_Sokoban.lua", "Drunken_Doom.lua",
+            "city.lua", "Drunken_Sudoku.lua", "Drunken_Connect4.lua", "Drunken_Battleship.lua"
         }
     end
 
