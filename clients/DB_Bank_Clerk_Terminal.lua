@@ -12,8 +12,9 @@
 --==============================================================================
 
 local version = 1.0
-local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua") .. ";" .. package.path
+local programDir = (shell and shell.getRunningProgram and fs.getDir(shell.getRunningProgram())) or ""
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. (programDir ~= "" and (fs.combine(programDir, "lib/?.lua") .. ";") or "") .. package.path
+local write = write or term.write
 
 local function safeRequire(mod)
     local ok, res = pcall(require, mod)

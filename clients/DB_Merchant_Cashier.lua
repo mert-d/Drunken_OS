@@ -1,8 +1,8 @@
 -- Drunken OS - Merchant Cashier PC (v1.1 - UI & Proxy Update)
 -- Wrapper for the Merchant Cashier application in drunken_os_apps library
 
-local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua") .. ";" .. package.path
+local programDir = (shell and shell.getRunningProgram and fs.getDir(shell.getRunningProgram())) or ""
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. (programDir ~= "" and (fs.combine(programDir, "lib/?.lua") .. ";") or "") .. package.path
 
 local apps = require("lib.drunken_os_apps")
 local sharedTheme = require("lib.theme")
@@ -140,7 +140,10 @@ local function main()
     context.parent.mailServerId = rednet.lookup("SimpleMail", "mail.server")
     
     -- GPS
-    local x,y,z = gps.locate(2)
+    local x, y, z = nil, nil, nil
+    if gps and gps.locate then
+        x, y, z = gps.locate(2)
+    end
     if x then context.parent.location = {x=x,y=y,z=z} end
 
     -- Login

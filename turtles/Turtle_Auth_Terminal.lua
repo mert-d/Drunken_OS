@@ -13,6 +13,11 @@
     4. Right-click the turtle to open its screen and press any key.
 ]]
 
+if not turtle then
+    print("Error: Turtle Authentication Terminal requires a Turtle.")
+    return
+end
+
 --==============================================================================
 -- Helper Functions
 --==============================================================================

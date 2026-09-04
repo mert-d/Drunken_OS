@@ -144,7 +144,7 @@ local function drawStatus()
 
     term.setCursorPos(2, 4)
     term.setTextColor(colors.gray)
-    term.write("ID: " .. os.getComputerID() .. " | Side: " .. config.side:upper() .. " | Mode: " .. config.mode:upper())
+    term.write("ID: " .. os.getComputerID() .. " | Side: " .. (config.side or "right"):upper() .. " | Mode: " .. (config.mode or "toggle"):upper())
 
     -- State Indicator
     term.setCursorPos(2, 6)
@@ -219,7 +219,7 @@ while running do
 
             elseif msg.type == "toggle" then
                 if isAuthorized then
-                    if config.mode == "pulse" then
+                    if (config.mode or "toggle") == "pulse" then
                         setSwitchState(true, msg.user)
                         pulseTimer = os.startTimer(config.pulseDuration or 2)
                     else

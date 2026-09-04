@@ -18,8 +18,8 @@
 -- API & Library Initialization
 --==============================================================================
 
-local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua") .. ";" .. package.path
+local programDir = (shell and shell.getRunningProgram and fs.getDir(shell.getRunningProgram())) or ""
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. (programDir ~= "" and (fs.combine(programDir, "lib/?.lua") .. ";") or "") .. package.path
 local DB = require("lib.db")
 local sharedTheme = require("lib.theme")
 local utils = require("lib.utils")

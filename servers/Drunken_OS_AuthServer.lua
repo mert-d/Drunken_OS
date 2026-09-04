@@ -3,7 +3,7 @@
     Handles login, registration, and session token generation via HyperAuth.
 ]]
 
-package.path = "/?.lua;" .. package.path
+package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;" .. package.path
 
 local ok_crypto, crypto = pcall(require, "lib.sha1_hmac")
 if not ok_crypto then error("Auth Server: lib.sha1_hmac not found.", 0) end

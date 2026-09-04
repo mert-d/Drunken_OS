@@ -7,14 +7,14 @@
 -- Environment & Path Setup
 --==============================================================================
 
-local programDir = fs.getDir(shell.getRunningProgram())
+local programDir = (shell and shell.getRunningProgram and fs.getDir(shell.getRunningProgram())) or ""
 -- Construct a clean, predictable package search path
 -- We use full module names (e.g. require("lib.sha1_hmac")), so we only need ?.lua
 local paths = {
     "?.lua",
     "?/init.lua",
-    fs.combine(programDir, "?.lua"),
-    fs.combine(programDir, "?/init.lua")
+    (programDir ~= "" and fs.combine(programDir, "?.lua") or nil),
+    (programDir ~= "" and fs.combine(programDir, "?/init.lua") or nil)
 }
 package.path = table.concat(paths, ";") .. ";" .. package.path
 local crypto = require("lib.sha1_hmac")

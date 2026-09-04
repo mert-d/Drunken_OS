@@ -14,8 +14,8 @@
 --==============================================================================
 
 -- Load our new, centralized cryptography library.
-local programDir = fs.getDir(shell.getRunningProgram())
-package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. fs.combine(programDir, "lib/?.lua") .. ";" .. package.path
+local programDir = (shell and shell.getRunningProgram and fs.getDir(shell.getRunningProgram())) or ""
+package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. (programDir ~= "" and (fs.combine(programDir, "lib/?.lua") .. ";") or "") .. package.path
 local crypto = require("lib.sha1_hmac")
 
 -- Load shared libraries
@@ -1535,9 +1535,11 @@ end
 
 
 local function main()
-    local computerTerm = term.current()
-    computerTerm.clear()
-    computerTerm.setCursorPos(1,1)
+    local computerTerm = (term.current and term.current()) or term
+    if computerTerm then
+        computerTerm.clear()
+        computerTerm.setCursorPos(1,1)
+    end
     
     print("Drunken OS Bank Server Initializing...")
 
