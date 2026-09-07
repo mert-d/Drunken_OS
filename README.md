@@ -1,9 +1,9 @@
-# 🏴‍☠️ Drunken OS (Enterprise Edition v16.8)
+# 🏴‍☠️ Drunken OS (Enterprise Edition v16.9)
 
-[![Version](https://img.shields.io/badge/version-16.8.0%20Enterprise-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-16.9.0%20Enterprise-blue.svg)](CHANGELOG.md)
 [![Minecraft](https://img.shields.io/badge/minecraft-1.18.2%2B-brightgreen.svg)]()
 [![Mod](https://img.shields.io/badge/mod-CC%3ATweaked%20%7C%20Restitched-orange.svg)]()
-[![Tests](https://img.shields.io/badge/tests-16%2F16%20Passing%20(100%25)-success.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-17%2F17%20Passing%20(100%25)-success.svg)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
 
 A comprehensive, distributed operating system and network ecosystem designed for **CC:Tweaked** and **CC:Restitched** (ComputerCraft) in Minecraft. Engineered for high performance, fault tolerance, and rich interaction on handheld **Pocket Computers**, desktop workstations, and autonomous turtles. Fully optimized for large survival multiplayer servers and industrial modpacks such as **Create Astral**.
@@ -11,6 +11,13 @@ A comprehensive, distributed operating system and network ecosystem designed for
 ---
 
 ## ✨ Features
+
+### 🔀 Multi-Tasking & Global Notification Daemon
+- **Coroutine Task Manager (`lib/task_manager.lua`)**: Cooperative multitasking supervisor running concurrent apps and desktop shell simultaneously.
+- **Window-Buffered Screen Memory**: Isolates display buffers (`window.create`) per task, guaranteeing 0 screen corruption or artifacting when background processes or notifications fire.
+- **Global Floating Toasts**: 3.5s auto-dismissing notification banners for Mail, Chat, Bank payments, Merchant invoices, and AirDrop with 1-tap app launch.
+- **Quick Task Switcher (`F1` / `Ctrl`)**: Seamless switching between open tasks and Desktop, process killing, and quick app launcher (`[N]`).
+- **Zero Performance Degradation**: Fast arcade games (*Tetris*, *Floppa Bird*, *Pong*) maintain 60 FPS tick rates with zero input lag.
 
 ### ⚡ Enterprise Network & Rendering Engine
 - **Delta-Row Terminal Buffering (`lib/engine.lua`)**: Caches dirty screen rows to reduce Minecraft server-to-client network packet transmission by up to 90%.
@@ -100,6 +107,7 @@ Drunken_OS/
 │   ├── score_cache.lua           # Offline score caching & deferred synchronization
 │   ├── p2p_socket.lua            # P2P connection handshake & packet transport
 │   ├── db.lua                    # ACID atomic database persistence & crash recovery
+│   ├── task_manager.lua          # Coroutine multitasking supervisor & notification daemon
 │   ├── theme.lua                 # Color palettes (Default, Matrix, Red Alert, etc.)
 │   ├── utils.lua                 # UI primitives (wordWrap, safeColor, inputBox)
 │   └── sdk.lua                   # Standard application development kit
@@ -110,8 +118,9 @@ Drunken_OS/
 ├── installer/                    # Master Installer & Deployment Disks
 │   ├── Master_Installer.lua      # Menu-driven floppy disk burner
 │   └── manifest.lua              # Distribution catalog & package specifications
-├── tests/                        # Automated Test Suite (16/16 Passing)
+├── tests/                        # Automated Test Suite (17/17 Passing)
 │   ├── test_all.lua              # Master test runner (100% automated pass)
+│   ├── test_task_manager.lua     # Multitasking & notification daemon unit tests
 │   ├── test_remote.lua, test_radar.lua, test_score_cache.lua, ...
 └── docs/                         # Comprehensive Engineering Documentation
     ├── FULL_SYSTEM_SETUP_GUIDE.md# End-to-end multi-server setup guide

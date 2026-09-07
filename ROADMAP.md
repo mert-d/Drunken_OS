@@ -75,6 +75,17 @@ _Goal: Extend Drunken OS beyond computers to control Minecraft physical bases, d
 
 ---
 
+## ⚡ Phase 8: Multi-Tasking & Global Notification Daemon (Completed in v16.9)
+_Goal: Introduce true cooperative multitasking, window-buffered screen memory, and global floating notification alerts with zero game lag._
+
+- [x] **Coroutine Supervisor & Task Manager (`lib/task_manager.lua`)**: Window-buffered multitasking supervisor (`window.create`) running multiple apps concurrently with 0 screen corruption and 0 tick lag.
+- [x] **Global Floating Notification Toast Daemon**: Non-intrusive 3.5s auto-dismissing toast alerts for Mail, Chat, Bank payments, Merchant invoices, and AirDrop with tap-to-open.
+- [x] **Centralized Network Packet Inspection**: Intercepts packets inside `TaskManager.step()`, preventing background listeners from stealing rednet messages while forwarding transparently to child apps.
+- [x] **Quick Task Switcher (`F1` / `Ctrl`)**: Hotkey-driven process switcher with task termination (`[X]`) and quick app launcher (`[N]`).
+- [x] **Automated Test Coverage (17 Suites)**: Created `tests/test_task_manager.lua`, achieving 17/17 test suites passing (100%).
+
+---
+
 ## 💡 Future Wishlist & Next Frontiers
 
 - [ ] **Astral Telemetry Satellite**: Specialized turtle or computer reading Create Astral space rocket data or train station departures.

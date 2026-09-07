@@ -27,6 +27,7 @@ return {
         "lib/transfer.lua",
         "lib/rpc.lua",
         "lib/score_cache.lua",
+        "lib/task_manager.lua",
         "manifest.lua"
     },
 

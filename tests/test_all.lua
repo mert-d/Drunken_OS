@@ -22,6 +22,7 @@ local tests = {
     { name = "Battleship Naval AI & Radar", file = "tests/test_battleship.lua" },
     { name = "Drunken Remote & Switches",  file = "tests/test_remote.lua" },
     { name = "NetRadar Proximity & Ping",  file = "tests/test_radar.lua" },
+    { name = "Task Manager & Daemon",      file = "tests/test_task_manager.lua" },
 }
 
 print("========================================================")

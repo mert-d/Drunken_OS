@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [16.9.0] - 2026-09-07 - Multi-Tasking Edition
+
+### ⚡ Phase 8: Multi-Tasking & Global Notification Daemon
+
+#### Added
+- **Coroutine Multi-Tasking Supervisor (`lib/task_manager.lua`)**:
+  - Full cooperative multitasking supervisor supporting multiple concurrent processes.
+  - Window-buffered screen memory (`window.create`) per task: isolates rendering buffers so background processes and toasts cause 0 screen corruption on foreground games or apps.
+  - Zero performance degradation: event pass-through directly honors coroutine filters with 0ms delay, preserving 60 FPS tick rates on fast arcade games.
+- **Global Floating Notification Toast Daemon**:
+  - Non-intrusive 2-line floating banner rendered across the top of the terminal with 3.5s auto-dismiss timer.
+  - Multi-protocol alerts: `✉ New Mail` (Light Blue), `💬 Chat` (Blue), `💰 Bank Payment` (Green), `💳 Invoice Request` (Orange with speaker chime), and `📡 AirDrop` (Cyan/Lime).
+  - **Tap to Open**: Clicking or tapping on the toast banner automatically opens or switches focus to the relevant application (`mail`, `chat`, `bank`, `merchant`, `files`).
+  - Buffered screen restoration: restores the underlying active task's window buffer cleanly upon dismissal with zero character artifacts.
+- **Quick Task Switcher (`F1` / `Ctrl`)**:
+  - Hotkey accessible from any game or tool to switch active foreground focus between open tasks and the Desktop.
+  - **Process Killing (`[X]` / `[Del]`)**: Closes any running task cleanly while protecting the system desktop.
+  - **App Launcher (`[N]`)**: Built-in quick app picker to launch any installed app or game without losing state in running programs.
+- **Centralized Network Packet Dispatcher**:
+  - Centralizes `rednet_message` processing in `TaskManager.step()` to prevent background listener threads from intercepting or stealing packets meant for active child apps.
+  - Transparently forwards all network packets to the active foreground task.
+- **Automated Test Suite (`tests/test_task_manager.lua`)**:
+  - Added full test suite verifying task creation, coroutine execution, high-frequency timers, event filtering, toast overlays, timer dismissals, and process reaping.
+  - Upgraded `tests/test_all.lua` to 17 automated test suites with 100% pass rate.
+
+#### Changed
+- **Drunken OS Mobile Client (`clients/Drunken_OS_Client.lua`)**:
+  - Initialized `TaskManager` supervisor running the Desktop as protected Task #1.
+  - Updated app launcher (`executeChoice`) to spawn apps as managed tasks with clean coroutine suspension.
+  - Replaced CPU-burning 0.5s poll loops in `backgroundListener` with a lightweight 15-second periodic synchronization timer for high scores and unread mail counts.
+  - Added `{ name = "task_manager" }` to `REQUIRED_LIBS` and exposed `context.taskManager` and `context.notify`.
+- **Manifest Synchronization**:
+  - Added `lib/task_manager.lua` to `shared` packages in both `manifest.lua` and `installer/manifest.lua`.
+
+---
+
 ## [16.8.0] - 2026-09-04 - Enterprise Edition
 
 ### 🚀 Phase 7: Base Redstone Automation & Network Diagnostics

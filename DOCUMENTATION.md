@@ -90,6 +90,12 @@ Drunken OS includes a suite of high-performance libraries in the `lib/` director
 ### 8. `lib/db.lua` — ACID Atomic Database Persistence
 - Crash-safe database writes using atomic `.tmp` swap files. Guarantees that sudden server restarts never corrupt bank accounts or mailboxes.
 
+### 9. `lib/task_manager.lua` — Multi-Tasking & Notification Daemon
+- Cooperative coroutine supervisor managing multiple active processes and the desktop shell concurrently.
+- Window-buffered screen memory (`window.create`) per task: isolates rendering buffers so background processes and toasts cause 0 screen corruption on running games or apps.
+- Centralized network packet dispatcher: catches `rednet_message` events for Mail, Chat, Bank transfers, Merchant invoices, and Radar pings, displays non-intrusive floating toast banners with tap-to-open, and forwards packets transparently to the active foreground app.
+- Task switcher interface (`F1` / `Ctrl`) with process killing (`[X]`) and quick app launcher (`[N]`).
+
 ---
 
 ## 📱 Modular Applet Suite

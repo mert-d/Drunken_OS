@@ -1,5 +1,5 @@
 --[[
-    Drunken OS - Mobile Client (v16.7 - Performance Edition)
+    Drunken OS - Mobile Client (v16.9 - Multi-Tasking Edition)
     by MuhendizBey
 ]]
 
@@ -27,7 +27,7 @@ end
 -- Configuration & State
 --==============================================================================
 
-local currentVersion = 16.8
+local currentVersion = 16.9
 local programName = "Drunken_OS_Client" -- Correct program name for updates
 local SESSION_FILE = ".session"
 local REQUIRED_LIBS = {
@@ -41,7 +41,8 @@ local REQUIRED_LIBS = {
     { name = "dns" },
     { name = "crypto_packet" },
     { name = "transfer" },
-    { name = "rpc" }
+    { name = "rpc" },
+    { name = "task_manager" }
 }
 
 local REQUIRED_APPS = {
@@ -55,6 +56,7 @@ local REQUIRED_APPS = {
 local sdk = require("lib.sdk")
 local theme = require("lib.theme")
 local utils = require("lib.utils")
+local taskManager = require("lib.task_manager")
 local wordWrap = utils.wordWrap
 local printCentered = utils.printCentered
 local colorToBlit = theme.colorToBlit
@@ -404,16 +406,7 @@ local currentApp = nil
 local running = true
 local favorites = {} -- Loaded from disk
 
--- Notification State
-local notification = {
-    active = false,
-    title = "",
-    message = "",
-    color = colors.blue,
-    timerId = nil
-}
-
--- Load/Save Favorites (Existing)
+-- Load/Save Favorites
 local function loadFavorites()
     if fs.exists(".favorites") then
         local f = fs.open(".favorites", "r")
@@ -427,43 +420,11 @@ local function saveFavorites()
     f.close()
 end
 
--- Helper: Draw Notification Toast
-local function drawNotification()
-    if not notification.active then return end
-    
-    local w, h = term.getSize()
-    local msg = notification.message
-    local width = #msg + 4
-    if width < 20 then width = 20 end
-    local x = w - width - 1
-    local y = 2 -- Below top bar
-    
-    -- Draw Box
-    paintutils.drawFilledBox(x, y, x+width, y+2, notification.color)
-    term.setCursorPos(x, y)
-    term.setTextColor(colors.white)
-    term.setBackgroundColor(notification.color)
-    
-    -- Title (Center or Left?)
-    term.setCursorPos(x+1, y)
-    term.write(notification.title)
-    
-    -- Message
-    term.setCursorPos(x+1, y+1)
-    term.write(msg)
-    
-    -- Border/Shadow? (Optional polish)
-end
-
--- Helper: Trigger Notification
-local function showNotification(title, msg, color)
-    notification.active = true
-    notification.title = title or "System"
-    notification.message = msg or ""
-    notification.color = color or colors.blue
-    
-    if notification.timerId then os.cancelTimer(notification.timerId) end
-    notification.timerId = os.startTimer(4) -- 4 Seconds
+-- Global Notification Toast Dispatcher (Routes to lib/task_manager)
+local function notify(title, message, color, duration, targetApp)
+    if taskManager and taskManager.notify then
+        taskManager.notify(title, message, color, duration, targetApp)
+    end
 end
 
 local function toggleFavorite(appName)
@@ -555,7 +516,26 @@ local function mainMenu()
             elseif choice.isApp then
                 local appName = choice.path:match("apps/(.+)%.lua$")
                 if appName then
-                    state.appLoader.run(appName, context)
+                    local appTitle = choice.label or appName
+                    appTitle = appTitle:gsub("^★%s*", ""):gsub("^%[.%]%s*", "")
+
+                    -- Check if app is already running
+                    local existingIndex = nil
+                    for i, t in ipairs(taskManager.getTasks()) do
+                        if t.appName == appName then
+                            existingIndex = i
+                            break
+                        end
+                    end
+                    if existingIndex then
+                        taskManager.switchTask(existingIndex)
+                    else
+                        local newTask = taskManager.createTask(appTitle, function(ctx)
+                            state.appLoader.run(appName, ctx)
+                        end, context)
+                        newTask.appName = appName
+                    end
+                    os.pullEvent("task_resume")
                 else
                     context.showMessage("Error", "Invalid app path: " .. choice.path)
                 end
@@ -732,55 +712,18 @@ local function gpsHeartbeat()
 end
 
 ---
--- Background Rednet Listener Thread.
--- Constantly processes incoming messages across multiple protocols without interrupting UI.
--- For example: Merchant payment requests, unread mail counts, or shop discovery broadcasts.
+-- Background Periodic Sync Thread.
+-- Periodically synchronizes pending game scores & requests unread mail counts.
+-- Network packets and live notification alerts are handled centrally by TaskManager.
 local function backgroundListener()
-    local lastSync = 0
     while true do
-        local now = os.epoch("utc") / 1000
-        -- Fast poll for rednet messages
-        local senderId, message, protocol = rednet.receive(nil, 0.5)
-        
-        if protocol == "DB_Merchant_Req" and message then
-            if message.type == "payment_request" and message.target == state.username then
-                if not state.pendingInvoices then state.pendingInvoices = {} end
-                table.insert(state.pendingInvoices, message)
-                local speaker = peripheral.find("speaker")
-                if speaker then speaker.playNote("pling", 1, 2) end
-            end
-        elseif protocol == "DB_Shop_Broadcast" and message and message.menu then
-            state.nearbyShop = message
-        elseif protocol == "DrunkenRadar" and type(message) == "table" and message.type == "radar_ping" then
-            local myGps = state.location
-            if not myGps and gps and gps.locate then
-                local gx, gy, gz = gps.locate(0.2)
-                if gx and gy and gz then myGps = { x = math.floor(gx), y = math.floor(gy), z = math.floor(gz) } end
-            end
-            rednet.send(senderId, {
-                type = "radar_pong",
-                id = os.getComputerID(),
-                user = state.username or "Pocket User",
-                device = "Pocket",
-                label = os.getComputerLabel() or ("Pocket #" .. os.getComputerID()),
-                gps = myGps
-            }, "DrunkenRadar")
-        end
-        
-        -- Occasional sync (Mail/Unread count & Pending Game Scores) every 10 seconds
-        if now - lastSync > 10 then
-            pcall(function()
-                local scoreCache = require("lib.score_cache")
-                scoreCache.syncPending()
-            end)
-            if state.mailServerId then
-                rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
-                local _, response = rednet.receive("SimpleMail", 0.5)
-                if response and response.count then
-                    state.unreadCount = response.count
-                end
-            end
-            lastSync = now
+        sleep(15)
+        pcall(function()
+            local scoreCache = require("lib.score_cache")
+            scoreCache.syncPending()
+        end)
+        if state.mailServerId and state.username then
+            rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
         end
     end
 end
@@ -862,6 +805,9 @@ local function main()
             context.readInput = readInput
             context.getSafeSize = getSafeSize
             context.wordWrap = wordWrap
+            context.taskManager = taskManager
+            context.notify = notify
+            context.appLoader = state.appLoader
 
             state.username = nil
             state.isAdmin = false
@@ -881,9 +827,16 @@ local function main()
                 context.showMessage("Message of the Day", motd_response.motd)
             end
             
-            -- Background listeners extracted to core scope
+            -- Multi-Tasking Supervisor with Desktop as Task #1
+            local function taskSupervisor()
+                taskManager.init(context)
+                taskManager.setUsername(state.username)
+                local desktopTask = taskManager.createTask("Drunken Desktop", mainMenu, context, true)
+                desktopTask.appName = "desktop"
+                taskManager.run()
+            end
 
-            parallel.waitForAny(mainMenu, gpsHeartbeat, backgroundListener)
+            parallel.waitForAny(taskSupervisor, gpsHeartbeat, backgroundListener)
             
             peripheral.find("modem", rednet.close)
             if not state.username then
