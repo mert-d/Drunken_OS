@@ -52,7 +52,11 @@ function DB.saveTableToFile(path, data, logFn)
     if fs.exists(path) then
         fs.delete(path)
     end
-    fs.move(tempPath, path)
+    local ok_move, err_move = pcall(fs.move, tempPath, path)
+    if not ok_move then
+        if logFn then logFn("Failed to move " .. tempPath .. " to " .. path .. ": " .. tostring(err_move), true) end
+        return false
+    end
     
     return true
 end
@@ -85,7 +89,11 @@ function DB.saveTableToFileJSON(path, data, logFn)
     if fs.exists(path) then
         fs.delete(path)
     end
-    fs.move(tempPath, path)
+    local ok_move, err_move = pcall(fs.move, tempPath, path)
+    if not ok_move then
+        if logFn then logFn("Failed to move JSON " .. tempPath .. " to " .. path .. ": " .. tostring(err_move), true) end
+        return false
+    end
     
     return true
 end
@@ -103,7 +111,7 @@ function DB.loadTableFromFile(path, logFn)
     -- the last write was interrupted after delete but before move.
     if not fs.exists(path) and fs.exists(tempPath) then
         if logFn then logFn("Found incomplete save, restoring from " .. tempPath, false) end
-        fs.move(tempPath, path)
+        pcall(fs.move, tempPath, path)
     end
 
     if fs.exists(path) then
@@ -134,7 +142,7 @@ function DB.loadTableFromFileJSON(path, logFn)
     
     if not fs.exists(path) and fs.exists(tempPath) then
         if logFn then logFn("Found incomplete save, restoring from " .. tempPath, false) end
-        fs.move(tempPath, path)
+        pcall(fs.move, tempPath, path)
     end
 
     if fs.exists(path) then

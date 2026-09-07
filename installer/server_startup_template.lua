@@ -30,6 +30,8 @@ local ok, err = pcall(shell.run, program_path)
 
 if not ok then
     -- If the program crashes, print the error to the main terminal
-    term.redirect(term.native())
+    if term.redirect and term.native then
+        pcall(term.redirect, term.native())
+    end
     print("ERROR: " .. tostring(err))
 end

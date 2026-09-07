@@ -653,7 +653,10 @@ local function installToPocketComputer(program, drive)
             destPath = mountPath .. "/" .. filePath
         end
 
-        fs.makeDir(fs.getDir(destPath))
+        local parentDir = fs.getDir(destPath)
+        if parentDir and parentDir ~= "" and not fs.exists(parentDir) then
+            fs.makeDir(parentDir)
+        end
         local fileHandle, err = fs.open(destPath, "w")
         if not fileHandle then
             showMessage("Error", "Failed to write to pocket computer: " .. (err or "Unknown error"), true)
@@ -724,8 +727,13 @@ local function createInstallDisk(program)
     -- the client, we make an installer disk.
 
     local mountPath = drive.getMountPath()
-    if not mountPath then
-        showMessage("Error", "Could not get disk mount path.", true)
+    if not mountPath or (drive.isDiskPresent and not drive.isDiskPresent()) then
+        showMessage("Disk Error", "No disk detected in the drive!\nPlease insert a floppy disk and try again.", true)
+        return
+    end
+
+    if fs.isReadOnly and fs.isReadOnly(mountPath) then
+        showMessage("Disk Error", "The inserted disk is write-protected or read-only!\nPlease insert a writable floppy disk.", true)
         return
     end
 
@@ -761,7 +769,10 @@ local function createInstallDisk(program)
         if filePath == "HyperAuthClient/config.lua" and fs.exists(destPath) then
             print("Skipping existing config: " .. filePath)
         else
-            fs.makeDir(fs.getDir(destPath))
+            local parentDir = fs.getDir(destPath)
+            if parentDir and parentDir ~= "" and not fs.exists(parentDir) then
+                fs.makeDir(parentDir)
+            end
             local file = fs.open(destPath, "w")
             file.write(fileCode)
             file.close()

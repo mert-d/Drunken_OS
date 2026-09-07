@@ -40,7 +40,13 @@ function updater.check(programName, currentVersion, targetPath)
         local _, update = rednet.receive("SimpleMail", 5)
         
         if update and update.code then
-            local path = targetPath or shell.getRunningProgram()
+            local path = targetPath or (shell and shell.getRunningProgram and shell.getRunningProgram())
+            if not path then
+                print("Updater: Error! No target path specified.")
+                return false
+            end
+            local dir = fs.getDir(path)
+            if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
             local file = fs.open(path, "w")
             if file then
                 file.write(update.code)
@@ -122,7 +128,8 @@ function updater.install_package(packageName, uiCallback)
              if filePath == "HyperAuthClient/config.lua" and fs.exists(filePath) then
                  logUI("Skipping existing config: " .. filePath)
              else
-                 if not fs.exists(fs.getDir(filePath)) then fs.makeDir(fs.getDir(filePath)) end
+                 local dir = fs.getDir(filePath)
+                 if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
                  local f = fs.open(filePath, "w")
                  f.write(fileData.code)
                  f.close()
@@ -172,7 +179,8 @@ function updater.install_app(appName, uiCallback)
     local _, fileData = rednet.receive("SimpleMail", 5)
     
     if fileData and fileData.success and fileData.code then
-        if not fs.exists(fs.getDir(path)) then fs.makeDir(fs.getDir(path)) end
+        local dir = fs.getDir(path)
+        if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
         local f = fs.open(path, "w")
         f.write(fileData.code)
         f.close()

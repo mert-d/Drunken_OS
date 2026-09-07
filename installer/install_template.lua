@@ -26,7 +26,7 @@ end
 -- Ensures a directory exists, creating it if necessary.
 local function ensureDir(path)
     local dir = fs.getDir(path)
-    if not fs.exists(dir) then
+    if dir and dir ~= "" and not fs.exists(dir) then
         fs.makeDir(dir)
     end
 end
@@ -36,12 +36,13 @@ end
 --==============================================================================
 
 local function doInstallation()
-    local diskPath = fs.getDir(shell.getRunningProgram())
+    local runningProgram = (shell and shell.getRunningProgram and shell.getRunningProgram()) or "startup.lua"
+    local diskPath = fs.getDir(runningProgram)
     if diskPath == "" or diskPath == "." then diskPath = "/" end
     
     local configPath = fs.combine(diskPath, "install_config.lua")
     
-    print("Installer path: " .. shell.getRunningProgram())
+    print("Installer path: " .. runningProgram)
     print("Disk path: " .. diskPath)
     print("Config path: " .. configPath)
     
@@ -74,11 +75,18 @@ local function doInstallation()
         print("Source: " .. sourcePath)
         print("Source Exists: " .. tostring(fs.exists(sourcePath)))
         print("Dest: " .. destPath)
-        ensureDir(destPath)
-        if fs.exists(destPath) then
-            fs.delete(destPath)
+        if fs.exists(sourcePath) then
+            ensureDir(destPath)
+            if fs.exists(destPath) then
+                fs.delete(destPath)
+            end
+            local ok_copy, err_copy = pcall(fs.copy, sourcePath, destPath)
+            if not ok_copy then
+                print("Warning: Failed to copy " .. filePath .. ": " .. tostring(err_copy))
+            end
+        else
+            print("Warning: Missing on disk: " .. filePath)
         end
-        fs.copy(sourcePath, destPath)
     end
 
     showMessage("Files copied successfully.")

@@ -59,19 +59,41 @@ function merchant.cashier(context)
             broadcasting = not broadcasting
             if broadcasting then
                 logActivity("Shop '" .. getParent(context).nickname .. "' opened.")
-                parallel.waitForAny(function()
-                    while broadcasting do
-                        rednet.broadcast({ type = "shop_heartbeat", name = getParent(context).nickname .. "'s Shop" }, MERCHANT_BROADCAST_PROTOCOL)
-                        sleep(5)
-                    end
-                end, function()
-                    while broadcasting do
-                        local _, msg = rednet.receive("DB_Merchant_Recv")
-                        if msg and msg.type == "payment_proof" then
-                            context.showMessage("SALE", string.format("Received $%d from %s", msg.amount, msg.from))
+                context.drawWindow("Shop Open")
+                context.drawText("Broadcasting...", 2, 4)
+                context.drawText("Press Q or Enter to Close", 2, 6)
+                parallel.waitForAny(
+                    function()
+                        while broadcasting do
+                            rednet.broadcast({ type = "shop_heartbeat", name = getParent(context).nickname .. "'s Shop" }, MERCHANT_BROADCAST_PROTOCOL)
+                            sleep(5)
+                        end
+                    end,
+                    function()
+                        while broadcasting do
+                            local _, msg = rednet.receive("DB_Merchant_Recv", 1)
+                            if msg and msg.type == "payment_proof" then
+                                context.showMessage("SALE", string.format("Received $%d from %s", msg.amount, msg.from))
+                                context.drawWindow("Shop Open")
+                                context.drawText("Broadcasting...", 2, 4)
+                                context.drawText("Press Q or Enter to Close", 2, 6)
+                            end
+                        end
+                    end,
+                    function()
+                        while broadcasting do
+                            local event, p1 = os.pullEvent()
+                            if event == "key" and (p1 == keys.q or p1 == keys.enter or p1 == keys.backspace) then
+                                broadcasting = false
+                                break
+                            elseif event == "mouse_click" then
+                                broadcasting = false
+                                break
+                            end
                         end
                     end
-                end)
+                )
+                logActivity("Shop closed.")
             end
         elseif selected == 2 then
             -- Simple catalog editor placeholder

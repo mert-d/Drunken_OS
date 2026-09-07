@@ -678,8 +678,16 @@ local function runSession()
 
     local drive = peripheral.find("drive")
     if not drive then error("No Disk Drive is attached to this terminal.", 0) end
+    local driveSide = peripheral.getName(drive)
     
-    local event, p1 = os.pullEvent("disk")
+    local p1 = nil
+    if disk.isPresent(driveSide) then
+        p1 = driveSide
+    else
+        local event, side = os.pullEvent("disk")
+        p1 = side
+    end
+
     local disk_label = disk.getLabel(p1)
     if not disk_label or not disk_label:match("^DrunkenBeard_Card_.+") then
         showMessage("Card Error", "This is not a valid Drunken Beard Bank card.", true)
@@ -687,7 +695,13 @@ local function runSession()
         return
     end
     username = disk_label:match("^DrunkenBeard_Card_(.+)")
-    local handle = fs.open(disk.getMountPath(p1) .. "/.card_data", "r")
+    local mountPath = disk.getMountPath(p1)
+    if not mountPath then
+        showMessage("Card Error", "Could not read card mount path.", true)
+        disk.eject(p1)
+        return
+    end
+    local handle = fs.open(mountPath .. "/.card_data", "r")
     if not handle then
         showMessage("Card Error", "Card is missing its data file.", true)
         disk.eject(p1)

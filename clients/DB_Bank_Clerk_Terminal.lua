@@ -270,15 +270,23 @@ local function createBankCard()
     end
 
     print("User verified.")
-    print("\nPlease insert a blank floppy disk into the drive...")
-    
-    while true do
-        local event, side = os.pullEvent("disk")
-        if side then break end
-    end
     
     local drive = peripheral.find("drive")
-    if not drive or not drive.isDiskPresent() then
+    if not drive then
+        print("Error: No disk drive attached to this computer.")
+        pause()
+        return
+    end
+
+    if not drive.isDiskPresent() then
+        print("\nPlease insert a blank floppy disk into the drive...")
+        while true do
+            local event, side = os.pullEvent("disk")
+            if side then break end
+        end
+    end
+    
+    if not drive.isDiskPresent() then
         print("Error: Disk not detected.")
         pause()
         return
@@ -288,6 +296,11 @@ local function createBankCard()
     drive.setDiskLabel("DrunkenBeard_Card_" .. user)
     
     local mountPath = drive.getMountPath()
+    if not mountPath then
+        print("Error: Could not access disk mount path.")
+        pause()
+        return
+    end
     local file = fs.open(mountPath .. "/.card_data", "w")
     if file then
         local cardData = { owner = user, issue_date = os.time(), issuer = "ClerkTerminal" }
