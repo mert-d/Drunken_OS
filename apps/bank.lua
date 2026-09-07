@@ -73,11 +73,25 @@ function bank.run(context)
         while true do
             context.drawWindow("Pocket Bank | $" .. balance)
             context.drawMenu(options, selected, 2, 4)
-            local event, key = os.pullEvent("key")
-            if key == keys.up then selected = (selected == 1) and #options or selected - 1
-            elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-            elseif key == keys.enter then break
-            elseif key == keys.tab then return end
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                local key = p1
+                if key == keys.up then selected = (selected == 1) and #options or selected - 1
+                elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+                elseif key == keys.enter then break
+                elseif key == keys.tab or key == keys.q then return end
+            elseif event == "mouse_click" then
+                local btn, clickX, clickY = p1, p2, p3
+                local clickedIdx = clickY - 4 + 1
+                if clickedIdx >= 1 and clickedIdx <= #options then
+                    selected = clickedIdx
+                    break
+                end
+            elseif event == "mouse_scroll" then
+                local dir = p1
+                if dir < 0 then selected = (selected == 1) and #options or selected - 1
+                else selected = (selected == #options) and 1 or selected + 1 end
+            end
         end
         
         if selected == 4 then return end
@@ -86,17 +100,24 @@ function bank.run(context)
             context.showMessage("Balance", "Your current balance is: $" .. balance)
         elseif selected == 2 then
             context.drawWindow("Exchange Rates")
-            local w,h = context.getSafeSize()
+            local w, h = context.getSafeSize()
             local y = 4
+            local sortedRates = {}
             for name, data in pairs(rates) do
+                table.insert(sortedRates, { name = name, data = data })
+            end
+            table.sort(sortedRates, function(a, b) return a.name < b.name end)
+            
+            for _, entry in ipairs(sortedRates) do
                 if y > h - 2 then break end
                 term.setCursorPos(2, y)
-                local clean = name:gsub("minecraft:", ""):gsub("_", " ")
-                term.write(string.format("%s: $%d", clean:sub(1,15), data.current))
+                local clean = entry.name:gsub("minecraft:", ""):gsub("_", " ")
+                local val = (type(entry.data) == "table" and (entry.data.current or entry.data.price)) or tonumber(entry.data) or 0
+                term.write(string.format("%s: $%d", clean:sub(1,15), val))
                 y = y + 1
             end
             term.setCursorPos(2, h-1); term.setTextColor(context.theme.prompt); term.write("Press any key...")
-            os.pullEvent("key")
+            os.pullEvent()
         elseif selected == 3 then
             context.drawWindow("Transfer Funds")
             local recipient = context.readInput("Recipient: ", 4)
@@ -165,11 +186,25 @@ function bank.pay(context)
                 term.setTextColor(context.theme.text)
             end
             context.drawMenu(options, selected, 2, 8)
-            local event, key = os.pullEvent("key")
-            if key == keys.up then selected = (selected == 1) and #options or selected - 1
-            elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-            elseif key == keys.enter then break
-            elseif key == keys.tab or key == keys.q then return end
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                local key = p1
+                if key == keys.up then selected = (selected == 1) and #options or selected - 1
+                elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+                elseif key == keys.enter then break
+                elseif key == keys.tab or key == keys.q then return end
+            elseif event == "mouse_click" then
+                local btn, clickX, clickY = p1, p2, p3
+                local clickedIdx = clickY - 8 + 1
+                if clickedIdx >= 1 and clickedIdx <= #options then
+                    selected = clickedIdx
+                    break
+                end
+            elseif event == "mouse_scroll" then
+                local dir = p1
+                if dir < 0 then selected = (selected == 1) and #options or selected - 1
+                else selected = (selected == #options) and 1 or selected + 1 end
+            end
         end
 
         local choice = options[selected]

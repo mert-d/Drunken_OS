@@ -15,7 +15,7 @@ end
 -- @param path string: Directory path containing the file.
 -- @param filename string: The name of the file to inspect.
 -- @return table: File metdata object.
-local function getFileInfo(path, filename)
+local function getFileInfo(path, filename, context)
     local fullPath = fs.combine(path, filename)
     local info = {
         name = filename,
@@ -24,23 +24,24 @@ local function getFileInfo(path, filename)
         ext = filename:match("^.+(%.%w+)$") or ""
     }
     
+    local theme = (context and context.theme) or {}
     if info.isDir then
         info.icon = ">"
-        info.color = context.theme.highlightText or colors.lightBlue
+        info.color = theme.highlightText or colors.lightBlue
     elseif info.ext == ".lua" then
         if fullPath:match("games/") then
             info.icon = "*"
-            info.color = context.theme.successText or colors.green
+            info.color = theme.successText or colors.green
         else
             info.icon = "-"
-            info.color = context.theme.warningText or colors.yellow
+            info.color = theme.warningText or colors.yellow
         end
     elseif info.ext == ".dat" or info.ext == ".db" or info.ext == ".json" then
         info.icon = "o"
-        info.color = context.theme.linkText or colors.purple
+        info.color = theme.linkText or colors.purple
     else
         info.icon = " "
-        info.color = context.theme.text or colors.white
+        info.color = theme.text or colors.white
     end
     return info
 end
@@ -70,11 +71,25 @@ function files.fileActionModal(context, file, isCloud)
         term.write(string.format("Type: %s | Size: %d b", file.isDir and "Folder" or (file.ext ~= "" and file.ext or "File"), file.size))
         
         context.drawMenu(options, selected, 2, 6)
-        local event, key = os.pullEvent("key")
-        if key == keys.up then selected = (selected == 1) and #options or selected - 1
-        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-        elseif key == keys.enter then break
-        elseif key == keys.tab then break end
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "key" then
+            local key = p1
+            if key == keys.up then selected = (selected == 1) and #options or selected - 1
+            elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+            elseif key == keys.enter then break
+            elseif key == keys.tab or key == keys.q then break end
+        elseif event == "mouse_click" then
+            local btn, clickX, clickY = p1, p2, p3
+            local clickedIdx = clickY - 6 + 1
+            if clickedIdx >= 1 and clickedIdx <= #options then
+                selected = clickedIdx
+                break
+            end
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir < 0 then selected = (selected == 1) and #options or selected - 1
+            else selected = (selected == #options) and 1 or selected + 1 end
+        end
     end
 
     local choice = options[selected]
@@ -112,8 +127,9 @@ function files.run(context)
         local files = {}
         if storageMode == "Local" then
             local rawFiles = fs.list(currentPath)
+            table.sort(rawFiles)
             if currentPath ~= "" then table.insert(files, { name = "..", isDir = true, icon = "<", color = context.theme.mutedText or colors.gray }) end
-            for _, f in ipairs(rawFiles) do table.insert(files, getFileInfo(currentPath, f)) end
+            for _, f in ipairs(rawFiles) do table.insert(files, getFileInfo(currentPath, f, context)) end
         else
             files = cloudFiles
             if #files == 0 then table.insert(files, { name = "(Cloud Empty)", icon = " ", color = context.theme.mutedText or colors.gray, disabled = true }) end
@@ -143,14 +159,46 @@ function files.run(context)
         term.setTextColor(context.theme.mutedText or colors.gray)
         term.write("[R] AirDrop In  [Enter] Options")
 
-        local event, key = os.pullEvent("key")
-        if key == keys.up then selected = selected - 1
-        elseif key == keys.down then selected = selected + 1
-        elseif key == keys.left or key == keys.right then
-            storageMode = (storageMode == "Local") and "Cloud" or "Local"
-            if storageMode == "Cloud" then refreshCloud() end
-            selected = 1; scroll = 1
-        elseif key == keys.enter then
+        local event, p1, p2, p3 = os.pullEvent()
+        local key = nil
+        if event == "key" then
+            key = p1
+            if key == keys.up then selected = selected - 1
+            elseif key == keys.down then selected = selected + 1
+            elseif key == keys.left or key == keys.right then
+                storageMode = (storageMode == "Local") and "Cloud" or "Local"
+                if storageMode == "Cloud" then refreshCloud() end
+                selected = 1; scroll = 1
+            end
+        elseif event == "mouse_click" then
+            local btn, clickX, clickY = p1, p2, p3
+            if clickY == 2 then
+                if clickX >= 2 and clickX <= 8 then
+                    if storageMode ~= "Local" then
+                        storageMode = "Local"
+                        selected = 1; scroll = 1
+                    end
+                elseif clickX >= 10 and clickX <= 17 then
+                    if storageMode ~= "Cloud" then
+                        storageMode = "Cloud"
+                        refreshCloud()
+                        selected = 1; scroll = 1
+                    end
+                end
+            elseif clickY >= 4 and clickY <= 4 + listHeight - 1 then
+                local clickedRow = scroll + (clickY - 4)
+                if clickedRow >= 1 and clickedRow <= #files then
+                    selected = clickedRow
+                    key = keys.enter
+                end
+            end
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir < 0 then selected = selected - 1
+            else selected = selected + 1 end
+        end
+
+        if key == keys.enter then
             local f = files[selected]
             if f and not f.disabled then
                 if f.isDir then

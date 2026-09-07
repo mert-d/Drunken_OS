@@ -130,23 +130,54 @@ function bites.run(ctx)
         term.write(" [Q] Cancel")
         term.setTextColor(ctx.theme.text or colors.white)
 
-        local _, key = os.pullEvent("key")
-        if key == keys.up then
-            repeat sel = sel - 1; if sel < 1 then sel = #lines end
-            until not lines[sel].isCat
-        elseif key == keys.down then
-            repeat sel = sel + 1; if sel > #lines then sel = 1 end
-            until not lines[sel].isCat
-        elseif key == keys.enter or key == keys.right then
-            local it = lines[sel]
-            if it and not it.isCat then addItem(it) end
-        elseif key == keys.minus or key == keys.numPadSubtract then
-            local it = lines[sel]
-            if it and not it.isCat then removeItem(it.id) end
-        elseif key == keys.c then
-            if #cart == 0 then ctx.showMessage("Empty Cart", "Add items first.")
-            else break end
-        elseif key == keys.q or key == keys.tab then return end
+        local ev, p1, p2, p3 = os.pullEvent()
+        if ev == "key" then
+            local key = p1
+            if key == keys.up then
+                repeat sel = sel - 1; if sel < 1 then sel = #lines end
+                until not lines[sel].isCat
+            elseif key == keys.down then
+                repeat sel = sel + 1; if sel > #lines then sel = 1 end
+                until not lines[sel].isCat
+            elseif key == keys.enter or key == keys.right then
+                local it = lines[sel]
+                if it and not it.isCat then addItem(it) end
+            elseif key == keys.minus or key == keys.numPadSubtract then
+                local it = lines[sel]
+                if it and not it.isCat then removeItem(it.id) end
+            elseif key == keys.c then
+                if #cart == 0 then ctx.showMessage("Empty Cart", "Add items first.")
+                else break end
+            elseif key == keys.q or key == keys.tab then return end
+        elseif ev == "mouse_click" then
+            local btn, clickX, clickY = p1, p2, p3
+            if clickY >= mStart and clickY <= mEnd then
+                local clickedIdx = scroll + (clickY - mStart + 1)
+                if clickedIdx >= 1 and clickedIdx <= #lines then
+                    if not lines[clickedIdx].isCat then
+                        sel = clickedIdx
+                        if btn == 2 then
+                            removeItem(lines[clickedIdx].id)
+                        else
+                            addItem(lines[clickedIdx])
+                        end
+                    end
+                end
+            elseif clickY == h - 1 then
+                if #cart > 0 then break end
+            elseif clickY == h then
+                return
+            end
+        elseif ev == "mouse_scroll" then
+            local dir = p1
+            if dir < 0 then
+                repeat sel = sel - 1; if sel < 1 then sel = #lines end
+                until not lines[sel].isCat
+            else
+                repeat sel = sel + 1; if sel > #lines then sel = 1 end
+                until not lines[sel].isCat
+            end
+        end
     end
 
     -- === Checkout ===
@@ -165,16 +196,27 @@ function bites.run(ctx)
     term.write("TOTAL: $" .. cartTotal)
     term.setTextColor(ctx.theme.text or colors.white)
 
-    local tblNum = tonumber(ctx.readInput("Deliver to Table #: ", y + 3))
-    if not tblNum then ctx.showMessage("Cancelled", "Order cancelled."); return end
+    local promptMsg = string.format("Deliver to Table # (1-%d): ", tblCount or 4)
+    local tblNum = tonumber(ctx.readInput(promptMsg, y + 3))
+    if not tblNum or tblNum < 1 or (tblCount and tblNum > tblCount) then
+        ctx.showMessage("Invalid Table", string.format("Please enter a valid table number (1 to %d).", tblCount or 4))
+        return
+    end
 
     ctx.drawWindow("Confirm Order?")
     term.setCursorPos(2, 4); term.write(string.format("Total: $%d | Table: %d", cartTotal, tblNum))
     term.setCursorPos(2, 6); term.write("[Enter] Pay  |  [Q] Cancel")
     while true do
-        local _, k = os.pullEvent("key")
-        if k == keys.enter then break
-        elseif k == keys.q then ctx.showMessage("Cancelled", "Order cancelled."); return end
+        local ev, p1, p2, p3 = os.pullEvent()
+        if ev == "key" then
+            if p1 == keys.enter then break
+            elseif p1 == keys.q then ctx.showMessage("Cancelled", "Order cancelled."); return end
+        elseif ev == "mouse_click" then
+            if p3 == 6 then
+                if p2 <= 14 then break
+                else ctx.showMessage("Cancelled", "Order cancelled."); return end
+            end
+        end
     end
 
     -- === Submit Order ===

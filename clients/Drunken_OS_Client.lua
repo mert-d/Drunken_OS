@@ -263,14 +263,23 @@ local function autoUpdateCheck()
         rednet.send(state.mailServerId, { type = "get_update", program = programName }, "SimpleMail")
         local _, update = rednet.receive("SimpleMail", 5)
         if update and update.code then
-            local path = shell.getRunningProgram()
+            local path = (shell and shell.getRunningProgram and shell.getRunningProgram()) or "Drunken_OS_Client.lua"
+            local parentDir = fs.getDir(path)
+            if parentDir and parentDir ~= "" and not fs.exists(parentDir) then
+                fs.makeDir(parentDir)
+            end
             local file = fs.open(path, "w")
-            file.write(update.code)
-            file.close()
-            print("Update complete. Rebooting...")
-            sleep(2)
-            os.reboot()
-            return true
+            if file then
+                file.write(update.code)
+                file.close()
+                print("Update complete. Rebooting...")
+                sleep(2)
+                os.reboot()
+                return true
+            else
+                print("Update failed: could not write to file.")
+                sleep(2)
+            end
         else
             print("Update failed.")
             sleep(2)
@@ -490,23 +499,31 @@ local function mainMenu()
         local mainOptions = {}
         
         -- A. Favorites
-        for _, path in ipairs(fs.list("apps")) do
-            if not fs.isDir("apps/"..path) then
-                local name = path:gsub("%.lua$", "")
-                local label = name:gsub("_", " ")
-                if favorites[label] then
-                   table.insert(mainOptions, { label = "★ " .. label, path = "apps/"..path, isApp = true }) 
+        if fs.exists("apps") and fs.isDir("apps") then
+            for _, path in ipairs(fs.list("apps")) do
+                if not fs.isDir("apps/"..path) and path:match("%.lua$") then
+                    local name = path:gsub("%.lua$", "")
+                    local label = name:gsub("_", " ")
+                    if favorites[label] then
+                        local display = name:gsub("(%a)([%w_']*)", function(first, rest)
+                            return first:upper() .. rest:lower():gsub("_", " ")
+                        end)
+                        table.insert(mainOptions, { label = "★ " .. display, path = "apps/"..path, isApp = true }) 
+                    end
                 end
             end
         end
         
         -- Default shortcuts if no user favorites pinned yet
         if not hasFavs then
-            local defaults = { "mail", "bank", "chat", "arcade", "files", "calc", "notes", "remote", "radar" }
+            local defaults = { "mail", "bank", "chat", "arcade", "files", "calc", "notes", "remote", "radar", "drunken_bites" }
             for _, d in ipairs(defaults) do
                 local p = "apps/" .. d .. ".lua"
                 if fs.exists(p) then
-                    table.insert(mainOptions, { label = "★ " .. d:sub(1,1):upper() .. d:sub(2), path = p, isApp = true })
+                    local display = d:gsub("(%a)([%w_']*)", function(first, rest)
+                        return first:upper() .. rest:lower():gsub("_", " ")
+                    end)
+                    table.insert(mainOptions, { label = "★ " .. display, path = p, isApp = true })
                 end
             end
         end
@@ -519,6 +536,7 @@ local function mainMenu()
         table.insert(mainOptions, { label = "[R] Reboot", action = os.reboot })
 
         local selected = 1
+        local scrollOffset = 0
         local inFolder = false
         local cachedAllApps = nil
         
@@ -527,10 +545,12 @@ local function mainMenu()
             if choice.action == "back" then
                 inFolder = false
                 selected = 1
+                scrollOffset = 0
                 return true
             elseif choice.isFolder then
                 inFolder = choice.label:gsub("%[%+%] ", "")
                 selected = 1
+                scrollOffset = 0
                 return true
             elseif choice.isApp then
                 local appName = choice.path:match("apps/(.+)%.lua$")
@@ -561,10 +581,14 @@ local function mainMenu()
                     cachedAllApps = {}
                     -- Populate All Apps
                     if fs.exists("apps") and fs.isDir("apps") then
-                        for _, path in ipairs(fs.list("apps")) do
+                        local appList = fs.list("apps")
+                        table.sort(appList)
+                        for _, path in ipairs(appList) do
                             if not fs.isDir("apps/"..path) and path:match("%.lua$") then
                                 local name = path:gsub("%.lua$", "")
-                                local label = name:gsub("_", " ")
+                                local label = name:gsub("(%a)([%w_']*)", function(first, rest)
+                                    return first:upper() .. rest:lower():gsub("_", " ")
+                                end)
                                 -- Exclude daemon turtle scripts from GUI client
                                 if not name:find("turtle") then
                                     table.insert(cachedAllApps, { label = label, path = "apps/"..path, isApp = true })
@@ -587,11 +611,37 @@ local function mainMenu()
             end
             
             local maxVisible = h - startY - 1
-            for i, opt in ipairs(currentList) do
-                if i <= maxVisible then
+            if maxVisible < 1 then maxVisible = 1 end
+
+            -- Keep selected within bounds
+            if selected < 1 then selected = 1 end
+            if selected > #currentList then selected = #currentList end
+
+            -- Adjust scrollOffset so selected is always visible
+            if selected <= scrollOffset then
+                scrollOffset = selected - 1
+            elseif selected > scrollOffset + maxVisible then
+                scrollOffset = selected - maxVisible
+            end
+            if scrollOffset < 0 then scrollOffset = 0 end
+            if scrollOffset > math.max(0, #currentList - maxVisible) then
+                scrollOffset = math.max(0, #currentList - maxVisible)
+            end
+
+            -- Scroll indicator at top
+            if scrollOffset > 0 then
+                term.setCursorPos(w - 2, startY - 1)
+                term.setTextColor(colors.yellow)
+                term.write("^")
+            end
+
+            for i = 1, maxVisible do
+                local itemIdx = scrollOffset + i
+                local opt = currentList[itemIdx]
+                if opt then
                     local y = startY + (i - 1)
                     term.setCursorPos(2, y)
-                    if i == selected then
+                    if itemIdx == selected then
                         term.setTextColor(theme.highlightText)
                         term.setBackgroundColor(theme.highlightBg)
                         local itemWidth = math.min(w - 3, 24)
@@ -614,6 +664,13 @@ local function mainMenu()
                     end
                 end
             end
+
+            -- Scroll indicator at bottom
+            if scrollOffset + maxVisible < #currentList then
+                term.setCursorPos(w - 2, startY + maxVisible)
+                term.setTextColor(colors.yellow)
+                term.write("v")
+            end
             
             local event, p1, p2, p3 = os.pullEvent()
             if event == "key" then
@@ -634,11 +691,14 @@ local function mainMenu()
                 end
             elseif event == "mouse_click" then
                 local btn, clickX, clickY = p1, p2, p3
-                local clickedIdx = clickY - startY + 1
-                if clickedIdx >= 1 and clickedIdx <= #currentList then
-                    selected = clickedIdx
-                    local choice = currentList[selected]
-                    if not executeChoice(choice) then break end
+                local relativeRow = clickY - startY + 1
+                if relativeRow >= 1 and relativeRow <= maxVisible then
+                    local clickedIdx = scrollOffset + relativeRow
+                    if clickedIdx >= 1 and clickedIdx <= #currentList then
+                        selected = clickedIdx
+                        local choice = currentList[selected]
+                        if not executeChoice(choice) then break end
+                    end
                 end
             elseif event == "mouse_scroll" then
                 local dir = p1
