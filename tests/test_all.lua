@@ -23,6 +23,9 @@ local tests = {
     { name = "Drunken Remote & Switches",  file = "tests/test_remote.lua" },
     { name = "NetRadar Proximity & Ping",  file = "tests/test_radar.lua" },
     { name = "Task Manager & Daemon",      file = "tests/test_task_manager.lua" },
+    { name = "Service Guard & Watchdog",   file = "tests/test_service_guard.lua" },
+    { name = "Speaker Audio Engine",       file = "tests/test_sound.lua" },
+    { name = "System Doctor Diagnostics",  file = "tests/test_doctor.lua" },
 }
 
 print("========================================================")

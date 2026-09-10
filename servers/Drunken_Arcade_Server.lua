@@ -16,6 +16,7 @@ package.path = "/?.lua;" .. package.path
 -- Load shared libraries
 local DB = require("lib.db")
 local sharedTheme = require("lib.theme")
+local ServiceGuard = require("lib.service_guard")
 
 local GAMES_DB = "games.db"
 local SCORES_DB = "scores.db"
@@ -525,20 +526,24 @@ end
 -- Main Loops
 --==============================================================================
 
-local function main()
-    -- Initialize Modems
-    local found = false
-    for _, side in ipairs(rs.getSides()) do
-        if peripheral.getType(side) == "modem" then
-            rednet.open(side)
-            found = true
-        end
-    end
-    
-    if not found then error("Arcade Server requires a Modem!") end
-    
+local function registerProtocols()
     rednet.host("ArcadeGames_Internal", "arcade.server.internal")
     rednet.host("ArcadeGames", "arcade.server")
+end
+
+local function flushArcadeState()
+    if dbTracker and dbTracker.backgroundSave then
+        pcall(dbTracker.backgroundSave)
+    end
+    flushLogs()
+end
+
+local function main()
+    -- Initialize Modems
+    local modems = ServiceGuard.initModems()
+    if modems.count == 0 then error("Arcade Server requires a Modem!") end
+    
+    registerProtocols()
     logActivity("Arcade Server Online (Dual Protocol)")
     
     -- Initialize the persistence tracker once, then drain any pre-init saves
@@ -548,24 +553,32 @@ local function main()
     end
     dbDirty = {}
 
-    -- Long-running coroutines (never restart on their own)
+    -- Long-running coroutines with protected dispatch and hot-plug
     local function networkListener()
+        local timerId = os.startTimer(1)
         while true do
-            local id, msg, proto = rednet.receive(nil, 1)
-            if id and (proto == "ArcadeGames_Internal" or proto == "ArcadeGames") and msg and msg.type then
-                if gameHandlers[msg.type] then
-                    gameHandlers[msg.type](id, msg)
+            local event, p1, p2, p3 = os.pullEventRaw()
+            if event == "rednet_message" then
+                local id, msg, proto = p1, p2, p3
+                if id and (proto == "ArcadeGames_Internal" or proto == "ArcadeGames") and msg and msg.type then
+                    if gameHandlers[msg.type] then
+                        ServiceGuard.protectHandler("Arcade:" .. tostring(msg.type), gameHandlers[msg.type], logActivity, id, msg)
+                    end
                 end
+                redrawUI()
+            elseif event == "peripheral" or event == "peripheral_detach" then
+                ServiceGuard.handlePeripheralEvent(event, p1, registerProtocols, logActivity)
+            elseif event == "timer" and p1 == timerId then
+                timerId = os.startTimer(1)
+                redrawUI()
             end
-            -- Redraw opportunity after each message or timeout
-            redrawUI()
         end
     end
 
     local function inputListener()
         while true do
             local w, h = term.getSize()
-            local event, p1 = os.pullEvent()
+            local event, p1 = os.pullEventRaw()
             if event == "key" then
                 if p1 == keys.d then
                     currentScreen = "dashboard"
@@ -591,8 +604,10 @@ local function main()
                     end
                     needsRedraw = true
                 elseif p1 == keys.escape then
-                    return
+                    error("Terminated", 0)
                 end
+            elseif event == "terminate" then
+                error("Terminated", 0)
             end
         end
     end
@@ -612,11 +627,14 @@ local function main()
         end
     end
 
-    parallel.waitForAny(networkListener, inputListener, lobbyCleanupLoop, persistenceLoop)
+    local function runServerLoops()
+        parallel.waitForAny(networkListener, inputListener, lobbyCleanupLoop, persistenceLoop)
+    end
+
+    ServiceGuard.runSupervisor("Arcade Server", runServerLoops, flushArcadeState, logActivity)
 
     -- Clean shutdown
-    dbTracker.backgroundSave()
-    flushLogs()
+    flushArcadeState()
     pcall(rednet.unhost, "ArcadeGames")
     pcall(rednet.unhost, "ArcadeGames_Internal")
     term.setBackgroundColor(colors.black)
@@ -626,8 +644,4 @@ local function main()
     print("Arcade Server shut down cleanly.")
 end
 
-local ok, err = pcall(main)
-if not ok and err and not err:find("Terminated") then
-    term.setBackgroundColor(colors.black); term.clear(); term.setCursorPos(1,1)
-    print("Arcade Server Error: " .. err)
-end
+main()

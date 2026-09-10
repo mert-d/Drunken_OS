@@ -10,6 +10,7 @@
 package.path = "/?.lua;" .. package.path
 local utils = require("lib.utils")
 local theme = require("lib.theme")
+local ok_sound, Sound = pcall(require, "lib.sound")
 
 local RADAR_PROTO = "DrunkenRadar"
 
@@ -110,6 +111,7 @@ function radarApp.run(context)
                             distNum = distNum,
                             distStr = distStr
                         })
+                        if ok_sound and Sound and Sound.playRadarPing then pcall(Sound.playRadarPing, distNum) end
                     end
                 end
             elseif event == "timer" and p1 == timer then

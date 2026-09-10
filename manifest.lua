@@ -9,7 +9,7 @@
 -- Global configuration structure detailing files bundled with each Drunken OS component.
 -- Ensures dependencies are mapped properly during fetching & installation.
 return {
-    version = 1.4,
+    version = 1.5,
 
     -- Files common to almost all client-side installations
     shared = {
@@ -28,6 +28,8 @@ return {
         "lib/rpc.lua",
         "lib/score_cache.lua",
         "lib/task_manager.lua",
+        "lib/service_guard.lua",
+        "lib/sound.lua",
         "manifest.lua"
     },
 
@@ -44,6 +46,7 @@ return {
                 "lib/db.lua",
                 "lib/utils.lua",
                 "lib/theme.lua",
+                "lib/service_guard.lua",
                 "clients/Admin_Console.lua",
                 "manifest.lua"
             },
@@ -59,6 +62,7 @@ return {
                 "servers/Drunken_OS_AuthServer.lua",
                 "lib/sha1_hmac.lua",
                 "lib/db.lua",
+                "lib/service_guard.lua",
                 -- HyperAuthClient Dependencies
                 "HyperAuthClient/config.lua",
                 "HyperAuthClient/api/auth_api.lua",
@@ -92,6 +96,7 @@ return {
                 "apps/arcade.lua",
                 "apps/bank.lua",
                 "apps/chat.lua",
+                "apps/doctor.lua",
                 "apps/drunken_bites.lua",
                 "apps/files.lua",
                 "apps/mail.lua",
@@ -144,7 +149,8 @@ return {
                 "lib/sha1_hmac.lua",
                 "lib/db.lua",
                 "lib/theme.lua",
-                "lib/utils.lua"
+                "lib/utils.lua",
+                "lib/service_guard.lua"
             },
             include_shared = false,
             needs_setup = true,
@@ -292,14 +298,14 @@ return {
             name = "Mainframe Proxy",
             type = "server",
             main = "servers/Proxy_Mainframe.lua",
-            files = { "servers/Proxy_Mainframe.lua", "lib/proxy_base.lua" },
+            files = { "servers/Proxy_Mainframe.lua", "lib/proxy_base.lua", "lib/service_guard.lua" },
             include_shared = false
         },
         proxy_bank = {
             name = "Bank Proxy",
             type = "server",
             main = "servers/Proxy_Bank.lua",
-            files = { "servers/Proxy_Bank.lua", "lib/proxy_base.lua" },
+            files = { "servers/Proxy_Bank.lua", "lib/proxy_base.lua", "lib/service_guard.lua" },
             include_shared = false
         },
         arcade_server = {
@@ -311,6 +317,7 @@ return {
                 "lib/sha1_hmac.lua",
                 "lib/db.lua",
                 "lib/theme.lua",
+                "lib/service_guard.lua",
                 -- 14 Arcade Games
                 "games/Drunken_Doom.lua",
                 "games/Drunken_Duels.lua",
@@ -335,6 +342,7 @@ return {
         "apps/arcade.lua",
         "apps/bank.lua",
         "apps/chat.lua",
+        "apps/doctor.lua",
         "apps/drunken_bites.lua",
         "apps/files.lua",
         "apps/mail.lua",
@@ -352,6 +360,7 @@ return {
         ["Developer Portal"] = "apps/developer.lua",
         ["Drunken Remote"]   = "apps/remote.lua",
         ["NetRadar"]         = "apps/radar.lua",
+        ["System Doctor"]    = "apps/doctor.lua",
         ["Calculator"]       = "apps/calc.lua",
         ["Notes Scratchpad"] = "apps/notes.lua",
         ["Connect 4"]        = "games/Drunken_Connect4.lua",

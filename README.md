@@ -1,9 +1,9 @@
-# 🏴‍☠️ Drunken OS (Enterprise Edition v16.9)
+# 🏴‍☠️ Drunken OS (Enterprise Edition v17.1)
 
-[![Version](https://img.shields.io/badge/version-16.9.0%20Enterprise-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-17.1.0%20Enterprise-blue.svg)](CHANGELOG.md)
 [![Minecraft](https://img.shields.io/badge/minecraft-1.18.2%2B-brightgreen.svg)]()
 [![Mod](https://img.shields.io/badge/mod-CC%3ATweaked%20%7C%20Restitched-orange.svg)]()
-[![Tests](https://img.shields.io/badge/tests-17%2F17%20Passing%20(100%25)-success.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-20%2F20%20Passing%20(100%25)-success.svg)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
 
 A comprehensive, distributed operating system and network ecosystem designed for **CC:Tweaked** and **CC:Restitched** (ComputerCraft) in Minecraft. Engineered for high performance, fault tolerance, and rich interaction on handheld **Pocket Computers**, desktop workstations, and autonomous turtles. Fully optimized for large survival multiplayer servers and industrial modpacks such as **Create Astral**.
@@ -12,10 +12,35 @@ A comprehensive, distributed operating system and network ecosystem designed for
 
 ## ✨ Features
 
+### 🔊 CC:Tweaked Speaker Sound Engine & Audio Feedback
+- **Retro 8-Bit Audio Engine (`lib/sound.lua`)**: Procedural note-block audio engine utilizing CC:Tweaked Speaker peripherals with automatic silent fallback when no speaker is present or audio is disabled.
+- **Contextual Notification Chimes**: Custom acoustic signatures for incoming notifications—high dual chime for Mail, warm bell for Chat, crisp coin pling for Bank payments, and soft double flute for AirDrop.
+- **Financial Audio Feedback**: Dual-tone ascending coin pickup sound (`pling` 14 -> 20 semitones) triggered on ATM cash withdrawals, merchant checkouts, and bank transfers.
+- **Proximity-Scaled Radar Ping**: Frequency-modulated sonar ping where pitch dynamically scales from low bass (6 semitones, >80m) to high treble (22 semitones, <=10m).
+- **Tactile UI Clicks & Arcade SFX**: Subtle button tap clicks (`Sound.playClick()`), harmonic success chords, error buzzers, and arcade bit chiptunes.
+
+### 🩺 In-Game "System Doctor" Diagnostic Suite
+- **Interactive Diagnostic Tool (`apps/doctor.lua`)**: 1-click system health check and diagnostic API (`doctor.diagnose()` & `doctor.autoRepair()`).
+- **Hardware & Resolution Profiling**: Automatically detects screen dimensions and optimizes layout for Pocket Computers (26x20) vs Advanced Computers (51x19) and color capability (16-color palette vs monochrome).
+- **Peripheral Audit**: Scans and verifies attached wired/wireless modems, speakers, external monitors, and disk drives.
+- **Server Latency Benchmarks**: Real-time round-trip latency measurements to Mainframe, Chat, Bank, Arcade, and Auth servers.
+- **Storage & Integrity Audit**: Verifies free disk space, tests filesystem read/write privileges, and identifies orphaned `.tmp` files.
+- **1-Click Auto-Repair (`[F]` / Touch)**: Re-opens closed modems, refreshes universal DNS cache, and purges orphaned `.tmp` files with single touch tap or keypress.
+
+### 🗄️ Append-Only Log Compaction & Stale-While-Revalidate DNS
+- **Append-Only Log Compaction (`DB.compactLogFile` in `lib/db.lua`)**: Safely compacts transaction and event logs when exceeding byte thresholds while preserving the latest $N$ entries via atomic `.tmp` swap, preventing world save bloat.
+- **Stale-While-Revalidate DNS (`lib/dns.lua`)**: Solves Rednet lookup failures when remote servers reside in sleeping or unloaded Minecraft chunks by falling back to verified cached server IDs (`allowStale = true`). Includes persistent on-disk cache (`.dns_cache.db`).
+- **Pocket Computer (26x20) Responsive UI (`lib/sdk.lua`)**: Dynamic dialog wrapping, screen-bounded message boxes, and finger-friendly `[ OK (Tap) ]` action buttons preventing text clipping on mobile displays.
+
+### 🛡️ Self-Healing Infrastructure & Peripheral Hot-Plug
+- **Zero-Downtime Server Supervisor (`lib/service_guard.lua`)**: Self-healing watchdog wraps all servers and network proxies; automatically intercepts fatal unhandled exceptions, safely executes emergency database flushes (`dbTracker.backgroundSave()`), logs timestamped stack traces to `/logs/<service>_crash.log`, and recovers the event loop with zero operator intervention.
+- **Dynamic Peripheral Hot-Plug & Cable Reconnection**: Actively listens for native CC `peripheral` and `peripheral_detach` events; automatically re-opens newly connected wired and wireless modems on rednet, dynamically re-binds external monitors (`monitor.setTextScale(0.5)`), and re-hosts all network protocols without requiring server reboots or manual maintenance.
+- **Protected Packet Dispatching**: Enforces strict `pcall` execution envelopes around all network message handlers across the Mainframe, Bank Server, Arcade Server, Auth Server, and Proxies, immunizing servers against malformed packets, nil-reference attacks, or corrupted payloads.
+
 ### 🔀 Multi-Tasking & Global Notification Daemon
 - **Coroutine Task Manager (`lib/task_manager.lua`)**: Cooperative multitasking supervisor running concurrent apps and desktop shell simultaneously.
 - **Window-Buffered Screen Memory**: Isolates display buffers (`window.create`) per task, guaranteeing 0 screen corruption or artifacting when background processes or notifications fire.
-- **Global Floating Toasts**: 3.5s auto-dismissing notification banners for Mail, Chat, Bank payments, Merchant invoices, and AirDrop with 1-tap app launch.
+- **Global Floating Toasts**: 3.5s auto-dismissing notification banners for Mail, Chat, Bank payments, Merchant invoices, and AirDrop with 1-tap app launch and sound effects.
 - **Quick Task Switcher (`F1` / `Ctrl`)**: Seamless switching between open tasks and Desktop, process killing, and quick app launcher (`[N]`).
 - **Zero Performance Degradation**: Fast arcade games (*Tetris*, *Floppa Bird*, *Pong*) maintain 60 FPS tick rates with zero input lag.
 
@@ -108,6 +133,7 @@ Drunken_OS/
 │   ├── p2p_socket.lua            # P2P connection handshake & packet transport
 │   ├── db.lua                    # ACID atomic database persistence & crash recovery
 │   ├── task_manager.lua          # Coroutine multitasking supervisor & notification daemon
+│   ├── service_guard.lua         # Self-healing server watchdog & hot-plug supervisor
 │   ├── theme.lua                 # Color palettes (Default, Matrix, Red Alert, etc.)
 │   ├── utils.lua                 # UI primitives (wordWrap, safeColor, inputBox)
 │   └── sdk.lua                   # Standard application development kit
@@ -118,8 +144,9 @@ Drunken_OS/
 ├── installer/                    # Master Installer & Deployment Disks
 │   ├── Master_Installer.lua      # Menu-driven floppy disk burner
 │   └── manifest.lua              # Distribution catalog & package specifications
-├── tests/                        # Automated Test Suite (17/17 Passing)
+├── tests/                        # Automated Test Suite (18/18 Passing)
 │   ├── test_all.lua              # Master test runner (100% automated pass)
+│   ├── test_service_guard.lua    # Service guard & watchdog recovery unit tests
 │   ├── test_task_manager.lua     # Multitasking & notification daemon unit tests
 │   ├── test_remote.lua, test_radar.lua, test_score_cache.lua, ...
 └── docs/                         # Comprehensive Engineering Documentation
@@ -158,11 +185,11 @@ Select a package to write to a blank floppy disk:
 
 ## 🧪 Automated Testing
 
-Drunken OS includes a 16-suite unit test runner covering all core libraries, networking layers, cryptography, and game AI. Run the master test suite on any computer:
+Drunken OS includes an 18-suite unit test runner covering all core libraries, networking layers, cryptography, self-healing supervisors, and game AI. Run the master test suite on any computer:
 ```bash
 tests/test_all.lua
 ```
-**Results: 16/16 test suites passing (100%)**
+**Results: 18/18 test suites passing (100%)**
 
 ---
 

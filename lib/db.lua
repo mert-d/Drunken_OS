@@ -164,6 +164,64 @@ function DB.loadTableFromFileJSON(path, logFn)
 end
 
 ---
+-- Compacts an append-only log file if it exceeds a size threshold.
+-- Reads the file, preserves the newest keepLines, and performs an atomic rewrite.
+-- @param path string: Path to the log file.
+-- @param maxBytes number|nil: Size threshold in bytes (default: 50 * 1024 = 50KB).
+-- @param keepLines number|nil: Number of recent lines to keep (default: 200).
+-- @param logFn function|nil: Optional logging function(msg, isErr).
+-- @return boolean: True if compacted, false if not needed or failed.
+function DB.compactLogFile(path, maxBytes, keepLines, logFn)
+    if not fs or not fs.exists or not fs.exists(path) then return false end
+    local threshold = maxBytes or (50 * 1024)
+    local linesToKeep = keepLines or 200
+
+    local size = (fs.getSize and fs.getSize(path)) or 0
+    if size <= threshold then return false end
+
+    local file = fs.open(path, "r")
+    if not file then return false end
+
+    local allLines = {}
+    local line = file.readLine()
+    while line do
+        table.insert(allLines, line)
+        line = file.readLine()
+    end
+    file.close()
+
+    if #allLines <= linesToKeep then return false end
+
+    local tempPath = path .. ".tmp"
+    local tempFile, err = fs.open(tempPath, "w")
+    if not tempFile then
+        if logFn then logFn("Failed to open temp file for log compaction: " .. tostring(err), true) end
+        return false
+    end
+
+    local startIdx = #allLines - linesToKeep + 1
+    for i = startIdx, #allLines do
+        tempFile.writeLine(allLines[i])
+    end
+    tempFile.close()
+
+    -- Atomic swap
+    if fs.exists(path) then
+        pcall(fs.delete, path)
+    end
+    local ok_move, err_move = pcall(fs.move, tempPath, path)
+    if ok_move then
+        if logFn then
+            logFn(string.format("Compacted %s: reduced from %d lines to %d lines.", path, #allLines, linesToKeep), false)
+        end
+        return true
+    else
+        if logFn then logFn("Failed to finalize log compaction: " .. tostring(err_move), true) end
+        return false
+    end
+end
+
+---
 -- Creates a dirty tracker for lazy persistence.
 -- @param dbPointers table: Map of {[dbPath] = function() return dataTable end}
 -- @param logFn function: Optional logging function(message, isError).
@@ -172,6 +230,7 @@ end
 function DB.createDirtyTracker(dbPointers, logFn, formats)
     local dbDirty = {}
     local fmtMap = formats or {}
+    local trackedLogs = {}
     
     local tracker = {}
     
@@ -181,6 +240,14 @@ function DB.createDirtyTracker(dbPointers, logFn, formats)
         dbDirty[dbPath] = true
     end
     
+    --- Registers an append-only log file to be auto-compacted during background save.
+    -- @param logPath string: File path to the log file.
+    -- @param maxBytes number|nil: Size threshold in bytes (default: 50KB).
+    -- @param keepLines number|nil: Number of recent lines to keep (default: 200).
+    function tracker.registerLog(logPath, maxBytes, keepLines)
+        table.insert(trackedLogs, { path = logPath, maxBytes = maxBytes, keepLines = keepLines })
+    end
+
     --- Checks if any database needs saving.
     -- @return boolean: True if at least one DB is dirty.
     function tracker.hasPendingSaves()
@@ -190,7 +257,7 @@ function DB.createDirtyTracker(dbPointers, logFn, formats)
         return false
     end
     
-    --- Performs background save of all dirty databases.
+    --- Performs background save of all dirty databases and compacts registered logs.
     -- Should be called periodically (e.g., every 30 seconds).
     function tracker.backgroundSave()
         for path, isDirty in pairs(dbDirty) do
@@ -202,6 +269,11 @@ function DB.createDirtyTracker(dbPointers, logFn, formats)
                     dbDirty[path] = false
                 end
             end
+        end
+
+        -- Periodic log compaction
+        for _, l in ipairs(trackedLogs) do
+            DB.compactLogFile(l.path, l.maxBytes, l.keepLines, logFn)
         end
     end
     

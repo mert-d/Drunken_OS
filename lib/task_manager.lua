@@ -28,6 +28,8 @@ if rootTerm and rootTerm.getSize then
     screenW, screenH = rootTerm.getSize()
 end
 
+local ok_sound, Sound = pcall(require, "lib.sound")
+
 local toast = {
     active = false,
     title = "",
@@ -84,6 +86,10 @@ function TaskManager.notify(title, message, color, duration, targetApp)
         pcall(os.cancelTimer, toast.timerId)
     end
     toast.timerId = os.startTimer(duration or 3.5)
+
+    if ok_sound and Sound and Sound.playToast then
+        pcall(Sound.playToast, targetApp)
+    end
 
     if toast.win then
         toast.win.setVisible(true)

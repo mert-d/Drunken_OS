@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [17.1.0] - 2026-09-09 - Hardware Sound Engine, In-Game Doctor & Pocket UX Edition
+
+### 🔊 Phase 10: CC:Tweaked Speaker Engine, In-Game Doctor, Log Compaction & Pocket UX
+
+#### Added
+- **Speaker Audio Engine (`lib/sound.lua`)**:
+  - Comprehensive retro 8-bit sound effects engine for CC:Tweaked Speaker peripherals with automatic silent fallback when no speaker is attached or when muted.
+  - **Contextual Notification Chimes (`Sound.playToast(category)`)**: Custom acoustic signatures for incoming Mail (`chime`), Chat (`bell`), Bank transfers (`pling`), and Airdrops (`flute`).
+  - **Financial Audio Feedback (`Sound.playCoin()`)**: Dual-tone ascending coin pickup sound triggered on ATM withdrawals, merchant payments, and banking transfers.
+  - **Radar Proximity Pitch Scaling (`Sound.playRadarPing(distance)`)**: Frequency-modulated sonar ping where pitch dynamically scales from 6 semitones (distant >80m) up to 22 semitones (immediate <=10m).
+  - **Tactile UI & Arcade FX**: Tactile UI click (`Sound.playClick()`), harmonic success chords (`Sound.playSuccess()`), warning error buzz (`Sound.playError()`), and arcade chiptune beeps (`Sound.playGameBeep()`).
+- **In-Game System Doctor Diagnostics (`apps/doctor.lua`)**:
+  - Interactive diagnostic suite and programmatic health audit API (`doctor.diagnose()` & `doctor.autoRepair()`).
+  - **Hardware & Display Audit**: Automatically identifies screen resolution and terminal profile (Pocket Computer 26x20 vs Advanced Computer 51x19) and color depth (16-color palette vs monochrome).
+  - **Peripheral Audit**: Scans for dual wired/wireless modems, speakers, external monitors, and disk drives.
+  - **World Spawn Latency Benchmarks**: Tests round-trip latency and availability to Mainframe, Chat, Bank, Arcade, and Auth servers.
+  - **Storage & Integrity Audit**: Computes free disk space, validates filesystem read/write privileges, and detects orphaned `.tmp` files.
+  - **1-Click Auto-Repair**: Auto-reconnects closed modems, flushes universal DNS cache, and purges orphaned `.tmp` files with single keypress (`[F]`) or touch tap.
+- **Append-Only Log Compaction (`DB.compactLogFile` in `lib/db.lua`)**:
+  - Atomic log compaction with safety margin thresholds (`maxBytes` and `keepLines`) using `.tmp` buffers and `fs.move`.
+  - Registered in database tracker (`tracker.registerLog()`) and integrated into background state flushes to prevent world save file bloat.
+- **Stale-While-Revalidate DNS Caching (`lib/dns.lua`)**:
+  - Eliminates Rednet lookup failures when target servers reside in unloaded or sleeping Minecraft chunks by returning previously verified cached IDs (`allowStale = true`).
+  - Persistent on-disk cache (`.dns_cache.db`) preserving server topology across computer reboots.
+- **Pocket Computer (26x20) UI & Touch Tuning (`lib/sdk.lua`)**:
+  - Responsive modal dialogs in `sdk.UI.showMessage`: automatic text wrapping, width clamping to terminal boundaries, and finger-friendly `[ OK (Tap) ]` action buttons.
+  - Clamped item width and touch hitboxes in `sdk.UI.drawMenu` preventing line-wrap visual artifacts on small screens.
+- **Automated Unit Tests**:
+  - `tests/test_sound.lua`: Comprehensive unit test suite (Suite #19) for note playback, mute controls, category chimes, coin sound, radar pitch scaling, and silent fallback.
+  - `tests/test_doctor.lua`: Comprehensive unit test suite (Suite #20) for hardware diagnosis, peripheral scanning, latency pings, storage checks, and auto-repair.
+
+#### Changed
+- **Audio Integration Across Apps & Clients**:
+  - Integrated `Sound.playToast(targetApp)` into `lib/task_manager.lua` notification daemon.
+  - Added `Sound.playCoin()` to `apps/bank.lua` and `clients/DB_Bank_ATM.lua` on successful payments and cash withdrawals.
+  - Added `Sound.playRadarPing(distance)` to `apps/radar.lua` ping receiver.
+  - Added `Sound.playClick()` to `lib/sdk.lua` dialog dismiss and menu selections.
+- **Master Test Runner (`tests/test_all.lua`)**:
+  - Expanded from 18 to 20 test suites with 100% pass rate.
+- **Package Manifests**:
+  - Added `lib/sound.lua` to `shared` and `apps/doctor.lua` to `all_apps`, `store`, and `client.files` in `manifest.lua` and `installer/manifest.lua` (100% byte-for-byte synchronization).
+
+---
+
+## [17.0.0] - 2026-09-08 - Self-Healing Infrastructure & Peripheral Hot-Plug Edition
+
+### 🛡️ Phase 9: Self-Healing Server Watchdogs & Peripheral Hot-Plug
+
+#### Added
+- **Service Guard & Watchdog Supervisor (`lib/service_guard.lua`)**:
+  - Comprehensive service supervisor library providing automatic crash detection, emergency state preservation, and zero-downtime auto-restart.
+  - **Zero-Downtime Server Supervisor (`ServiceGuard.runSupervisor`)**:
+    - Catches unexpected runtime crashes, unhandled errors, and nil references without terminating server processes.
+    - Automatically triggers emergency state flushes (`dbTracker.backgroundSave()`) before restart to guarantee 0 data loss.
+    - Appends timestamped stack traces and exception reports to persistent log files (`logs/<service>_crash.log`).
+    - Respects operator termination (`Ctrl+T` / `keys.escape` / `"Terminated"`) for clean shutdown.
+  - **Dynamic Peripheral Hot-Plug Subsystem (`ServiceGuard.initModems`, `ServiceGuard.handlePeripheralEvent`)**:
+    - Actively detects native ComputerCraft `peripheral` and `peripheral_detach` events.
+    - Automatically opens wired and wireless modems on rednet upon connection/re-connection.
+    - Re-binds external monitors dynamically (`monitor.setTextScale(0.5)`).
+    - Automatically re-hosts all network protocols without requiring server reboots.
+  - **Protected Packet Dispatcher (`ServiceGuard.protectHandler`)**:
+    - Enforces protected `pcall` execution wrappers around packet handlers, immunizing servers and proxies against malformed packets, nil fields, and corrupted payloads.
+- **Automated Test Suite (`tests/test_service_guard.lua`)**:
+  - Comprehensive unit tests verifying modem auto-discovery, wired/wireless filtering, peripheral hot-plug callbacks, monitor re-binding, detachment logging, protected handler execution, crash logging, and zero-downtime supervisor auto-restart.
+  - Registered in master test runner (`tests/test_all.lua`) as Suite #18 with 100% pass rate.
+
+#### Changed
+- **Network Proxies (`lib/proxy_base.lua`)**:
+  - Wired and wireless modem detection modernized with `ServiceGuard.initModems()`.
+  - Dispatcher loop updated to handle `peripheral` and `peripheral_detach` events for auto-reconnection.
+  - `forward` and `relay` packet dispatching wrapped with `ServiceGuard.protectHandler`.
+  - Entire proxy dispatcher supervised under `ServiceGuard.runSupervisor`.
+- **Mainframe Core Gateway (`servers/Drunken_OS_Server.lua`)**:
+  - Wired modem initialization upgraded via `ServiceGuard.initModems("wired")`.
+  - Added dynamic protocol re-hosting and monitor re-binding on peripheral hot-plug events.
+  - Wrapped `mailHandlers` execution in safe `pcall` with guaranteed `rednet.send` restoration.
+  - Main event loop supervised under `ServiceGuard.runSupervisor` with `flushMainframeState` callback.
+- **Bank Server (`servers/Drunken_OS_BankServer.lua`)**:
+  - Modems auto-configured with `ServiceGuard.initModems()`.
+  - Added hot-plug event handling and re-hosting for `"DB_Bank_Internal"` and `"DB_Bank"`.
+  - Protected `bankHandlers` dispatch and audit protocol handlers (`stock_report`, `get_transaction_log`).
+  - Event loop supervised under `ServiceGuard.runSupervisor` with `flushBankState` callback.
+- **Arcade Games Server (`servers/Drunken_Arcade_Server.lua`)**:
+  - Modems initialized via `ServiceGuard.initModems()`.
+  - Network listener converted to event-driven loop supporting `peripheral` hot-plug and 1-second refresh timer.
+  - Game message handlers protected via `ServiceGuard.protectHandler`.
+  - Server loops supervised under `ServiceGuard.runSupervisor` with `flushArcadeState` callback.
+- **Authentication Server (`servers/Drunken_OS_AuthServer.lua`)**:
+  - Modems auto-initialized via `ServiceGuard.initModems()`.
+  - Network listener upgraded with peripheral hot-plug handling and `ServiceGuard.protectHandler`.
+  - Server execution supervised under `ServiceGuard.runSupervisor` with `flushAuthState` callback.
+- **Package Manifests**:
+  - Synchronized `lib/service_guard.lua` across `shared` packages and all server/proxy packages in both `manifest.lua` and `installer/manifest.lua`.
+
+---
+
 ## [16.9.0] - 2026-09-07 - Multi-Tasking Edition
 
 ### ⚡ Phase 8: Multi-Tasking & Global Notification Daemon

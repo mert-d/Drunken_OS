@@ -5,6 +5,8 @@
     Eliminates code duplication between Mainframe and Bank proxies.
 ]]
 
+local ServiceGuard = require("lib.service_guard")
+
 local ProxyBase = {}
 
 ---
@@ -34,9 +36,11 @@ function ProxyBase.run(config)
         print(entry)
         
         if monitor then
-            local oldTerm = term.redirect(monitor)
-            print(entry)
-            term.redirect(oldTerm)
+            local ok, oldTerm = pcall(term.redirect, monitor)
+            if ok then
+                print(entry)
+                term.redirect(oldTerm)
+            end
         end
 
         table.insert(logs, entry)
@@ -44,6 +48,18 @@ function ProxyBase.run(config)
     end
 
     local internalIdCache = {}
+
+    -- Register/re-register hosts
+    local function registerHosts()
+        for host, proto in pairs(config.hostMap) do
+            local ok, err = pcall(rednet.host, proto, host)
+            if ok then
+                log("Hosting " .. host .. " (" .. proto .. ")")
+            else
+                log("Failed to host " .. host .. ": " .. tostring(err), true)
+            end
+        end
+    end
 
     -- Forward: Wireless/External -> Internal/Wired
     local function forward(senderId, message, protocol)
@@ -89,15 +105,30 @@ function ProxyBase.run(config)
         end
     end
 
-    -- Dispatcher: single event loop
+    -- Dispatcher: single event loop with hot-plug & protected dispatch
     local function dispatcher()
         while true do
-            local event, id, msg, protocol = os.pullEventRaw("rednet_message")
+            local event, p1, p2, p3 = os.pullEventRaw()
             
-            if config.protocolMap[protocol] then
-                forward(id, msg, protocol)
-            elseif internalToPublic[protocol] then
-                relay(id, msg, protocol)
+            if event == "rednet_message" then
+                local id, msg, protocol = p1, p2, p3
+                if config.protocolMap[protocol] then
+                    ServiceGuard.protectHandler("Proxy:forward", forward, log, id, msg, protocol)
+                elseif internalToPublic[protocol] then
+                    ServiceGuard.protectHandler("Proxy:relay", relay, log, id, msg, protocol)
+                end
+            elseif event == "peripheral" or event == "peripheral_detach" then
+                ServiceGuard.handlePeripheralEvent(event, p1, registerHosts, log, function(monSide)
+                    monitor = peripheral.wrap(monSide)
+                    if monitor then
+                        monitor.setTextScale(0.5)
+                        monitor.clear()
+                        monitor.setCursorPos(1, 1)
+                        monitor.write(config.name .. " - Live Feed")
+                    end
+                end)
+            elseif event == "terminate" then
+                error("Terminated", 0)
             end
         end
     end
@@ -108,18 +139,9 @@ function ProxyBase.run(config)
     print(config.name .. " v" .. config.version)
     print("Initializing modems...")
 
-    local wireless_modem, wired_modem = nil, nil
-    for _, name in ipairs(peripheral.getNames()) do
-        if peripheral.getType(name) == "modem" then
-            local m = peripheral.wrap(name)
-            if m.isWireless() then
-                wireless_modem = name
-            else
-                wired_modem = name
-            end
-            rednet.open(name)
-        end
-    end
+    local modems = ServiceGuard.initModems()
+    local wireless_modem = modems.wireless
+    local wired_modem = modems.wired
 
     if not wireless_modem then log("Warning: No wireless modem found.", true) end
     if not wired_modem then log("Warning: No wired modem found.", true) end
@@ -133,18 +155,11 @@ function ProxyBase.run(config)
         monitor.write(config.name .. " - Live Feed")
     end
 
-    -- Register hosts
-    for host, proto in pairs(config.hostMap) do
-        local ok, err = pcall(rednet.host, proto, host)
-        if ok then
-            log("Hosting " .. host .. " (" .. proto .. ")")
-        else
-            log("Failed to host " .. host .. ": " .. tostring(err), true)
-        end
-    end
+    -- Register initial hosts
+    registerHosts()
 
-    log("Proxy Online. Dispatcher active.")
-    dispatcher()
+    log("Proxy Online. Dispatcher active under ServiceGuard supervisor.")
+    ServiceGuard.runSupervisor(config.name, dispatcher, nil, log)
 end
 
 return ProxyBase

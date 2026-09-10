@@ -86,6 +86,28 @@ _Goal: Introduce true cooperative multitasking, window-buffered screen memory, a
 
 ---
 
+## 🛡️ Phase 9: Self-Healing Infrastructure & Peripheral Hot-Plug (Completed in v17.0)
+_Goal: Eliminate server crashes and connection drops with zero-downtime watchdogs and automatic peripheral cable hot-plugging._
+
+- [x] **Service Guard Watchdog Supervisor (`lib/service_guard.lua`)**: Intercepts unhandled crashes, executes emergency database flushes (`dbTracker.backgroundSave()`), logs timestamped stack traces, and auto-restarts server loops with 0 downtime.
+- [x] **Peripheral Hot-Plug & Cable Auto-Reconnection**: Dynamic event handling for native `peripheral` and `peripheral_detach` events to auto-reopen modems, re-bind external monitors, and re-host protocols.
+- [x] **Protected Packet Handlers (`ServiceGuard.protectHandler`)**: Enforces `pcall` envelopes around all packet handlers across servers and proxies, preventing malformed payload crashes.
+- [x] **Automated Test Coverage (18 Suites)**: Created `tests/test_service_guard.lua`, achieving 18/18 test suites passing (100%).
+
+---
+
+## 🔊 Phase 10: Hardware Sound Engine, In-Game Doctor & Pocket UX (Completed in v17.1)
+_Goal: Add retro 8-bit note block sound effects, interactive in-game diagnostic tools, append-only log compaction, stale DNS fallback, and pocket mobile touch scaling._
+
+- [x] **CC:Tweaked Speaker Sound Engine (`lib/sound.lua`)**: Procedural note-block audio engine with silent fallback; contextual notification chimes (Mail, Chat, Bank, AirDrop), rising coin pickup sounds for ATM/POS, radar proximity pitch scaling (6 to 22 semitones), tactile clicks, and arcade SFX.
+- [x] **In-Game "System Doctor" Diagnostic Suite (`apps/doctor.lua`)**: Interactive diagnostic tool and health check API auditing terminal dimensions (Pocket 26x20 vs Desktop 51x19), color palette, modems, speakers, monitors, disk drives, Rednet state, 5-server latency benchmarks, free storage, and 1-click auto-repair (`[F]`).
+- [x] **Append-Only Log Compaction (`DB.compactLogFile` in `lib/db.lua`)**: Safely compacts transaction and event logs when exceeding byte thresholds while preserving the latest $N$ lines via atomic `.tmp` swap, preventing world save bloat.
+- [x] **Stale-While-Revalidate DNS (`lib/dns.lua`)**: Solves Rednet lookup failures when remote servers reside in sleeping or unloaded Minecraft chunks by falling back to verified cached server IDs (`allowStale = true`). Includes persistent on-disk cache (`.dns_cache.db`).
+- [x] **Pocket Computer (26x20) Responsive UI (`lib/sdk.lua`)**: Dynamic dialog text wrapping, screen-bounded message boxes, and finger-friendly `[ OK (Tap) ]` action buttons preventing text clipping on mobile displays.
+- [x] **Automated Test Coverage (20 Suites)**: Created `tests/test_sound.lua` and `tests/test_doctor.lua`, achieving 20/20 test suites passing (100%).
+
+---
+
 ## 💡 Future Wishlist & Next Frontiers
 
 - [ ] **Astral Telemetry Satellite**: Specialized turtle or computer reading Create Astral space rocket data or train station departures.

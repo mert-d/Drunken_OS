@@ -30,6 +30,7 @@ local AuthModule = require("servers.modules.auth")
 -- Load shared libraries
 local DB = require("lib.db")
 local utils = require("lib.utils")
+local ServiceGuard = require("lib.service_guard")
 
 --==============================================================================
 -- Configuration & State
@@ -1414,10 +1415,16 @@ local function handleRednetMessage(senderId, message, protocol)
             -- Temporary rednet.send override allows handlers to remain stateless
             local oldSend = rednet.send
             rednet.send = sendResponse
-            mailHandlers[actualMsg.type](origSender, actualMsg)
+            local ok, err = pcall(mailHandlers[actualMsg.type], origSender, actualMsg)
             rednet.send = oldSend
+            if not ok then
+                logActivity("Error in mail handler '" .. tostring(actualMsg.type) .. "': " .. tostring(err), true)
+            end
         else
-            mailHandlers[actualMsg.type](origSender, actualMsg)
+            local ok, err = pcall(mailHandlers[actualMsg.type], origSender, actualMsg)
+            if not ok then
+                logActivity("Error in mail handler '" .. tostring(actualMsg.type) .. "': " .. tostring(err), true)
+            end
         end
 
     elseif protocol == "SimpleChat_Internal" and actualMsg and actualMsg.from then
@@ -1487,6 +1494,25 @@ local function handleTerminalInput(event, p1)
 end
 
 ---
+-- Protocol registration helper for startup and hot-plug events.
+local function registerProtocols()
+    rednet.host("SimpleMail_Internal", "mail.server.internal")
+    rednet.host("SimpleChat_Internal", "chat.server.internal")
+    rednet.host("Drunken_Admin_Internal", "admin.server.internal")
+    rednet.host("auth.secure.v1_Internal", "auth.client.internal")
+    rednet.host(AUTH_INTERLINK_PROTOCOL, "interlink.server.internal")
+end
+
+---
+-- Flushes all dirty database state and persistent logs on shutdown or recovery.
+local function flushMainframeState()
+    if dbTracker and dbTracker.backgroundSave then
+        pcall(dbTracker.backgroundSave)
+    end
+    flushLogs()
+end
+
+---
 -- Orchestrates the core server threads concurrently using parallel.waitForAny.
 -- Includes the admin prompt, rednet listener, persistent save loop, and UI rendering loop.
 local function mainEventLoop()
@@ -1497,16 +1523,27 @@ local function mainEventLoop()
             if event == "key" or event == "char" then
                 handleTerminalInput(event, p1)
             elseif event == "terminate" then
-                break
+                error("Terminated", 0)
             end
         end
     end
 
     local function rednetListener()
         while true do
-            local event, senderId, message, protocol = os.pullEventRaw("rednet_message")
-            if senderId then
-                handleRednetMessage(senderId, message, protocol)
+            local event, p1, p2, p3 = os.pullEventRaw()
+            if event == "rednet_message" then
+                local senderId, message, protocol = p1, p2, p3
+                if senderId then
+                    ServiceGuard.protectHandler("Mainframe:packet", handleRednetMessage, logActivity, senderId, message, protocol)
+                end
+            elseif event == "peripheral" or event == "peripheral_detach" then
+                ServiceGuard.handlePeripheralEvent(event, p1, registerProtocols, logActivity, function(monName)
+                    monitor = peripheral.wrap(monName)
+                    if monitor then
+                        monitor.setTextScale(0.5)
+                        redrawMonitorUI()
+                    end
+                end)
             end
         end
     end
@@ -1519,7 +1556,7 @@ end
 -- 1. Load data from disk.
 -- 2. Detect and initialize external monitors.
 -- 3. Open modems and host rednet protocols.
--- 4. Kick off the main event loop.
+-- 4. Kick off the supervised event loop with zero downtime auto-restart.
 local function main()
     loadAllData()
     
@@ -1530,22 +1567,16 @@ local function main()
         redrawMonitorUI()
     end
 
-    for _, side in ipairs(rs.getSides()) do
-        if peripheral.getType(side) == "modem" then
-            local m = peripheral.wrap(side)
-            if not m.isWireless() then
-                rednet.open(side)
-                logActivity("Wired modem opened on " .. side)
-            end
-        end
+    local modems = ServiceGuard.initModems("wired")
+    if modems.count == 0 then
+        logActivity("Warning: No wired modem attached on startup.", true)
+    else
+        logActivity("Wired modems initialized: " .. table.concat(modems.all, ", "))
     end
-    rednet.host("SimpleMail_Internal", "mail.server.internal")
-    rednet.host("SimpleChat_Internal", "chat.server.internal")
-    rednet.host("Drunken_Admin_Internal", "admin.server.internal")
-    rednet.host("auth.secure.v1_Internal", "auth.client.internal")
-    rednet.host(AUTH_INTERLINK_PROTOCOL, "interlink.server.internal")
-    logActivity("Mainframe Server v12.1 (Internal Only) Initialized.")
-    mainEventLoop()
+
+    registerProtocols()
+    logActivity("Mainframe Server v12.1 (Internal Only) Initialized under ServiceGuard.")
+    ServiceGuard.runSupervisor("Mainframe Server", mainEventLoop, flushMainframeState, logActivity)
 end
 
 main()

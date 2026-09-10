@@ -1,4 +1,4 @@
-# 📖 Drunken OS Enterprise Documentation (v16.8)
+# 📖 Drunken OS Enterprise Documentation (v17.1)
 
 Welcome to the technical documentation for **Drunken OS (Enterprise Edition)**, an advanced, modular, Rednet-based operating system designed for **CC:Tweaked** and **CC:Restitched** in Minecraft. This document covers the distributed architecture, enterprise networking layers, security models, application suites, and protocol specifications.
 
@@ -64,9 +64,10 @@ Drunken OS includes a suite of high-performance libraries in the `lib/` director
 - Only transmits changed characters to the terminal driver (`term.setCursorPos` + `term.blit`), slashing Minecraft server-to-client network packet overhead by up to **90%**.
 - Prevents visible screen flicker during high-speed game rendering.
 
-### 2. `lib/dns.lua` — Universal DNS Cache
+### 2. `lib/dns.lua` — Universal DNS Cache & Stale Fallback
 - Intercepts `rednet.lookup` calls and caches service-to-ID mappings with a 60-second Time-To-Live (TTL).
 - Eliminates broadcast storms when dozens of clients ping the network at the same time.
+- Stale-while-revalidate fallback ensures sleeping or unloaded Minecraft chunks do not cause failed lookups.
 
 ### 3. `lib/crypto_packet.lua` — Anti-Replay Cryptographic Packets
 - Wraps sensitive payloads with HMAC-SHA1 signatures, millisecond timestamps, and rolling random nonces.
@@ -87,14 +88,23 @@ Drunken OS includes a suite of high-performance libraries in the `lib/` director
 ### 7. `lib/p2p_socket.lua` — Peer-to-Peer Socket Transport
 - Symmetric connection handshake, continuous heartbeat pinging, and timeout disconnection detection for multiplayer games.
 
-### 8. `lib/db.lua` — ACID Atomic Database Persistence
+### 8. `lib/db.lua` — ACID Atomic Database Persistence & Log Compaction
 - Crash-safe database writes using atomic `.tmp` swap files. Guarantees that sudden server restarts never corrupt bank accounts or mailboxes.
+- Auto-compacting append-only logs (`DB.compactLogFile`) with configurable byte thresholds and line retention to prevent long-term world save bloat.
 
 ### 9. `lib/task_manager.lua` — Multi-Tasking & Notification Daemon
 - Cooperative coroutine supervisor managing multiple active processes and the desktop shell concurrently.
 - Window-buffered screen memory (`window.create`) per task: isolates rendering buffers so background processes and toasts cause 0 screen corruption on running games or apps.
 - Centralized network packet dispatcher: catches `rednet_message` events for Mail, Chat, Bank transfers, Merchant invoices, and Radar pings, displays non-intrusive floating toast banners with tap-to-open, and forwards packets transparently to the active foreground app.
 - Task switcher interface (`F1` / `Ctrl`) with process killing (`[X]`) and quick app launcher (`[N]`).
+
+### 10. `lib/service_guard.lua` — Self-Healing Watchdogs & Peripheral Hot-Plug
+- Zero-downtime supervisor (`ServiceGuard.runSupervisor`) that catches fatal exceptions, triggers emergency database flushes, logs stack traces, and recovers server loops.
+- Dynamic peripheral hot-plug (`ServiceGuard.initModems`, `handlePeripheralEvent`): auto-detects plugged modems, re-binds external monitors, and re-hosts protocols without rebooting.
+
+### 11. `lib/sound.lua` — CC:Tweaked Speaker Sound Engine
+- Procedural retro 8-bit note block sound effects with silent fallback when no speaker is attached.
+- Contextual notification chimes (Mail, Chat, Bank, AirDrop), dual-tone rising coin pickup sounds, radar proximity pitch scaling, and arcade chiptune beeps.
 
 ---
 
@@ -105,6 +115,7 @@ Applications in Drunken OS are isolated modules located in `apps/`. Each app rec
 ### Core System Applets
 - **`apps/arcade.lua`**: Browse installed games, view global & local high scores, launch titles, and sync updates from the Arcade Server.
 - **`apps/bank.lua`**: Check balance, transfer funds to players, view transaction history, and check stock prices. Features bounded 1.2s timeout for graceful offline operation.
+- **`apps/doctor.lua`**: In-game "System Doctor" diagnostic tool and health check API. Automatically inspects terminal profile (Pocket 26x20 vs Desktop 51x19), color palette, modems, speakers, monitors, disk drives, Rednet listening state, 5-server latency benchmarks, free storage, filesystem read/write privileges, and provides 1-click auto-repair (`[F]`).
 - **`apps/mail.lua`**: Send and receive messages, view inbox/outbox, attach documents, and manage contacts.
 - **`apps/chat.lua`**: Real-time global IRC-style chatroom.
 - **`apps/files.lua`**: Local file explorer with built-in **AirDrop** wireless beam to transfer files directly to nearby pocket computers without server dependencies.
@@ -175,25 +186,29 @@ The Drunken OS test suite can be run directly on any ComputerCraft machine or si
 tests/test_all.lua
 ```
 
-The test runner executes 16 automated test suites:
+The test runner executes 18 automated test suites:
 1. `tests/test_sha1.lua` — HMAC-SHA1 cryptographic verification.
 2. `tests/test_utils.lua` — String wrapping, safe coloring, and UI utilities.
 3. `tests/test_theme.lua` — Theme palette switching and game colors.
 4. `tests/test_db.lua` — Database persistence and atomic swap recovery.
-5. `tests/test_sdk.lua` — App loader environment isolation and context injection.
-6. `tests/test_dns.lua` — DNS resolution caching and TTL expiration.
-7. `tests/test_engine.lua` — Delta-row differential terminal buffering.
+5. `tests/test_sdk_menu_local.lua` — App loader environment isolation and context injection.
+6. `tests/test_engine_delta.lua` — Delta-row differential terminal buffering.
+7. `tests/test_dns.lua` — DNS resolution caching and TTL expiration.
 8. `tests/test_crypto_packet.lua` — Anti-replay cryptographic validation and nonces.
-9. `tests/test_rpc.lua` — Asynchronous RPC multi-plexing and timeout handling.
-10. `tests/test_transfer.lua` — Chunked file streaming and SHA-1 verification.
-11. `tests/test_score_cache.lua` — Offline score caching and deferred sync queue.
-12. `tests/test_p2p_socket.lua` — Peer-to-peer connection lifecycle and disconnect detection.
-13. `tests/test_c4.lua` — Connect 4 AI move evaluation and win-condition validation.
+9. `tests/test_transfer.lua` — Chunked file streaming and SHA-1 verification.
+10. `tests/test_rpc.lua` — Asynchronous RPC multi-plexing and timeout handling.
+11. `tests/test_calc.lua` — Arithmetic, stack division, and Create gear ratio calculations.
+12. `tests/test_score_cache.lua` — Offline score caching and deferred sync queue.
+13. `tests/test_connect4.lua` — Connect 4 AI move evaluation and win-condition validation.
 14. `tests/test_battleship.lua` — Battleship auto-deployer and hunt/target search AI.
 15. `tests/test_remote.lua` — Redstone switch discovery, toggling, and access control.
 16. `tests/test_radar.lua` — 3D GPS distance math, proximity sorting, and latency ping.
+17. `tests/test_task_manager.lua` — Coroutine multitasking, event transparency, and toast alerts.
+18. `tests/test_service_guard.lua` — Service guard, hot-plug reconnection, and self-healing watchdogs.
+19. `tests/test_sound.lua` — Speaker audio engine, note block synthesis, and audio feedback.
+20. `tests/test_doctor.lua` — System Doctor diagnostic audit, latency tests, and auto-repair.
 
-**Current Test Status: 16/16 Test Suites Passing (100%)**
+**Current Test Status: 20/20 Test Suites Passing (100%)**
 
 ---
 

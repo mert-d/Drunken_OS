@@ -28,15 +28,41 @@ function DrunkenOS.UI.drawWindow(title)
     term.setBackgroundColor(theme.bg)
 end
 
---- Shows a modal message box.
+local function wrapMessage(text, maxW)
+    local lines = {}
+    for rawLine in tostring(text or ""):gmatch("[^\r\n]+") do
+        local current = ""
+        for word in rawLine:gmatch("%S+") do
+            if #current == 0 then
+                current = word:sub(1, maxW)
+            elseif #current + 1 + #word <= maxW then
+                current = current .. " " .. word
+            else
+                table.insert(lines, current)
+                current = word:sub(1, maxW)
+            end
+        end
+        if #current > 0 then
+            table.insert(lines, current)
+        end
+    end
+    if #lines == 0 then table.insert(lines, "") end
+    return lines
+end
+
+--- Shows a modal message box responsive to both Pocket (26x20) and Desktop (51x19) displays.
 -- @param title string: The dialog title.
 -- @param message string: The message body.
 function DrunkenOS.UI.showMessage(title, message)
     local w, h = term.getSize()
-    local width = math.min(w - 4, 30)
-    local height = 6
-    local x = math.floor((w - width) / 2)
-    local y = math.floor((h - height) / 2)
+    local isPocket = (w <= 26)
+    local width = isPocket and math.max(18, w - 2) or math.min(w - 4, 34)
+    local innerW = width - 2
+    local msgLines = wrapMessage(message, innerW)
+    local maxDisplayLines = math.min(#msgLines, isPocket and 4 or 6)
+    local height = math.max(6, maxDisplayLines + 4)
+    local x = math.max(1, math.floor((w - width) / 2) + 1)
+    local y = math.max(2, math.floor((h - height) / 2) + 1)
     
     -- Draw Box
     for i = 0, height do
@@ -45,17 +71,26 @@ function DrunkenOS.UI.showMessage(title, message)
         term.write(string.rep(" ", width))
     end
     
+    -- Title
     term.setCursorPos(x + 1, y + 1)
     term.setTextColor(theme.highlightText)
-    term.write(title)
+    term.write(title:sub(1, innerW))
     
-    term.setCursorPos(x + 1, y + 3)
+    -- Message lines
     term.setTextColor(theme.text)
-    term.write(message:sub(1, width - 2))
+    for i = 1, maxDisplayLines do
+        term.setCursorPos(x + 1, y + 1 + i)
+        term.write(msgLines[i]:sub(1, innerW))
+    end
     
-    term.setCursorPos(x + 1, y + 5)
+    -- Action button
+    local btnText = isPocket and "[ OK (Tap) ]" or "Press ENTER or Tap"
+    local btnX = x + math.max(0, math.floor((width - #btnText) / 2))
+    local btnY = y + height - 1
+    term.setCursorPos(btnX, btnY)
     term.setTextColor(theme.prompt)
-    term.write("Press ENTER or Tap")
+    term.write(btnText)
+
     while true do
         local e, p1 = os.pullEvent()
         if e == "key" and (p1 == keys.enter or p1 == keys.space or p1 == keys.esc) then
@@ -64,6 +99,12 @@ function DrunkenOS.UI.showMessage(title, message)
             break
         end
     end
+
+    pcall(function()
+        local sound = require("lib.sound")
+        sound.playClick()
+    end)
+
     -- Reset
     term.setBackgroundColor(theme.bg)
     term.clear()
@@ -79,11 +120,13 @@ function DrunkenOS.UI.drawMenu(options, selected, x, y)
     selected = selected or 1
     x = x or 2
     y = y or 2
+    local w, h = term.getSize()
 
     local maxLen = 0
     for _, opt in ipairs(options) do
         if #opt > maxLen then maxLen = #opt end
     end
+    local maxItemWidth = math.min(maxLen, w - x - 2)
 
     while true do
         for i, opt in ipairs(options) do
@@ -95,7 +138,9 @@ function DrunkenOS.UI.drawMenu(options, selected, x, y)
                 term.setTextColor(theme.text)
                 term.setBackgroundColor(theme.bg)
             end
-            term.write(" " .. opt .. string.rep(" ", maxLen - #opt + 1))
+            local display = opt:sub(1, maxItemWidth)
+            local line = " " .. display .. string.rep(" ", maxItemWidth - #display + 1)
+            term.write(line)
         end
 
         -- Reset colors after drawing
@@ -112,13 +157,15 @@ function DrunkenOS.UI.drawMenu(options, selected, x, y)
                 selected = selected + 1
                 if selected > #options then selected = 1 end
             elseif key == keys.enter then
+                pcall(function() require("lib.sound").playClick() end)
                 return selected
             end
         elseif event == "mouse_click" then
             local button, clickX, clickY = p1, p2, p3
             local clickedIdx = clickY - y + 1
             if clickedIdx >= 1 and clickedIdx <= #options then
-                if clickX >= x and clickX <= (x + maxLen + 3) then
+                if clickX >= x and clickX <= (x + maxItemWidth + 3) then
+                    pcall(function() require("lib.sound").playClick() end)
                     return clickedIdx
                 end
             end

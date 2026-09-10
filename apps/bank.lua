@@ -6,6 +6,7 @@
 local bank = {}
 local appVersion = 1.2
 local BANK_PROTOCOL = "DB_Bank"
+local ok_sound, Sound = pcall(require, "lib.sound")
 
 local function getParent(context)
     return (context and context.parent) or context or {}
@@ -137,6 +138,7 @@ function bank.run(context)
                         local _, resp = rednet.receive(BANK_PROTOCOL, 15)
                         if resp and resp.success then
                             balance = resp.newBalance
+                            if ok_sound and Sound and Sound.playCoin then pcall(Sound.playCoin) end
                             context.showMessage("Success", "Sent $" .. amount .. " to " .. recipient)
                         else
                             context.showMessage("Failed", (resp and (resp.reason or "Transfer failed")) or "Connection timeout.")
@@ -254,6 +256,7 @@ function bank.pay(context)
                 local _, resp = rednet.receive(BANK_PROTOCOL, 15)
                 if resp and resp.success then
                     balance = resp.newBalance
+                    if ok_sound and Sound and Sound.playCoin then pcall(Sound.playCoin) end
                     context.showMessage("Success", "Paid $" .. amount .. " to " .. recipient)
                     rednet.broadcast({
                         type = "payment_proof",

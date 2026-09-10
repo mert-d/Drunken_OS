@@ -77,5 +77,32 @@ assert_eq(idPatched2, 30, "Patched rednet.lookup hits cache")
 assert_eq(mockLookupCount, 5, "Raw lookup NOT called through patched rednet")
 
 dns.unpatchRednet()
+
+-- 6. Stale-While-Revalidate Fallback (Sleeping / Unloaded Chunks)
+-- Wait for bank entry TTL to expire
+local start2 = os.clock()
+while os.clock() - start2 < 0.01 do end
+
+-- Simulate server being unloaded / offline
+mockRegistry["DB_Bank:bank.server"] = nil
+
+-- Lookup with allowStale = true (default) should return stale ID 20
+local idStale = dns.lookup("DB_Bank", "bank.server", 0.001)
+assert_eq(idStale, 20, "Stale fallback returns cached ID 20 when server is sleeping/unloaded")
+local statsAfterStale = dns.getStats()
+assert_eq(statsAfterStale.stale_hits, 1, "Stale hits counter incremented to 1")
+
+-- Lookup with allowStale = false should return nil
+local idStrict = dns.lookup("DB_Bank", "bank.server", 0.001, false)
+assert_eq(idStrict, nil, "Strict lookup (allowStale=false) returns nil when offline")
+
+-- 7. Persistent Cache & Flush
+dns.saveCache()
+local statsBeforeFlush = dns.getStats()
+assert_eq(statsBeforeFlush.entries > 0, true, "Active entries present before flush")
+dns.flush()
+local statsAfterFlush = dns.getStats()
+assert_eq(statsAfterFlush.entries, 0, "Cache completely empty after flush")
+
 print(">>> All DNS Cache tests passed successfully!\n")
 return true

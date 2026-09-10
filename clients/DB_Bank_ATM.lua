@@ -23,6 +23,7 @@
 local programDir = (shell and shell.getRunningProgram and fs.getDir(shell.getRunningProgram())) or ""
 package.path = "/?.lua;/lib/?.lua;/lib/?/init.lua;" .. (programDir ~= "" and (fs.combine(programDir, "lib/?.lua") .. ";") or "") .. package.path
 local crypto = require("lib.sha1_hmac")
+local ok_sound, Sound = pcall(require, "lib.sound")
 
 local CONFIG_PATH = "atm.conf" -- Define the config file path
 
@@ -425,6 +426,7 @@ local function withdraw()
     
     if final_response and final_response.success then
         balance = final_response.newBalance
+        if ok_sound and Sound and Sound.playCoin then pcall(Sound.playCoin) end
         showMessage("Success", "Please collect your items. New balance: $" .. balance)
     else
         -- This is a critical error state. The user has the items but their balance was not updated.
@@ -490,6 +492,7 @@ local function transferFunds()
 
     if response and response.success then
         balance = response.newBalance
+        if ok_sound and Sound and Sound.playCoin then pcall(Sound.playCoin) end
         showMessage("Success", "Transfer complete. Your new balance is $" .. balance)
     else
         showMessage("Transfer Failed", (response and response.reason) or "No response from server.", true)

@@ -12,6 +12,7 @@ local ok_auth, AuthClient = pcall(require, "HyperAuthClient/api/auth_client")
 if not ok_auth then error("Auth Server: HyperAuthClient API not found.", 0) end
 
 local DB = require("lib.db")
+local ServiceGuard = require("lib.service_guard")
 
 -- State
 local users = {}
@@ -30,20 +31,17 @@ local function logActivity(msg, isError)
     print(os.date("[%H:%M:%S] ") .. pfx .. msg)
 end
 
--- Initialize modems
-for _, name in ipairs(peripheral.getNames()) do
-    if peripheral.getType(name) == "modem" then
-        if peripheral.call(name, "isWireless") then
-            wirelessModem = name
-            rednet.open(name)
-        else
-            wiredModem = name
-            rednet.open(name)
-        end
-    end
+-- Protocol hosting helper
+local function registerProtocols()
+    rednet.host(AUTH_SERVER_PROTOCOL, "auth.server")
 end
 
-if not wirelessModem and not wiredModem then
+-- Initialize modems
+local modems = ServiceGuard.initModems()
+wirelessModem = modems.wireless
+wiredModem = modems.wired
+
+if modems.count == 0 then
     error("Auth Server requires at least one modem to function.")
 end
 
@@ -51,7 +49,7 @@ end
 users = DB.loadTableFromFile(USERS_DB, logActivity)
 
 -- Host the auth service
-rednet.host(AUTH_SERVER_PROTOCOL, "auth.server")
+registerProtocols()
 
 --- Initiates a 2FA request via HyperAuth
 local function requestAuthCode(username, password, nickname, senderId, purpose)
@@ -211,15 +209,32 @@ local function garbageCollectPending()
     end
 end
 
+local function flushAuthState()
+    if users then
+        pcall(DB.saveTableToFile, USERS_DB, users, logActivity)
+    end
+end
+
 local function startServer()
     logActivity("Auth Server starting up...")
     logActivity("Listening for external auth on: " .. AUTH_SERVER_PROTOCOL)
     logActivity("Listening for interlink on: " .. AUTH_INTERLINK_PROTOCOL)
     
     while true do
-        local event, senderId, message, protocol = os.pullEvent("rednet_message")
-        handleMessage(senderId, message, protocol)
+        local event, p1, p2, p3 = os.pullEventRaw()
+        if event == "rednet_message" then
+            local senderId, message, protocol = p1, p2, p3
+            ServiceGuard.protectHandler("Auth:message", handleMessage, logActivity, senderId, message, protocol)
+        elseif event == "peripheral" or event == "peripheral_detach" then
+            ServiceGuard.handlePeripheralEvent(event, p1, registerProtocols, logActivity)
+        elseif event == "terminate" then
+            error("Terminated", 0)
+        end
     end
 end
 
-parallel.waitForAny(startServer, garbageCollectPending)
+local function runAuthServer()
+    parallel.waitForAny(startServer, garbageCollectPending)
+end
+
+ServiceGuard.runSupervisor("Auth Server", runAuthServer, flushAuthState, logActivity)

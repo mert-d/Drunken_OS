@@ -22,6 +22,7 @@ local crypto = require("lib.sha1_hmac")
 local DB = require("lib.db")
 local sharedTheme = require("lib.theme")
 local utils = require("lib.utils")
+local ServiceGuard = require("lib.service_guard")
 
 --==============================================================================
 -- Configuration & State
@@ -1453,13 +1454,27 @@ local function handleTerminalInput(event, p1)
     uiDirty = true
 end
 
+local function registerProtocols()
+    rednet.host("DB_Bank_Internal", "bank.server.internal")
+    if not wired_modem_name then
+        rednet.host(BANK_PROTOCOL, "bank.server")
+    end
+end
+
+local function flushBankState()
+    if dbTracker and dbTracker.backgroundSave then
+        pcall(dbTracker.backgroundSave)
+    end
+    flushLogs()
+end
+
 local function adminPrompt()
     while true do
         local event, p1 = os.pullEventRaw()
         if event == "key" or event == "char" then
             handleTerminalInput(event, p1)
         elseif event == "terminate" then
-            break
+            error("Terminated", 0)
         end
     end
 end
@@ -1470,64 +1485,78 @@ end
 
 local function networkListener()
     while true do
-        local event, senderId, message, protocolReceived = os.pullEventRaw("rednet_message")
+        local event, p1, p2, p3 = os.pullEventRaw()
         
-        -- Proxy Support: Extract original sender and message
-        local origSender = senderId
-        local actualMsg = message
-        local isProxied = false
-        
-        if type(message) == "table" and message.proxy_orig_sender then
-            origSender = message.proxy_orig_sender
-            actualMsg = message.proxy_orig_msg
-            isProxied = true
-        end
-
-        local realRednetSend = rednet.send
-        local function sendResponse(p_id, p_msg, p_proto)
-            -- Only wrap and change protocol if we are responding back to the original client.
-            -- If we are proxied, we MUST use the internal protocol (protocolReceived) so the Proxy recognizes it as a response.
-            if isProxied and p_id == origSender then
-                realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, protocolReceived)
-            else
-                realRednetSend(p_id, p_msg, p_proto or protocolReceived)
+        if event == "rednet_message" then
+            local senderId, message, protocolReceived = p1, p2, p3
+            -- Proxy Support: Extract original sender and message
+            local origSender = senderId
+            local actualMsg = message
+            local isProxied = false
+            
+            if type(message) == "table" and message.proxy_orig_sender then
+                origSender = message.proxy_orig_sender
+                actualMsg = message.proxy_orig_msg
+                isProxied = true
             end
-        end
 
-        if (protocolReceived == "DB_Bank_Internal" or protocolReceived == BANK_PROTOCOL) and actualMsg and actualMsg.type and bankHandlers[actualMsg.type] then
-            -- Override rednet.send temporarily to handle proxied responses
-            local oldSend = rednet.send
-            rednet.send = sendResponse
-            bankHandlers[actualMsg.type](origSender, actualMsg)
-            rednet.send = oldSend
-        
-        elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "stock_report" then
-            local messageToVerify = textutils.serializeJSON(message.report)
-            local signature = crypto.hmac_hex(AUDIT_SECRET_KEY, messageToVerify)
-            if signature == message.signature then
-                logActivity("Received valid, signed stock report from Auditor.")
-                currentStock = message.report
-                saveTableToFile(STOCK_DB, currentStock)
-                adjustCurrencyRates()
-                needsRedraw = true -- Update dashboard stats
-            else
-                logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
-            end
-        elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "get_transaction_log" then
-            local signature = crypto.hmac_hex(AUDIT_SECRET_KEY, message.timestamp)
-            if signature == message.signature then
-                local log_path = TRANSACTIONS_DIR .. "/master.log"
-                if fs.exists(log_path) then
-                    local file = fs.open(log_path, "r")
-                    local log_data = file.readAll()
-                    file.close()
-                    rednet.send(senderId, { success = true, log = log_data }, AUDIT_PROTOCOL)
+            local realRednetSend = rednet.send
+            local function sendResponse(p_id, p_msg, p_proto)
+                -- Only wrap and change protocol if we are responding back to the original client.
+                -- If we are proxied, we MUST use the internal protocol (protocolReceived) so the Proxy recognizes it as a response.
+                if isProxied and p_id == origSender then
+                    realRednetSend(senderId, { proxy_orig_sender = origSender, proxy_response = p_msg }, protocolReceived)
                 else
-                    rednet.send(senderId, { success = false, reason = "No transaction log found." }, AUDIT_PROTOCOL)
+                    realRednetSend(p_id, p_msg, p_proto or protocolReceived)
                 end
-            else
-                logActivity("Received an INVALID or TAMPERED log request! Ignoring.", true)
             end
+
+            if (protocolReceived == "DB_Bank_Internal" or protocolReceived == BANK_PROTOCOL) and actualMsg and actualMsg.type and bankHandlers[actualMsg.type] then
+                -- Override rednet.send temporarily to handle proxied responses
+                local oldSend = rednet.send
+                rednet.send = sendResponse
+                local ok, err = pcall(bankHandlers[actualMsg.type], origSender, actualMsg)
+                rednet.send = oldSend
+                if not ok then
+                    logActivity("Error in bank handler '" .. tostring(actualMsg.type) .. "': " .. tostring(err), true)
+                end
+            
+            elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "stock_report" then
+                ServiceGuard.protectHandler("Bank:stock_report", function()
+                    local messageToVerify = textutils.serializeJSON(message.report)
+                    local signature = crypto.hmac_hex(AUDIT_SECRET_KEY, messageToVerify)
+                    if signature == message.signature then
+                        logActivity("Received valid, signed stock report from Auditor.")
+                        currentStock = message.report
+                        saveTableToFile(STOCK_DB, currentStock)
+                        adjustCurrencyRates()
+                        needsRedraw = true -- Update dashboard stats
+                    else
+                        logActivity("Received an INVALID or TAMPERED stock report! Ignoring.", true)
+                    end
+                end, logActivity)
+
+            elseif protocolReceived == AUDIT_PROTOCOL and message and message.type == "get_transaction_log" then
+                ServiceGuard.protectHandler("Bank:get_transaction_log", function()
+                    local signature = crypto.hmac_hex(AUDIT_SECRET_KEY, message.timestamp)
+                    if signature == message.signature then
+                        local log_path = TRANSACTIONS_DIR .. "/master.log"
+                        if fs.exists(log_path) then
+                            local file = fs.open(log_path, "r")
+                            local log_data = file.readAll()
+                            file.close()
+                            rednet.send(senderId, { success = true, log = log_data }, AUDIT_PROTOCOL)
+                        else
+                            rednet.send(senderId, { success = false, reason = "No transaction log found." }, AUDIT_PROTOCOL)
+                        end
+                    else
+                        logActivity("Received an INVALID or TAMPERED log request! Ignoring.", true)
+                    end
+                end, logActivity)
+            end
+
+        elseif event == "peripheral" or event == "peripheral_detach" then
+            ServiceGuard.handlePeripheralEvent(event, p1, registerProtocols, logActivity)
         end
     end
 end
@@ -1557,17 +1586,9 @@ local function main()
     loadAllData()
     
     print("Scanning for modems...")
-    for _, name in ipairs(peripheral.getNames()) do
-        if peripheral.getType(name) == "modem" then
-            local modem_p = peripheral.wrap(name)
-            if modem_p.isWireless() then
-                wireless_modem_name = name
-            else
-                wired_modem_name = name
-            end
-            rednet.open(name)
-        end
-    end
+    local modems = ServiceGuard.initModems()
+    wired_modem_name = modems.wired
+    wireless_modem_name = modems.wireless
 
     if not wired_modem_name and not wireless_modem_name then
         print("FATAL: No modem attached (wired or wireless).")
@@ -1596,15 +1617,15 @@ local function main()
     end
     print("Mainframe located at ID " .. mainServerId)
     
-    rednet.host("DB_Bank_Internal", "bank.server.internal")
-    if not wired_modem_name then
-        rednet.host(BANK_PROTOCOL, "bank.server")
-    end
+    registerProtocols()
     
     startupComplete = true -- Stop logging to the physical terminal
     
-    -- Run the main loops. The Bank Server now operates entirely through the admin terminal.
-    parallel.waitForAny(networkListener, adminPrompt, uiRenderLoop, persistenceLoop)
+    -- Run the main loops inside ServiceGuard supervisor for zero-downtime auto-recovery
+    local function runServerLoops()
+        parallel.waitForAny(networkListener, adminPrompt, uiRenderLoop, persistenceLoop)
+    end
+    ServiceGuard.runSupervisor("Bank Server", runServerLoops, flushBankState, logActivity)
     
     computerTerm.clear()
     computerTerm.setCursorPos(1,1)
