@@ -50,6 +50,13 @@ local PACKAGE_METADATA = {
         desc = "Cryptographic authentication authority with SHA-1 tokens",
         prompt = "DISK: Insert blank floppy disk and press ENTER."
     },
+    hyperauth_server = {
+        category = "servers",
+        badge = "[HYPERAUTH]",
+        hardware = "Command Computer + Wireless Modem",
+        desc = "Minecraft tellraw 2FA code dispatcher & token authority",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
     bank_server = {
         category = "servers",
         badge = "[BANK]",

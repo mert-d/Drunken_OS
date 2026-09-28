@@ -324,4 +324,155 @@ local ok_boot, bootErr = pcall(rootStartupChunk)
 assert_true(ok_boot, "/startup.lua executed cleanly: " .. tostring(bootErr))
 assert_eq(launchedProgram, "servers/Drunken_OS_Server.lua", "Startup booted into Server Gateway program")
 
+-- 7. HyperAuth Server Package Verification & Installation Simulation
+local haPkg = manifest.packages.hyperauth_server
+assert_true(haPkg ~= nil, "HyperAuth server package defined in manifest")
+assert_eq(haPkg.type, "server", "HyperAuth package type is server")
+assert_eq(haPkg.main, "servers/HyperAuth_Server.lua", "HyperAuth main program path")
+
+local haPkgBytes = 0
+for _, relPath in ipairs(haPkg.files) do
+    local f = io.open(relPath, "rb")
+    assert_true(f ~= nil, "HyperAuth package file exists: " .. relPath)
+    local content = f:read("*a")
+    f:close()
+    haPkgBytes = haPkgBytes + #content
+end
+print(string.format("  INFO: HyperAuth server raw file size: %d bytes (%.2f KB)", haPkgBytes, haPkgBytes / 1024))
+local haTotalDisk = haPkgBytes + #installTemplateCode + #srvStartupCode + 1024
+assert_true(haTotalDisk <= FLOPPY_LIMIT, "HyperAuth package fits comfortably within 125,000 bytes limit")
+print(string.format("  INFO: HyperAuth floppy margin remaining: %d bytes (%.2f KB)", FLOPPY_LIMIT - haTotalDisk, (FLOPPY_LIMIT - haTotalDisk) / 1024))
+
+-- Verify vendor registry consistency
+local vf = io.open("vendors.jsonl", "r")
+assert_true(vf ~= nil, "vendors.jsonl exists in root")
+local vLine = vf:read("*l")
+vf:close()
+assert_true(vLine:find("DrunkenOS_AuthNode") ~= nil, "Default vendor DrunkenOS_AuthNode is registered in vendors.jsonl")
+assert_true(vLine:find("drunken_secret_2026") ~= nil, "Default shared secret configured in vendors.jsonl")
+
+-- Verify HyperAuthClient config matches
+local haConfig = require("HyperAuthClient.config")
+assert_eq(haConfig.CLIENT_ID, "DrunkenOS_AuthNode", "HyperAuthClient configured with matching CLIENT_ID")
+assert_eq(haConfig.SHARED_SECRET, "drunken_secret_2026", "HyperAuthClient configured with matching SHARED_SECRET")
+
+-- Simulate Command Computer installation for HyperAuth Server
+local haTargetRoot = {}
+local haMockFs = {
+    exists = function(path)
+        path = path:gsub("^/", "")
+        if path:sub(1, 5) == "disk/" then
+            local rel = path:sub(6)
+            for _, f in ipairs(haPkg.files) do if f == rel then return true end end
+            if rel == "startup.lua" or rel == "server_startup.lua" or rel == "install_config.lua" then return true end
+            return false
+        elseif path == "disk" then
+            return true
+        end
+        return haTargetRoot[path] ~= nil
+    end,
+    getDir = function(path) return path:match("^(.*)/[^/]+$") or "" end,
+    getName = function(path) return path:match("[^/]+$") or path end,
+    combine = function(b, r) return (b == "" or b == ".") and r or (b:gsub("/+$","") .. "/" .. r:gsub("^/+","")) end,
+    makeDir = function() end,
+    delete = function(p) haTargetRoot[p:gsub("^/","")] = nil end,
+    copy = function(from, to)
+        from, to = from:gsub("^/",""), to:gsub("^/","")
+        if from:sub(1, 5) == "disk/" then
+            local rel = from:sub(6)
+            local f = io.open(rel, "rb")
+            if f then haTargetRoot[to] = f:read("*a"); f:close() end
+        else
+            haTargetRoot[to] = haTargetRoot[from]
+        end
+    end,
+    open = function(p, m)
+        p = p:gsub("^/","")
+        if m == "r" then
+            local c = nil
+            if p:sub(1, 5) == "disk/" then
+                local rel = p:sub(6)
+                if rel == "install_config.lua" then
+                    c = "{\n  name = \"" .. haPkg.name .. "\",\n  type = \"server\",\n  main_program = \"" .. haPkg.main .. "\",\n  files = {\n"
+                    for _, file in ipairs(haPkg.files) do c = c .. "    \"" .. file .. "\",\n" end
+                    c = c .. "  }\n}\n"
+                elseif rel == "server_startup.lua" then
+                    c = srvStartupCode
+                else
+                    local f = io.open(rel, "rb")
+                    if f then c = f:read("*a"); f:close() end
+                end
+            else
+                c = haTargetRoot[p]
+            end
+            if not c then return nil end
+            local pos = 1
+            return {
+                readAll = function() return c end,
+                readLine = function()
+                    if pos > #c then return nil end
+                    local nl = c:find("\n", pos, true)
+                    local line = nl and c:sub(pos, nl - 1) or c:sub(pos)
+                    pos = nl and (nl + 1) or (#c + 1)
+                    return line
+                end,
+                close = function() end
+            }
+        elseif m == "w" then
+            return {
+                write = function(s) haTargetRoot[p] = (haTargetRoot[p] or "") .. tostring(s) end,
+                close = function() end
+            }
+        end
+        return nil
+    end
+}
+
+local haEnv = {
+    fs = haMockFs,
+    term = mockTerm,
+    colors = mockColors,
+    peripheral = mockPeripheral,
+    disk = mockDisk,
+    shell = mockShell,
+    os = mockOs,
+    textutils = mockTextutils,
+    sleep = function() end,
+    print = function() end,
+    io = { write = function() end },
+    pcall = pcall,
+    type = type,
+    tostring = tostring,
+    tonumber = tonumber,
+    string = string,
+    table = table,
+    ipairs = ipairs,
+    pairs = pairs
+}
+
+local haInstallChunk = load(installTemplateCode, "disk/startup.lua", "t", haEnv)
+local ok_ha_inst = pcall(haInstallChunk)
+assert_true(ok_ha_inst, "HyperAuth installation executed cleanly from disk")
+assert_true(haTargetRoot["startup.lua"] ~= nil, "HyperAuth server_startup written to /startup.lua")
+assert_true(haTargetRoot[".program_path"] == "servers/HyperAuth_Server.lua", "HyperAuth /.program_path set correctly")
+assert_true(haTargetRoot["servers/HyperAuth_Server.lua"] ~= nil, "HyperAuth_Server.lua installed on Command PC")
+assert_true(haTargetRoot["servers/hyperauth/secure.lua"] ~= nil, "hyperauth/secure.lua installed on Command PC")
+assert_true(haTargetRoot["vendors.jsonl"] ~= nil, "vendors.jsonl installed on Command PC")
+
+-- Simulate Command Computer boot
+local haLaunched = nil
+local haHdEnv = {
+    fs = haMockFs,
+    shell = { run = function(cmd) haLaunched = cmd end },
+    print = function() end,
+    printError = function() end,
+    read = function() end,
+    pcall = pcall,
+    tostring = tostring
+}
+local haBootChunk = load(haTargetRoot["startup.lua"], "/startup.lua", "t", haHdEnv)
+local ok_ha_boot = pcall(haBootChunk)
+assert_true(ok_ha_boot, "Command Computer booted HyperAuth startup.lua")
+assert_eq(haLaunched, "servers/HyperAuth_Server.lua", "Command PC launched HyperAuth_Server.lua")
+
 print(">>> All Installer & Boot Simulation tests passed successfully!")

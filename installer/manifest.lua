@@ -73,6 +73,22 @@ return {
             include_shared = false 
         },
 
+        -- HyperAuth 2FA Server
+        hyperauth_server = {
+            name = "HyperAuth 2FA Server",
+            type = "server",
+            main = "servers/HyperAuth_Server.lua",
+            files = {
+                "servers/HyperAuth_Server.lua",
+                "servers/hyperauth/secure.lua",
+                "servers/hyperauth/sha1.lua",
+                "lib/service_guard.lua",
+                "vendors.jsonl",
+                "manifest.lua"
+            },
+            include_shared = false
+        },
+
         -- Mail & Cloud Server
         mail_server = {
             name = "Drunken OS Mail Server",
