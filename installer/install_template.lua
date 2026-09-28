@@ -1,29 +1,38 @@
 --[[
-    Drunken OS - Generic Installation Script (v1.2 - Modular Sync)
+    Drunken OS - Resilient Disk Installer (v1.3)
     by MuhendizBey
 
     Purpose:
-    This script is placed on every installation disk. When run, it performs
-    a permanent installation of the program onto the computer's hard drive,
-    including creating a startup file.
+    Placed on every installation disk. Discovers drive mount dynamically,
+    copies files cleanly to hard drive root, configures startup, and reboots.
 ]]
 
---==============================================================================
--- Helper Functions
---==============================================================================
+local runSetupWizard
 
-local runSetupWizard -- Forward declaration
-
-local function showMessage(message)
-    term.clear()
-    term.setCursorPos(1, 1)
-    print("Drunken OS Installer v1.1")
-    print("--------------------")
-    print(message)
-    sleep(1.5)
+local function fatalError(title, details)
+    pcall(function()
+        if term.isColor and term.isColor() then
+            term.setBackgroundColor(colors.black)
+            term.setTextColor(colors.red)
+        end
+        term.clear()
+        term.setCursorPos(1, 2)
+        print("========================================")
+        print("     DRUNKEN OS INSTALLATION FAILED     ")
+        print("========================================")
+        if term.setTextColor then term.setTextColor(colors.white) end
+        print("\n" .. tostring(title) .. "\n")
+        if details then
+            if term.setTextColor then term.setTextColor(colors.lightGray or colors.white) end
+            print(tostring(details))
+        end
+        print("\nPlease take a screenshot or verify disk.")
+        print("Press any key to reboot...")
+        os.pullEvent("key")
+        os.reboot()
+    end)
 end
 
--- Ensures a directory exists, creating it if necessary.
 local function ensureDir(path)
     local dir = fs.getDir(path)
     if dir and dir ~= "" and not fs.exists(dir) then
@@ -31,197 +40,175 @@ local function ensureDir(path)
     end
 end
 
---==============================================================================
--- Main Installation Logic
---==============================================================================
+local function findDiskPath()
+    local running = (shell and shell.getRunningProgram and shell.getRunningProgram()) or ""
+    local dir = fs.getDir(running)
+    if dir and dir ~= "" and dir ~= "." and fs.exists(fs.combine(dir, "install_config.lua")) then
+        return dir
+    end
+    if peripheral and peripheral.getNames then
+        for _, name in ipairs(peripheral.getNames()) do
+            if peripheral.getType(name) == "drive" then
+                local mount = disk and disk.getMountPath and disk.getMountPath(name)
+                if mount and fs.exists(fs.combine(mount, "install_config.lua")) then
+                    return mount
+                end
+            end
+        end
+    end
+    for _, candidate in ipairs({ "disk", "disk1", "disk2", "/" }) do
+        if fs.exists(fs.combine(candidate, "install_config.lua")) then
+            return candidate
+        end
+    end
+    return (dir ~= "" and dir ~= ".") and dir or "disk"
+end
 
 local function doInstallation()
-    local runningProgram = (shell and shell.getRunningProgram and shell.getRunningProgram()) or "startup.lua"
-    local diskPath = fs.getDir(runningProgram)
-    if diskPath == "" or diskPath == "." then diskPath = "/" end
-    
+    local diskPath = findDiskPath()
     local configPath = fs.combine(diskPath, "install_config.lua")
-    
-    print("Installer path: " .. runningProgram)
-    print("Disk path: " .. diskPath)
-    print("Config path: " .. configPath)
-    
-    -- This file will be created by the Master Installer
+
     if not fs.exists(configPath) then
-        print("FATAL: install_config.lua not found.")
-        print("Search path: " .. configPath)
+        fatalError("Configuration file not found!", "Looked for install_config.lua in: " .. tostring(configPath))
         return
     end
 
-    -- Load the configuration for this specific installation
     local configFile = fs.open(configPath, "r")
+    if not configFile then
+        fatalError("Cannot read configuration file!", configPath)
+        return
+    end
     local configData = configFile.readAll()
     configFile.close()
+
     local config = textutils.unserialize(configData)
     if not config or not config.main_program or not config.files then
-        print("FATAL: install_config.lua is corrupt.")
+        fatalError("Configuration file is corrupted!", "Data length: " .. tostring(configData and #configData or 0) .. " bytes")
         return
     end
 
-    showMessage("Starting installation of " .. config.name .. "...")
+    local isColor = term.isColor and term.isColor()
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setCursorPos(1, 1)
+    if isColor then term.setTextColor(colors.cyan) end
+    print("========================================")
+    print("      Drunken OS Installer (v1.3)       ")
+    print("========================================")
+    if isColor then term.setTextColor(colors.yellow) end
+    print("Installing: " .. tostring(config.name))
+    if isColor then term.setTextColor(colors.white) end
+    print("Source: /" .. tostring(diskPath) .. " -> Target: /\n")
 
-    -- Copy all files from the disk to the computer's hard drive
-    for _, filePath in ipairs(config.files) do
+    for idx, filePath in ipairs(config.files) do
         local sourcePath = fs.combine(diskPath, filePath)
         local destPath = "/" .. filePath
 
-        showMessage("Copying " .. filePath .. "...")
+        if isColor then term.setTextColor(colors.lightGray) end
+        io.write(string.format("[%2d/%2d] %-30s ... ", idx, #config.files, fs.getName(filePath)))
 
-        print("Source: " .. sourcePath)
-        print("Source Exists: " .. tostring(fs.exists(sourcePath)))
-        print("Dest: " .. destPath)
         if fs.exists(sourcePath) then
             ensureDir(destPath)
-            if fs.exists(destPath) then
-                fs.delete(destPath)
-            end
+            if fs.exists(destPath) then fs.delete(destPath) end
             local ok_copy, err_copy = pcall(fs.copy, sourcePath, destPath)
-            if not ok_copy then
-                print("Warning: Failed to copy " .. filePath .. ": " .. tostring(err_copy))
+            if ok_copy then
+                if isColor then term.setTextColor(colors.green) end
+                print("OK")
+            else
+                if isColor then term.setTextColor(colors.red) end
+                print("FAIL (" .. tostring(err_copy) .. ")")
             end
         else
-            print("Warning: Missing on disk: " .. filePath)
+            if isColor then term.setTextColor(colors.orange or colors.yellow) end
+            print("MISSING")
         end
     end
 
-    showMessage("Files copied successfully.")
-
-    -- Run the setup wizard if needed
-    if config.needs_setup then
+    if config.needs_setup and runSetupWizard then
+        print("")
         runSetupWizard(config.setup_type)
     end
 
-    -- Create the startup file
-    showMessage("Creating startup file...")
-    
-    -- Write the program path to a hidden file for the startup script to read
     local pathFile = fs.open("/.program_path", "w")
-    pathFile.write(config.main_program)
-    pathFile.close()
+    if pathFile then
+        pathFile.write(config.main_program)
+        pathFile.close()
+    end
 
+    if isColor then term.setTextColor(colors.yellow) end
+    print("\nCreating startup file...")
     if config.type == "server" then
-        local serverStartupPath = fs.combine(diskPath, "server_startup.lua")
-        if not fs.exists(serverStartupPath) then
-            print("FATAL: server_startup.lua missing on disk!")
+        local srvStartupPath = fs.combine(diskPath, "server_startup.lua")
+        if not fs.exists(srvStartupPath) then
+            fatalError("server_startup.lua is missing on installation disk!", srvStartupPath)
             return
         end
-        
-        local serverStartupFile = fs.open(serverStartupPath, "r")
-        local serverStartupScript = serverStartupFile.readAll()
-        serverStartupFile.close()
-
-        -- No more gsub here, serverStartupScript now reads /.program_path
-        local startupFile = fs.open("/startup.lua", "w")
-        startupFile.write(serverStartupScript)
-        startupFile.close()
+        local sf = fs.open(srvStartupPath, "r")
+        local srvScript = sf.readAll()
+        sf.close()
+        local outStartup = fs.open("/startup.lua", "w")
+        outStartup.write(srvScript)
+        outStartup.close()
     else
-        local startupFile = fs.open("/startup.lua", "w")
-        startupFile.write('shell.run("' .. tostring(config.main_program) .. '")')
-        startupFile.close()
+        local outStartup = fs.open("/startup.lua", "w")
+        outStartup.write('shell.run("' .. tostring(config.main_program) .. '")')
+        outStartup.close()
     end
 
-    showMessage("Installation complete! Rebooting in 3 seconds...")
-    
-    -- Eject the disk if present
+    if isColor then term.setTextColor(colors.green) end
+    print("Installation complete! Ejecting disk...")
+
     local drive = peripheral.find("drive")
-    if drive and drive.isDiskPresent() then
-        drive.ejectDisk()
+    if drive and drive.isDiskPresent and drive.isDiskPresent() then
+        pcall(drive.ejectDisk)
     end
 
-    sleep(3)
+    sleep(2)
     os.reboot()
 end
 
 runSetupWizard = function(setup_type)
     local ATM_TURTLE_PROTOCOL = "DB_ATM_Turtle"
-
     if setup_type == "atm" then
-        showMessage("Running ATM setup wizard...")
-
+        print("Configuring ATM...")
         local modem = peripheral.find("modem")
-        if not modem then
-            print("Warning: No wireless modem found.")
-            print("Verification will be skipped.")
-        else
-            rednet.open(peripheral.getName(modem))
-        end
-
-        local turtleId
-        local verified = false
-
+        if modem then rednet.open(peripheral.getName(modem)) end
+        local turtleId, verified = nil, false
         while not verified do
-            print("\nPlease enter the ID of the Bank Clerk Turtle:")
+            print("Enter Bank Clerk Turtle ID:")
             local input = read()
             turtleId = tonumber(input)
-
             if not turtleId then
-                print("Invalid ID. Please enter a number.")
+                print("Invalid ID. Enter a number.")
             elseif not modem then
                 verified = true
             else
-                print("Sending ping to Turtle " .. turtleId .. "...")
+                print("Pinging Turtle " .. turtleId .. "...")
                 rednet.send(turtleId, { type = "ping" }, ATM_TURTLE_PROTOCOL)
-
-                local sender, message = rednet.receive(ATM_TURTLE_PROTOCOL, 5)
+                local sender, message = rednet.receive(ATM_TURTLE_PROTOCOL, 4)
                 if sender == turtleId and type(message) == "table" and message.type == "pong" then
-                    print("Handshake successful! Turtle is online.")
+                    print("Handshake OK! Turtle online.")
                     verified = true
                 else
-                    print("No response from turtle.")
-                    print("Retry ping? (y/n)")
-                    local choice = read():lower()
-                    if choice ~= "y" then
-                        print("Proceeding without verification...")
-                        verified = true
-                    end
+                    print("No response. Retry? (y/n)")
+                    if read():lower() ~= "y" then verified = true end
                 end
             end
         end
-
-        local config = { turtleClerkId = turtleId }
-        local file = fs.open("/atm.conf", "w")
-        file.write(textutils.serialize(config))
-        file.close()
-        showMessage("ATM configured successfully.")
-    elseif setup_type == "bank_server" then
-        showMessage("Running Bank Server setup wizard...")
-        print("Please enter a secret key for the Auditor turtle:")
-        local secretKey = read()
-        -- The bank server will read this file on startup
-        local file = fs.open("/auditor_key.conf", "w")
-        file.write(secretKey)
-        file.close()
-        showMessage("Bank Server configured successfully.")
-    elseif setup_type == "auditor" then
-        showMessage("Running Auditor setup wizard...")
-        print("Please enter the secret key for the Bank Server:")
-        local secretKey = read()
-        -- The auditor turtle will read this file on startup
-        local file = fs.open("/auditor_key.conf", "w")
-        file.write(secretKey)
-        file.close()
-        showMessage("Auditor configured successfully.")
+        local f = fs.open("/atm.conf", "w")
+        if f then f.write(textutils.serialize({ turtleClerkId = turtleId })); f.close() end
+    elseif setup_type == "bank_server" or setup_type == "auditor" then
+        local prompt = (setup_type == "bank_server") and "Auditor" or "Bank Server"
+        print("Enter secret key for " .. prompt .. ":")
+        local secret = read()
+        local f = fs.open("/auditor_key.conf", "w")
+        if f then f.write(secret); f.close() end
     end
 end
 
----
--- Main application entry point for the installation routine.
--- Protected call wrapper for the doInstallation logic.
 local function main()
     local ok, err = pcall(doInstallation)
-    if not ok then
-        print("INSTALLATION FAILED:")
-        print(tostring(err))
-        print("Please take a screenshot and report this error.")
-        print("Press any key to reboot.")
-        os.pullEvent("key")
-        os.reboot()
-    end
+    if not ok then fatalError("Unexpected Installer Crash!", err) end
 end
 
 main()

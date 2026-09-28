@@ -164,9 +164,16 @@ return {
             main = "clients/DB_Bank_ATM.lua",
             files = {
                 "clients/DB_Bank_ATM.lua",
-                "apps/bank.lua"
+                "apps/bank.lua",
+                "lib/sha1_hmac.lua",
+                "lib/theme.lua",
+                "lib/utils.lua",
+                "lib/sdk.lua",
+                "lib/sound.lua",
+                "lib/dns.lua",
+                "lib/service_guard.lua"
             },
-            include_shared = true,
+            include_shared = false,
             needs_setup = true,
             setup_type = "atm"
         },
@@ -178,9 +185,16 @@ return {
             main = "clients/DB_Bank_Clerk_Terminal.lua",
             files = {
                 "clients/DB_Bank_Clerk_Terminal.lua",
-                "apps/bank.lua"
+                "apps/bank.lua",
+                "lib/sha1_hmac.lua",
+                "lib/theme.lua",
+                "lib/utils.lua",
+                "lib/sdk.lua",
+                "lib/sound.lua",
+                "lib/dns.lua",
+                "lib/service_guard.lua"
             },
-            include_shared = true
+            include_shared = false
         },
 
         -- Vault Clerk Turtle
@@ -217,9 +231,17 @@ return {
             files = {
                 "clients/DB_Merchant_POS.lua",
                 "apps/merchant.lua",
-                "apps/bank.lua"
+                "apps/bank.lua",
+                "lib/drunken_os_apps.lua",
+                "lib/sha1_hmac.lua",
+                "lib/theme.lua",
+                "lib/utils.lua",
+                "lib/sdk.lua",
+                "lib/sound.lua",
+                "lib/dns.lua",
+                "lib/service_guard.lua"
             },
-            include_shared = true
+            include_shared = false
         },
 
         -- Merchant Cashier
@@ -230,9 +252,17 @@ return {
             files = {
                 "clients/DB_Merchant_Cashier.lua",
                 "apps/merchant.lua",
-                "apps/bank.lua"
+                "apps/bank.lua",
+                "lib/drunken_os_apps.lua",
+                "lib/sha1_hmac.lua",
+                "lib/theme.lua",
+                "lib/utils.lua",
+                "lib/sdk.lua",
+                "lib/sound.lua",
+                "lib/dns.lua",
+                "lib/service_guard.lua"
             },
-            include_shared = true
+            include_shared = false
         },
 
         -- Restaurant Server

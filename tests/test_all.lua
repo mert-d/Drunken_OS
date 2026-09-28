@@ -26,6 +26,7 @@ local tests = {
     { name = "Service Guard & Watchdog",   file = "tests/test_service_guard.lua" },
     { name = "Speaker Audio Engine",       file = "tests/test_sound.lua" },
     { name = "System Doctor Diagnostics",  file = "tests/test_doctor.lua" },
+    { name = "Installer Disk & Boot Sim",   file = "tests/test_installer.lua" },
 }
 
 print("========================================================")

@@ -743,89 +743,112 @@ local function createInstallDisk(program)
         fs.delete(mountPath .. "/" .. file)
     end
 
-    -- Write the program and its dependencies
-    print("Writing program files to disk...")
-    -- allFiles is already defined and populated above
-
-    -- Check total size
-    local totalSize = 0
-    for _, filePath in ipairs(allFiles) do
-        local content = dependencies[filePath] or programCode
-        totalSize = totalSize + #content
-    end
-    
-    local freeSpace = fs.getFreeSpace(mountPath)
-    local safetyBuffer = 5120 -- 5 KB buffer for installer scripts
-    if (totalSize + safetyBuffer) > freeSpace then
-        showMessage("Error", string.format("Disk full! Required: %d KB, Free: %d KB.\nPlease use a blank or larger disk.", math.ceil((totalSize + safetyBuffer)/1024), math.ceil(freeSpace/1024)), true)
-        return
-    end
-
-    for _, filePath in ipairs(allFiles) do
-        local fileCode = dependencies[filePath] or programCode
-        local destPath = mountPath .. "/" .. filePath
-        
-        -- Special Case: Preserve HyperAuth Configuration
-        if filePath == "HyperAuthClient/config.lua" and fs.exists(destPath) then
-            print("Skipping existing config: " .. filePath)
-        else
-            local parentDir = fs.getDir(destPath)
-            if parentDir and parentDir ~= "" and not fs.exists(parentDir) then
-                fs.makeDir(parentDir)
-            end
-            local file = fs.open(destPath, "w")
-            file.write(fileCode)
-            file.close()
-        end
-    end
-    print("Program files written.")
-
-    -- Write the installation script(s)
-    print("Writing installation script(s)...")
+    -- Pre-load installation scripts and serialize config BEFORE writing
+    print("Preparing installer scripts...")
     local installScript = getFileContent("installer/install_template.lua")
     if not installScript then
-        showMessage("Error", "Failed to get main installation script.", true)
+        showMessage("Error", "Failed to get main installation script (installer/install_template.lua).", true)
         return
     end
 
+    local serverStartupScript = nil
     if program.type == "server" then
-        local serverStartupScript = getFileContent("installer/server_startup_template.lua")
+        serverStartupScript = getFileContent("installer/server_startup_template.lua")
         if not serverStartupScript then
-            showMessage("Error", "Failed to download the server startup script.", true)
+            showMessage("Error", "Failed to get server startup script (installer/server_startup_template.lua).", true)
             return
         end
-        local serverStartupFile = fs.open(mountPath .. "/server_startup.lua", "w")
-        if not serverStartupFile then
-            showMessage("Error", "Could not write server startup script. Disk full?", true)
-            return
-        end
-        serverStartupFile.write(serverStartupScript)
-        serverStartupFile.close()
     end
 
-    local startupFile = fs.open(mountPath .. "/startup.lua", "w")
-    if not startupFile then
-        showMessage("Error", "Could not write installer startup script. Disk full?", true)
-        return
-    end
-    startupFile.write(installScript)
-    startupFile.close()
-    print("Installation script written.")
-
-    -- Write the configuration file
-    print("Writing configuration file...")
     local config = {
         name = program.name,
-        type = program.type, -- Added missing type
+        type = program.type,
         main_program = program.path,
         files = allFiles,
         needs_setup = program.needs_setup or false,
         setup_type = program.setup_type or nil
     }
-    local configFile = fs.open(mountPath .. "/install_config.lua", "w")
-    configFile.write(textutils.serialize(config))
-    configFile.close()
-    print("Configuration file written.")
+    local configSerialized = textutils.serialize(config)
+
+    -- Accurate total size calculation
+    local programFilesSize = 0
+    for _, filePath in ipairs(allFiles) do
+        local content = dependencies[filePath] or programCode
+        programFilesSize = programFilesSize + #content
+    end
+
+    local installerScriptsSize = #installScript + (serverStartupScript and #serverStartupScript or 0) + #configSerialized
+    local safetyMargin = 2048 -- 2 KB safe buffer for filesystem metadata
+    local requiredTotal = programFilesSize + installerScriptsSize + safetyMargin
+
+    local freeSpace = fs.getFreeSpace(mountPath)
+    if requiredTotal > freeSpace then
+        local reqKb = math.ceil(requiredTotal / 1024)
+        local freeKb = math.ceil(freeSpace / 1024)
+        local diffKb = reqKb - freeKb
+        showMessage("Disk Full", string.format("Cannot create installer for '%s'.\nRequired: %d KB | Free: %d KB (%d KB short).\nPlease insert a higher-capacity floppy disk.", program.name, reqKb, freeKb, diffKb), true)
+        return
+    end
+
+    -- Verified file writer function
+    local function writeVerified(relPath, content)
+        local destPath = mountPath .. "/" .. relPath
+        local parentDir = fs.getDir(destPath)
+        if parentDir and parentDir ~= "" and not fs.exists(parentDir) then
+            fs.makeDir(parentDir)
+        end
+        local file, err = fs.open(destPath, "w")
+        if not file then
+            return false, "Cannot write " .. relPath .. ": " .. tostring(err or "disk error")
+        end
+        file.write(content)
+        file.close()
+        if fs.getSize(destPath) < #content then
+            return false, "Write truncated on " .. relPath .. " (disk capacity exceeded)!"
+        end
+        return true
+    end
+
+    -- Write critical boot files FIRST so disk is never half-created without bootloader
+    print("Writing installer boot files...")
+    local ok_boot, err_boot = writeVerified("startup.lua", installScript)
+    if not ok_boot then
+        showMessage("Write Error", "Failed to write startup.lua:\n" .. tostring(err_boot), true)
+        return
+    end
+
+    if program.type == "server" and serverStartupScript then
+        local ok_srv, err_srv = writeVerified("server_startup.lua", serverStartupScript)
+        if not ok_srv then
+            showMessage("Write Error", "Failed to write server_startup.lua:\n" .. tostring(err_srv), true)
+            return
+        end
+    end
+
+    local ok_cfg, err_cfg = writeVerified("install_config.lua", configSerialized)
+    if not ok_cfg then
+        showMessage("Write Error", "Failed to write install_config.lua:\n" .. tostring(err_cfg), true)
+        return
+    end
+
+    -- Write program files and dependencies
+    print("Writing program files to disk...")
+    for _, filePath in ipairs(allFiles) do
+        local fileCode = dependencies[filePath] or programCode
+        local destPath = mountPath .. "/" .. filePath
+
+        -- Special Case: Preserve HyperAuth Configuration
+        if filePath == "HyperAuthClient/config.lua" and fs.exists(destPath) then
+            print("Skipping existing config: " .. filePath)
+        else
+            local ok_f, err_f = writeVerified(filePath, fileCode)
+            if not ok_f then
+                showMessage("Write Error", "Failed writing " .. filePath .. ":\n" .. tostring(err_f), true)
+                return
+            end
+        end
+    end
+    print("All program files written and verified.")
 
     -- Set the disk label
     print("Setting disk label...")

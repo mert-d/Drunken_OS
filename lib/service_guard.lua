@@ -11,14 +11,7 @@
 local ServiceGuard = {}
 ServiceGuard._VERSION = 1.0
 
---==============================================================================
--- Modem & Peripheral Hot-Plug Subsystem
---==============================================================================
-
----
 -- Detects and opens all attached modems.
--- @param filter string|nil: "wired", "wireless", or nil for all modems
--- @return table: { wired = name|nil, wireless = name|nil, count = number, all = { names... } }
 function ServiceGuard.initModems(filter)
     local result = {
         wired = nil,
@@ -64,15 +57,7 @@ function ServiceGuard.initModems(filter)
     return result
 end
 
----
 -- Event listener helper for hot-plugged and detached peripherals.
--- Catches "peripheral" and "peripheral_detach" events, re-opens modems, and re-hosts services.
--- @param event string: The event name
--- @param name string: Peripheral side or network name
--- @param hostRegistrations function|nil: Callback to re-register rednet.host protocols
--- @param logger function|nil: Logging callback function(msg, isError)
--- @param onMonitor function|nil: Callback when an external monitor is attached
--- @return boolean: True if the event was handled as a peripheral change
 function ServiceGuard.handlePeripheralEvent(event, name, hostRegistrations, logger, onMonitor)
     local log = logger or function(m) end
 
@@ -120,18 +105,7 @@ function ServiceGuard.handlePeripheralEvent(event, name, hostRegistrations, logg
     return false
 end
 
---==============================================================================
--- Protected Packet & Handler Execution
---==============================================================================
-
----
 -- Executes a packet handler or subsystem callback inside a protected pcall.
--- Prevents malformed, unexpected, or attack packets from crashing server threads.
--- @param handlerName string: Identifier for logs (e.g. "Mail:send_mail", "Bank:transfer")
--- @param func function: The callback function to execute
--- @param logger function|nil: Logger callback function(msg, isError)
--- @param ...: Arguments passed to func
--- @return boolean, ...: Success status followed by return values or error message
 function ServiceGuard.protectHandler(handlerName, func, logger, ...)
     local log = logger or function(m) end
     if type(func) ~= "function" then
@@ -151,18 +125,7 @@ function ServiceGuard.protectHandler(handlerName, func, logger, ...)
     return true, table.unpack(results)
 end
 
---==============================================================================
--- Zero-Downtime Server Supervisor Watchdog
---==============================================================================
-
----
 -- Runs a server main function inside a self-healing supervisor loop.
--- Catches unhandled fatal exceptions, flushes database state, logs stack traces, and auto-restarts.
--- @param serviceName string: Display title (e.g. "Mainframe Server", "Bank Server")
--- @param mainFunc function: The main event loop function to supervise
--- @param cleanupFunc function|nil: State cleanup / database flush callback before restart
--- @param logger function|nil: Logging function(msg, isError)
--- @param delaySeconds number|nil: Recovery backoff in seconds (default: 2)
 function ServiceGuard.runSupervisor(serviceName, mainFunc, cleanupFunc, logger, delaySeconds)
     local log = logger or function(m, isErr)
         local prefix = isErr and "[FATAL] " or "[INFO] "

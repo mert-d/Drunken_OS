@@ -114,12 +114,23 @@ end
 ---
 -- Redraws the entire admin console UI on the server's terminal.
 -- This includes the title bar, a scrollable log area, and an interactive input prompt.
+local function getLogDisplayLines(maxLines, width)
+    local lines = {}
+    for i = #logHistory, 1, -1 do
+        local wrapped = wordWrap(logHistory[i], width)
+        for j = #wrapped, 1, -1 do
+            table.insert(lines, 1, " " .. wrapped[j])
+            if #lines >= maxLines then return lines end
+        end
+    end
+    return lines
+end
+
 local function redrawAdminUI()
     local w, h = term.getSize()
     term.setBackgroundColor(theme.windowBg)
     term.clear()
 
-    -- Title Bar: Centered text on a highlighted background
     term.setBackgroundColor(theme.title)
     term.setCursorPos(1, 1)
     term.write((" "):rep(w))
@@ -128,35 +139,22 @@ local function redrawAdminUI()
     term.setCursorPos(math.floor((w - #title) / 2) + 1, 1)
     term.write(title)
 
-    -- Status Bar: Displays the current server state at the bottom
     term.setBackgroundColor(theme.statusBarBg)
     term.setTextColor(theme.statusBarText)
     term.setCursorPos(1, h)
     term.write((" "):rep(w))
-    local status = "RUNNING | Type 'help' for commands"
     term.setCursorPos(2, h)
-    term.write(status)
+    term.write("RUNNING | Type 'help' for commands")
 
-    -- Log Area: Displays recent activity logs with word-wrapping
     term.setBackgroundColor(theme.windowBg)
     term.setTextColor(theme.text)
     local logAreaHeight = h - 4
-    local displayLines = {}
-    -- Iterate backwards through logs to fill the screen from the bottom up
-    for i = #logHistory, 1, -1 do
-        local wrappedLines = wordWrap(logHistory[i], w - 2)
-        for j = #wrappedLines, 1, -1 do
-            table.insert(displayLines, 1, " " .. wrappedLines[j])
-            if #displayLines >= logAreaHeight then break end
-        end
-        if #displayLines >= logAreaHeight then break end
-    end
+    local displayLines = getLogDisplayLines(logAreaHeight, w - 2)
     for i = 1, math.min(#displayLines, logAreaHeight) do
         term.setCursorPos(1, 1 + i)
         term.write(displayLines[i])
     end
 
-    -- Input Area: Separator and a cyan prompt for admin commands
     term.setCursorPos(1, h - 2)
     term.write(('-'):rep(w))
     term.setCursorPos(1, h - 1)
@@ -166,15 +164,12 @@ local function redrawAdminUI()
     term.write(adminInput)
 end
 
----
--- Redraws the log view on the external monitor.
 local function redrawMonitorUI()
     if not monitor then return end
     local w, h = monitor.getSize()
     monitor.setBackgroundColor(colors.black)
     monitor.clear()
 
-    -- Title Bar
     monitor.setBackgroundColor(colors.gray)
     monitor.setCursorPos(1, 1)
     monitor.write(string.rep(" ", w))
@@ -183,21 +178,9 @@ local function redrawMonitorUI()
     monitor.setCursorPos(math.floor((w - #title) / 2) + 1, 1)
     monitor.write(title)
     
-    -- Log Area
     monitor.setBackgroundColor(colors.black)
     local logAreaHeight = h - 2
-    local displayLines = {}
-    
-    -- We use the same wordWrap as the admin UI
-    for i = #logHistory, 1, -1 do
-        local wrappedLines = wordWrap(logHistory[i], w - 2)
-        for j = #wrappedLines, 1, -1 do
-            table.insert(displayLines, 1, " " .. wrappedLines[j])
-            if #displayLines >= logAreaHeight then break end
-        end
-        if #displayLines >= logAreaHeight then break end
-    end
-    
+    local displayLines = getLogDisplayLines(logAreaHeight, w - 2)
     for i = 1, math.min(#displayLines, logAreaHeight) do
         monitor.setCursorPos(1, 1 + i)
         local line = displayLines[i]
@@ -469,47 +452,40 @@ function mailHandlers.get_file(senderId, message)
     end
 end
 
-function mailHandlers.get_version(senderId, message)
-    local prog = message.program
+local function resolveProgramCode(prog)
+    if not prog or type(prog) ~= "string" then return nil end
     if prog:match("^app%.") then
-        local appName = prog:gsub("^app%.", "")
-        local appPath = "apps/" .. appName .. ".lua"
+        local appPath = "apps/" .. prog:gsub("^app%.", "") .. ".lua"
         if fs.exists(appPath) then
             local f = fs.open(appPath, "r")
             if f then
-                local content = f.readAll(); f.close()
-                rednet.send(senderId, { version = parseVersion(content) }, "SimpleMail")
-            else
-                rednet.send(senderId, { version = 0 }, "SimpleMail")
-            end
-        else
-            rednet.send(senderId, { version = 0 }, "SimpleMail")
-        end
-    else
-        local version = programVersions[prog]
-        if not version or version == 0 then
-            -- Fallback: check games/ directory
-            local gamePath = "games/" .. prog
-            if fs.exists(gamePath) then
-                local f = fs.open(gamePath, "r")
-                if f then
-                    version = parseVersion(f.readAll())
-                    f.close()
-                end
-            else
-                -- Fallback 2: check lib/ directory
-                local libPath = "lib/" .. prog .. ".lua"
-                if fs.exists(libPath) then
-                    local f = fs.open(libPath, "r")
-                    if f then
-                        version = parseVersion(f.readAll())
-                        f.close()
-                    end
-                end
+                local c = f.readAll(); f.close()
+                return c
             end
         end
-        rednet.send(senderId, { version = version or 0 }, "SimpleMail")
+        return nil
     end
+    if programCode[prog] then return programCode[prog] end
+    for _, path in ipairs({ "games/" .. prog, "lib/" .. prog .. ".lua" }) do
+        if fs.exists(path) then
+            local f = fs.open(path, "r")
+            if f then
+                local c = f.readAll(); f.close()
+                return c
+            end
+        end
+    end
+    return nil
+end
+
+function mailHandlers.get_version(senderId, message)
+    local prog = message.program
+    local version = programVersions[prog]
+    if not version or version == 0 then
+        local code = resolveProgramCode(prog)
+        version = code and parseVersion(code) or 0
+    end
+    rednet.send(senderId, { version = version or 0 }, "SimpleMail")
 end
 
 local appVersionCache = nil
@@ -555,42 +531,7 @@ function mailHandlers.get_all_game_versions(senderId, message)
 end
 
 function mailHandlers.get_update(senderId, message)
-    local prog = message.program
-    if prog:match("^app%.") then
-        local appName = prog:gsub("^app%.", "")
-        local appPath = "apps/" .. appName .. ".lua"
-        if fs.exists(appPath) then
-            local f = fs.open(appPath, "r")
-            local code = f.readAll(); f.close()
-            rednet.send(senderId, { code = code }, "SimpleMail")
-        else
-            rednet.send(senderId, { code = nil }, "SimpleMail")
-        end
-    else
-        local code = programCode[prog]
-        if not code then
-            -- Fallback: check games/ directory
-            local gamePath = "games/" .. prog
-            if fs.exists(gamePath) then
-                local f = fs.open(gamePath, "r")
-                if f then
-                    code = f.readAll()
-                    f.close()
-                end
-            else
-                -- Fallback 2: check lib/ directory
-                local libPath = "lib/" .. prog .. ".lua"
-                if fs.exists(libPath) then
-                    local f = fs.open(libPath, "r")
-                    if f then
-                        code = f.readAll()
-                        f.close()
-                    end
-                end
-            end
-        end
-        rednet.send(senderId, { code = code }, "SimpleMail")
-    end
+    rednet.send(senderId, { code = resolveProgramCode(message.program) }, "SimpleMail")
 end
 
     -- Duplicate handlers removed (get_manifest and get_file — see authoritative definitions above)
@@ -979,72 +920,56 @@ function adminCommands.games()
     end
 end
 
+local function fetchSyncFile(relPath)
+    local absPath = fs.combine("/", relPath)
+    if fs.exists(absPath) then
+        local f = fs.open(relPath, "r")
+        if f then
+            local c = f.readAll(); f.close()
+            return c
+        end
+    end
+    if http and http.get then
+        local url = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/" .. relPath
+        local resp = http.get(url)
+        if resp then
+            local c = resp.readAll(); resp.close()
+            return c
+        end
+    end
+    return nil
+end
+
 function adminCommands.sync(a)
     local target = a[2] or "all"
     
     if target == "client" or target == "all" then
         logActivity("Syncing Drunken_OS_Client...")
-        local path = "clients/Drunken_OS_Client.lua"
-        local absPath = fs.combine("/", path)
-        logActivity("Checking local path: " .. absPath)
-        
-        local code, v
-        if fs.exists(absPath) then
-            local f = fs.open(path, "r")
-            code = f.readAll()
-            f.close()
-            v = code:match("[%w%.]+Version%s*=%s*([%d%.]+)")
-        else
-            logActivity("Local file needed? No. Check GitHub...")
-            local url = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/clients/Drunken_OS_Client.lua"
-            local response = http.get(url)
-            if response then
-                code = response.readAll()
-                response.close()
-                v = code:match("[%w%.]+Version%s*=%s*([%d%.]+)")
-                logActivity("Fetched from GitHub.")
-            else
-                logActivity("Error: Could not fetch from GitHub.", true)
-            end
-        end
-
-        if code and v then
-            local version = tonumber(v)
+        local code = fetchSyncFile("clients/Drunken_OS_Client.lua")
+        if code then
+            local v = parseVersion(code)
             programCode["Drunken_OS_Client"] = code
-            programVersions["Drunken_OS_Client"] = version
+            programVersions["Drunken_OS_Client"] = tonumber(v) or 1.0
             saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
-            logActivity("Published Client v" .. version)
+            logActivity("Published Client v" .. (v or 1.0))
         else
-            logActivity("Error: Valid code/version not found.", true)
+            logActivity("Error: Could not fetch Drunken_OS_Client.", true)
         end
     end
     
     if target == "apps" or target == "all" then
         logActivity("Syncing Applets...")
         local appsList = { "arcade.lua", "bank.lua", "chat.lua", "files.lua", "mail.lua", "merchant.lua", "system.lua" }
-        local baseUrl = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/apps/"
-        
         if not fs.exists("apps") then fs.makeDir("apps") end
         local appUpdated = 0
-        
         for _, filename in ipairs(appsList) do
-            local url = baseUrl .. filename
-            logActivity("Pulling: " .. filename)
-            local response = http.get(url)
-            if response then
-                local code = response.readAll()
-                response.close()
-                if code and #code > 0 then
-                    local f = fs.open("apps/" .. filename, "w")
-                    if f then
-                        f.write(code)
-                        f.close()
-                        appUpdated = appUpdated + 1
-                        
-                        -- Extract version for logging
-                        local v = parseVersion(code)
-                        logActivity("Synced " .. filename .. " (v" .. v .. ")")
-                    end
+            local code = fetchSyncFile("apps/" .. filename)
+            if code and #code > 0 then
+                local f = fs.open("apps/" .. filename, "w")
+                if f then
+                    f.write(code); f.close()
+                    appUpdated = appUpdated + 1
+                    logActivity("Synced " .. filename .. " (v" .. parseVersion(code) .. ")")
                 end
             else
                 logActivity("Failed to pull " .. filename, true)
@@ -1056,45 +981,16 @@ function adminCommands.sync(a)
     if target == "libs" or target == "all" then
         logActivity("Syncing Libraries...")
         local libs = { "lib/drunken_os_apps.lua", "lib/sha1_hmac.lua", "lib/updater.lua", "lib/app_loader.lua", "lib/theme.lua", "lib/utils.lua", "lib/sdk.lua", "lib/p2p_socket.lua" }
-        local baseUrl = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
-        
         for _, path in ipairs(libs) do
-            local code, v = nil, nil
-            local absPath = "/" .. path
-            
-            -- Strategy 1: Local File
-            if fs.exists(absPath) then
-                local f = fs.open(absPath, "r")
-                code = f.readAll()
-                f.close()
-            else
-                -- Strategy 2: GitHub Fallback
-                logActivity("Local " .. path .. " not found. Fetching from GitHub...")
-                local response = http.get(baseUrl .. path)
-                if response then
-                    code = response.readAll()
-                    response.close()
-                    logActivity("Fetched " .. path .. " from GitHub.")
-                end
-            end
-            
+            local code = fetchSyncFile(path)
             if code then
                 local name = fs.getName(path):gsub("%.lua$", "")
                 programCode[name] = code
-                
-                -- Attempt to extract version
-                v = code:match("[%w%.]+Version%s*=%s*([%d%.]+)") or 
-                    code:match("[%w%.]*_VERSION%s*=%s*([%d%.]+)") or 
-                    code:match("%(v([%d%.]+)%)")
-                
-                if v then
-                    programVersions[name] = tonumber(v)
-                    logActivity("Published library: " .. name .. " (v" .. v .. ")")
-                else
-                    logActivity("Warning: No version found for library " .. name, true)
-                end
+                local v = parseVersion(code)
+                programVersions[name] = tonumber(v) or 1.0
+                logActivity("Published library: " .. name .. " (v" .. (v or 1.0) .. ")")
             else
-                logActivity("Error: Could not find library " .. path .. " locally or on GitHub.", true)
+                logActivity("Error: Could not find library " .. path, true)
             end
         end
         saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
@@ -1102,35 +998,16 @@ function adminCommands.sync(a)
     
     if target == "manifest" or target == "all" then
         logActivity("Syncing Manifest...")
-        local url = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/installer/manifest.lua"
-        local response = http.get(url)
-        if response then
-            local code = response.readAll()
-            response.close()
-            if code and #code > 0 then
-                local f = fs.open("manifest.lua", "w")
-                if f then
-                    f.write(code)
-                    f.close()
-                    local env = {
-                        table = table,
-                        string = string,
-                        math = math,
-                        os = os,
-                        textutils = textutils,
-                        peripheral = peripheral,
-                        rednet = rednet,
-                        fs = fs,
-                        term = term,
-                        colors = colors,
-                        colours = colours,
-                        keys = keys
-                    }
-                    local func = load(code, "manifest", "t", env)
-                    if func then
-                        manifest = func()
-                        logActivity("Manifest updated to v" .. (manifest.version or "?"))
-                    end
+        local code = fetchSyncFile("installer/manifest.lua")
+        if code and #code > 0 then
+            local f = fs.open("manifest.lua", "w")
+            if f then
+                f.write(code); f.close()
+                local env = { table = table, string = string, math = math, os = os, textutils = textutils, peripheral = peripheral, rednet = rednet, fs = fs, term = term, colors = colors, colours = colours, keys = keys }
+                local func = load(code, "manifest", "t", env)
+                if func then
+                    manifest = func()
+                    logActivity("Manifest updated to v" .. (manifest.version or "?"))
                 end
             end
         else
@@ -1144,26 +1021,7 @@ function adminCommands.sync(a)
     
     if target == "auditor" or target == "all" then
         logActivity("Syncing Auditor...")
-        local path = "turtles/Auditor.lua"
-        local code = nil
-        
-        -- Strategy 1: Local File
-        if fs.exists("/" .. path) then
-            local f = fs.open("/" .. path, "r")
-            code = f.readAll()
-            f.close()
-        else
-            -- Strategy 2: GitHub Fallback
-            logActivity("Local " .. path .. " not found. Fetching from GitHub...")
-            local url = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/" .. path
-            local response = http.get(url)
-            if response then
-                code = response.readAll()
-                response.close()
-                logActivity("Fetched Auditor from GitHub.")
-            end
-        end
-
+        local code = fetchSyncFile("turtles/Auditor.lua")
         if code then
             programCode["Auditor"] = code
             saveTableToFile(UPDATER_DB, {v = programVersions, c = programCode})
