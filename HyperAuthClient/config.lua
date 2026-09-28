@@ -6,4 +6,5 @@ return {
 
   KNOWN_SERVER_ID         = nil,
   DEFAULT_TIMEOUT_SECONDS = 6,
+  PAIRED                  = true,
 }

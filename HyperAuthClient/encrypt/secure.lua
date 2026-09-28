@@ -1,11 +1,26 @@
 local sha1 = require("HyperAuthClient/encrypt/sha1")
-local bit = bit32
-local bor, bxor, rshift, band = bit.bor, bit.bxor, bit.rshift, bit.band
+local bit = bit32 or _G.bit32 or _G.bit
+if not bit then
+  local ok, mod = pcall(require, "bit")
+  if ok and mod then bit = mod end
+end
+
+local bor, bxor, rshift, band
+if bit then
+  bor, bxor, rshift, band = bit.bor, bit.bxor, bit.rshift, bit.band
+else
+  bor  = function(a, b) return a | b end
+  bxor = function(a, b) return a ~ b end
+  rshift = function(a, b) return (a >> b) & 0xFFFFFFFF end
+  band = function(a, b) return a & b end
+end
 
 local NONCE_HEX_LENGTH    = 16
 local TIMESTAMP_TOLERANCE = 2 * 60 * 1000
 
-local function now_ms() return os.epoch("utc") end
+local function now_ms()
+  return (os.epoch and os.epoch("utc")) or (os.time and (os.time() * 1000)) or 1000000
+end
 local function seed_rng()
   math.randomseed( tonumber(string.sub(tostring({}),8),16) + now_ms() )
 end

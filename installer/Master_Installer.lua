@@ -864,10 +864,23 @@ local function createInstallDisk(program)
         local fileCode = dependencies[filePath] or programCode
         local destPath = mountPath .. "/" .. filePath
 
-        -- Special Case: Preserve HyperAuth Configuration
+        -- Special Case: Preserve existing HyperAuth Configuration on disk, or seed fresh un-paired config
         if filePath == "HyperAuthClient/config.lua" and fs.exists(destPath) then
             print("Skipping existing config: " .. filePath)
         else
+            if filePath == "HyperAuthClient/config.lua" then
+                fileCode = [[return {
+  PROTOCOL_NAME = "auth.secure.v1",
+
+  CLIENT_ID     = "unpaired",
+  SHARED_SECRET = "",
+
+  KNOWN_SERVER_ID         = nil,
+  DEFAULT_TIMEOUT_SECONDS = 6,
+  PAIRED                  = false,
+}
+]]
+            end
             local ok_f, err_f = writeVerified(filePath, fileCode)
             if not ok_f then
                 showMessage("Write Error", "Failed writing " .. filePath .. ":\n" .. tostring(err_f), true)

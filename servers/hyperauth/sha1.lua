@@ -3,10 +3,30 @@
     Provides raw and hex implementations for auth token verification.
 ]]
 
-local bit = bit32 or bit
-local band, bor, bxor, bnot = bit.band, bit.bor, bit.bxor, bit.bnot
-local lshift, rshift = bit.lshift, bit.rshift
-local rol = bit.lrotate or function(a, b) return bor(lshift(a, b), rshift(a, 32 - b)) end
+local bit = bit32 or _G.bit32 or _G.bit
+if not bit then
+  local ok, mod = pcall(require, "bit")
+  if ok and mod then bit = mod end
+end
+
+local band, bor, bxor, bnot, lshift, rshift, rol
+if bit then
+  band, bor, bxor, bnot = bit.band, bit.bor, bit.bxor, bit.bnot
+  lshift, rshift = bit.lshift, bit.rshift
+  rol = bit.lrotate or function(n, bits)
+    return bor(lshift(n, bits), rshift(n, 32 - bits))
+  end
+else
+  band = function(a, b) return a & b end
+  bor  = function(a, b) return a | b end
+  bxor = function(a, b) return a ~ b end
+  bnot = function(a) return (~a) & 0xFFFFFFFF end
+  lshift = function(a, b) return (a << b) & 0xFFFFFFFF end
+  rshift = function(a, b) return (a >> b) & 0xFFFFFFFF end
+  rol = function(n, bits)
+    return ((n << bits) | (n >> (32 - bits))) & 0xFFFFFFFF
+  end
+end
 
 local H0 = {0x67452301,0xEFCDAB89,0x98BADCFE,0x10325476,0xC3D2E1F0}
 local K  = {0x5A827999,0x6ED9EBA1,0x8F1BBCDC,0xCA62C1D6}
@@ -51,8 +71,8 @@ local function sha1(s) return to_hex(sha1_raw(s)) end
 local function hmac_sha1_raw(key,msg)
   if #key>64 then key=sha1_raw(key) end
   if #key<64 then key=key..string.rep("\0",64-#key) end
-  local o=key:gsub(".",function(c)return string.char(bit.bxor(c:byte(),0x5c)) end)
-  local i=key:gsub(".",function(c)return string.char(bit.bxor(c:byte(),0x36)) end)
+  local o=key:gsub(".",function(c)return string.char(bxor(c:byte(),0x5c)) end)
+  local i=key:gsub(".",function(c)return string.char(bxor(c:byte(),0x36)) end)
   return sha1_raw(o..sha1_raw(i..msg))
 end
 local function hmac_sha1(key,msg) return to_hex(hmac_sha1_raw(key,msg)) end

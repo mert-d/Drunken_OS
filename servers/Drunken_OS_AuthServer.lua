@@ -51,6 +51,10 @@ users = DB.loadTableFromFile(USERS_DB, logActivity)
 -- Host the auth service
 registerProtocols()
 
+local PAIRING_PROTOCOL = "hyperauth.pair.v1"
+local args = { ... }
+local forcePair = (args[1] == "pair" or args[1] == "--pair")
+
 --- Reads the live HyperAuth client configuration dynamically
 local function getHyperAuthConfig()
     package.loaded["HyperAuthClient.config"] = nil
@@ -63,8 +67,148 @@ local function getHyperAuthConfig()
     return {
         PROTOCOL_NAME = AUTH_INTERNAL_API,
         CLIENT_ID = "drunken_os_server",
-        SHARED_SECRET = "01431f1589d73d826c2a9669ab60fa8b"
+        SHARED_SECRET = "01431f1589d73d826c2a9669ab60fa8b",
+        PAIRED = true
     }
+end
+
+--- Checks if this Auth Server has completed pairing with HyperAuth
+local function isPaired()
+    local cfg = getHyperAuthConfig()
+    if cfg and cfg.PAIRED == true and cfg.SHARED_SECRET and #cfg.SHARED_SECRET > 0 and cfg.CLIENT_ID ~= "unpaired" then
+        return true
+    end
+    return false
+end
+
+--- Performs the interactive auto-pairing handshake with HyperAuth Server
+local function performAutoPairing()
+    local isColor = term.isColor and term.isColor()
+    term.clear()
+    term.setCursorPos(1, 1)
+
+    if isColor then term.setTextColor(colors.cyan) end
+    print("========================================================")
+    print("      DRUNKEN OS AUTH SERVER - HYPERAUTH PAIRING        ")
+    print("========================================================")
+
+    math.randomseed(os.epoch("utc") + os.getComputerID())
+    local pin = string.format("%04d", math.random(1000, 9999))
+    local nonce = crypto.hex(os.epoch("utc") .. tostring(math.random()))
+    local myId = os.getComputerID()
+
+    if isColor then term.setTextColor(colors.white) end
+    print(string.format("  Computer ID : #%d", myId))
+    print(string.format("  Device Name : Drunken OS Auth Server #%d", myId))
+    print(string.format("  Protocol    : %s", PAIRING_PROTOCOL))
+    print("")
+    if isColor then term.setTextColor(colors.yellow) end
+    print("  +----------------------------------------------------+")
+    print(string.format("  |        ONE-TIME VERIFICATION PIN: [ %s ]         |", pin))
+    print("  +----------------------------------------------------+")
+    if isColor then term.setTextColor(colors.lightGray or colors.white) end
+    print("\n  Broadcasting pairing request to HyperAuth Server...")
+    print("  Please approve this request on the HyperAuth console.")
+    print("  (Type 'pair accept " .. myId .. "' or 'y' on the Command Computer)")
+    print("\n  [Press 'S' to skip pairing and use local defaults]\n")
+
+    -- Ensure modems are open
+    if ServiceGuard and ServiceGuard.initModems then
+        pcall(ServiceGuard.initModems)
+    end
+
+    local timerId = os.startTimer(0.1)
+    local broadcastInterval = 2.5
+    local lastBroadcast = 0
+    local pairingComplete = false
+
+    while not pairingComplete do
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "timer" and p1 == timerId then
+            local now = os.epoch("utc") / 1000
+            if (now - lastBroadcast) >= broadcastInterval then
+                lastBroadcast = now
+                local pairPacket = {
+                    type = "pair_request",
+                    computer_id = myId,
+                    label = "Drunken OS Auth #" .. myId,
+                    pin = pin,
+                    nonce = nonce,
+                    timestamp = os.epoch("utc")
+                }
+                rednet.broadcast(pairPacket, PAIRING_PROTOCOL)
+                io.write(".")
+            end
+            timerId = os.startTimer(0.5)
+
+        elseif event == "rednet_message" then
+            local senderId, message, protocol = p1, p2, p3
+            if protocol == PAIRING_PROTOCOL and type(message) == "table" then
+                if message.type == "pair_accept" and message.nonce == nonce then
+                    pairingComplete = true
+                    if isColor then term.setTextColor(colors.green) end
+                    print("\n\n  ========================================================")
+                    print(string.format("  [SUCCESS] PAIRED WITH HYPERAUTH SERVER #%d!", message.server_id or senderId))
+                    print("  ========================================================")
+                    if isColor then term.setTextColor(colors.white) end
+                    print(string.format("  Assigned Vendor ID : %s", message.vendorId))
+                    print(string.format("  Cryptographic Key  : %s...", tostring(message.sharedSecret):sub(1, 8)))
+
+                    -- Persist configuration to HyperAuthClient/config.lua
+                    local configPath = "HyperAuthClient/config.lua"
+                    local configData = string.format([[return {
+  PROTOCOL_NAME = %q,
+
+  CLIENT_ID     = %q,
+  SHARED_SECRET = %q,
+
+  KNOWN_SERVER_ID         = %s,
+  DEFAULT_TIMEOUT_SECONDS = 6,
+  PAIRED                  = true,
+}
+]], message.protocol or "auth.secure.v1", message.vendorId, message.sharedSecret, tostring(message.server_id or senderId))
+
+                    local f = fs.open(configPath, "w")
+                    if f then
+                        f.write(configData)
+                        f.close()
+                        logActivity("Pairing configuration saved to " .. configPath)
+                    else
+                        logActivity("Failed to save " .. configPath, true)
+                    end
+
+                    package.loaded["HyperAuthClient.config"] = nil
+                    package.loaded["HyperAuthClient/config"] = nil
+
+                    sleep(2)
+                    term.clear()
+                    term.setCursorPos(1, 1)
+                    return true
+
+                elseif message.type == "pair_reject" and message.nonce == nonce then
+                    if isColor then term.setTextColor(colors.red) end
+                    print(string.format("\n\n  [REJECTED] Pairing was declined by HyperAuth Server: %s", message.reason or "Unknown"))
+                    if isColor then term.setTextColor(colors.white) end
+                    print("  Press any key to retry or 'S' to skip...")
+                    local _, key = os.pullEvent("key")
+                    if key == keys.s then return false end
+                    return performAutoPairing()
+                end
+            end
+
+        elseif event == "key" then
+            local key = p1
+            if key == keys.s then
+                if isColor then term.setTextColor(colors.yellow) end
+                print("\n\n  Pairing skipped by user. Continuing with local config...")
+                sleep(1)
+                term.clear()
+                term.setCursorPos(1, 1)
+                return false
+            end
+        end
+    end
+    return false
 end
 
 --- Initiates a 2FA request via HyperAuth
@@ -258,6 +402,9 @@ local function startServer()
 end
 
 local function runAuthServer()
+    if forcePair or not isPaired() then
+        performAutoPairing()
+    end
     parallel.waitForAny(startServer, garbageCollectPending)
 end
 

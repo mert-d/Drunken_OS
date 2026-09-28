@@ -21,9 +21,11 @@ local ServiceGuard = nil
 pcall(function() ServiceGuard = require("lib.service_guard") end)
 
 -- Configuration Constants
+local PAIRING_PROTOCOL           = "hyperauth.pair.v1"
 local PROTOCOLS = {
     "auth.secure.v1_Internal",
-    "auth.secure.v1"
+    "auth.secure.v1",
+    PAIRING_PROTOCOL
 }
 local VENDOR_REGISTRY_PATH       = "/vendors.jsonl"
 local AUTH_LOG_FILE_PATH         = "/logs/hyperauth.log.jsonl"
@@ -37,6 +39,7 @@ local MAX_VERIFY_ATTEMPTS        = 5
 local vendor_cache_by_id = {}
 local vendor_last_loaded_millis = 0
 local pending_requests_by_id = {}
+local pending_pair_requests = {}
 local isRunning = true
 local logHistory = {}
 local hasCommandsAPI = (commands ~= nil and type(commands.exec) == "function")
@@ -264,6 +267,42 @@ local function handleMessage(sender_computer_id, raw_outer_message, receivedProt
         return
     end
 
+    -- Automatic Pairing Handshake (Zero-Config Automatch)
+    if receivedProtocol == PAIRING_PROTOCOL or outer_envelope.type == "pair_request" then
+        if outer_envelope.type == "pair_request" then
+            local senderId = sender_computer_id
+            local pin = tostring(outer_envelope.pin or "")
+            local label = tostring(outer_envelope.label or ("Auth Server #" .. senderId))
+            local nonce = tostring(outer_envelope.nonce or "")
+
+            pending_pair_requests[senderId] = {
+                id = senderId,
+                pin = pin,
+                label = label,
+                nonce = nonce,
+                timestamp = current_time_millis()
+            }
+
+            local isColor = term.isColor and term.isColor()
+            print("")
+            if isColor then term.setTextColor(colors.yellow) end
+            print("********************************************************")
+            print(string.format("  INCOMING PAIRING REQUEST FROM COMPUTER #%d!", senderId))
+            print(string.format("  Device : %s", label))
+            if #pin > 0 then
+                print(string.format("  PIN    : [ %s ]", pin))
+            end
+            print(string.format("  Action : Type 'pair accept %d' (or 'y') to authorize.", senderId))
+            print("********************************************************")
+            if isColor then term.setTextColor(colors.white) end
+            io.write("hyperauth> ")
+
+            logActivity(string.format("Pair request from PC #%d ('%s', PIN: %s)", senderId, label, pin))
+            append_log_line({ level = "info", event = "pair_request", sender = senderId, label = label, pin = pin })
+            return
+        end
+    end
+
     local vendor_id = tostring(outer_envelope.client_id or outer_envelope.vendorID or "")
     local vendor_record = get_vendor_record_by_id(vendor_id)
 
@@ -410,6 +449,7 @@ local function processAdminCommand(line)
     if cmd == "help" then
         print("\n=== HyperAuth Admin Commands ===")
         print(" status                - Show server health & stats")
+        print(" pair [list|accept|reject] - Manage Auth Server pairings")
         print(" vendors               - List registered vendors")
         print(" addvendor <id> <name> <secret> - Register new vendor")
         print(" delvendor <id>        - Disable a vendor")
@@ -427,7 +467,116 @@ local function processAdminCommand(line)
         print(" Registered  : " .. vCount .. " vendor(s)")
         local rCount = 0
         for _ in pairs(pending_requests_by_id) do rCount = rCount + 1 end
-        print(" Active 2FA  : " .. rCount .. " pending request(s)\n")
+        print(" Active 2FA  : " .. rCount .. " pending request(s)")
+        local pCount = 0
+        for _ in pairs(pending_pair_requests) do pCount = pCount + 1 end
+        print(" Pending Pair: " .. pCount .. " incoming request(s)\n")
+
+    elseif cmd == "pair" or cmd == "accept" or cmd == "y" or cmd == "yes" or cmd == "reject" or cmd == "n" or cmd == "no" then
+        local sub = parts[1]:lower()
+        local targetId = nil
+
+        if sub == "pair" then
+            local action = parts[2] and parts[2]:lower() or "list"
+            if action == "list" then
+                print("\n--- Pending Auth Server Pairing Requests ---")
+                local count = 0
+                for id, req in pairs(pending_pair_requests) do
+                    count = count + 1
+                    print(string.format("  [PC #%d] %s | PIN: %s", id, req.label, req.pin))
+                end
+                if count == 0 then print("  No pending pairing requests.") end
+                print("")
+                return
+            elseif action == "accept" or action == "yes" or action == "y" then
+                targetId = tonumber(parts[3])
+                sub = "accept"
+            elseif action == "reject" or action == "no" or action == "n" then
+                targetId = tonumber(parts[3])
+                sub = "reject"
+            else
+                print(" Usage: pair [list | accept <id> | reject <id>]")
+                return
+            end
+        else
+            targetId = tonumber(parts[2])
+            if sub == "y" or sub == "yes" then sub = "accept" end
+            if sub == "n" or sub == "no" then sub = "reject" end
+        end
+
+        if not targetId then
+            -- Auto-pick if only one request is pending
+            local firstId, count = nil, 0
+            for id in pairs(pending_pair_requests) do
+                firstId = id
+                count = count + 1
+            end
+            if count == 1 then targetId = firstId end
+        end
+
+        if not targetId or not pending_pair_requests[targetId] then
+            print(" No pending pairing request for ID: " .. tostring(targetId or "unspecified"))
+            print(" Type 'pair list' to view pending requests.")
+            return
+        end
+
+        local req = pending_pair_requests[targetId]
+
+        if sub == "accept" then
+            local newSecret = secure.random_hex(32)
+            local newVendorId = "drunken_auth_" .. targetId
+            local vendorName = req.label or ("Drunken OS Auth #" .. targetId)
+
+            -- Save to vendors.jsonl
+            local newEntry = {
+                vendorId = newVendorId,
+                vendorName = vendorName,
+                sharedSecret = newSecret,
+                enabled = true
+            }
+            local f = fs.open(VENDOR_REGISTRY_PATH, "a")
+            if f then
+                f.write(textutils.serializeJSON(newEntry) .. "\n")
+                f.close()
+            end
+            vendor_cache_by_id[newVendorId] = {
+                vendorName = vendorName,
+                sharedSecret = newSecret,
+                enabled = true
+            }
+
+            local replyPacket = {
+                type = "pair_accept",
+                server_id = os.getComputerID(),
+                vendorId = newVendorId,
+                sharedSecret = newSecret,
+                protocol = "auth.secure.v1",
+                pin = req.pin,
+                nonce = req.nonce,
+                timestamp = current_time_millis()
+            }
+            rednet.send(targetId, textutils.serialize(replyPacket), PAIRING_PROTOCOL)
+            pending_pair_requests[targetId] = nil
+
+            print(string.format(" [SUCCESS] Paired with PC #%d!", targetId))
+            print(string.format(" Assigned Vendor ID : %s", newVendorId))
+            print(string.format(" Generated Key      : %s...", newSecret:sub(1, 8)))
+            logActivity(string.format("Approved pairing for PC #%d (Vendor: %s)", targetId, newVendorId))
+            append_log_line({ level = "info", event = "pair_approved", vendorId = newVendorId, client = targetId })
+
+        elseif sub == "reject" then
+            rednet.send(targetId, textutils.serialize({
+                type = "pair_reject",
+                server_id = os.getComputerID(),
+                reason = "Rejected by administrator.",
+                pin = req.pin,
+                nonce = req.nonce
+            }), PAIRING_PROTOCOL)
+            pending_pair_requests[targetId] = nil
+            print(" [REJECTED] Pairing request for PC #" .. targetId .. " rejected.")
+            logActivity("Rejected pairing request for PC #" .. targetId, true)
+            append_log_line({ level = "warn", event = "pair_rejected", client = targetId })
+        end
 
     elseif cmd == "vendors" then
         print("\n--- Registered Vendors ---")
