@@ -20,6 +20,7 @@ for _, p in ipairs(sha1_candidates) do
     if not fn then
       error("secure: Compile error in '" .. p .. "':\n" .. tostring(err), 0)
     end
+    if setfenv and getfenv then pcall(setfenv, fn, getfenv()) end
     local ok, res = pcall(fn)
     if not ok then
       error("secure: Runtime error in '" .. p .. "':\n" .. tostring(res), 0)
@@ -72,7 +73,10 @@ local TIMESTAMP_TOLERANCE = 2 * 60 * 1000
 
 local function now_ms() return os.epoch and os.epoch("utc") or (os.time() * 1000) end
 local function seed_rng()
-  math.randomseed( tonumber(string.sub(tostring({}), 8), 16) + now_ms() )
+  local hex = tostring({}):match("(%x+)$") or "0"
+  local val = tonumber(hex, 16) or 0
+  local ms = (now_ms() % 2147483647)
+  math.randomseed((val + ms) % 2147483647)
 end
 
 local function random_hex(n)

@@ -6,10 +6,12 @@
 local runningProg = shell and shell.getRunningProgram and shell.getRunningProgram() or ""
 local runningDir = fs.getDir(runningProg)
 
-package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;/HyperAuthClient/?.lua;HyperAuthClient/?.lua;/servers/?.lua;servers/?.lua;"
-    .. "/disk/?.lua;disk/?.lua;/disk/HyperAuthClient/?.lua;disk/HyperAuthClient/?.lua;"
-    .. (runningDir ~= "" and (fs.combine(runningDir, "?.lua") .. ";" .. fs.combine(runningDir, "HyperAuthClient/?.lua") .. ";") or "")
-    .. package.path
+if package then
+    package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;/HyperAuthClient/?.lua;HyperAuthClient/?.lua;/servers/?.lua;servers/?.lua;"
+        .. "/disk/?.lua;disk/?.lua;/disk/HyperAuthClient/?.lua;disk/HyperAuthClient/?.lua;"
+        .. (runningDir ~= "" and (fs.combine(runningDir, "?.lua") .. ";" .. fs.combine(runningDir, "HyperAuthClient/?.lua") .. ";") or "")
+        .. (package.path or "")
+end
 
 local crypto = nil
 local crypto_candidates = {
@@ -24,6 +26,7 @@ for _, p in ipairs(crypto_candidates) do
         if not fn then
             error("Auth Server: Compile error in '" .. p .. "':\n" .. tostring(err), 0)
         end
+        if setfenv and getfenv then pcall(setfenv, fn, getfenv()) end
         local ok, mod = pcall(fn)
         if not ok then
             error("Auth Server: Runtime error in '" .. p .. "':\n" .. tostring(mod), 0)
@@ -58,6 +61,7 @@ for _, p in ipairs(client_candidates) do
         if not fn then
             error("Auth Server: Compile error in '" .. p .. "':\n" .. tostring(err), 0)
         end
+        if setfenv and getfenv then pcall(setfenv, fn, getfenv()) end
         local ok, mod = pcall(fn)
         if not ok then
             error("Auth Server: Runtime error in '" .. p .. "':\n" .. tostring(mod), 0)
@@ -124,12 +128,35 @@ local forcePair = (args[1] == "pair" or args[1] == "--pair")
 
 --- Reads the live HyperAuth client configuration dynamically
 local function getHyperAuthConfig()
-    package.loaded["HyperAuthClient.config"] = nil
-    package.loaded["HyperAuthClient/config"] = nil
-    local ok, cfg = pcall(require, "HyperAuthClient/config")
-    if not ok then ok, cfg = pcall(require, "HyperAuthClient.config") end
-    if ok and type(cfg) == "table" then
-        return cfg
+    local candidates = {
+        "/HyperAuthClient/config.lua",
+        "HyperAuthClient/config.lua",
+        "/config.lua",
+        "config.lua"
+    }
+    for _, p in ipairs(candidates) do
+        if fs and fs.exists and fs.exists(p) then
+            local fn, err = loadfile(p)
+            if fn then
+                if setfenv and getfenv then pcall(setfenv, fn, getfenv()) end
+                local ok, cfg = pcall(fn)
+                if ok and type(cfg) == "table" then
+                    return cfg
+                end
+            end
+        end
+    end
+
+    if package and package.loaded then
+        package.loaded["HyperAuthClient.config"] = nil
+        package.loaded["HyperAuthClient/config"] = nil
+    end
+    if require then
+        local ok, cfg = pcall(require, "HyperAuthClient/config")
+        if not ok then ok, cfg = pcall(require, "HyperAuthClient.config") end
+        if ok and type(cfg) == "table" then
+            return cfg
+        end
     end
     return {
         PROTOCOL_NAME = AUTH_INTERNAL_API,
@@ -272,8 +299,10 @@ local function performAutoPairing()
                         logActivity("Failed to save " .. configPath, true)
                     end
 
-                    package.loaded["HyperAuthClient.config"] = nil
-                    package.loaded["HyperAuthClient/config"] = nil
+                    if package and package.loaded then
+                        package.loaded["HyperAuthClient.config"] = nil
+                        package.loaded["HyperAuthClient/config"] = nil
+                    end
 
                     sleep(2)
                     term.clear()

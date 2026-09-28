@@ -12,12 +12,14 @@
 local runningProg = shell and shell.getRunningProgram and shell.getRunningProgram() or ""
 local runningDir = fs.getDir(runningProg)
 
-package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;/servers/?.lua;servers/?.lua;"
-    .. "/servers/hyperauth/?.lua;servers/hyperauth/?.lua;"
-    .. "/hyperauth/?.lua;hyperauth/?.lua;"
-    .. "/disk/?.lua;disk/?.lua;/disk/servers/?.lua;disk/servers/?.lua;/disk/servers/hyperauth/?.lua;"
-    .. (runningDir ~= "" and (fs.combine(runningDir, "?.lua") .. ";" .. fs.combine(runningDir, "hyperauth/?.lua") .. ";") or "")
-    .. package.path
+if package then
+    package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;/servers/?.lua;servers/?.lua;"
+        .. "/servers/hyperauth/?.lua;servers/hyperauth/?.lua;"
+        .. "/hyperauth/?.lua;hyperauth/?.lua;"
+        .. "/disk/?.lua;disk/?.lua;/disk/servers/?.lua;disk/servers/?.lua;/disk/servers/hyperauth/?.lua;"
+        .. (runningDir ~= "" and (fs.combine(runningDir, "?.lua") .. ";" .. fs.combine(runningDir, "hyperauth/?.lua") .. ";") or "")
+        .. (package.path or "")
+end
 
 local secure = nil
 local secure_candidates = {
@@ -36,6 +38,7 @@ for _, p in ipairs(secure_candidates) do
         if not fn then
             error("HyperAuth Server: Compile error in '" .. p .. "':\n" .. tostring(err), 0)
         end
+        if setfenv and getfenv then pcall(setfenv, fn, getfenv()) end
         local ok, mod = pcall(fn)
         if not ok then
             error("HyperAuth Server: Runtime error in '" .. p .. "':\n" .. tostring(mod), 0)
