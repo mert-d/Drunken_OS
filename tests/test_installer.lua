@@ -486,4 +486,160 @@ local ok_ha_boot = pcall(haBootChunk)
 assert_true(ok_ha_boot, "Command Computer booted HyperAuth startup.lua")
 assert_eq(haLaunched, "servers/HyperAuth_Server.lua", "Command PC launched HyperAuth_Server.lua")
 
+-- 8. Verify Authentication Authority Server (auth_server) Package & Boot
+local authPkg = manifest.packages.auth_server
+assert_true(authPkg ~= nil, "Auth server package defined in manifest")
+assert_eq(authPkg.type, "server", "Auth server package type is server")
+assert_eq(authPkg.main, "servers/Drunken_OS_AuthServer.lua", "Auth server main program path")
+
+local authPkgBytes = 0
+for _, relPath in ipairs(authPkg.files) do
+    local f = io.open(relPath, "rb")
+    assert_true(f ~= nil, "Auth package file exists: " .. relPath)
+    local content = f:read("*a")
+    f:close()
+    authPkgBytes = authPkgBytes + #content
+end
+print(string.format("  INFO: Auth server raw file size: %d bytes (%.2f KB)", authPkgBytes, authPkgBytes / 1024))
+assert_true(authPkgBytes <= 125000, "Auth server package fits comfortably within 125,000 bytes limit")
+
+-- Simulate Auth Server disk installation
+local authMockDisk = {}
+local authTargetRoot = {}
+
+authMockDisk["startup.lua"] = installTemplateCode
+authMockDisk["startup"] = 'shell.run("startup.lua")\n'
+authMockDisk["server_startup.lua"] = srvStartupCode
+authMockDisk["server_startup"] = 'shell.run("server_startup.lua")\n'
+local authConfigData = {
+    name = authPkg.name,
+    type = authPkg.type,
+    main_program = authPkg.main,
+    files = authPkg.files
+}
+authMockDisk["install_config.lua"] = mockTextutils.serialize(authConfigData)
+for _, fpath in ipairs(authPkg.files) do
+    local f = io.open(fpath, "rb")
+    authMockDisk[fpath] = f:read("*a")
+    f:close()
+end
+
+local authMockFs = {
+    combine = function(a, b)
+        if a == "" or a == "/" then return b end
+        if b == "" then return a end
+        return a:gsub("/+$", "") .. "/" .. b:gsub("^/+", "")
+    end,
+    getDir = function(p)
+        local d = p:match("^(.-)/[^/]+$")
+        return d or ""
+    end,
+    getName = function(p) return p:match("[^/]+$") or p end,
+    exists = function(p)
+        local np = p:gsub("^/+", "")
+        if np:sub(1, 5) == "disk/" then
+            local rel = np:sub(6)
+            return authMockDisk[rel] ~= nil
+        end
+        return authTargetRoot[np] ~= nil
+    end,
+    open = function(p, mode)
+        local np = p:gsub("^/+", "")
+        if mode == "r" then
+            local data = nil
+            if np:sub(1, 5) == "disk/" then
+                data = authMockDisk[np:sub(6)]
+            else
+                data = authTargetRoot[np]
+            end
+            if not data then return nil end
+            return {
+                readAll = function() return data end,
+                close = function() end
+            }
+        elseif mode == "w" then
+            return {
+                write = function(content)
+                    authTargetRoot[np] = content
+                end,
+                close = function() end
+            }
+        end
+    end,
+    copy = function(src, dest)
+        local nsrc = src:gsub("^/+", "")
+        local ndest = dest:gsub("^/+", "")
+        local data = nil
+        if nsrc:sub(1, 5) == "disk/" then
+            data = authMockDisk[nsrc:sub(6)]
+        else
+            data = authTargetRoot[nsrc]
+        end
+        if data then
+            authTargetRoot[ndest] = data
+            return true
+        end
+        return false, "file not found"
+    end,
+    delete = function(p)
+        local np = p:gsub("^/+", "")
+        authTargetRoot[np] = nil
+    end,
+    makeDir = function() end,
+    getSize = function(p)
+        local np = p:gsub("^/+", "")
+        local d = authTargetRoot[np] or (np:sub(1, 5) == "disk/" and authMockDisk[np:sub(6)])
+        return d and #d or 0
+    end
+}
+
+local authEnv = {
+    fs = authMockFs,
+    term = mockTerm,
+    colors = mockColors,
+    peripheral = mockPeripheral,
+    disk = mockDisk,
+    shell = mockShell,
+    os = mockOs,
+    textutils = mockTextutils,
+    sleep = function() end,
+    print = function() end,
+    io = { write = function() end },
+    pcall = pcall,
+    type = type,
+    tostring = tostring,
+    tonumber = tonumber,
+    string = string,
+    table = table,
+    ipairs = ipairs,
+    pairs = pairs
+}
+
+local authInstallChunk = load(installTemplateCode, "disk/startup.lua", "t", authEnv)
+local ok_auth_inst = pcall(authInstallChunk)
+assert_true(ok_auth_inst, "Auth Server installation executed cleanly from disk")
+assert_true(authTargetRoot["startup.lua"] ~= nil, "Auth Server startup written to /startup.lua")
+assert_true(authTargetRoot["startup"] ~= nil, "Auth Server /startup legacy forwarder written")
+assert_true(authTargetRoot[".program_path"] == "servers/Drunken_OS_AuthServer.lua", "Auth Server /.program_path set correctly")
+assert_true(authTargetRoot["servers/Drunken_OS_AuthServer.lua"] ~= nil, "Auth Server main program installed")
+assert_true(authTargetRoot["HyperAuthClient/api/auth_client.lua"] ~= nil, "HyperAuthClient auth_client.lua installed")
+assert_true(authTargetRoot["HyperAuthClient/encrypt/secure.lua"] ~= nil, "HyperAuthClient secure.lua installed")
+assert_true(authTargetRoot["HyperAuthClient/encrypt/sha1.lua"] ~= nil, "HyperAuthClient sha1.lua installed")
+
+-- Simulate Auth Server computer boot
+local authLaunched = nil
+local authHdEnv = {
+    fs = authMockFs,
+    shell = { run = function(cmd) authLaunched = cmd end },
+    print = function() end,
+    printError = function() end,
+    read = function() end,
+    pcall = pcall,
+    tostring = tostring
+}
+local authBootChunk = load(authTargetRoot["startup.lua"], "/startup.lua", "t", authHdEnv)
+local ok_auth_boot = pcall(authBootChunk)
+assert_true(ok_auth_boot, "Advanced Computer booted Auth Server startup.lua")
+assert_eq(authLaunched, "servers/Drunken_OS_AuthServer.lua", "Advanced Computer launched Drunken_OS_AuthServer.lua")
+
 print(">>> All Installer & Boot Simulation tests passed successfully!")

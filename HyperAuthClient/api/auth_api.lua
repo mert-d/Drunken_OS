@@ -1,4 +1,8 @@
-local secure = require("HyperAuthClient/encrypt/secure")
+local ok_sec, secure = pcall(require, "HyperAuthClient.encrypt.secure")
+if not ok_sec then ok_sec, secure = pcall(require, "HyperAuthClient/encrypt/secure") end
+if not ok_sec then ok_sec, secure = pcall(require, "encrypt.secure") end
+if not ok_sec then ok_sec, secure = pcall(require, "secure") end
+if not ok_sec then error("auth_api: failed to load secure module: " .. tostring(secure), 0) end
 
 local cached_server_id = nil
 

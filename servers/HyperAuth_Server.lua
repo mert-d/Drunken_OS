@@ -9,12 +9,23 @@
     and validates verification attempts against rate-limits and expiry windows.
 ]]
 
-package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;/servers/?.lua;" .. package.path
+local runningProg = shell and shell.getRunningProgram and shell.getRunningProgram() or ""
+local runningDir = fs.getDir(runningProg)
+
+package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;/servers/?.lua;servers/?.lua;"
+    .. "/servers/hyperauth/?.lua;servers/hyperauth/?.lua;"
+    .. "/hyperauth/?.lua;hyperauth/?.lua;"
+    .. "/disk/?.lua;disk/?.lua;/disk/servers/?.lua;disk/servers/?.lua;/disk/servers/hyperauth/?.lua;"
+    .. (runningDir ~= "" and (fs.combine(runningDir, "?.lua") .. ";" .. fs.combine(runningDir, "hyperauth/?.lua") .. ";") or "")
+    .. package.path
 
 local ok_secure, secure = pcall(require, "servers.hyperauth.secure")
+if not ok_secure then ok_secure, secure = pcall(require, "servers/hyperauth/secure") end
 if not ok_secure then ok_secure, secure = pcall(require, "hyperauth.secure") end
+if not ok_secure then ok_secure, secure = pcall(require, "hyperauth/secure") end
 if not ok_secure then ok_secure, secure = pcall(require, "secure") end
 if not ok_secure then ok_secure, secure = pcall(require, "HyperAuthClient.encrypt.secure") end
+if not ok_secure then ok_secure, secure = pcall(require, "HyperAuthClient/encrypt/secure") end
 if not ok_secure then error("HyperAuth Server: Failed to load secure module: " .. tostring(secure), 0) end
 
 local ServiceGuard = nil
@@ -28,6 +39,15 @@ local PROTOCOLS = {
     PAIRING_PROTOCOL
 }
 local VENDOR_REGISTRY_PATH       = "/vendors.jsonl"
+if not fs.exists(VENDOR_REGISTRY_PATH) then
+    if fs.exists("vendors.jsonl") then
+        VENDOR_REGISTRY_PATH = "vendors.jsonl"
+    elseif fs.exists("disk/vendors.jsonl") then
+        VENDOR_REGISTRY_PATH = "disk/vendors.jsonl"
+    elseif fs.exists("/disk/vendors.jsonl") then
+        VENDOR_REGISTRY_PATH = "/disk/vendors.jsonl"
+    end
+end
 local AUTH_LOG_FILE_PATH         = "/logs/hyperauth.log.jsonl"
 local REGISTRY_HOT_RELOAD_MILLIS = 5 * 1000
 

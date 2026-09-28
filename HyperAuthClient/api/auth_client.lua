@@ -1,4 +1,8 @@
-local API = require("HyperAuthClient/api/auth_api")
+local ok_api, API = pcall(require, "HyperAuthClient.api.auth_api")
+if not ok_api then ok_api, API = pcall(require, "HyperAuthClient/api/auth_api") end
+if not ok_api then ok_api, API = pcall(require, "api.auth_api") end
+if not ok_api then ok_api, API = pcall(require, "auth_api") end
+if not ok_api then error("auth_client: failed to load auth_api: " .. tostring(API), 0) end
 
 local function get_config()
   package.loaded["HyperAuthClient.config"] = nil

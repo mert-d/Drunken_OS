@@ -832,7 +832,7 @@ local function createInstallDisk(program)
     end
 
     -- Legacy BIOS forwarder: supports computers looking for 'startup' without .lua extension
-    local forwarderScript = 'if fs.exists("disk/startup.lua") then shell.run("disk/startup.lua") elseif fs.exists("startup.lua") then shell.run("startup.lua") else local d=fs.getDir(shell.getRunningProgram()); shell.run(fs.combine(d,"startup.lua")) end\n'
+    local forwarderScript = 'local d = fs.getDir(shell and shell.getRunningProgram and shell.getRunningProgram() or ""); local t = fs.combine(d, "startup.lua"); if fs.exists(t) then shell.run("/" .. t) elseif fs.exists("disk/startup.lua") then shell.run("disk/startup.lua") else shell.run("startup.lua") end\n'
     local ok_boot2, err_boot2 = writeVerified("startup", forwarderScript)
     if not ok_boot2 then
         showMessage("Write Error", "Failed to write startup:\n" .. tostring(err_boot2), true)
@@ -894,7 +894,11 @@ local function createInstallDisk(program)
     print("Setting disk label...")
     drive.setDiskLabel(program.name .. " Installer")
 
-    showMessage("Success", "Installation disk for " .. program.name .. " created successfully.", false)
+    if program.id == "hyperauth_server" then
+        showMessage("HyperAuth Disk Created", "Disk for " .. program.name .. " created!\n\nNOTE FOR COMMAND COMPUTER:\nMinecraft blocks floppy autorun on Command PCs.\nOn your Command PC, type:\n  disk/startup\nand press Enter to run the installer!", false)
+    else
+        showMessage("Success", "Installation disk for " .. program.name .. " created successfully.", false)
+    end
     drive.ejectDisk()
 end
 

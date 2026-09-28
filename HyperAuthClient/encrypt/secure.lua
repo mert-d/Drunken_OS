@@ -1,4 +1,10 @@
-local sha1 = require("HyperAuthClient/encrypt/sha1")
+local ok_sha1, sha1 = pcall(require, "HyperAuthClient.encrypt.sha1")
+if not ok_sha1 then ok_sha1, sha1 = pcall(require, "HyperAuthClient/encrypt/sha1") end
+if not ok_sha1 then ok_sha1, sha1 = pcall(require, "encrypt.sha1") end
+if not ok_sha1 then ok_sha1, sha1 = pcall(require, "sha1") end
+if not ok_sha1 then ok_sha1, sha1 = pcall(require, "lib.sha1_hmac") end
+if not ok_sha1 then ok_sha1, sha1 = pcall(require, "servers.hyperauth.sha1") end
+if not ok_sha1 then error("secure: failed to load sha1 module: " .. tostring(sha1), 0) end
 local bit = bit32 or _G.bit32 or _G.bit
 if not bit then
   local ok, mod = pcall(require, "bit")

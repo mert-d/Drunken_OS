@@ -3,13 +3,24 @@
     Handles login, registration, and session token generation via HyperAuth.
 ]]
 
-package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;" .. package.path
+local runningProg = shell and shell.getRunningProgram and shell.getRunningProgram() or ""
+local runningDir = fs.getDir(runningProg)
+
+package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;/HyperAuthClient/?.lua;HyperAuthClient/?.lua;/servers/?.lua;servers/?.lua;"
+    .. "/disk/?.lua;disk/?.lua;/disk/HyperAuthClient/?.lua;disk/HyperAuthClient/?.lua;"
+    .. (runningDir ~= "" and (fs.combine(runningDir, "?.lua") .. ";" .. fs.combine(runningDir, "HyperAuthClient/?.lua") .. ";") or "")
+    .. package.path
 
 local ok_crypto, crypto = pcall(require, "lib.sha1_hmac")
-if not ok_crypto then error("Auth Server: lib.sha1_hmac not found.", 0) end
+if not ok_crypto then ok_crypto, crypto = pcall(require, "lib/sha1_hmac") end
+if not ok_crypto then ok_crypto, crypto = pcall(require, "sha1_hmac") end
+if not ok_crypto then error("Auth Server: lib.sha1_hmac not found: " .. tostring(crypto), 0) end
 
-local ok_auth, AuthClient = pcall(require, "HyperAuthClient/api/auth_client")
-if not ok_auth then error("Auth Server: HyperAuthClient API not found.", 0) end
+local ok_auth, AuthClient = pcall(require, "HyperAuthClient.api.auth_client")
+if not ok_auth then ok_auth, AuthClient = pcall(require, "HyperAuthClient/api/auth_client") end
+if not ok_auth then ok_auth, AuthClient = pcall(require, "api.auth_client") end
+if not ok_auth then ok_auth, AuthClient = pcall(require, "auth_client") end
+if not ok_auth then error("Auth Server: HyperAuthClient API not found: " .. tostring(AuthClient), 0) end
 
 local DB = require("lib.db")
 local ServiceGuard = require("lib.service_guard")

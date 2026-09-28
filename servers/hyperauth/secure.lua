@@ -4,13 +4,30 @@
 ]]
 
 local ok_sha1, sha1 = pcall(require, "servers.hyperauth.sha1")
+if not ok_sha1 then ok_sha1, sha1 = pcall(require, "servers/hyperauth/sha1") end
 if not ok_sha1 then ok_sha1, sha1 = pcall(require, "hyperauth.sha1") end
+if not ok_sha1 then ok_sha1, sha1 = pcall(require, "hyperauth/sha1") end
 if not ok_sha1 then ok_sha1, sha1 = pcall(require, "sha1") end
 if not ok_sha1 then ok_sha1, sha1 = pcall(require, "HyperAuthClient.encrypt.sha1") end
-if not ok_sha1 then error("secure: cannot find sha1 library") end
+if not ok_sha1 then ok_sha1, sha1 = pcall(require, "HyperAuthClient/encrypt/sha1") end
+if not ok_sha1 then ok_sha1, sha1 = pcall(require, "lib.sha1_hmac") end
+if not ok_sha1 then error("secure: cannot find sha1 library: " .. tostring(sha1), 0) end
 
-local bit = bit32 or bit
-local bor, bxor, rshift, band = bit.bor, bit.bxor, bit.rshift, bit.band
+local bit = bit32 or _G.bit32 or _G.bit
+if not bit then
+  local ok, mod = pcall(require, "bit")
+  if ok and mod then bit = mod end
+end
+
+local bor, bxor, rshift, band
+if bit then
+  bor, bxor, rshift, band = bit.bor, bit.bxor, bit.rshift, bit.band
+else
+  bor  = function(a, b) return a | b end
+  bxor = function(a, b) return a ~ b end
+  rshift = function(a, b) return (a >> b) & 0xFFFFFFFF end
+  band = function(a, b) return a & b end
+end
 
 local NONCE_HEX_LENGTH    = 16
 local TIMESTAMP_TOLERANCE = 2 * 60 * 1000
