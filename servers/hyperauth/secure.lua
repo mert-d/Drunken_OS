@@ -3,15 +3,42 @@
     Implements symmetric keystream cipher, HMAC-SHA1 verification, and timestamp anti-replay.
 ]]
 
-local ok_sha1, sha1 = pcall(require, "servers.hyperauth.sha1")
-if not ok_sha1 then ok_sha1, sha1 = pcall(require, "servers/hyperauth/sha1") end
-if not ok_sha1 then ok_sha1, sha1 = pcall(require, "hyperauth.sha1") end
-if not ok_sha1 then ok_sha1, sha1 = pcall(require, "hyperauth/sha1") end
-if not ok_sha1 then ok_sha1, sha1 = pcall(require, "sha1") end
-if not ok_sha1 then ok_sha1, sha1 = pcall(require, "HyperAuthClient.encrypt.sha1") end
-if not ok_sha1 then ok_sha1, sha1 = pcall(require, "HyperAuthClient/encrypt/sha1") end
-if not ok_sha1 then ok_sha1, sha1 = pcall(require, "lib.sha1_hmac") end
-if not ok_sha1 then error("secure: cannot find sha1 library: " .. tostring(sha1), 0) end
+local sha1 = nil
+local sha1_candidates = {
+  "/servers/hyperauth/sha1.lua",
+  "servers/hyperauth/sha1.lua",
+  "/hyperauth/sha1.lua",
+  "hyperauth/sha1.lua",
+  "/sha1.lua",
+  "sha1.lua",
+  "/lib/sha1_hmac.lua",
+  "lib/sha1_hmac.lua"
+}
+for _, p in ipairs(sha1_candidates) do
+  if fs and fs.exists and fs.exists(p) then
+    local fn, err = loadfile(p)
+    if not fn then
+      error("secure: Compile error in '" .. p .. "':\n" .. tostring(err), 0)
+    end
+    local ok, res = pcall(fn)
+    if not ok then
+      error("secure: Runtime error in '" .. p .. "':\n" .. tostring(res), 0)
+    end
+    sha1 = res
+    break
+  end
+end
+if not sha1 then
+  local ok_sha1, res = pcall(require, "servers.hyperauth.sha1")
+  if not ok_sha1 then ok_sha1, res = pcall(require, "hyperauth.sha1") end
+  if not ok_sha1 then ok_sha1, res = pcall(require, "sha1") end
+  if not ok_sha1 then ok_sha1, res = pcall(require, "lib.sha1_hmac") end
+  if ok_sha1 then
+    sha1 = res
+  else
+    error("secure: cannot find or load sha1 module: " .. tostring(res), 0)
+  end
+end
 
 local bit = bit32 or _G.bit32 or _G.bit
 if not bit then
@@ -23,10 +50,21 @@ local bor, bxor, rshift, band
 if bit then
   bor, bxor, rshift, band = bit.bor, bit.bxor, bit.rshift, bit.band
 else
-  bor  = function(a, b) return a | b end
-  bxor = function(a, b) return a ~ b end
-  rshift = function(a, b) return (a >> b) & 0xFFFFFFFF end
-  band = function(a, b) return a & b end
+  local load_fn = loadstring or load
+  local ok_native, native_funcs = pcall(load_fn, [[
+    return {
+      bor  = function(a, b) return (a | b) & 0xFFFFFFFF end,
+      bxor = function(a, b) return (a ~ b) & 0xFFFFFFFF end,
+      rshift = function(a, b) return (a >> b) & 0xFFFFFFFF end,
+      band = function(a, b) return (a & b) & 0xFFFFFFFF end
+    }
+  ]])
+  if ok_native and native_funcs then
+    local nf = native_funcs()
+    bor, bxor, rshift, band = nf.bor, nf.bxor, nf.rshift, nf.band
+  else
+    error("secure: No bit32 library or native bitwise operators found.", 0)
+  end
 end
 
 local NONCE_HEX_LENGTH    = 16

@@ -258,13 +258,32 @@ local mockOs = {
     epoch = function() return 1000000 end
 }
 
+local function serializeLuaVal(val)
+    if type(val) == "string" then
+        return string.format("%q", val)
+    elseif type(val) == "number" or type(val) == "boolean" then
+        return tostring(val)
+    elseif type(val) == "table" then
+        local parts = {}
+        for k, v in pairs(val) do
+            local kStr = type(k) == "number" and ("[" .. k .. "]") or ("[\"" .. tostring(k) .. "\"]")
+            table.insert(parts, kStr .. " = " .. serializeLuaVal(v))
+        end
+        return "{\n" .. table.concat(parts, ",\n") .. "\n}"
+    end
+    return "nil"
+end
+
 local mockTextutils = {
     unserialize = function(str)
         local fn = load("return " .. str)
         if fn then return fn() end
         return nil
     end,
-    serialize = function(t) return textutils and textutils.serialize(t) or "" end
+    serialize = function(t)
+        if textutils and textutils.serialize then return textutils.serialize(t) end
+        return serializeLuaVal(t)
+    end
 }
 
 -- Execute disk/startup.lua in target machine environment

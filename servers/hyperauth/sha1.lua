@@ -14,19 +14,35 @@ if bit then
   band, bor, bxor, bnot = bit.band, bit.bor, bit.bxor, bit.bnot
   lshift, rshift = bit.lshift, bit.rshift
   rol = bit.lrotate or function(n, bits)
-    return bor(lshift(n, bits), rshift(n, 32 - bits))
+    return bit.bor(bit.lshift(n, bits), bit.rshift(n, 32 - bits))
   end
 else
-  band = function(a, b) return a & b end
-  bor  = function(a, b) return a | b end
-  bxor = function(a, b) return a ~ b end
-  bnot = function(a) return (~a) & 0xFFFFFFFF end
-  lshift = function(a, b) return (a << b) & 0xFFFFFFFF end
-  rshift = function(a, b) return (a >> b) & 0xFFFFFFFF end
-  rol = function(n, bits)
-    return ((n << bits) | (n >> (32 - bits))) & 0xFFFFFFFF
+  local load_fn = loadstring or load
+  local ok_native, native_funcs = pcall(load_fn, [[
+    return {
+      band = function(a, b) return (a & b) & 0xFFFFFFFF end,
+      bor  = function(a, b) return (a | b) & 0xFFFFFFFF end,
+      bxor = function(a, b) return (a ~ b) & 0xFFFFFFFF end,
+      bnot = function(a) return (~a) & 0xFFFFFFFF end,
+      lshift = function(a, b) return (a << b) & 0xFFFFFFFF end,
+      rshift = function(a, b) return (a >> b) & 0xFFFFFFFF end,
+      rol = function(n, bits)
+        n = n & 0xFFFFFFFF
+        bits = bits % 32
+        return (((n << bits) | (n >> (32 - bits)))) & 0xFFFFFFFF
+      end
+    }
+  ]])
+  if ok_native and native_funcs then
+    local nf = native_funcs()
+    band, bor, bxor, bnot = nf.band, nf.bor, nf.bxor, nf.bnot
+    lshift, rshift, rol = nf.lshift, nf.rshift, nf.rol
+  else
+    error("sha1: No bitwise library (bit32/bit) or native bitwise operators found.", 0)
   end
 end
+
+local unpack = table.unpack or _G.unpack or unpack
 
 local H0 = {0x67452301,0xEFCDAB89,0x98BADCFE,0x10325476,0xC3D2E1F0}
 local K  = {0x5A827999,0x6ED9EBA1,0x8F1BBCDC,0xCA62C1D6}
@@ -46,7 +62,7 @@ local function block_u32s(b)
 end
 
 local function sha1_raw(m)
-  local h0,h1,h2,h3,h4=table.unpack(H0)
+  local h0,h1,h2,h3,h4=unpack(H0)
   m=preprocess(m)
   for i=1,#m,64 do
     local w=block_u32s(m:sub(i,i+63))

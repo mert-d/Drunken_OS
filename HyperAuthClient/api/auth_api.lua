@@ -1,8 +1,39 @@
-local ok_sec, secure = pcall(require, "HyperAuthClient.encrypt.secure")
-if not ok_sec then ok_sec, secure = pcall(require, "HyperAuthClient/encrypt/secure") end
-if not ok_sec then ok_sec, secure = pcall(require, "encrypt.secure") end
-if not ok_sec then ok_sec, secure = pcall(require, "secure") end
-if not ok_sec then error("auth_api: failed to load secure module: " .. tostring(secure), 0) end
+local secure = nil
+local secure_candidates = {
+  "/HyperAuthClient/encrypt/secure.lua",
+  "HyperAuthClient/encrypt/secure.lua",
+  "/encrypt/secure.lua",
+  "encrypt/secure.lua",
+  "/secure.lua",
+  "secure.lua",
+  "/servers/hyperauth/secure.lua",
+  "servers/hyperauth/secure.lua"
+}
+for _, p in ipairs(secure_candidates) do
+  if fs and fs.exists and fs.exists(p) then
+    local fn, err = loadfile(p)
+    if not fn then
+      error("auth_api: Compile error in '" .. p .. "':\n" .. tostring(err), 0)
+    end
+    local ok, res = pcall(fn)
+    if not ok then
+      error("auth_api: Runtime error in '" .. p .. "':\n" .. tostring(res), 0)
+    end
+    secure = res
+    break
+  end
+end
+if not secure then
+  local ok_sec, res = pcall(require, "HyperAuthClient.encrypt.secure")
+  if not ok_sec then ok_sec, res = pcall(require, "HyperAuthClient/encrypt/secure") end
+  if not ok_sec then ok_sec, res = pcall(require, "encrypt.secure") end
+  if not ok_sec then ok_sec, res = pcall(require, "secure") end
+  if ok_sec then
+    secure = res
+  else
+    error("auth_api: failed to load secure module: " .. tostring(res), 0)
+  end
+end
 
 local cached_server_id = nil
 

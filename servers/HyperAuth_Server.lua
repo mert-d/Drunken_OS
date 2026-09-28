@@ -19,14 +19,42 @@ package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;/servers/?.lua;servers/?.lua;"
     .. (runningDir ~= "" and (fs.combine(runningDir, "?.lua") .. ";" .. fs.combine(runningDir, "hyperauth/?.lua") .. ";") or "")
     .. package.path
 
-local ok_secure, secure = pcall(require, "servers.hyperauth.secure")
-if not ok_secure then ok_secure, secure = pcall(require, "servers/hyperauth/secure") end
-if not ok_secure then ok_secure, secure = pcall(require, "hyperauth.secure") end
-if not ok_secure then ok_secure, secure = pcall(require, "hyperauth/secure") end
-if not ok_secure then ok_secure, secure = pcall(require, "secure") end
-if not ok_secure then ok_secure, secure = pcall(require, "HyperAuthClient.encrypt.secure") end
-if not ok_secure then ok_secure, secure = pcall(require, "HyperAuthClient/encrypt/secure") end
-if not ok_secure then error("HyperAuth Server: Failed to load secure module: " .. tostring(secure), 0) end
+local secure = nil
+local secure_candidates = {
+    "/servers/hyperauth/secure.lua",
+    "servers/hyperauth/secure.lua",
+    "/hyperauth/secure.lua",
+    "hyperauth/secure.lua",
+    "/secure.lua",
+    "secure.lua",
+    "/disk/servers/hyperauth/secure.lua",
+    "disk/servers/hyperauth/secure.lua"
+}
+for _, p in ipairs(secure_candidates) do
+    if fs.exists(p) then
+        local fn, err = loadfile(p)
+        if not fn then
+            error("HyperAuth Server: Compile error in '" .. p .. "':\n" .. tostring(err), 0)
+        end
+        local ok, mod = pcall(fn)
+        if not ok then
+            error("HyperAuth Server: Runtime error in '" .. p .. "':\n" .. tostring(mod), 0)
+        end
+        secure = mod
+        break
+    end
+end
+if not secure then
+    local ok_secure, mod = pcall(require, "servers.hyperauth.secure")
+    if not ok_secure then ok_secure, mod = pcall(require, "servers/hyperauth/secure") end
+    if not ok_secure then ok_secure, mod = pcall(require, "hyperauth.secure") end
+    if not ok_secure then ok_secure, mod = pcall(require, "secure") end
+    if ok_secure then
+        secure = mod
+    else
+        error("HyperAuth Server: Failed to load secure module: " .. tostring(mod), 0)
+    end
+end
 
 local ServiceGuard = nil
 pcall(function() ServiceGuard = require("lib.service_guard") end)

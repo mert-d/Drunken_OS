@@ -1,8 +1,37 @@
-local ok_api, API = pcall(require, "HyperAuthClient.api.auth_api")
-if not ok_api then ok_api, API = pcall(require, "HyperAuthClient/api/auth_api") end
-if not ok_api then ok_api, API = pcall(require, "api.auth_api") end
-if not ok_api then ok_api, API = pcall(require, "auth_api") end
-if not ok_api then error("auth_client: failed to load auth_api: " .. tostring(API), 0) end
+local API = nil
+local api_candidates = {
+  "/HyperAuthClient/api/auth_api.lua",
+  "HyperAuthClient/api/auth_api.lua",
+  "/api/auth_api.lua",
+  "api/auth_api.lua",
+  "/auth_api.lua",
+  "auth_api.lua"
+}
+for _, p in ipairs(api_candidates) do
+  if fs and fs.exists and fs.exists(p) then
+    local fn, err = loadfile(p)
+    if not fn then
+      error("auth_client: Compile error in '" .. p .. "':\n" .. tostring(err), 0)
+    end
+    local ok, res = pcall(fn)
+    if not ok then
+      error("auth_client: Runtime error in '" .. p .. "':\n" .. tostring(res), 0)
+    end
+    API = res
+    break
+  end
+end
+if not API then
+  local ok_api, res = pcall(require, "HyperAuthClient.api.auth_api")
+  if not ok_api then ok_api, res = pcall(require, "HyperAuthClient/api/auth_api") end
+  if not ok_api then ok_api, res = pcall(require, "api.auth_api") end
+  if not ok_api then ok_api, res = pcall(require, "auth_api") end
+  if ok_api then
+    API = res
+  else
+    error("auth_client: failed to load auth_api: " .. tostring(res), 0)
+  end
+end
 
 local function get_config()
   package.loaded["HyperAuthClient.config"] = nil

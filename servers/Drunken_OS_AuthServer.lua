@@ -11,16 +11,72 @@ package.path = "/?.lua;?.lua;/lib/?.lua;lib/?.lua;/HyperAuthClient/?.lua;HyperAu
     .. (runningDir ~= "" and (fs.combine(runningDir, "?.lua") .. ";" .. fs.combine(runningDir, "HyperAuthClient/?.lua") .. ";") or "")
     .. package.path
 
-local ok_crypto, crypto = pcall(require, "lib.sha1_hmac")
-if not ok_crypto then ok_crypto, crypto = pcall(require, "lib/sha1_hmac") end
-if not ok_crypto then ok_crypto, crypto = pcall(require, "sha1_hmac") end
-if not ok_crypto then error("Auth Server: lib.sha1_hmac not found: " .. tostring(crypto), 0) end
+local crypto = nil
+local crypto_candidates = {
+    "/lib/sha1_hmac.lua",
+    "lib/sha1_hmac.lua",
+    "/sha1_hmac.lua",
+    "sha1_hmac.lua"
+}
+for _, p in ipairs(crypto_candidates) do
+    if fs.exists(p) then
+        local fn, err = loadfile(p)
+        if not fn then
+            error("Auth Server: Compile error in '" .. p .. "':\n" .. tostring(err), 0)
+        end
+        local ok, mod = pcall(fn)
+        if not ok then
+            error("Auth Server: Runtime error in '" .. p .. "':\n" .. tostring(mod), 0)
+        end
+        crypto = mod
+        break
+    end
+end
+if not crypto then
+    local ok_crypto, res = pcall(require, "lib.sha1_hmac")
+    if not ok_crypto then ok_crypto, res = pcall(require, "lib/sha1_hmac") end
+    if not ok_crypto then ok_crypto, res = pcall(require, "sha1_hmac") end
+    if ok_crypto then
+        crypto = res
+    else
+        error("Auth Server: lib.sha1_hmac not found: " .. tostring(res), 0)
+    end
+end
 
-local ok_auth, AuthClient = pcall(require, "HyperAuthClient.api.auth_client")
-if not ok_auth then ok_auth, AuthClient = pcall(require, "HyperAuthClient/api/auth_client") end
-if not ok_auth then ok_auth, AuthClient = pcall(require, "api.auth_client") end
-if not ok_auth then ok_auth, AuthClient = pcall(require, "auth_client") end
-if not ok_auth then error("Auth Server: HyperAuthClient API not found: " .. tostring(AuthClient), 0) end
+local AuthClient = nil
+local client_candidates = {
+    "/HyperAuthClient/api/auth_client.lua",
+    "HyperAuthClient/api/auth_client.lua",
+    "/api/auth_client.lua",
+    "api/auth_client.lua",
+    "/auth_client.lua",
+    "auth_client.lua"
+}
+for _, p in ipairs(client_candidates) do
+    if fs.exists(p) then
+        local fn, err = loadfile(p)
+        if not fn then
+            error("Auth Server: Compile error in '" .. p .. "':\n" .. tostring(err), 0)
+        end
+        local ok, mod = pcall(fn)
+        if not ok then
+            error("Auth Server: Runtime error in '" .. p .. "':\n" .. tostring(mod), 0)
+        end
+        AuthClient = mod
+        break
+    end
+end
+if not AuthClient then
+    local ok_auth, res = pcall(require, "HyperAuthClient.api.auth_client")
+    if not ok_auth then ok_auth, res = pcall(require, "HyperAuthClient/api/auth_client") end
+    if not ok_auth then ok_auth, res = pcall(require, "api.auth_client") end
+    if not ok_auth then ok_auth, res = pcall(require, "auth_client") end
+    if ok_auth then
+        AuthClient = res
+    else
+        error("Auth Server: HyperAuthClient API not found: " .. tostring(res), 0)
+    end
+end
 
 local DB = require("lib.db")
 local ServiceGuard = require("lib.service_guard")
