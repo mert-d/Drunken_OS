@@ -183,6 +183,11 @@ local function performAutoPairing()
     if ServiceGuard and ServiceGuard.initModems then
         pcall(ServiceGuard.initModems)
     end
+    if not (rednet and rednet.isOpen and rednet.isOpen()) then
+        if isColor then term.setTextColor(colors.red) end
+        print("  [!] WARNING: No modem open! Please attach a Wireless Modem to this PC.")
+        if isColor then term.setTextColor(colors.lightGray or colors.white) end
+    end
 
     local timerId = os.startTimer(0.1)
     local broadcastInterval = 2.5
@@ -195,6 +200,11 @@ local function performAutoPairing()
             local now = os.epoch("utc") / 1000
             if (now - lastBroadcast) >= broadcastInterval then
                 lastBroadcast = now
+                if not (rednet and rednet.isOpen and rednet.isOpen()) then
+                    if ServiceGuard and ServiceGuard.initModems then
+                        pcall(ServiceGuard.initModems)
+                    end
+                end
                 local pairPacket = {
                     type = "pair_request",
                     computer_id = myId,
@@ -204,12 +214,30 @@ local function performAutoPairing()
                     timestamp = os.epoch("utc")
                 }
                 rednet.broadcast(pairPacket, PAIRING_PROTOCOL)
+                rednet.broadcast(textutils.serialize(pairPacket), PAIRING_PROTOCOL)
                 io.write(".")
             end
             timerId = os.startTimer(0.5)
 
+        elseif event == "peripheral" or event == "peripheral_detach" then
+            if ServiceGuard and ServiceGuard.initModems then
+                pcall(ServiceGuard.initModems)
+            end
+
         elseif event == "rednet_message" then
-            local senderId, message, protocol = p1, p2, p3
+            local senderId, rawMessage, protocol = p1, p2, p3
+            local message = rawMessage
+            if type(rawMessage) == "string" then
+                local ok, res = pcall(textutils.unserialize, rawMessage)
+                if ok and type(res) == "table" then
+                    message = res
+                else
+                    local ok_j, res_j = pcall(textutils.unserializeJSON, rawMessage)
+                    if ok_j and type(res_j) == "table" then
+                        message = res_j
+                    end
+                end
+            end
             if protocol == PAIRING_PROTOCOL and type(message) == "table" then
                 if message.type == "pair_accept" and message.nonce == nonce then
                     pairingComplete = true

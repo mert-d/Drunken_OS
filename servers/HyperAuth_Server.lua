@@ -254,27 +254,29 @@ local function dm_player_with_code(player_username, code_text, ttl_millis)
 end
 
 -- Networking Setup
+local openModems = {}
 local function setupNetworking()
+    openModems = {}
     if ServiceGuard and ServiceGuard.initModems then
         pcall(ServiceGuard.initModems)
     end
-    if peripheral and peripheral.getNames then
-        for _, side in ipairs(peripheral.getNames()) do
-            if peripheral.getType(side) == "modem" and rednet and rednet.open then
+    local names = (peripheral and peripheral.getNames and peripheral.getNames()) or { "left", "right", "top", "bottom", "front", "back" }
+    for _, side in ipairs(names) do
+        if peripheral.getType(side) == "modem" then
+            if rednet and rednet.open then
                 pcall(rednet.open, side)
             end
-        end
-    else
-        for _, side in ipairs({ "left", "right", "top", "bottom", "front", "back" }) do
-            if peripheral.getType(side) == "modem" and rednet and rednet.open then
-                pcall(rednet.open, side)
-            end
+            local isWire = false
+            local p = peripheral.wrap(side)
+            if p and p.isWireless then isWire = p.isWireless() end
+            table.insert(openModems, { side = side, wireless = isWire })
         end
     end
 
     for _, proto in ipairs(PROTOCOLS) do
         pcall(rednet.host, proto, "hyperauth.server")
     end
+    return openModems
 end
 
 -- Header Banner
@@ -293,6 +295,18 @@ local function drawHeader()
     print(string.format(" Computer ID : #%d", os.getComputerID()))
     print(string.format(" Commands API: %s", cmdStatus))
 
+    if #openModems > 0 then
+        local modemDescs = {}
+        for _, m in ipairs(openModems) do
+            table.insert(modemDescs, string.format("%s (%s)", m.wireless and "Wireless" or "Wired", m.side))
+        end
+        print(string.format(" Modem(s)    : %s [OPEN]", table.concat(modemDescs, ", ")))
+    else
+        if isColor then term.setTextColor(colors.red) end
+        print(" Modem(s)    : [!] NO MODEM DETECTED! (Attach Wireless Modem)")
+        if isColor then term.setTextColor(colors.white) end
+    end
+
     local vendorCount = 0
     for _ in pairs(vendor_cache_by_id) do vendorCount = vendorCount + 1 end
     print(string.format(" Vendors DB  : %d active vendor(s)", vendorCount))
@@ -308,8 +322,20 @@ end
 
 -- Request Processor
 local function handleMessage(sender_computer_id, raw_outer_message, receivedProtocol)
-    local is_envelope_deserialized, outer_envelope = pcall(textutils.unserialize, raw_outer_message)
-    if not is_envelope_deserialized or type(outer_envelope) ~= "table" then
+    local outer_envelope = raw_outer_message
+    if type(raw_outer_message) == "string" then
+        local is_deserialized, res = pcall(textutils.unserialize, raw_outer_message)
+        if is_deserialized and type(res) == "table" then
+            outer_envelope = res
+        else
+            local is_json, res_json = pcall(textutils.unserializeJSON, raw_outer_message)
+            if is_json and type(res_json) == "table" then
+                outer_envelope = res_json
+            end
+        end
+    end
+
+    if type(outer_envelope) ~= "table" then
         append_log_line({ level = "warn", event = "bad_outer_envelope", sender = sender_computer_id })
         rednet.send(sender_computer_id, textutils.serialize({ error = "bad_outer" }), receivedProtocol)
         return
@@ -464,23 +490,31 @@ end
 
 -- Background Network Listener Loop
 local function networkLoop()
+    local pruneTimer = os.startTimer(5)
     while isRunning do
-        local sender_id, message, protocol = rednet.receive(nil, 1)
-        if sender_id and message then
-            for _, listeningProto in ipairs(PROTOCOLS) do
-                if protocol == listeningProto then
-                    pcall(handleMessage, sender_id, message, protocol)
-                    break
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "rednet_message" then
+            local sender_id, message, protocol = p1, p2, p3
+            if sender_id and message then
+                for _, listeningProto in ipairs(PROTOCOLS) do
+                    if protocol == listeningProto then
+                        pcall(handleMessage, sender_id, message, protocol)
+                        break
+                    end
                 end
             end
-        end
-
-        -- Prune expired pending requests periodically
-        local now = current_time_millis()
-        for req_id, rec in pairs(pending_requests_by_id) do
-            if rec.expires_millis < now then
-                pending_requests_by_id[req_id] = nil
+        elseif event == "peripheral" or event == "peripheral_detach" then
+            setupNetworking()
+            logActivity("Peripheral update: modems refreshed.")
+        elseif event == "timer" and p1 == pruneTimer then
+            -- Prune expired pending requests periodically
+            local now = current_time_millis()
+            for req_id, rec in pairs(pending_requests_by_id) do
+                if rec.expires_millis < now then
+                    pending_requests_by_id[req_id] = nil
+                end
             end
+            pruneTimer = os.startTimer(5)
         end
     end
 end
@@ -497,6 +531,7 @@ local function processAdminCommand(line)
     if cmd == "help" then
         print("\n=== HyperAuth Admin Commands ===")
         print(" status                - Show server health & stats")
+        print(" net / modem           - Check & refresh connected modems")
         print(" pair [list|accept|reject] - Manage Auth Server pairings")
         print(" vendors               - List registered vendors")
         print(" addvendor <id> <name> <secret> - Register new vendor")
@@ -519,6 +554,21 @@ local function processAdminCommand(line)
         local pCount = 0
         for _ in pairs(pending_pair_requests) do pCount = pCount + 1 end
         print(" Pending Pair: " .. pCount .. " incoming request(s)\n")
+
+    elseif cmd == "net" or cmd == "modem" then
+        setupNetworking()
+        print("\n--- Network & Modem Status ---")
+        if #openModems > 0 then
+            for _, m in ipairs(openModems) do
+                local isOpen = rednet and rednet.isOpen and rednet.isOpen(m.side)
+                print(string.format("  [%s] %s Modem | Rednet: %s",
+                    m.side, m.wireless and "Wireless" or "Wired", isOpen and "OPEN" or "CLOSED"))
+            end
+        else
+            print("  [!] NO MODEM DETECTED! Please attach a Wireless Modem to any side of this PC.")
+        end
+        print("  Hosted Protocols: " .. table.concat(PROTOCOLS, ", "))
+        print("")
 
     elseif cmd == "pair" or cmd == "accept" or cmd == "y" or cmd == "yes" or cmd == "reject" or cmd == "n" or cmd == "no" then
         local sub = parts[1]:lower()
@@ -603,6 +653,7 @@ local function processAdminCommand(line)
                 nonce = req.nonce,
                 timestamp = current_time_millis()
             }
+            rednet.send(targetId, replyPacket, PAIRING_PROTOCOL)
             rednet.send(targetId, textutils.serialize(replyPacket), PAIRING_PROTOCOL)
             pending_pair_requests[targetId] = nil
 
@@ -613,13 +664,15 @@ local function processAdminCommand(line)
             append_log_line({ level = "info", event = "pair_approved", vendorId = newVendorId, client = targetId })
 
         elseif sub == "reject" then
-            rednet.send(targetId, textutils.serialize({
+            local rejectPacket = {
                 type = "pair_reject",
                 server_id = os.getComputerID(),
                 reason = "Rejected by administrator.",
                 pin = req.pin,
                 nonce = req.nonce
-            }), PAIRING_PROTOCOL)
+            }
+            rednet.send(targetId, rejectPacket, PAIRING_PROTOCOL)
+            rednet.send(targetId, textutils.serialize(rejectPacket), PAIRING_PROTOCOL)
             pending_pair_requests[targetId] = nil
             print(" [REJECTED] Pairing request for PC #" .. targetId .. " rejected.")
             logActivity("Rejected pairing request for PC #" .. targetId, true)
