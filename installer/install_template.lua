@@ -49,14 +49,23 @@ local function findDiskPath()
     if peripheral and peripheral.getNames then
         for _, name in ipairs(peripheral.getNames()) do
             if peripheral.getType(name) == "drive" then
-                local mount = disk and disk.getMountPath and disk.getMountPath(name)
+                local mount = nil
+                if disk and disk.getMountPath then
+                    pcall(function() mount = disk.getMountPath(name) end)
+                end
+                if not mount then
+                    local p = peripheral.wrap(name)
+                    if p and p.getMountPath then
+                        pcall(function() mount = p.getMountPath() end)
+                    end
+                end
                 if mount and fs.exists(fs.combine(mount, "install_config.lua")) then
                     return mount
                 end
             end
         end
     end
-    for _, candidate in ipairs({ "disk", "disk1", "disk2", "/" }) do
+    for _, candidate in ipairs({ "disk", "disk1", "disk2", "disk3", "disk4", "disk5", "/" }) do
         if fs.exists(fs.combine(candidate, "install_config.lua")) then
             return candidate
         end
@@ -137,22 +146,33 @@ local function doInstallation()
 
     if isColor then term.setTextColor(colors.yellow) end
     print("\nCreating startup file...")
+    local startupContent = ""
     if config.type == "server" then
         local srvStartupPath = fs.combine(diskPath, "server_startup.lua")
         if not fs.exists(srvStartupPath) then
-            fatalError("server_startup.lua is missing on installation disk!", srvStartupPath)
-            return
+            if fs.exists(fs.combine(diskPath, "server_startup")) then
+                srvStartupPath = fs.combine(diskPath, "server_startup")
+            else
+                fatalError("server_startup.lua is missing on installation disk!", srvStartupPath)
+                return
+            end
         end
         local sf = fs.open(srvStartupPath, "r")
-        local srvScript = sf.readAll()
+        startupContent = sf.readAll()
         sf.close()
-        local outStartup = fs.open("/startup.lua", "w")
-        outStartup.write(srvScript)
-        outStartup.close()
     else
-        local outStartup = fs.open("/startup.lua", "w")
-        outStartup.write('shell.run("' .. tostring(config.main_program) .. '")')
+        startupContent = 'shell.run("' .. tostring(config.main_program) .. '")\n'
+    end
+
+    local outStartup = fs.open("/startup.lua", "w")
+    if outStartup then
+        outStartup.write(startupContent)
         outStartup.close()
+    end
+    local outStartupLegacy = fs.open("/startup", "w")
+    if outStartupLegacy then
+        outStartupLegacy.write('if fs.exists("/startup.lua") then shell.run("/startup.lua") else shell.run("startup.lua") end\n')
+        outStartupLegacy.close()
     end
 
     if isColor then term.setTextColor(colors.green) end

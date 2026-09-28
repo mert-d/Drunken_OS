@@ -673,9 +673,9 @@ local function installToPocketComputer(program, drive)
         fileHandle.close()
     end
 
-    -- Create the startup file on the pocket computer
+    -- Create the startup files on the pocket computer (modern + legacy)
     local mainProgramName = fs.getName(program.path)
-    local startupCode = "shell.run('/" .. mainProgramName .. "')"
+    local startupCode = "shell.run('/" .. mainProgramName .. "')\n"
     local startupPath = mountPath .. "/startup.lua"
     local startupFile, err = fs.open(startupPath, "w")
     if not startupFile then
@@ -684,6 +684,13 @@ local function installToPocketComputer(program, drive)
     end
     startupFile.write(startupCode)
     startupFile.close()
+
+    local startupLegacy = mountPath .. "/startup"
+    local sLegacyFile = fs.open(startupLegacy, "w")
+    if sLegacyFile then
+        sLegacyFile.write(startupCode)
+        sLegacyFile.close()
+    end
 
     showMessage("Success", "Installation to Pocket Computer complete.", false)
 end
@@ -824,10 +831,23 @@ local function createInstallDisk(program)
         return
     end
 
+    -- Legacy BIOS forwarder: supports computers looking for 'startup' without .lua extension
+    local forwarderScript = 'if fs.exists("disk/startup.lua") then shell.run("disk/startup.lua") elseif fs.exists("startup.lua") then shell.run("startup.lua") else local d=fs.getDir(shell.getRunningProgram()); shell.run(fs.combine(d,"startup.lua")) end\n'
+    local ok_boot2, err_boot2 = writeVerified("startup", forwarderScript)
+    if not ok_boot2 then
+        showMessage("Write Error", "Failed to write startup:\n" .. tostring(err_boot2), true)
+        return
+    end
+
     if program.type == "server" and serverStartupScript then
         local ok_srv, err_srv = writeVerified("server_startup.lua", serverStartupScript)
         if not ok_srv then
             showMessage("Write Error", "Failed to write server_startup.lua:\n" .. tostring(err_srv), true)
+            return
+        end
+        local ok_srv2, err_srv2 = writeVerified("server_startup", 'shell.run("server_startup.lua")\n')
+        if not ok_srv2 then
+            showMessage("Write Error", "Failed to write server_startup:\n" .. tostring(err_srv2), true)
             return
         end
     end

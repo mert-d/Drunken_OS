@@ -1,8 +1,8 @@
 return {
-  PROTOCOL_NAME = "auth.secure.v1_Internal",
+  PROTOCOL_NAME = "auth.secure.v1",
 
-  CLIENT_ID     = "DrunkenOS_AuthNode",
-  SHARED_SECRET = "drunken_secret_2026",
+  CLIENT_ID     = "drunken_os_server",
+  SHARED_SECRET = "01431f1589d73d826c2a9669ab60fa8b",
 
   KNOWN_SERVER_ID         = nil,
   DEFAULT_TIMEOUT_SECONDS = 6,

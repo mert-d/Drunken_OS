@@ -107,7 +107,9 @@ end
 
 -- Write installer files in verified order (critical boot files first)
 assert_true(mockWriteDisk("startup.lua", installTemplateCode), "Write disk/startup.lua")
+assert_true(mockWriteDisk("startup", 'shell.run("startup.lua")\n'), "Write disk/startup (legacy forwarder)")
 assert_true(mockWriteDisk("server_startup.lua", srvStartupCode), "Write disk/server_startup.lua")
+assert_true(mockWriteDisk("server_startup", 'shell.run("server_startup.lua")\n'), "Write disk/server_startup (legacy forwarder)")
 assert_true(mockWriteDisk("install_config.lua", configStr), "Write disk/install_config.lua")
 
 for _, relPath in ipairs(serverPkg.files) do
@@ -118,7 +120,9 @@ for _, relPath in ipairs(serverPkg.files) do
 end
 
 assert_true(diskStorage["startup.lua"] ~= nil and #diskStorage["startup.lua"] > 0, "disk/startup.lua is valid & non-empty")
+assert_true(diskStorage["startup"] ~= nil and #diskStorage["startup"] > 0, "disk/startup forwarder is valid & non-empty")
 assert_true(diskStorage["server_startup.lua"] ~= nil and #diskStorage["server_startup.lua"] > 0, "disk/server_startup.lua is valid & non-empty")
+assert_true(diskStorage["server_startup"] ~= nil and #diskStorage["server_startup"] > 0, "disk/server_startup forwarder is valid & non-empty")
 assert_true(diskStorage["install_config.lua"] ~= nil and #diskStorage["install_config.lua"] > 0, "disk/install_config.lua is valid & non-empty")
 
 -- 4. Clean Boot & Installation Simulation on Target Advanced Computer
@@ -296,6 +300,7 @@ assert_true(diskEjected, "Installer requested floppy disk ejection (drive.ejectD
 
 -- 5. Verify Target Hard Drive Root State Post-Installation
 assert_true(targetRootStorage["startup.lua"] ~= nil, "/startup.lua installed on target hard drive")
+assert_true(targetRootStorage["startup"] ~= nil, "/startup (legacy forwarder) installed on target hard drive")
 assert_true(targetRootStorage[".program_path"] == "servers/Drunken_OS_Server.lua", "/.program_path points to servers/Drunken_OS_Server.lua")
 assert_true(targetRootStorage["servers/Drunken_OS_Server.lua"] ~= nil, "Main server program copied to hard drive")
 assert_true(targetRootStorage["lib/db.lua"] ~= nil, "lib/db.lua copied to hard drive")
@@ -346,15 +351,20 @@ print(string.format("  INFO: HyperAuth floppy margin remaining: %d bytes (%.2f K
 -- Verify vendor registry consistency
 local vf = io.open("vendors.jsonl", "r")
 assert_true(vf ~= nil, "vendors.jsonl exists in root")
-local vLine = vf:read("*l")
+local vContent = vf:read("*a")
 vf:close()
-assert_true(vLine:find("DrunkenOS_AuthNode") ~= nil, "Default vendor DrunkenOS_AuthNode is registered in vendors.jsonl")
-assert_true(vLine:find("drunken_secret_2026") ~= nil, "Default shared secret configured in vendors.jsonl")
+assert_true(vContent:find("drunken_os_server") ~= nil, "Configured vendor drunken_os_server is registered in vendors.jsonl")
+assert_true(vContent:find("01431f1589d73d826c2a9669ab60fa8b") ~= nil, "Configured secret registered in vendors.jsonl")
+assert_true(vContent:find("DrunkenOS_AuthNode") ~= nil, "Default vendor DrunkenOS_AuthNode is registered in vendors.jsonl")
+assert_true(vContent:find("drunken_secret_2026") ~= nil, "Default shared secret configured in vendors.jsonl")
 
 -- Verify HyperAuthClient config matches
+package.loaded["HyperAuthClient.config"] = nil
+package.loaded["HyperAuthClient/config"] = nil
 local haConfig = require("HyperAuthClient.config")
-assert_eq(haConfig.CLIENT_ID, "DrunkenOS_AuthNode", "HyperAuthClient configured with matching CLIENT_ID")
-assert_eq(haConfig.SHARED_SECRET, "drunken_secret_2026", "HyperAuthClient configured with matching SHARED_SECRET")
+assert_eq(haConfig.CLIENT_ID, "drunken_os_server", "HyperAuthClient configured with matching CLIENT_ID")
+assert_eq(haConfig.SHARED_SECRET, "01431f1589d73d826c2a9669ab60fa8b", "HyperAuthClient configured with matching SHARED_SECRET")
+assert_eq(haConfig.PROTOCOL_NAME, "auth.secure.v1", "HyperAuthClient configured with auth.secure.v1 protocol")
 
 -- Simulate Command Computer installation for HyperAuth Server
 local haTargetRoot = {}
@@ -454,6 +464,7 @@ local haInstallChunk = load(installTemplateCode, "disk/startup.lua", "t", haEnv)
 local ok_ha_inst = pcall(haInstallChunk)
 assert_true(ok_ha_inst, "HyperAuth installation executed cleanly from disk")
 assert_true(haTargetRoot["startup.lua"] ~= nil, "HyperAuth server_startup written to /startup.lua")
+assert_true(haTargetRoot["startup"] ~= nil, "HyperAuth /startup legacy forwarder written to Command PC")
 assert_true(haTargetRoot[".program_path"] == "servers/HyperAuth_Server.lua", "HyperAuth /.program_path set correctly")
 assert_true(haTargetRoot["servers/HyperAuth_Server.lua"] ~= nil, "HyperAuth_Server.lua installed on Command PC")
 assert_true(haTargetRoot["servers/hyperauth/secure.lua"] ~= nil, "hyperauth/secure.lua installed on Command PC")

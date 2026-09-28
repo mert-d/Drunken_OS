@@ -87,15 +87,25 @@ local function ensureDefaultVendorFile()
     if not fs.exists(VENDOR_REGISTRY_PATH) then
         local f = fs.open(VENDOR_REGISTRY_PATH, "w")
         if f then
-            local defaultVendor = {
-                vendorId = "DrunkenOS_AuthNode",
-                vendorName = "Drunken OS Auth Node",
-                sharedSecret = "drunken_secret_2026",
-                enabled = true
+            local defaultVendors = {
+                {
+                    vendorId = "drunken_os_server",
+                    vendorName = "Drunken OS Server",
+                    sharedSecret = "01431f1589d73d826c2a9669ab60fa8b",
+                    enabled = true
+                },
+                {
+                    vendorId = "DrunkenOS_AuthNode",
+                    vendorName = "Drunken OS Auth Node",
+                    sharedSecret = "drunken_secret_2026",
+                    enabled = true
+                }
             }
-            f.write(textutils.serializeJSON(defaultVendor) .. "\n")
+            for _, v in ipairs(defaultVendors) do
+                f.write(textutils.serializeJSON(v) .. "\n")
+            end
             f.close()
-            logActivity("Created default " .. VENDOR_REGISTRY_PATH .. " with DrunkenOS_AuthNode.")
+            logActivity("Created default " .. VENDOR_REGISTRY_PATH .. " with default vendors.")
         end
     end
 end
@@ -142,7 +152,18 @@ local function get_vendor_record_by_id(vendor_id)
         vendor_cache_by_id = load_vendor_registry_file()
         vendor_last_loaded_millis = now_millis
     end
-    return vendor_cache_by_id[tostring(vendor_id)]
+    local target = tostring(vendor_id)
+    if vendor_cache_by_id[target] then
+        return vendor_cache_by_id[target]
+    end
+    -- Case-insensitive lookup fallback
+    local lowerTarget = target:lower()
+    for k, v in pairs(vendor_cache_by_id) do
+        if k:lower() == lowerTarget then
+            return v
+        end
+    end
+    return nil
 end
 
 -- Minecraft In-Game Token Delivery (/tellraw)
@@ -184,10 +205,17 @@ end
 -- Networking Setup
 local function setupNetworking()
     if ServiceGuard and ServiceGuard.initModems then
-        ServiceGuard.initModems()
+        pcall(ServiceGuard.initModems)
+    end
+    if peripheral and peripheral.getNames then
+        for _, side in ipairs(peripheral.getNames()) do
+            if peripheral.getType(side) == "modem" and rednet and rednet.open then
+                pcall(rednet.open, side)
+            end
+        end
     else
         for _, side in ipairs({ "left", "right", "top", "bottom", "front", "back" }) do
-            if peripheral.getType(side) == "modem" then
+            if peripheral.getType(side) == "modem" and rednet and rednet.open then
                 pcall(rednet.open, side)
             end
         end

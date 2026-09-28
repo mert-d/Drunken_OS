@@ -51,12 +51,32 @@ users = DB.loadTableFromFile(USERS_DB, logActivity)
 -- Host the auth service
 registerProtocols()
 
+--- Reads the live HyperAuth client configuration dynamically
+local function getHyperAuthConfig()
+    package.loaded["HyperAuthClient.config"] = nil
+    package.loaded["HyperAuthClient/config"] = nil
+    local ok, cfg = pcall(require, "HyperAuthClient/config")
+    if not ok then ok, cfg = pcall(require, "HyperAuthClient.config") end
+    if ok and type(cfg) == "table" then
+        return cfg
+    end
+    return {
+        PROTOCOL_NAME = AUTH_INTERNAL_API,
+        CLIENT_ID = "drunken_os_server",
+        SHARED_SECRET = "01431f1589d73d826c2a9669ab60fa8b"
+    }
+end
+
 --- Initiates a 2FA request via HyperAuth
 local function requestAuthCode(username, password, nickname, senderId, purpose)
     logActivity("Requesting auth code for '" .. username .. "'...")
-    local reply, err = AuthClient.requestCode(AUTH_INTERNAL_API, {
+    local cfg = getHyperAuthConfig()
+    local apiProto = cfg.PROTOCOL_NAME or AUTH_INTERNAL_API or "auth.secure.v1"
+    local vendorId = cfg.CLIENT_ID or "drunken_os_server"
+
+    local reply, err = AuthClient.requestCode(apiProto, {
         username = username, password = password,
-        vendorID = "DrunkenOS_AuthNode", computerID = os.getComputerID(),
+        vendorID = vendorId, computerID = os.getComputerID(),
         extra = { purpose = purpose or "unknown" },
     })
 
@@ -143,7 +163,9 @@ local function handleMessage(senderId, message, protocol)
                 return
             end
             
-            local reply, err = AuthClient.verifyCode(AUTH_INTERNAL_API, { request_id = authData.request_id, code = code })
+            local cfg = getHyperAuthConfig()
+            local apiProto = cfg.PROTOCOL_NAME or AUTH_INTERNAL_API or "auth.secure.v1"
+            local reply, err = AuthClient.verifyCode(apiProto, { request_id = authData.request_id, code = code })
             
             if reply and reply.ok then
                 local token = crypto.hex(os.time() .. math.random())
@@ -216,9 +238,11 @@ local function flushAuthState()
 end
 
 local function startServer()
+    local haCfg = getHyperAuthConfig()
     logActivity("Auth Server starting up...")
     logActivity("Listening for external auth on: " .. AUTH_SERVER_PROTOCOL)
     logActivity("Listening for interlink on: " .. AUTH_INTERLINK_PROTOCOL)
+    logActivity("HyperAuth 2FA Link: Protocol='" .. (haCfg.PROTOCOL_NAME or "auth.secure.v1") .. "', Vendor='" .. (haCfg.CLIENT_ID or "drunken_os_server") .. "'")
     
     while true do
         local event, p1, p2, p3 = os.pullEventRaw()
