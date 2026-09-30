@@ -143,18 +143,21 @@ function handlers.send(senderId, payload)
         logActivity(string.format("Mail from '%s' to '%s'", mail.from_nickname, mail.to))
     end
     
-    -- Notify network so recipients get real-time toast
-    pcall(rednet.broadcast, {
-        type = "new_mail_notification",
-        recipient = mail.to,
-        mail = {
-            from = mail.from,
-            from_nickname = mail.from_nickname,
-            subject = mail.subject
-        }
-    }, AUTH_INTERLINK_PROTOCOL)
-    
+    -- 1. Dispatch confirmation back to sender FIRST to prevent packet collision with notification
     rednet.send(senderId, { status = "Sent!", success = true, original_type = payload.type }, AUTH_INTERLINK_PROTOCOL)
+
+    -- 2. Notify network if recipient is someone else so they get real-time toast
+    if mail.to ~= mail.from and mail.to ~= (payload.message and payload.message.user) then
+        pcall(rednet.broadcast, {
+            type = "new_mail_notification",
+            recipient = mail.to,
+            mail = {
+                from = mail.from,
+                from_nickname = mail.from_nickname,
+                subject = mail.subject
+            }
+        }, AUTH_INTERLINK_PROTOCOL)
+    end
 end
 
 function handlers.fetch(senderId, payload)

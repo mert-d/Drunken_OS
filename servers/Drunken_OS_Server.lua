@@ -1336,15 +1336,18 @@ local function handleRednetMessage(senderId, message, protocol)
             local targetProto = actualMsg.original_protocol or "SimpleMail"
             local internalProto = targetProto .. "_Internal"
             if targetId then
+                logActivity(string.format("Relaying async resp '%s' to client %d (proxy: %s)", tostring(actualMsg.original_type), targetId, tostring(proxyId)))
+                local wrappedResp = { proxy_orig_sender = targetId, proxy_response = actualMsg }
+                
+                -- Fail-safe 3-way delivery:
+                -- 1. Direct unicast to proxy if known
                 if proxyId then
-                    -- Client is behind a Network Proxy! Wrap it for the proxy to relay:
-                    realRednetSend(proxyId, { proxy_orig_sender = targetId, proxy_response = actualMsg }, internalProto)
-                else
-                    -- Direct client send
-                    realRednetSend(targetId, actualMsg, targetProto)
-                    -- Also broadcast on internal protocol so any listening proxy can relay
-                    rednet.broadcast({ proxy_orig_sender = targetId, proxy_response = actualMsg }, internalProto)
+                    realRednetSend(proxyId, wrappedResp, internalProto)
                 end
+                -- 2. Broadcast on internalProto so ANY proxy on the network relays it to the phone
+                rednet.broadcast(wrappedResp, internalProto)
+                -- 3. Direct send in case client is on wired/internal network
+                realRednetSend(targetId, actualMsg, targetProto)
             end
         elseif actualMsg.type == "new_mail_notification" then
             -- Relay notification to proxies and clients

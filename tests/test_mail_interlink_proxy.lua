@@ -64,8 +64,9 @@ assert_eq(validResp.nickname, "Mert Bey", "Auth Server returns user nickname")
 local invalidResp = handleAuthInterlink({ type = "verify_session", user = "mert", session_token = "wrong_token" })
 assert_true(invalidResp ~= nil and invalidResp.valid == false, "Auth Server rejects invalid session token")
 
--- 3. Test Proxy Response Routing on Mainframe
+-- 3. Test 3-Way Fail-Safe Proxy Response Routing on Mainframe
 local proxyOutgoing = {}
+local broadcastOutgoing = {}
 local directOutgoing = {}
 
 local clientProxies = {
@@ -78,26 +79,35 @@ local function routeInterlinkResponse(actualMsg)
     local targetProto = actualMsg.original_protocol or "SimpleMail"
     local internalProto = targetProto .. "_Internal"
     if targetId then
+        local wrappedResp = { proxy_orig_sender = targetId, proxy_response = actualMsg }
         if proxyId then
-            table.insert(proxyOutgoing, { target = proxyId, msg = { proxy_orig_sender = targetId, proxy_response = actualMsg }, proto = internalProto })
-        else
-            table.insert(directOutgoing, { target = targetId, msg = actualMsg, proto = targetProto })
+            table.insert(proxyOutgoing, { target = proxyId, msg = wrappedResp, proto = internalProto })
         end
+        table.insert(broadcastOutgoing, { msg = wrappedResp, proto = internalProto })
+        table.insert(directOutgoing, { target = targetId, msg = actualMsg, proto = targetProto })
     end
 end
 
 routeInterlinkResponse({
-    original_type = "fetch",
+    original_type = "send",
     original_senderId = 0,
     proxy_senderId = 8,
     original_protocol = "SimpleMail",
-    mail = { { subject = "Welcome" } }
+    status = "Sent!",
+    success = true
 })
 
-assert_eq(#proxyOutgoing, 1, "Mail response routed to Proxy")
+assert_eq(#proxyOutgoing, 1, "Mail response routed to Proxy via unicast")
 assert_eq(proxyOutgoing[1].target, 8, "Target proxy matches client proxy ID")
 assert_eq(proxyOutgoing[1].proto, "SimpleMail_Internal", "Protocol is SimpleMail_Internal")
 assert_eq(proxyOutgoing[1].msg.proxy_orig_sender, 0, "Proxy response wraps original client ID")
-assert_eq(proxyOutgoing[1].msg.proxy_response.mail[1].subject, "Welcome", "Wrapped mail content intact")
+assert_eq(proxyOutgoing[1].msg.proxy_response.status, "Sent!", "Wrapped send confirmation intact")
+
+assert_eq(#broadcastOutgoing, 1, "Mail response broadcast on internal protocol for fail-safe relay")
+assert_eq(broadcastOutgoing[1].proto, "SimpleMail_Internal", "Broadcast uses SimpleMail_Internal")
+assert_eq(broadcastOutgoing[1].msg.proxy_orig_sender, 0, "Broadcast wraps original client ID")
+
+assert_eq(#directOutgoing, 1, "Direct send attempted in case client is wired")
+assert_eq(directOutgoing[1].target, 0, "Direct target is client ID 0")
 
 print(">>> All Mail Interlink Proxy & Score Cache tests passed successfully!")

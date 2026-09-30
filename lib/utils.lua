@@ -77,7 +77,7 @@ function utils.drawWindow(title, context)
         local maxTitleLen = w - #rightInfo - 2
         local displayTitle = (title or "Drunken OS")
         if #displayTitle > maxTitleLen and maxTitleLen > 3 then
-            displayTitle = displayTitle:sub(1, maxTitleLen - 1) .. "…"
+            displayTitle = displayTitle:sub(1, maxTitleLen - 2) .. ".."
         end
         term.setCursorPos(1, 1)
         term.write(" " .. displayTitle)
@@ -88,7 +88,7 @@ function utils.drawWindow(title, context)
     else
         -- Desktop Screen (51x19) Layout
         term.setCursorPos(2, 1)
-        term.write("■ " .. (title or "Drunken OS"))
+        term.write("[*] " .. (title or "Drunken OS"))
         
         local rightParts = {}
         if rednet and rednet.isOpen and rednet.isOpen() then
@@ -129,7 +129,7 @@ function utils.drawWindow(title, context)
         if w <= 30 then
             term.write("Tap or Arrows to navigate")
         else
-            term.write("Drunken OS • Press [Q] or [Enter]")
+            term.write("Drunken OS - Press [Q] or [Enter]")
         end
     end
     

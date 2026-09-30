@@ -406,6 +406,22 @@ local currentApp = nil
 local running = true
 local favorites = {} -- Loaded from disk
 
+-- Clean ASCII icons for mobile interface (CraftOS compatible, no unicode '?' artifacts)
+local APP_ICONS = {
+    mail = "[@]",
+    bank = "[$]",
+    chat = "[#]",
+    arcade = "[>]",
+    files = "[~]",
+    calc = "[%]",
+    notes = "[=]",
+    remote = "[^]",
+    radar = "[o]",
+    drunken_bites = "[*]",
+    store = "[S]",
+    system = "[*]"
+}
+
 -- Load/Save Favorites
 local function loadFavorites()
     if fs.exists(".favorites") then
@@ -428,10 +444,11 @@ local function notify(title, message, color, duration, targetApp)
 end
 
 local function toggleFavorite(appName)
-    if favorites[appName] then
-        favorites[appName] = nil
+    local key = tostring(appName):lower()
+    if favorites[key] then
+        favorites[key] = nil
     else
-        favorites[appName] = true
+        favorites[key] = true
     end
     saveFavorites()
 end
@@ -446,53 +463,59 @@ local function mainMenu()
         context.drawWindow("Drunken OS v" .. currentVersion)
         
         -- Build Menu Options
-        local menuItems = {}
-        
-        -- 1. Favorites Section
         local hasFavs = false
         for appName, _ in pairs(favorites) do
-            -- Verify app still exists
-            local path = "apps/" .. appName .. ".lua" -- Assumption based on naming convention
             hasFavs = true
+            break
         end
         
         -- Construct list: { label="Display", action=func, isApp=true, path=... }
         local mainOptions = {}
         
-        -- A. Favorites
+        -- A. User-Pinned Favorites
         if fs.exists("apps") and fs.isDir("apps") then
             for _, path in ipairs(fs.list("apps")) do
                 if not fs.isDir("apps/"..path) and path:match("%.lua$") then
                     local name = path:gsub("%.lua$", "")
-                    local label = name:gsub("_", " ")
-                    if favorites[label] then
+                    local key = name:lower()
+                    if favorites[key] or favorites[name] then
                         local display = name:gsub("(%a)([%w_']*)", function(first, rest)
                             return first:upper() .. rest:lower():gsub("_", " ")
                         end)
-                        table.insert(mainOptions, { label = "★ " .. display, path = "apps/"..path, isApp = true }) 
+                        local icon = APP_ICONS[key] or "[*]"
+                        local badge = ""
+                        if key == "mail" and state.unreadCount and state.unreadCount > 0 then
+                            badge = " (" .. state.unreadCount .. ")"
+                        end
+                        table.insert(mainOptions, { label = icon .. " " .. display .. badge, path = "apps/"..path, isApp = true, appName = key }) 
                     end
                 end
             end
         end
         
-        -- Default shortcuts if no user favorites pinned yet
+        -- B. Default shortcuts if no user favorites pinned yet: 5 essential mobile apps
         if not hasFavs then
-            local defaults = { "mail", "bank", "chat", "arcade", "files", "calc", "notes", "remote", "radar", "drunken_bites" }
+            local defaults = { "mail", "bank", "chat", "arcade", "files" }
             for _, d in ipairs(defaults) do
                 local p = "apps/" .. d .. ".lua"
                 if fs.exists(p) then
                     local display = d:gsub("(%a)([%w_']*)", function(first, rest)
                         return first:upper() .. rest:lower():gsub("_", " ")
                     end)
-                    table.insert(mainOptions, { label = "★ " .. display, path = p, isApp = true })
+                    local icon = APP_ICONS[d] or "[*]"
+                    local badge = ""
+                    if d == "mail" and state.unreadCount and state.unreadCount > 0 then
+                        badge = " (" .. state.unreadCount .. ")"
+                    end
+                    table.insert(mainOptions, { label = icon .. " " .. display .. badge, path = p, isApp = true, appName = d })
                 end
             end
         end
         
-        -- B. Core Folders
+        -- C. Core System Options
         table.insert(mainOptions, { label = "[+] All Apps", isFolder = true })
-        table.insert(mainOptions, { label = "[S] App Store", path = "apps/store.lua", isApp = true })
-        table.insert(mainOptions, { label = "[*] System", path = "apps/system.lua", isApp = true })
+        table.insert(mainOptions, { label = "[S] App Store", path = "apps/store.lua", isApp = true, appName = "store" })
+        table.insert(mainOptions, { label = "[*] System", path = "apps/system.lua", isApp = true, appName = "system" })
         table.insert(mainOptions, { label = "[X] Shutdown", action = os.shutdown })
         table.insert(mainOptions, { label = "[R] Reboot", action = os.reboot })
 
@@ -514,10 +537,10 @@ local function mainMenu()
                 scrollOffset = 0
                 return true
             elseif choice.isApp then
-                local appName = choice.path:match("apps/(.+)%.lua$")
+                local appName = choice.appName or choice.path:match("apps/(.+)%.lua$")
                 if appName then
                     local appTitle = choice.label or appName
-                    appTitle = appTitle:gsub("^★%s*", ""):gsub("^%[.%]%s*", "")
+                    appTitle = appTitle:gsub("^%[.-%]%s*", ""):gsub("%s*%(%d+%)%s*$", "")
 
                     -- Check if app is already running
                     local existingIndex = nil
@@ -571,12 +594,13 @@ local function mainMenu()
                                 end)
                                 -- Exclude daemon turtle scripts from GUI client
                                 if not name:find("turtle") then
-                                    table.insert(cachedAllApps, { label = label, path = "apps/"..path, isApp = true })
+                                    local icon = APP_ICONS[name:lower()] or "[*]"
+                                    table.insert(cachedAllApps, { label = icon .. " " .. label, path = "apps/"..path, isApp = true, appName = name:lower() })
                                 end
                             end
                         end
                     end
-                    table.insert(cachedAllApps, { label = "⬅ Back", action = "back" })
+                    table.insert(cachedAllApps, { label = "[<] Back", action = "back" })
                 end
                 currentList = cachedAllApps
             end
@@ -665,8 +689,9 @@ local function mainMenu()
                 elseif key == keys.f and inFolder == "All Apps" then
                     local choice = currentList[selected]
                     if choice and choice.isApp then
-                        toggleFavorite(choice.label)
-                        context.showMessage("Favorites", "Toggled " .. choice.label)
+                        local favKey = choice.appName or choice.label
+                        toggleFavorite(favKey)
+                        context.showMessage("Favorites", "Toggled " .. (choice.appName or choice.label))
                     end
                 end
             elseif event == "mouse_click" then

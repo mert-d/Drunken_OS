@@ -556,7 +556,7 @@ function TaskManager.step(event, p1, p2, p3, p4, p5)
                 if msg.type == "new_mail" or (msg.mail and msg.mail.from) then
                     local sender = (msg.mail and (msg.mail.from_nickname or msg.mail.from)) or msg.from or "Someone"
                     local subj = (msg.mail and msg.mail.subject) or msg.subject or "New Message"
-                    TaskManager.notify("✉ New Mail", sender .. ": " .. subj, colors.lightBlue, 4.0, "mail")
+                    TaskManager.notify("[Mail] New Mail", sender .. ": " .. subj, colors.lightBlue, 4.0, "mail")
                 elseif msg.count then
                     if contextRef and contextRef.parent then
                         contextRef.parent.unreadCount = msg.count
@@ -566,7 +566,7 @@ function TaskManager.step(event, p1, p2, p3, p4, p5)
                 if msg.type == "message" and msg.from and msg.from ~= myUsername then
                     local sender = msg.from_nickname or msg.from
                     local text = msg.message or msg.text or ""
-                    TaskManager.notify("💬 Chat", sender .. ": " .. text, colors.blue, 3.5, "chat")
+                    TaskManager.notify("[Chat] Chat", sender .. ": " .. text, colors.blue, 3.5, "chat")
                 end
             elseif proto == "DB_Merchant_Req" then
                 if msg.type == "payment_request" and (not msg.target or msg.target == myUsername) then
@@ -576,7 +576,7 @@ function TaskManager.step(event, p1, p2, p3, p4, p5)
                     end
                     local speaker = peripheral and peripheral.find and peripheral.find("speaker")
                     if speaker and speaker.playNote then pcall(speaker.playNote, "pling", 1, 2) end
-                    TaskManager.notify("💳 Invoice", string.format("Payment requested: $%d", msg.amount or 0), colors.orange, 5.0, "merchant")
+                    TaskManager.notify("[Bank] Invoice", string.format("Payment requested: $%d", msg.amount or 0), colors.orange, 5.0, "merchant")
                 end
             elseif proto == "DB_Shop_Broadcast" and msg.menu then
                 if contextRef and contextRef.parent then
@@ -602,13 +602,13 @@ function TaskManager.step(event, p1, p2, p3, p4, p5)
                 if msg.type == "payment_proof" or msg.type == "transfer_notification" then
                     local sender = msg.from or "Someone"
                     local amt = msg.amount or 0
-                    TaskManager.notify("💰 Bank Payment", string.format("Received $%d from %s", amt, sender), colors.green, 4.0, "bank")
+                    TaskManager.notify("[Bank] Payment", string.format("Received $%d from %s", amt, sender), colors.green, 4.0, "bank")
                 end
             elseif proto == "DrunkenAirDrop" then
                 if msg.type == "airdrop_ping" and msg.user and msg.user ~= myUsername then
-                    TaskManager.notify("📡 AirDrop", "Device nearby: " .. msg.user, colors.cyan, 3.0, "files")
+                    TaskManager.notify("[Drop] AirDrop", "Device nearby: " .. msg.user, colors.cyan, 3.0, "files")
                 elseif msg.type == "xfer_init" then
-                    TaskManager.notify("📡 AirDrop", "Receiving file: " .. (msg.filename or "file"), colors.lime, 4.0, "files")
+                    TaskManager.notify("[Drop] AirDrop", "Receiving file: " .. (msg.filename or "file"), colors.lime, 4.0, "files")
                 end
             end
         end
