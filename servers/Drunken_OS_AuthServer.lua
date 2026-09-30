@@ -502,6 +502,16 @@ local function handleMessage(senderId, message, protocol)
             local user = message.user
             local exists = (users[user] ~= nil)
             rednet.send(senderId, { type = "user_exists_response", user = user, exists = exists }, AUTH_INTERLINK_PROTOCOL)
+        elseif message.type == "verify_session" then
+            local user = message.user
+            local token = message.session_token
+            local valid = false
+            local nick = nil
+            if user and token and users[user] and users[user].session_token == token then
+                valid = true
+                nick = users[user].nickname
+            end
+            rednet.send(senderId, { type = "verify_session_response", user = user, valid = valid, nickname = nick }, AUTH_INTERLINK_PROTOCOL)
         end
     end
 end

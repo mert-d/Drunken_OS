@@ -39,6 +39,7 @@ local ServiceGuard = require("lib.service_guard")
 local admins = {} -- This will now be loaded from a file
 local games, chatHistory, gameList, pendingApps = {}, {}, {}, {}
 local active_sessions = {} -- populated via Drunken_Auth_Interlink
+local clientProxies = {} -- Map client ID -> Proxy ID
 local userLocations = {} -- Stores latest (x, y, z) for each user
 local programVersions, programCode, gameCode = {}, {}, {}
 local logHistory, adminInput, motd = {}, "", ""
@@ -580,7 +581,22 @@ end
 -- Shared Authentication Helper (must be defined before handlers that use it)
 local function verifySecureSession(message)
     local u = message.user or message.username
-    return u and active_sessions[u] and message.session_token and active_sessions[u].token == message.session_token
+    local token = message.session_token
+    if not u or not token then return false end
+    if active_sessions[u] and active_sessions[u].token == token then
+        return true
+    end
+    -- Fallback: query Auth Server over interlink if active_sessions is missing entry (e.g. after Mainframe reboot)
+    local authServerId = rednet.lookup("auth.secure.v1", "auth.server")
+    if authServerId then
+        rednet.send(authServerId, { type = "verify_session", user = u, session_token = token }, AUTH_INTERLINK_PROTOCOL)
+        local _, response = rednet.receive(AUTH_INTERLINK_PROTOCOL, 2.5)
+        if response and response.type == "verify_session_response" and response.valid then
+            active_sessions[u] = { token = token, nickname = response.nickname }
+            return true
+        end
+    end
+    return false
 end
 
 -- Forward-declare adminCommands (populated later, used by admin_action handler)
@@ -683,6 +699,9 @@ function mailHandlers.user_exists(senderId, message)
 end
 
 local function proxyToInterlink(senderId, message)
+    if message.type == "get_unread_count" and not message.session_token and message.user and active_sessions[message.user] then
+        message.session_token = active_sessions[message.user].token
+    end
     if not verifySecureSession(message) then 
         rednet.send(senderId, { success = false, reason = "Unauthorized session." }, "SimpleMail")
         return 
@@ -692,6 +711,7 @@ local function proxyToInterlink(senderId, message)
         type = message.type,
         message = message,
         original_senderId = senderId,
+        proxy_senderId = clientProxies[senderId],
         original_protocol = "SimpleMail"
     }
     rednet.broadcast(payload, AUTH_INTERLINK_PROTOCOL)
@@ -1253,6 +1273,7 @@ local function handleRednetMessage(senderId, message, protocol)
         origSender = message.proxy_orig_sender
         actualMsg = message.proxy_orig_msg
         isProxied = true
+        clientProxies[origSender] = senderId
     end
 
     -- Encapsulated response function that handles proxy routing automatically
@@ -1311,9 +1332,29 @@ local function handleRednetMessage(senderId, message, protocol)
         elseif actualMsg.original_type then
             -- This is a proxy response from the Mail/Auth server, forward it back!
             local targetId = actualMsg.original_senderId
+            local proxyId = actualMsg.proxy_senderId or clientProxies[targetId]
+            local targetProto = actualMsg.original_protocol or "SimpleMail"
+            local internalProto = targetProto .. "_Internal"
             if targetId then
-                sendResponse(targetId, actualMsg, actualMsg.original_protocol or "SimpleMail")
+                if proxyId then
+                    -- Client is behind a Network Proxy! Wrap it for the proxy to relay:
+                    realRednetSend(proxyId, { proxy_orig_sender = targetId, proxy_response = actualMsg }, internalProto)
+                else
+                    -- Direct client send
+                    realRednetSend(targetId, actualMsg, targetProto)
+                    -- Also broadcast on internal protocol so any listening proxy can relay
+                    rednet.broadcast({ proxy_orig_sender = targetId, proxy_response = actualMsg }, internalProto)
+                end
             end
+        elseif actualMsg.type == "new_mail_notification" then
+            -- Relay notification to proxies and clients
+            local notifyMsg = {
+                type = "new_mail",
+                recipient = actualMsg.recipient,
+                mail = actualMsg.mail
+            }
+            rednet.broadcast(notifyMsg, "SimpleMail_Internal")
+            rednet.broadcast(notifyMsg, "SimpleMail")
         end
 
     elseif protocol == "Drunken_Admin_Internal" and actualMsg.type == "execute_command" then

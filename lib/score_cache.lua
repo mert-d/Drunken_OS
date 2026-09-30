@@ -7,7 +7,32 @@
     synced to the Arcade Server leaderboard once the server is back online.
 ]]
 
-local DB = require("lib.db")
+local DB
+local ok_db, loadedDB = pcall(require, "lib.db")
+if ok_db and type(loadedDB) == "table" and type(loadedDB.loadTableFromFile) == "function" then
+    DB = loadedDB
+else
+    -- Built-in lightweight fallback so score_cache never fails if lib.db is missing or damaged
+    DB = {
+        loadTableFromFile = function(path)
+            if not fs.exists(path) then return {} end
+            local f = fs.open(path, "r")
+            if not f then return {} end
+            local data = f.readAll()
+            f.close()
+            local ok, res = pcall(textutils.unserialize, data)
+            return (ok and type(res) == "table") and res or {}
+        end,
+        saveTableToFile = function(path, tbl)
+            local f = fs.open(path, "w")
+            if not f then return false end
+            f.write(textutils.serialize(tbl))
+            f.close()
+            return true
+        end
+    }
+end
+
 local SCORES_FILE = ".game_scores.db"
 local PENDING_FILE = ".pending_scores.db"
 

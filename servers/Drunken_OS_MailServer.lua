@@ -143,6 +143,17 @@ function handlers.send(senderId, payload)
         logActivity(string.format("Mail from '%s' to '%s'", mail.from_nickname, mail.to))
     end
     
+    -- Notify network so recipients get real-time toast
+    pcall(rednet.broadcast, {
+        type = "new_mail_notification",
+        recipient = mail.to,
+        mail = {
+            from = mail.from,
+            from_nickname = mail.from_nickname,
+            subject = mail.subject
+        }
+    }, AUTH_INTERLINK_PROTOCOL)
+    
     rednet.send(senderId, { status = "Sent!", success = true, original_type = payload.type }, AUTH_INTERLINK_PROTOCOL)
 end
 
@@ -229,6 +240,7 @@ while true do
             local oldSend = rednet.send
             rednet.send = function(target, response, proto)
                 response.original_senderId = payload.original_senderId
+                response.proxy_senderId = payload.proxy_senderId
                 response.original_protocol = payload.original_protocol
                 oldSend(target, response, proto)
             end

@@ -29,6 +29,7 @@ return {
         "lib/score_cache.lua",
         "lib/task_manager.lua",
         "lib/service_guard.lua",
+        "lib/db.lua",
         "lib/sound.lua",
         "manifest.lua"
     },

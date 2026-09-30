@@ -86,10 +86,10 @@ function mail.viewInbox(context)
     term.setCursorPos(2, 4)
     term.write("Fetching mail...")
     rednet.send(getParent(context).mailServerId, { type = "fetch", user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 1.5)
+    local _, response = rednet.receive("SimpleMail", 6.0)
     
     if not response or not response.mail then
-        context.showMessage("Offline", (response and (response.reason or "Mail data missing")) or "Mail server is unreachable.\n(Chunk may be unloaded).")
+        context.showMessage("Offline", (response and (response.reason or response.status or "Mail data missing")) or "Mail server is unreachable.\n(Chunk may be unloaded).")
         return
     end
     
@@ -186,8 +186,9 @@ function mail.composeAndSend(context, to, subject, attachment)
     }
     rednet.send(getParent(context).mailServerId, { type = "send", mail = mailObj, session_token = getParent(context).session_token, user = getParent(context).username }, "SimpleMail")
     context.drawWindow("Sending...")
-    local _, confirm = rednet.receive("SimpleMail", 10)
-    context.showMessage("Server Response", (confirm and confirm.status) or "No response from server.")
+    local _, confirm = rednet.receive("SimpleMail", 10.0)
+    local msg = (confirm and (confirm.status or confirm.reason or confirm.error or (confirm.success and "Sent!") or "Unknown response")) or "No response from server."
+    context.showMessage("Server Response", msg)
 end
 
 function mail.sendMail(context)
@@ -195,9 +196,9 @@ function mail.sendMail(context)
     local to = context.readInput("To: ", 4)
     if not to or to == "" then return end
     rednet.send(getParent(context).mailServerId, { type = "user_exists", user = to }, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 1.5)
+    local _, response = rednet.receive("SimpleMail", 6.0)
     if not response or not response.exists then
-        context.showMessage("Offline", (response and "Recipient '"..to.."' not found.") or "Mail server offline or chunk unloaded.")
+        context.showMessage("Offline", (response and (response.reason or "Recipient '"..to.."' not found.")) or "Mail server offline or chunk unloaded.")
         return
     end
     local subject = context.readInput("Subject: ", 6)
@@ -220,7 +221,7 @@ function mail.manageLists(context)
                 context.drawWindow("All Lists")
                 term.setCursorPos(2, 4); term.write("Fetching lists...")
                 rednet.send(getParent(context).mailServerId, { type = "get_lists", user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
-                local _, response = rednet.receive("SimpleMail", 5)
+                local _, response = rednet.receive("SimpleMail", 6.0)
                 if response and response.lists then
                     context.drawWindow("All Lists")
                     local listTable = {}
@@ -242,31 +243,25 @@ function mail.manageLists(context)
                         os.pullEvent("key")
                     end
                 else
-                    context.showMessage("Error", "Could not fetch lists.")
+                    context.showMessage("Error", (response and (response.reason or "Could not fetch lists.")) or "Could not fetch lists (timed out).")
                 end
             elseif selected == 2 then
                 context.drawWindow("Create List")
                 local name = context.readInput("New list name: @", 4)
                 if name and name ~= "" then
                     rednet.send(getParent(context).mailServerId, { type = "create_list", name = name, creator = getParent(context).username, user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
-                    local _, r = rednet.receive("SimpleMail", 5)
-                    if r and r.status then
-                        context.showMessage("Server Response", r.status)
-                    else
-                        context.showMessage("Error", "No response.")
-                    end
+                    local _, r = rednet.receive("SimpleMail", 6.0)
+                    local msg = (r and (r.status or r.reason or (r.success and "List created.") or "Unknown response")) or "No response from server."
+                    context.showMessage("Server Response", msg)
                 end
             elseif selected == 3 then
                 context.drawWindow("Join List")
                 local name = context.readInput("List to join: @", 4)
                 if name and name ~= "" then
                     rednet.send(getParent(context).mailServerId, { type = "join_list", name = name, user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
-                    local _, r = rednet.receive("SimpleMail", 5)
-                    if r and r.status then
-                        context.showMessage("Server Response", r.status)
-                    else
-                        context.showMessage("Error", "No response.")
-                    end
+                    local _, r = rednet.receive("SimpleMail", 6.0)
+                    local msg = (r and (r.status or r.reason or (r.success and "Joined list.") or "Unknown response")) or "No response from server."
+                    context.showMessage("Server Response", msg)
                 end
             elseif selected == 4 then
                 break

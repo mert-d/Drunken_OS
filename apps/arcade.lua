@@ -6,7 +6,27 @@
 local theme = require("lib.theme")
 local utils = require("lib.utils")
 local P2P_Socket = require("lib.p2p_socket")
-local scoreCache = require("lib.score_cache")
+
+-- Clear previous failed require cache if present
+if package and package.loaded and package.loaded["lib.score_cache"] == false then
+    package.loaded["lib.score_cache"] = nil
+end
+
+local ok_sc, sc = pcall(require, "lib.score_cache")
+local scoreCache
+if ok_sc and type(sc) == "table" then
+    scoreCache = sc
+else
+    scoreCache = {
+        loadScores = function() return {} end,
+        getPersonalBest = function() return 0 end,
+        getLocalLeaderboard = function() return {} end,
+        recordScore = function() return false, "error" end,
+        getPendingCount = function() return 0 end,
+        syncPending = function() return 0, 0 end
+    }
+end
+
 local arcade = {}
 local arcadeVersion = 2.5
 

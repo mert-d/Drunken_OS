@@ -28,6 +28,7 @@ local tests = {
     { name = "System Doctor Diagnostics",  file = "tests/test_doctor.lua" },
     { name = "Installer Disk & Boot Sim",   file = "tests/test_installer.lua" },
     { name = "HyperAuth Auto-Pairing Handshake", file = "tests/test_hyperauth_pairing.lua" },
+    { name = "Mail Proxy & Interlink Flow", file = "tests/test_mail_interlink_proxy.lua" },
 }
 
 print("========================================================")

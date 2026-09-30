@@ -719,11 +719,20 @@ local function backgroundListener()
     while true do
         sleep(15)
         pcall(function()
+            if package and package.loaded and package.loaded["lib.score_cache"] == false then
+                package.loaded["lib.score_cache"] = nil
+            end
             local scoreCache = require("lib.score_cache")
-            scoreCache.syncPending()
+            if scoreCache and scoreCache.syncPending then
+                scoreCache.syncPending()
+            end
         end)
         if state.mailServerId and state.username then
-            rednet.send(state.mailServerId, { type = "get_unread_count", user = state.username }, "SimpleMail")
+            rednet.send(state.mailServerId, { 
+                type = "get_unread_count", 
+                user = state.username, 
+                session_token = state.session_token 
+            }, "SimpleMail")
         end
     end
 end
