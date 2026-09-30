@@ -1455,9 +1455,11 @@ local function handleTerminalInput(event, p1)
 end
 
 local function registerProtocols()
-    rednet.host("DB_Bank_Internal", "bank.server.internal")
+    if rednet and rednet.unhost then pcall(rednet.unhost, "DB_Bank_Internal", "bank.server.internal") end
+    if rednet and rednet.host then pcall(rednet.host, "DB_Bank_Internal", "bank.server.internal") end
     if not wired_modem_name then
-        rednet.host(BANK_PROTOCOL, "bank.server")
+        if rednet and rednet.unhost then pcall(rednet.unhost, BANK_PROTOCOL, "bank.server") end
+        if rednet and rednet.host then pcall(rednet.host, BANK_PROTOCOL, "bank.server") end
     end
 end
 

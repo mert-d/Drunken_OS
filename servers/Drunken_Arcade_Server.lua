@@ -527,8 +527,14 @@ end
 --==============================================================================
 
 local function registerProtocols()
-    rednet.host("ArcadeGames_Internal", "arcade.server.internal")
-    rednet.host("ArcadeGames", "arcade.server")
+    if rednet and rednet.unhost then
+        pcall(rednet.unhost, "ArcadeGames_Internal", "arcade.server.internal")
+        pcall(rednet.unhost, "ArcadeGames", "arcade.server")
+    end
+    if rednet and rednet.host then
+        pcall(rednet.host, "ArcadeGames_Internal", "arcade.server.internal")
+        pcall(rednet.host, "ArcadeGames", "arcade.server")
+    end
 end
 
 local function flushArcadeState()

@@ -1354,11 +1354,17 @@ end
 ---
 -- Protocol registration helper for startup and hot-plug events.
 local function registerProtocols()
-    rednet.host("SimpleMail_Internal", "mail.server.internal")
-    rednet.host("SimpleChat_Internal", "chat.server.internal")
-    rednet.host("Drunken_Admin_Internal", "admin.server.internal")
-    rednet.host("auth.secure.v1_Internal", "auth.client.internal")
-    rednet.host(AUTH_INTERLINK_PROTOCOL, "interlink.server.internal")
+    local protos = {
+        { proto = "SimpleMail_Internal", host = "mail.server.internal" },
+        { proto = "SimpleChat_Internal", host = "chat.server.internal" },
+        { proto = "Drunken_Admin_Internal", host = "admin.server.internal" },
+        { proto = "auth.secure.v1_Internal", host = "auth.client.internal" },
+        { proto = AUTH_INTERLINK_PROTOCOL, host = "interlink.server.internal" },
+    }
+    for _, item in ipairs(protos) do
+        if rednet and rednet.unhost then pcall(rednet.unhost, item.proto, item.host) end
+        if rednet and rednet.host then pcall(rednet.host, item.proto, item.host) end
+    end
 end
 
 ---

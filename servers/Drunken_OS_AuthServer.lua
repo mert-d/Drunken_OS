@@ -104,7 +104,27 @@ end
 
 -- Protocol hosting helper
 local function registerProtocols()
-    rednet.host(AUTH_SERVER_PROTOCOL, "auth.server")
+    if rednet and rednet.unhost then
+        pcall(rednet.unhost, AUTH_SERVER_PROTOCOL, "auth.server")
+    end
+    if rednet and rednet.host then
+        local ok, err = pcall(rednet.host, AUTH_SERVER_PROTOCOL, "auth.server")
+        if not ok then
+            local existingId = rednet.lookup and rednet.lookup(AUTH_SERVER_PROTOCOL, "auth.server")
+            if existingId and existingId == os.getComputerID() then
+                return
+            end
+            if existingId then
+                logActivity(string.format("Conflict: Computer #%s is already hosting '%s' on '%s'!", 
+                    tostring(existingId), "auth.server", AUTH_SERVER_PROTOCOL), true)
+                print(string.format("\n[ERROR] Hostname Conflict! Computer #%s is already running as the Auth Server on this network.", tostring(existingId)))
+                print("Please shut down Computer #" .. tostring(existingId) .. " if you wish to run on this machine.\n")
+                error("Hostname in use by Computer #" .. tostring(existingId), 0)
+            else
+                logActivity("Warning: Failed to host '" .. AUTH_SERVER_PROTOCOL .. "': " .. tostring(err), true)
+            end
+        end
+    end
 end
 
 -- Initialize modems
