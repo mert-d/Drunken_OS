@@ -71,12 +71,12 @@ local PROTOCOLS = {
 }
 local VENDOR_REGISTRY_PATH       = "/vendors.jsonl"
 if not fs.exists(VENDOR_REGISTRY_PATH) then
-    if fs.exists("vendors.jsonl") then
-        VENDOR_REGISTRY_PATH = "vendors.jsonl"
-    elseif fs.exists("disk/vendors.jsonl") then
-        VENDOR_REGISTRY_PATH = "disk/vendors.jsonl"
-    elseif fs.exists("/disk/vendors.jsonl") then
-        VENDOR_REGISTRY_PATH = "/disk/vendors.jsonl"
+    local seedPaths = { "vendors.jsonl", "disk/vendors.jsonl", "/disk/vendors.jsonl" }
+    for _, sp in ipairs(seedPaths) do
+        if fs.exists(sp) then
+            pcall(fs.copy, sp, VENDOR_REGISTRY_PATH)
+            break
+        end
     end
 end
 local AUTH_LOG_FILE_PATH         = "/logs/hyperauth.log.jsonl"
@@ -200,10 +200,33 @@ local function load_vendor_registry_file()
     return vendor_map
 end
 
+local function save_vendor_registry_file()
+    local f = fs.open(VENDOR_REGISTRY_PATH, "w")
+    if not f then
+        logActivity("Error: Could not open " .. VENDOR_REGISTRY_PATH .. " for writing!", true)
+        return false
+    end
+    for vid, vdata in pairs(vendor_cache_by_id) do
+        local entry = {
+            vendorId = vid,
+            vendorName = vdata.vendorName or vid,
+            sharedSecret = vdata.sharedSecret,
+            enabled = (vdata.enabled ~= false)
+        }
+        f.write(textutils.serializeJSON(entry) .. "\n")
+    end
+    f.close()
+    vendor_last_loaded_millis = current_time_millis()
+    return true
+end
+
 local function get_vendor_record_by_id(vendor_id)
     local now_millis = current_time_millis()
     if (now_millis - vendor_last_loaded_millis) > REGISTRY_HOT_RELOAD_MILLIS then
-        vendor_cache_by_id = load_vendor_registry_file()
+        local loaded = load_vendor_registry_file()
+        for k, v in pairs(loaded) do
+            vendor_cache_by_id[k] = v
+        end
         vendor_last_loaded_millis = now_millis
     end
     local target = tostring(vendor_id)
@@ -628,23 +651,16 @@ local function processAdminCommand(line)
             local newVendorId = "drunken_auth_" .. targetId
             local vendorName = req.label or ("Drunken OS Auth #" .. targetId)
 
-            -- Save to vendors.jsonl
-            local newEntry = {
-                vendorId = newVendorId,
-                vendorName = vendorName,
-                sharedSecret = newSecret,
-                enabled = true
-            }
-            local f = fs.open(VENDOR_REGISTRY_PATH, "a")
-            if f then
-                f.write(textutils.serializeJSON(newEntry) .. "\n")
-                f.close()
-            end
             vendor_cache_by_id[newVendorId] = {
                 vendorName = vendorName,
                 sharedSecret = newSecret,
                 enabled = true
             }
+            if save_vendor_registry_file() then
+                logActivity("Saved vendor pairing to " .. VENDOR_REGISTRY_PATH)
+            else
+                logActivity("Failed to write vendor pairing to " .. VENDOR_REGISTRY_PATH, true)
+            end
 
             local replyPacket = {
                 type = "pair_accept",
@@ -698,12 +714,8 @@ local function processAdminCommand(line)
             print(" Usage: addvendor <vendorId> <vendorName> <sharedSecret>")
             return
         end
-        local newEntry = { vendorId = vid, vendorName = vname, sharedSecret = vsec, enabled = true }
-        local f = fs.open(VENDOR_REGISTRY_PATH, "a")
-        if f then
-            f.write(textutils.serializeJSON(newEntry) .. "\n")
-            f.close()
-            vendor_cache_by_id = load_vendor_registry_file()
+        vendor_cache_by_id[vid] = { vendorName = vname, sharedSecret = vsec, enabled = true }
+        if save_vendor_registry_file() then
             print(" Vendor '" .. vid .. "' registered successfully.")
         else
             print(" Error: Could not write to " .. VENDOR_REGISTRY_PATH)
@@ -716,7 +728,8 @@ local function processAdminCommand(line)
             return
         end
         vendor_cache_by_id[vid] = nil
-        print(" Vendor '" .. vid .. "' removed from memory cache. (Edit " .. VENDOR_REGISTRY_PATH .. " to persist deletion).")
+        save_vendor_registry_file()
+        print(" Vendor '" .. vid .. "' deleted successfully.")
 
     elseif cmd == "requests" then
         print("\n--- Active Pending 2FA Requests ---")
