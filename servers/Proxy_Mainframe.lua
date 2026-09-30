@@ -20,18 +20,13 @@ ProxyBase.run({
         ["SimpleMail"]     = "SimpleMail_Internal",
         ["SimpleChat"]     = "SimpleChat_Internal",
         ["Drunken_Admin"]  = "Drunken_Admin_Internal",
-        ["auth.secure.v1"] = "auth.secure.v1_Internal",
     },
 
     hostMap = {
         ["mail.server"]  = "SimpleMail",
         ["chat.server"]  = "SimpleChat",
         ["admin.server"] = "Drunken_Admin",
-        ["auth.server"]  = "auth.secure.v1",
     },
 
-    transparentProtocols = {
-        ["auth.secure.v1"]          = true,
-        ["auth.secure.v1_Internal"] = true,
-    }
+    transparentProtocols = {}
 })
