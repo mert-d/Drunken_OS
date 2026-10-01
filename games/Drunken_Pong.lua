@@ -131,32 +131,33 @@ local function mainGame(...)
     local INT_W, INT_H = 51, 19
     local function toScreen(ix, iy)
         local sw, sh = getSafeSize()
-        local sx = math.floor((ix / INT_W) * (sw - 2)) + 2
-        local sy = math.floor((iy / INT_H) * (sh - 2)) + 2
-        return sx, sy
+        local sx = math.floor((ix / INT_W) * (sw - 4)) + 2
+        local sy = math.floor((iy / INT_H) * (sh - 4)) + 2
+        return math.min(sw - 1, math.max(2, sx)), math.min(sh - 1, math.max(2, sy))
     end
 
     local function drawGame()
         drawFrame()
         local w, h = getSafeSize()
         
-        -- Draw Scores (Sleek Blit - Guaranteed equal argument lengths)
-        local scoreMsg
-        local scoreColor
-        local scoreBg
-        if w < 34 then
-            scoreMsg   = string.format(" %02d | %02d ", score.me, score.opp)
-            scoreColor = " 55 7 ee "
-            scoreBg    = " fffffff "
-        else
-            local uName = (#username > 8) and username:sub(1, 7) .. "." or username
-            local oName = isSolo and "AI Bot" or "Opponent"
-            scoreMsg   = string.format(" %s %02d | %02d %s ", uName, score.me, score.opp, oName)
-            scoreColor = " " .. string.rep("5", #uName) .. " 55 7 ee " .. string.rep("e", #oName) .. " "
-            scoreBg    = string.rep("f", #scoreMsg)
-        end
-        term.setCursorPos(math.max(1, math.floor((w - #scoreMsg)/2) + 1), 2)
-        term.blit(scoreMsg, scoreColor, scoreBg)
+        -- Draw Scores cleanly on Row 2 (No term.blit mismatch possible)
+        local myScore = string.format("%02d", score.me)
+        local oppScore = string.format("%02d", score.opp)
+        local totalScoreLen = 11 -- "[ 00 : 00 ]"
+        local startX = math.max(1, math.floor((w - totalScoreLen) / 2) + 1)
+        
+        term.setCursorPos(startX, 2)
+        term.setBackgroundColor(colors.black)
+        term.setTextColor(colors.gray)
+        term.write("[ ")
+        term.setTextColor(colors.lime)
+        term.write(myScore)
+        term.setTextColor(colors.gray)
+        term.write(" : ")
+        term.setTextColor(colors.red)
+        term.write(oppScore)
+        term.setTextColor(colors.gray)
+        term.write(" ]")
 
         -- Draw Trails
         term.setBackgroundColor(theme.bg)
@@ -594,6 +595,6 @@ end
 local ok, err = pcall(mainGame, ...)
 if not ok then
     term.setBackgroundColor(colors.black); term.clear(); term.setCursorPos(1,1)
-    print("Pong Error: " .. err)
-    os.pullEvent("key")
+    print("Pong Error: " .. tostring(err))
+    pcall(os.pullEvent)
 end
