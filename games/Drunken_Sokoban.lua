@@ -24,19 +24,28 @@ local function mainGame(...)
     local gameName = "DrunkenSokoban"
     local arcadeServerId = nil
 
-    -- Use shared theme colors
+    local sound = nil
+    pcall(function() sound = require("lib.sound") end)
+    local function playSfx(fn, ...)
+        if sound and sound[fn] then pcall(sound[fn], ...) end
+    end
+    local function playTone(inst, pitch, vol)
+        if sound and sound.playNote then pcall(sound.playNote, colors.white, inst, pitch, vol) end
+    end
+
+    -- Use shared theme colors with Win95 styling
     local theme = {
-        bg = sharedTheme.bg,
-        text = sharedTheme.text,
-        border = sharedTheme.prompt,
-        player = sharedTheme.game.gold,
-        box = sharedTheme.game.box,
-        target = sharedTheme.game.target,
-        wall = sharedTheme.game.wall,
-        boxOnTarget = sharedTheme.game.energy,
-        highlightBg = sharedTheme.highlightBg,
-        highlightText = sharedTheme.highlightText,
-        prompt = sharedTheme.game.gold,
+        bg = colors.lightGray,
+        text = colors.black,
+        border = colors.gray,
+        player = colors.yellow,
+        box = colors.orange,
+        target = colors.lime,
+        wall = colors.gray,
+        boxOnTarget = colors.green,
+        highlightBg = colors.blue,
+        highlightText = colors.white,
+        prompt = colors.blue,
     }
 
     -- Level Data (Simple 1st Level)
@@ -361,74 +370,148 @@ local function mainGame(...)
             player.x = last.px
             player.y = last.py
             moveCount = last.moves
+            playTone("flute", 16, 0.8)
             return true
         end
+        playTone("bass", 1, 0.4)
         return false
     end
 
-    local function drawFrame()
+    local function drawFrame(subTitle)
         local w, h = getSafeSize()
-        term.setBackgroundColor(theme.bg); term.clear()
-        term.setBackgroundColor(theme.border)
-        term.setCursorPos(1, 1); term.write(string.rep(" ", w))
-        term.setCursorPos(1, h); term.write(string.rep(" ", w))
-        for i = 2, h - 1 do
-            term.setCursorPos(1, i); term.write(" ")
-            term.setCursorPos(w, i); term.write(" ")
+        term.setBackgroundColor(colors.lightGray)
+        term.clear()
+        
+        -- Win95 Title Bar
+        term.setCursorPos(1, 1)
+        term.setBackgroundColor(colors.blue)
+        term.setTextColor(colors.white)
+        local title = " Sokoban " .. (subTitle and ("- " .. subTitle) or ("v" .. gameVersion))
+        if #title > w - 4 then title = title:sub(1, w - 4) end
+        term.write(title .. string.rep(" ", math.max(0, w - #title - 3)))
+        
+        -- Win95 Close Button [X]
+        term.setCursorPos(w - 2, 1)
+        term.setBackgroundColor(colors.lightGray)
+        term.setTextColor(colors.black)
+        term.write("[X]")
+    end
+
+    local function countBoxes()
+        local placed, total = 0, 0
+        for y, row in ipairs(board) do
+            for x, char in ipairs(row) do
+                if char == "." then total = total + 1
+                elseif char == "Y" then total = total + 1; placed = placed + 1 end
+            end
         end
-        term.setCursorPos(1, 1); term.setTextColor(theme.text)
-        local title = " Drunken Sokoban v" .. gameVersion .. " "
-        term.setCursorPos(math.floor((w - #title)/2), 1); term.write(title)
+        return placed, total
     end
 
     local function drawBoard()
-        drawFrame()
         local w, h = getSafeSize()
-        local lvl = levels[currentLevel]
+        drawFrame("Level " .. currentLevel)
+        
+        -- Top Scoreboard / Status Strip
+        term.setCursorPos(1, 2)
+        term.setBackgroundColor(colors.gray)
+        term.setTextColor(colors.white)
+        term.write(string.rep(" ", w))
+        
+        local placed, total = countBoxes()
+        term.setCursorPos(2, 2)
+        term.setBackgroundColor(colors.black)
+        term.setTextColor(colors.lime)
+        term.write(string.format(" L:%02d ", currentLevel))
+        
+        term.setCursorPos(math.max(9, math.floor(w/2 - 5)), 2)
+        term.setBackgroundColor(colors.black)
+        term.setTextColor(colors.yellow)
+        term.write(string.format(" MOV:%03d ", moveCount))
+        
+        local boxStr = string.format(" BOX:%d/%d ", placed, total)
+        term.setCursorPos(math.max(2, w - #boxStr), 2)
+        term.setBackgroundColor(colors.black)
+        term.setTextColor(placed == total and colors.lime or colors.cyan)
+        term.write(boxStr)
+
+        -- Playfield Area
         local mh = #board
         local mw = 0
         for _, r in ipairs(board) do mw = math.max(mw, #r) end
 
-        local ox = math.floor((w - mw) / 2)
-        local oy = math.floor((h - mh) / 2)
+        local ox = math.max(2, math.floor((w - mw) / 2))
+        local oy = math.max(4, math.floor((h - 3 - mh) / 2) + 2)
 
         for y, row in ipairs(board) do
             term.setCursorPos(ox, oy + y - 1)
             for x, char in ipairs(row) do
-                local fg = theme.text
-                local bg = theme.bg
+                local fg = colors.white
+                local bg = colors.black
                 local display = char
 
                 if x == player.x and y == player.y then
                     display = "@"
-                    fg = theme.player
+                    fg = colors.yellow
+                    bg = (char == "." or char == "Y") and colors.green or colors.black
                 elseif char == "#" then
-                    fg = theme.wall
+                    fg = colors.gray
+                    bg = colors.lightGray
+                    display = "#"
                 elseif char == "X" then
-                    fg = theme.box
+                    fg = colors.orange
+                    bg = colors.brown
+                    display = "$"
                 elseif char == "." then
-                    fg = theme.target
+                    fg = colors.lime
+                    bg = colors.black
+                    display = "."
                 elseif char == "Y" then -- Box on target
-                    display = "X"
-                    fg = theme.boxOnTarget
+                    display = "$"
+                    fg = colors.yellow
+                    bg = colors.green
+                elseif char == " " then
+                    display = " "
+                    bg = colors.black
                 end
 
                 term.setTextColor(fg)
+                term.setBackgroundColor(bg)
                 term.write(display)
             end
         end
 
-        term.setTextColor(theme.text)
-        term.setCursorPos(2, h-2); term.write("Level: " .. currentLevel .. " | Moves: " .. moveCount)
-        term.setCursorPos(math.floor(w/2 - 15), h)
-        term.setBackgroundColor(theme.border); term.write(" ARROWS: Move | U: Undo | R: Restart | Q: Quit ")
+        -- Bottom Touch & Control Bar
+        term.setCursorPos(1, h)
+        term.setBackgroundColor(colors.gray)
+        term.setTextColor(colors.white)
+        term.write(string.rep(" ", w))
+        
+        if w >= 38 then
+            term.setCursorPos(2, h)
+            term.setBackgroundColor(colors.lightGray)
+            term.setTextColor(colors.black)
+            term.write("[<][^][v][>]")
+            
+            term.setCursorPos(16, h)
+            term.write("[Undo] [Reset] [Menu]")
+        else
+            term.setCursorPos(1, h)
+            term.setBackgroundColor(colors.lightGray)
+            term.setTextColor(colors.black)
+            term.write("[<][^][v][>] [U] [R] [M]")
+        end
+        return ox, oy
     end
 
     local function move(dx, dy)
         local nx, ny = player.x + dx, player.y + dy
         local target = board[ny] and board[ny][nx]
 
-        if not target or target == "#" then return end -- Wall or OOB
+        if not target or target == "#" then
+            playTone("bass", 1, 0.4)
+            return false
+        end
 
         if target == "X" or target == "Y" then
             -- Push logic
@@ -442,12 +525,23 @@ local function mainGame(...)
                 -- Move player
                 player.x, player.y = nx, ny
                 moveCount = moveCount + 1
+                if boxTarget == "." then
+                    playTone("chime", 14, 1.0)
+                else
+                    playTone("bass", 7, 0.8)
+                end
+                return true
+            else
+                playTone("bass", 1, 0.4)
+                return false
             end
         else
             pushHistory()
             -- Normal move
             player.x, player.y = nx, ny
             moveCount = moveCount + 1
+            playTone("hat", 12, 0.3)
+            return true
         end
     end
 
@@ -464,72 +558,155 @@ local function mainGame(...)
         local options = { "New Game", "Level Select", "Local Maps", "World Builder", "Community Maps", "Quit" }
         local selection = 1
         while true do
-            drawFrame()
+            drawFrame("Menu")
             local w, h = getSafeSize()
-            term.setTextColor(theme.prompt)
-            term.setCursorPos(math.floor(w/2 - 5), 5)
-            term.write("MAIN MENU")
+            
+            -- Win95 Dialog Box
+            local bw = math.min(w - 4, 30)
+            local bh = #options + 4
+            local bx = math.floor((w - bw) / 2)
+            local by = math.floor((h - bh) / 2)
+            
+            term.setBackgroundColor(colors.gray)
+            for y = by, by + bh do
+                term.setCursorPos(bx, y)
+                term.write(string.rep(" ", bw))
+            end
+            
+            term.setCursorPos(bx + 2, by + 1)
+            term.setBackgroundColor(colors.gray)
+            term.setTextColor(colors.yellow)
+            term.write("SELECT AN OPTION:")
 
             for i, opt in ipairs(options) do
+                local oy = by + 2 + i
+                term.setCursorPos(bx + 2, oy)
                 if i == selection then
-                    term.setBackgroundColor(theme.highlightBg)
-                    term.setTextColor(theme.highlightText)
+                    term.setBackgroundColor(colors.blue)
+                    term.setTextColor(colors.white)
+                    term.write(string.format(" > [%d] %-" .. (bw - 8) .. "s ", i, opt))
                 else
-                    term.setBackgroundColor(theme.bg)
-                    term.setTextColor(theme.text)
+                    term.setBackgroundColor(colors.lightGray)
+                    term.setTextColor(colors.black)
+                    term.write(string.format("   [%d] %-" .. (bw - 8) .. "s ", i, opt))
                 end
-                term.setCursorPos(math.floor(w/2 - #opt/2), 7 + i)
-                term.write(opt)
             end
 
-            local event, key = os.pullEvent("key")
-            if key == keys.up then selection = math.max(1, selection - 1)
-            elseif key == keys.down then selection = math.min(#options, selection + 1)
-            elseif key == keys.enter then return options[selection]
-            elseif key == keys.q then return "Quit" end
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                if p1 == keys.up then selection = math.max(1, selection - 1); playSfx("playClick")
+                elseif p1 == keys.down then selection = math.min(#options, selection + 1); playSfx("playClick")
+                elseif p1 == keys.enter or p1 == keys.space then playSfx("playClick"); return options[selection]
+                elseif p1 == keys.one then return options[1]
+                elseif p1 == keys.two then return options[2]
+                elseif p1 == keys.three then return options[3]
+                elseif p1 == keys.four then return options[4]
+                elseif p1 == keys.five then return options[5]
+                elseif p1 == keys.six or p1 == keys.q then return "Quit" end
+            elseif event == "mouse_click" then
+                local mx, my = p2, p3
+                if my == 1 and mx >= w - 3 then
+                    playSfx("playClick")
+                    return "Quit"
+                end
+                for i, opt in ipairs(options) do
+                    local oy = by + 2 + i
+                    if my == oy and mx >= bx and mx <= bx + bw then
+                        playSfx("playClick")
+                        selection = i
+                        return opt
+                    end
+                end
+            elseif event == "mouse_scroll" then
+                selection = math.max(1, math.min(#options, selection + p1))
+                playSfx("playClick")
+            end
         end
     end
 
     local function showLevelSelect()
         local selection = 1
         local scroll = 0
-        local maxVisible = 10
         while true do
-            drawFrame()
+            drawFrame("Level Select")
             local w, h = getSafeSize()
-            term.setTextColor(theme.prompt)
+            local maxVisible = math.max(4, h - 7)
+
             term.setCursorPos(math.floor(w/2 - 6), 3)
-            term.write("LEVEL SELECT")
+            term.setBackgroundColor(colors.lightGray)
+            term.setTextColor(colors.black)
+            term.write("SELECT LEVEL")
 
             for i = 1, maxVisible do
                 local idx = i + scroll
                 if idx > #levels then break end
                 local lvl = levels[idx]
                 
+                term.setCursorPos(3, 4 + i)
                 if idx == selection then
-                    term.setBackgroundColor(theme.highlightBg)
-                    term.setTextColor(theme.highlightText)
+                    term.setBackgroundColor(colors.blue)
+                    term.setTextColor(colors.white)
+                    term.write(string.format(" > %2d. %-" .. (w - 10) .. "s ", idx, lvl.name))
                 else
-                    term.setBackgroundColor(theme.bg)
-                    term.setTextColor(theme.text)
+                    term.setBackgroundColor(colors.lightGray)
+                    term.setTextColor(colors.black)
+                    term.write(string.format("   %2d. %-" .. (w - 10) .. "s ", idx, lvl.name))
                 end
-                local label = string.format("%d. %s", idx, lvl.name)
-                term.setCursorPos(math.floor(w/2 - #label/2), 5 + i)
-                term.write(label)
             end
 
-            term.setBackgroundColor(theme.bg); term.setTextColor(colors.gray)
-            term.setCursorPos(2, h); term.write(" ARROWS: Scroll | ENTER: Play | Q: Back ")
+            term.setBackgroundColor(colors.gray)
+            term.setTextColor(colors.white)
+            term.setCursorPos(1, h)
+            term.write(string.rep(" ", w))
+            term.setCursorPos(2, h)
+            term.write("[Play] [Back] | Tap to select")
 
-            local event, key = os.pullEvent("key")
-            if key == keys.up then 
-                selection = math.max(1, selection - 1)
-                if selection <= scroll then scroll = math.max(0, scroll - 1) end
-            elseif key == keys.down then 
-                selection = math.min(#levels, selection + 1)
-                if selection > scroll + maxVisible then scroll = math.min(#levels - maxVisible, scroll + 1) end
-            elseif key == keys.enter then currentLevel = selection; return true
-            elseif key == keys.backspace or key == keys.q then return false end
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                if p1 == keys.up then 
+                    selection = math.max(1, selection - 1)
+                    if selection <= scroll then scroll = math.max(0, scroll - 1) end
+                    playSfx("playClick")
+                elseif p1 == keys.down then 
+                    selection = math.min(#levels, selection + 1)
+                    if selection > scroll + maxVisible then scroll = math.min(#levels - maxVisible, scroll + 1) end
+                    playSfx("playClick")
+                elseif p1 == keys.enter then
+                    currentLevel = selection
+                    playSfx("playClick")
+                    return true
+                elseif p1 == keys.backspace or p1 == keys.q then
+                    playSfx("playClick")
+                    return false
+                end
+            elseif event == "mouse_click" then
+                local mx, my = p2, p3
+                if my == 1 and mx >= w - 3 then
+                    playSfx("playClick")
+                    return false
+                elseif my == h then
+                    if mx >= 2 and mx <= 7 then
+                        currentLevel = selection
+                        playSfx("playClick")
+                        return true
+                    elseif mx >= 9 and mx <= 15 then
+                        playSfx("playClick")
+                        return false
+                    end
+                elseif my >= 5 and my <= 4 + maxVisible then
+                    local clickedIdx = (my - 4) + scroll
+                    if clickedIdx <= #levels then
+                        selection = clickedIdx
+                        currentLevel = selection
+                        playSfx("playClick")
+                        return true
+                    end
+                end
+            elseif event == "mouse_scroll" then
+                scroll = math.max(0, math.min(math.max(0, #levels - maxVisible), scroll + p1))
+                selection = math.max(1, math.min(#levels, selection + p1))
+                playSfx("playClick")
+            end
         end
     end
 
@@ -559,13 +736,26 @@ local function mainGame(...)
                 term.write(s.name)
             end
 
-            local event, key = os.pullEvent("key")
-            if key == keys.up then sizeSelection = math.max(1, sizeSelection - 1)
-            elseif key == keys.down then sizeSelection = math.min(#sizes, sizeSelection + 1)
-            elseif key == keys.enter then
-                ew, eh = sizes[sizeSelection].w, sizes[sizeSelection].h
-                break
-            elseif key == keys.q or key == keys.backspace then return end
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                if p1 == keys.up then sizeSelection = math.max(1, sizeSelection - 1); playSfx("playClick")
+                elseif p1 == keys.down then sizeSelection = math.min(#sizes, sizeSelection + 1); playSfx("playClick")
+                elseif p1 == keys.enter then
+                    ew, eh = sizes[sizeSelection].w, sizes[sizeSelection].h
+                    break
+                elseif p1 == keys.q or p1 == keys.backspace then return end
+            elseif event == "mouse_click" then
+                if p3 == 1 and p2 >= w - 3 then return end
+                for i = 1, #sizes do
+                    if p3 == 7 + i then
+                        sizeSelection = i
+                        ew, eh = sizes[sizeSelection].w, sizes[sizeSelection].h
+                        playSfx("playClick")
+                        break
+                    end
+                end
+                if ew and eh then break end
+            end
         end
 
         local editorBoard = {}
@@ -577,7 +767,7 @@ local function mainGame(...)
         for y = 1, eh do editorBoard[y] = {}; for x = 1, ew do editorBoard[y][x] = " " end end
 
         local function drawEditor()
-            drawFrame()
+            drawFrame("World Builder")
             local w, h = getSafeSize()
             local ox = math.floor((w - ew) / 2)
             local oy = math.floor((h - eh) / 2)
@@ -585,29 +775,32 @@ local function mainGame(...)
             for y, row in ipairs(editorBoard) do
                 term.setCursorPos(ox, oy + y - 1)
                 for x, char in ipairs(row) do
-                    local fg, bg = theme.text, theme.bg
-                    if x == cx and y == cy then bg = theme.highlightBg; fg = theme.highlightText end
+                    local fg, bg = colors.black, colors.white
+                    if x == cx and y == cy then bg = colors.blue; fg = colors.white end
                     
-                    if char == "#" then fg = theme.wall
-                    elseif char == "X" then fg = theme.box
-                    elseif char == "." then fg = theme.target
-                    elseif char == "@" then fg = theme.player end
+                    if char == "#" then fg = colors.gray; if x ~= cx or y ~= cy then bg = colors.lightGray end
+                    elseif char == "X" then fg = colors.orange; if x ~= cx or y ~= cy then bg = colors.brown end
+                    elseif char == "." then fg = colors.lime; if x ~= cx or y ~= cy then bg = colors.black end
+                    elseif char == "@" then fg = colors.yellow; if x ~= cx or y ~= cy then bg = colors.black end end
 
                     term.setTextColor(fg); term.setBackgroundColor(bg)
                     term.write(char)
                 end
             end
 
-            term.setBackgroundColor(theme.bg); term.setTextColor(theme.text)
-            term.setCursorPos(2, h-2); term.write("Brush: " .. (brushNames[brush] or brush) .. " (1-5 to change)")
-            term.setCursorPos(math.floor(w/2 - 20), h)
-            term.setBackgroundColor(theme.border); term.write(" ARROWS: Move | SPACE: Place | S: Save | P: Publish | Q: Exit ")
+            term.setBackgroundColor(colors.gray); term.setTextColor(colors.white)
+            term.setCursorPos(1, h-1); term.write(string.rep(" ", w))
+            term.setCursorPos(2, h-1); term.write("Brush: [" .. (brushNames[brush] or brush) .. "] (1:Wall 2:Box 3:Tgt 4:Ply 5:Clr)")
+            term.setCursorPos(1, h); term.write(string.rep(" ", w))
+            term.setCursorPos(2, h); term.write(" [S:Save] [P:Publish] [Q:Exit] | Tap grid to paint ")
+            return ox, oy
         end
 
         while true do
-            drawEditor()
-            local event, key = os.pullEvent()
+            local ox, oy = drawEditor()
+            local event, p1, p2, p3 = os.pullEvent()
             if event == "key" then
+                local key = p1
                 if key == keys.up then cy = math.max(1, cy - 1)
                 elseif key == keys.down then cy = math.min(eh, cy + 1)
                 elseif key == keys.left then cx = math.max(1, cx - 1)
@@ -670,8 +863,29 @@ local function mainGame(...)
                     else
                         term.setCursorPos(2, 2); term.setTextColor(colors.red); term.write("Publish cancelled.")
                     end
-                    sleep(1.5)
                 elseif key == keys.q then return end
+            elseif event == "mouse_click" or event == "mouse_drag" then
+                local mx, my = p2, p3
+                if my == 1 and mx >= w - 3 then
+                    playSfx("playClick")
+                    return
+                elseif ox and oy and my >= oy and my < oy + eh then
+                    local gx = mx - ox + 1
+                    local gy = my - oy + 1
+                    if gx >= 1 and gx <= ew and gy >= 1 and gy <= eh then
+                        editorBoard[gy][gx] = brush
+                        cx, cy = gx, gy
+                        playTone("hat", 14, 0.4)
+                    end
+                elseif my == h - 1 then
+                    -- Brush change via touch
+                    if mx >= 10 and mx <= 15 then brush = "#"; playSfx("playClick")
+                    elseif mx >= 16 and mx <= 20 then brush = "X"; playSfx("playClick")
+                    elseif mx >= 21 and mx <= 26 then brush = "."; playSfx("playClick")
+                    elseif mx >= 27 and mx <= 32 then brush = "@"; playSfx("playClick")
+                    elseif mx >= 33 and mx <= 38 then brush = " "; playSfx("playClick")
+                    end
+                end
             end
         end
     end
@@ -729,30 +943,50 @@ local function mainGame(...)
             term.setBackgroundColor(theme.bg); term.setTextColor(colors.gray)
             term.setCursorPos(2, h); term.write(" ENTER: Play | BACKSPACE: Back ")
 
-            local event, key = os.pullEvent("key")
-            if key == keys.up then 
-                selection = math.max(1, selection - 1)
-                if selection <= scroll then scroll = math.max(0, scroll - 1) end
-            elseif key == keys.down then 
-                selection = math.min(#maps, selection + 1)
-                if selection > scroll + maxVisible then scroll = math.min(#maps - maxVisible, scroll + 1) end
-            elseif key == keys.enter then
-                local selected = maps[selection]
-                local originalLevel = currentLevel
-                levels[100] = { map = selected.data, name = selected.name }
-                currentLevel = 100
-                gameLoop()
-                currentLevel = originalLevel
-            elseif key == keys.backspace or key == keys.q then return end
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then 
+                if p1 == keys.up then 
+                    selection = math.max(1, selection - 1)
+                    if selection <= scroll then scroll = math.max(0, scroll - 1) end
+                    playSfx("playClick")
+                elseif p1 == keys.down then 
+                    selection = math.min(#maps, selection + 1)
+                    if selection > scroll + maxVisible then scroll = math.min(#maps - maxVisible, scroll + 1) end
+                    playSfx("playClick")
+                elseif p1 == keys.enter then
+                    local selected = maps[selection]
+                    local originalLevel = currentLevel
+                    levels[100] = { map = selected.data, name = selected.name }
+                    currentLevel = 100
+                    gameLoop()
+                    currentLevel = originalLevel
+                elseif p1 == keys.backspace or p1 == keys.q then return end
+            elseif event == "mouse_click" then
+                local mx, my = p2, p3
+                if my == 1 and mx >= w - 3 then return end
+                if my >= 6 and my <= 5 + maxVisible then
+                    local clickedIdx = (my - 5) + scroll
+                    if clickedIdx <= #maps then
+                        selection = clickedIdx
+                        local selected = maps[selection]
+                        local originalLevel = currentLevel
+                        levels[100] = { map = selected.data, name = selected.name }
+                        currentLevel = 100
+                        gameLoop()
+                        currentLevel = originalLevel
+                    end
+                end
+            elseif event == "mouse_scroll" then
+                scroll = math.max(0, math.min(math.max(0, #maps - maxVisible), scroll + p1))
+                selection = math.max(1, math.min(#maps, selection + p1))
+                playSfx("playClick")
+            end
         end
     end
 
     local function showCommunityMaps()
-        drawFrame()
+        drawFrame("Community Maps")
         local w, h = getSafeSize()
-        term.setTextColor(theme.prompt)
-        term.setCursorPos(math.floor(w/2 - 7), 3)
-        term.write("COMMUNITY MAPS")
 
         arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
         if not arcadeServerId then
@@ -771,9 +1005,7 @@ local function mainGame(...)
 
         local selection = 1
         while true do
-            drawFrame()
-            term.setTextColor(theme.prompt)
-            term.setCursorPos(math.floor(w/2 - 7), 3); term.write("COMMUNITY MAPS")
+            drawFrame("Community Maps")
             
             for i, map in ipairs(msg.maps) do
                 if i == selection then
@@ -789,50 +1021,131 @@ local function mainGame(...)
             term.setBackgroundColor(theme.bg); term.setTextColor(theme.text)
             term.setCursorPos(2, h); term.write(" ENTER: Play | BACKSPACE/Q: Back ")
 
-            local event, key = os.pullEvent("key")
-            if key == keys.up then selection = math.max(1, selection - 1)
-            elseif key == keys.down then selection = math.min(#msg.maps, selection + 1)
-            elseif key == keys.enter then
-                local selectedMap = msg.maps[selection]
-                rednet.send(arcadeServerId, { type = "get_community_map", game = gameName, filename = selectedMap.filename }, "ArcadeGames")
-                local rid, rmsg = rednet.receive("ArcadeGames", 3)
-                if rmsg and rmsg.success then
-                    -- Play the map
-                    local originalLevel = currentLevel
-                    levels[99] = { map = rmsg.map.data, name = rmsg.map.name }
-                    currentLevel = 99
-                    gameLoop()
-                    currentLevel = originalLevel
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                if p1 == keys.up then selection = math.max(1, selection - 1); playSfx("playClick")
+                elseif p1 == keys.down then selection = math.min(#msg.maps, selection + 1); playSfx("playClick")
+                elseif p1 == keys.enter then
+                    local selectedMap = msg.maps[selection]
+                    rednet.send(arcadeServerId, { type = "get_community_map", game = gameName, filename = selectedMap.filename }, "ArcadeGames")
+                    local rid, rmsg = rednet.receive("ArcadeGames", 3)
+                    if rmsg and rmsg.success then
+                        local originalLevel = currentLevel
+                        levels[99] = { map = rmsg.map.data, name = rmsg.map.name }
+                        currentLevel = 99
+                        gameLoop()
+                        currentLevel = originalLevel
+                    end
+                elseif p1 == keys.backspace or p1 == keys.q then return end
+            elseif event == "mouse_click" then
+                local mx, my = p2, p3
+                if my == 1 and mx >= w - 3 then return end
+                if my >= 6 and my <= 5 + #msg.maps then
+                    selection = my - 5
+                    local selectedMap = msg.maps[selection]
+                    if selectedMap then
+                        rednet.send(arcadeServerId, { type = "get_community_map", game = gameName, filename = selectedMap.filename }, "ArcadeGames")
+                        local rid, rmsg = rednet.receive("ArcadeGames", 3)
+                        if rmsg and rmsg.success then
+                            local originalLevel = currentLevel
+                            levels[99] = { map = rmsg.map.data, name = rmsg.map.name }
+                            currentLevel = 99
+                            gameLoop()
+                            currentLevel = originalLevel
+                        end
+                    end
                 end
-            elseif key == keys.backspace or key == keys.q then return end
+            elseif event == "mouse_scroll" then
+                selection = math.max(1, math.min(#msg.maps, selection + p1))
+                playSfx("playClick")
+            end
         end
     end
 
     local function gameLoop()
         loadLevel(currentLevel)
         while true do
-            drawBoard()
-            local event, key = os.pullEvent("key")
-            if key == keys.up then move(0, -1)
-            elseif key == keys.down then move(0, 1)
-            elseif key == keys.left then move(-1, 0)
-            elseif key == keys.right then move(1, 0)
-            elseif key == keys.u then undo()
-            elseif key == keys.r then loadLevel(currentLevel)
-            elseif key == keys.q then return end
+            local ox, oy = drawBoard()
+            local event, p1, p2, p3 = os.pullEvent()
+            local w, h = getSafeSize()
+            
+            if event == "key" then
+                if p1 == keys.up or p1 == keys.w then move(0, -1)
+                elseif p1 == keys.down or p1 == keys.s then move(0, 1)
+                elseif p1 == keys.left or p1 == keys.a then move(-1, 0)
+                elseif p1 == keys.right or p1 == keys.d then move(1, 0)
+                elseif p1 == keys.u or p1 == keys.z then undo()
+                elseif p1 == keys.r then loadLevel(currentLevel); playTone("snare", 8, 0.7)
+                elseif p1 == keys.q or p1 == keys.tab or p1 == keys.backspace then return end
+            elseif event == "mouse_click" or event == "mouse_drag" then
+                local mx, my = p2, p3
+                -- Title Bar Close [X]
+                if my == 1 and mx >= w - 3 then
+                    playSfx("playClick")
+                    return
+                -- Bottom Bar Buttons
+                elseif my == h then
+                    if w >= 38 then
+                        if mx >= 2 and mx <= 4 then move(-1, 0) -- [<]
+                        elseif mx >= 5 and mx <= 7 then move(0, -1) -- [^]
+                        elseif mx >= 8 and mx <= 10 then move(0, 1) -- [v]
+                        elseif mx >= 11 and mx <= 13 then move(1, 0) -- [>]
+                        elseif mx >= 16 and mx <= 21 then undo() -- [Undo]
+                        elseif mx >= 23 and mx <= 30 then loadLevel(currentLevel); playTone("snare", 8, 0.7) -- [Reset]
+                        elseif mx >= 32 and mx <= 38 then return -- [Menu]
+                        end
+                    else
+                        if mx >= 1 and mx <= 3 then move(-1, 0) -- [<]
+                        elseif mx >= 4 and mx <= 6 then move(0, -1) -- [^]
+                        elseif mx >= 7 and mx <= 9 then move(0, 1) -- [v]
+                        elseif mx >= 10 and mx <= 12 then move(1, 0) -- [>]
+                        elseif mx >= 14 and mx <= 16 then undo() -- [U]
+                        elseif mx >= 18 and mx <= 20 then loadLevel(currentLevel); playTone("snare", 8, 0.7) -- [R]
+                        elseif mx >= 22 and mx <= 24 then return -- [M]
+                        end
+                    end
+                -- Board Tap-to-move
+                elseif ox and oy and my >= oy and my < oy + #board then
+                    local bx = mx - ox + 1
+                    local by = my - oy + 1
+                    local dx = bx - player.x
+                    local dy = by - player.y
+                    if math.abs(dx) > math.abs(dy) then
+                        move(dx > 0 and 1 or -1, 0)
+                    elseif math.abs(dy) > 0 then
+                        move(0, dy > 0 and 1 or -1)
+                    end
+                end
+            end
 
             if checkWin() then
-                local w, h = getSafeSize()
                 drawBoard()
-                term.setCursorPos(1, h-1); print("Level Clear!")
-                sleep(1)
+                playTone("bell", 10, 1.0)
+                sleep(0.08)
+                playTone("bell", 14, 1.0)
+                sleep(0.08)
+                playTone("chime", 18, 1.0)
+                
+                term.setCursorPos(math.max(1, math.floor(w/2 - 7)), math.floor(h/2))
+                term.setBackgroundColor(colors.green)
+                term.setTextColor(colors.white)
+                term.write(" LEVEL CLEAR! ")
+                sleep(1.2)
+                
                 currentLevel = currentLevel + 1
                 if currentLevel > #levels then
-                    print("Game Complete!")
+                    drawFrame("Victory!")
+                    term.setCursorPos(math.floor(w/2 - 8), math.floor(h/2 - 1))
+                    term.setBackgroundColor(colors.blue)
+                    term.setTextColor(colors.yellow)
+                    term.write(" GAME COMPLETE! ")
                     local finalScore = math.max(10, 1000 - moveCount)
                     scoreCache.recordScore(gameName, finalScore, username)
-                    term.setTextColor(colors.yellow)
-                    print("Personal Best: " .. scoreCache.getPersonalBest(gameName))
+                    term.setCursorPos(math.floor(w/2 - 10), math.floor(h/2 + 1))
+                    term.setBackgroundColor(colors.lightGray)
+                    term.setTextColor(colors.black)
+                    term.write("Personal Best: " .. scoreCache.getPersonalBest(gameName))
+                    playSfx("playSuccess")
                     sleep(2)
                     return
                 end

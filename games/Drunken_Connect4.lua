@@ -9,6 +9,10 @@
 local theme = require("lib.theme")
 local utils = require("lib.utils")
 local scoreCache = require("lib.score_cache")
+local ok_sound, Sound = pcall(require, "lib.sound")
+if not ok_sound or type(Sound) ~= "table" then
+    Sound = { playClick = function() end, playNote = function() end, playSuccess = function() end }
+end
 
 local COLS = 7
 local ROWS = 6
@@ -275,6 +279,7 @@ function game.run(context)
             if chosenCol and chosenCol >= 1 and chosenCol <= COLS then
                 local r = game.dropToken(board, chosenCol, currentTurn)
                 if r then
+                    Sound.playNote("hat", 0.8, 14)
                     if isMultiplayer and opponentId then
                         rednet.send(opponentId, { type = "c4_move", col = chosenCol }, "C4_P2P")
                     end
@@ -282,6 +287,7 @@ function game.run(context)
                     if game.checkWin(board, currentTurn) then
                         gameOver = true
                         winner = currentTurn
+                        Sound.playSuccess()
                     elseif game.isFull(board) then
                         gameOver = true
                         winner = 0
@@ -296,9 +302,11 @@ function game.run(context)
                 sleep(0.4)
                 local aiCol = game.getAiMove(board, P2, P1)
                 game.dropToken(board, aiCol, P2)
+                Sound.playNote("hat", 0.6, 12)
                 if game.checkWin(board, P2) then
                     gameOver = true
                     winner = P2
+                    Sound.playNote("bass", 1.2, 6)
                 elseif game.isFull(board) then
                     gameOver = true
                     winner = 0

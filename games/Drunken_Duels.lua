@@ -73,19 +73,29 @@ local function mainGame(...)
     local gameName = "DrunkenDuels"
     local socket = P2P_Socket.new(gameName, gameVersion, "DrunkenDuels_Game")
     local isSpectator = false
+    local isSolo = false
 
-    -- Use shared theme colors
+    local sound = nil
+    pcall(function() sound = require("lib.sound") end)
+    local function playSfx(fn, ...)
+        if sound and sound[fn] then pcall(sound[fn], ...) end
+    end
+    local function playTone(inst, pitch, vol)
+        if sound and sound.playNote then pcall(sound.playNote, colors.white, inst, pitch, vol) end
+    end
+
+    -- Win95 Theme colors
     local theme = {
-        bg = sharedTheme.bg,
-        text = sharedTheme.text,
-        border = sharedTheme.game.floor,
-        player = sharedTheme.game.energy,
-        opponent = sharedTheme.game.enemy,
-        header = sharedTheme.highlightBg,
-        hp = sharedTheme.game.damage,
-        en = sharedTheme.highlightBg,
-        charge = sharedTheme.game.gold,
-        active = sharedTheme.prompt
+        bg = colors.lightGray,
+        text = colors.black,
+        border = colors.gray,
+        player = colors.blue,
+        opponent = colors.red,
+        header = colors.blue,
+        hp = colors.red,
+        en = colors.lightBlue,
+        charge = colors.yellow,
+        active = colors.blue
     }
 
     local particles = {}
@@ -107,7 +117,7 @@ local function mainGame(...)
     end
 
     local function addLog(msg, color)
-        table.insert(logs, {text = msg, color = color or theme.text})
+        table.insert(logs, {text = msg, color = color or colors.white})
         if #logs > 5 then table.remove(logs, 1) end
     end
 
@@ -117,20 +127,22 @@ local function mainGame(...)
 
     local function drawBar(x, y, width, val, max, color, label)
         term.setCursorPos(x, y)
-        term.setTextColor(theme.text)
-        term.write(label .. ": ")
+        term.setBackgroundColor(colors.lightGray)
+        term.setTextColor(colors.black)
+        term.write(string.format("%-3s: ", label))
         
-        local barX = x + #label + 2
-        local fillWidth = math.floor((val / max) * width)
+        local barX = x + 5
+        local fillWidth = math.max(0, math.min(width, math.floor(((val or 0) / math.max(1, max or 1)) * width)))
         
         term.setCursorPos(barX, y)
+        term.setBackgroundColor(colors.black)
         term.setTextColor(color)
-        term.write("[")
         term.write(string.rep("=", fillWidth))
         term.setTextColor(colors.gray)
         term.write(string.rep("-", width - fillWidth))
-        term.setTextColor(color)
-        term.write("] " .. val .. "/" .. max)
+        term.setBackgroundColor(colors.lightGray)
+        term.setTextColor(colors.black)
+        term.write(string.format(" %d/%d", val or 0, max or 1))
     end
 
     local function screenShake()
@@ -141,39 +153,70 @@ local function mainGame(...)
         flashCol = nil
     end
 
-    local function drawFrame()
+    local function drawFrame(subTitle)
         local w, h = getSafeSize()
-        term.setBackgroundColor(flashCol or theme.bg); term.clear()
+        term.setBackgroundColor(flashCol or colors.lightGray); term.clear()
         
-        -- Draw Border with Shake
+        -- Win95 Title Bar
         local offset = shakeDir
-        term.setBackgroundColor(theme.border)
-        term.setCursorPos(1 + offset, 1); term.write(string.rep(" ", w))
-        term.setCursorPos(1 + offset, h); term.write(string.rep(" ", w))
-        for i = 2, h - 1 do
-            term.setCursorPos(1 + offset, i); term.write(" ")
-            term.setCursorPos(w + offset, i); term.write(" ")
-        end
-
         term.setCursorPos(1 + offset, 1)
-        term.setTextColor(theme.text)
-        local titleText = " Drunken Duels v" .. gameVersion .. " "
-        term.setCursorPos(math.floor((w - #titleText)/2) + offset, 1); term.write(titleText)
+        term.setBackgroundColor(colors.blue)
+        term.setTextColor(colors.white)
+        local title = " Drunken Duels " .. (subTitle and ("- " .. subTitle) or ("v" .. gameVersion))
+        if #title > w - 4 then title = title:sub(1, w - 4) end
+        term.write(title .. string.rep(" ", math.max(0, w - #title - 3)))
+        
+        term.setCursorPos(w - 2 + offset, 1)
+        term.setBackgroundColor(colors.lightGray)
+        term.setTextColor(colors.black)
+        term.write("[X]")
     end
 
     local function drawLobby(msg)
-        drawFrame()
+        drawFrame("Lobby")
         local w, h = getSafeSize()
-        term.setBackgroundColor(theme.bg)
-        term.setTextColor(theme.text)
         
-        msg = msg or (isHost and "Waiting for player..." or "Searching for match...")
-        if #msg > w - 4 then msg = msg:sub(1, w - 7) .. "..." end
-        term.setCursorPos(math.floor(w/2 - #msg/2), math.floor(h/2))
-        term.write(msg)
+        -- Win95 Dialog
+        local bw = math.min(w - 4, 34)
+        local bh = 11
+        local bx = math.floor((w - bw) / 2)
+        local by = math.floor((h - bh) / 2)
         
-        term.setCursorPos(math.floor(w/2 - 10), h)
-        term.setBackgroundColor(theme.border); term.write(" TAB: Back | Q: Quit ")
+        term.setBackgroundColor(colors.gray)
+        for y = by, by + bh do
+            term.setCursorPos(bx, y)
+            term.write(string.rep(" ", bw))
+        end
+        
+        term.setCursorPos(bx + 2, by + 1)
+        term.setBackgroundColor(colors.gray)
+        term.setTextColor(colors.yellow)
+        term.write("SELECT MATCH MODE:")
+
+        local lobbyOpts = {
+            "[1] Solo (vs AI Bot)",
+            "[2] Host Match (P2P)",
+            "[3] Join Match (Lobby)",
+            "[4] Direct ID Connect",
+            "[5] Spectate Match",
+            "[Q] Exit Duel"
+        }
+        for i, opt in ipairs(lobbyOpts) do
+            term.setCursorPos(bx + 2, by + 2 + i)
+            term.setBackgroundColor(colors.lightGray)
+            term.setTextColor(colors.black)
+            term.write(string.format(" %-" .. (bw - 6) .. "s ", opt))
+        end
+
+        if msg then
+            term.setCursorPos(bx + 2, by + bh)
+            term.setBackgroundColor(colors.gray)
+            term.setTextColor(colors.lime)
+            local cleanMsg = #msg > bw - 4 and msg:sub(1, bw - 7) .. "..." or msg
+            term.write(cleanMsg)
+        end
+        
+        return bx, by, bw, bh
     end
 
     local function drawStats()
@@ -181,7 +224,8 @@ local function mainGame(...)
         local half = math.floor(w / 2)
         
         -- My Stats (Left)
-        term.setTextColor(theme.player)
+        term.setTextColor(colors.blue)
+        term.setBackgroundColor(colors.lightGray)
         local leftLabel = isSpectator and "P2 (" .. (myStats.username or "Player 2") .. ")" or "YOU (" .. username .. ")"
         term.setCursorPos(3, 3); term.write(leftLabel .. " [" .. (myStats.class or "?") .. "]")
         drawBar(3, 4, 10, myStats.hp, myStats.maxHp, theme.hp, "HP")
@@ -189,41 +233,54 @@ local function mainGame(...)
         drawBar(3, 6, 5, myStats.charge, 3, theme.charge, "ULT")
         
         -- Portrait Player
-        if myStats.class then
+        if myStats.class and classes[myStats.class] then
             term.setTextColor(classes[myStats.class].color)
+            term.setBackgroundColor(colors.lightGray)
             for i, line in ipairs(classes[myStats.class].portrait) do
                 term.setCursorPos(3, 7 + i); term.write(line)
             end
         end
 
         -- Opponent Stats (Right)
-        term.setTextColor(theme.opponent)
-        local oppName = oppStats.username or "Opponent"
+        term.setTextColor(colors.red)
+        term.setBackgroundColor(colors.lightGray)
+        local oppName = oppStats.username or (isSolo and "ShadowBot" or "Opponent")
         local rightLabel = isSpectator and "P1 (" .. oppName .. ")" or "OP (" .. oppName .. ")"
-        term.setCursorPos(w - #rightLabel - #oppStats.class - 5, 3); term.write(rightLabel .. " [" .. (oppStats.class or "?") .. "]")
-        drawBar(w - 25, 4, 10, oppStats.hp, oppStats.maxHp, theme.hp, "HP")
-        drawBar(w - 25, 5, 10, oppStats.energy, oppStats.maxEnergy or 10, theme.en, "EN")
-        drawBar(w - 25, 6, 5, oppStats.charge, 3, theme.charge, "ULT")
+        term.setCursorPos(math.max(half, w - 25), 3); term.write(rightLabel .. " [" .. (oppStats.class or "?") .. "]")
+        drawBar(math.max(half, w - 25), 4, 10, oppStats.hp, oppStats.maxHp, theme.hp, "HP")
+        drawBar(math.max(half, w - 25), 5, 10, oppStats.energy, oppStats.maxEnergy or 10, theme.en, "EN")
+        drawBar(math.max(half, w - 25), 6, 5, oppStats.charge, 3, theme.charge, "ULT")
 
         -- Portrait Opponent
-        if oppStats.class then
+        if oppStats.class and classes[oppStats.class] then
             term.setTextColor(classes[oppStats.class].color)
+            term.setBackgroundColor(colors.lightGray)
             for i, line in ipairs(classes[oppStats.class].portrait) do
-                term.setCursorPos(w - 10, 7 + i); term.write(line)
+                term.setCursorPos(math.max(half + 10, w - 12), 7 + i); term.write(line)
             end
         end
         
-        -- Logs
+        -- Recessed Battle Log Box
+        local logBoxY = math.max(11, h - 7)
+        term.setBackgroundColor(colors.black)
+        for y = logBoxY, h - 2 do
+            term.setCursorPos(2, y)
+            term.write(string.rep(" ", w - 2))
+        end
         for i, log in ipairs(logs) do
-            term.setCursorPos(3, h - 7 + i)
-            term.setTextColor(log.color)
-            term.write("> " .. log.text)
+            if logBoxY + i - 1 <= h - 2 then
+                term.setCursorPos(3, logBoxY + i - 1)
+                term.setBackgroundColor(colors.black)
+                term.setTextColor(log.color or colors.white)
+                term.write("> " .. log.text)
+            end
         end
 
         -- Particles
         for i = #particles, 1, -1 do
             local p = particles[i]
             term.setTextColor(p.color)
+            term.setBackgroundColor(colors.lightGray)
             term.setCursorPos(p.x, p.y)
             term.write(p.text)
             p.life = p.life - 1
@@ -234,58 +291,74 @@ local function mainGame(...)
 
     local function drawClassSelection()
         local w, h = getSafeSize()
-        drawFrame()
-        term.setTextColor(theme.text)
-        local title = "SELECT YOUR CLASS"
+        drawFrame("Class Selection")
+        term.setTextColor(colors.black)
+        term.setBackgroundColor(colors.lightGray)
+        local title = "CHOOSE YOUR FIGHTER"
         term.setCursorPos(math.floor(w/2 - #title/2), 3); term.write(title)
 
-        local i = 0
-        for name, data in pairs(classes) do
-            local x = 5 + (i * 15)
+        local classOrder = { "Warrior", "Mage", "Rogue" }
+        for i, name in ipairs(classOrder) do
+            local data = classes[name]
+            local x = 3 + ((i - 1) * 16)
+            
+            -- Win95 Card Bevel
+            term.setBackgroundColor(colors.gray)
+            for cy = 5, 13 do
+                term.setCursorPos(x, cy); term.write(string.rep(" ", 15))
+            end
+            
             term.setTextColor(data.color)
-            term.setCursorPos(x, 6); term.write("[" .. (i+1) .. "] " .. name)
+            term.setBackgroundColor(colors.gray)
+            term.setCursorPos(x + 1, 6); term.write("[" .. i .. "] " .. name)
             for j, line in ipairs(data.portrait) do
                 term.setCursorPos(x + 2, 7 + j); term.write(line)
             end
-            term.setTextColor(theme.text)
-            term.setCursorPos(x, 11); term.write("HP: " .. data.hp)
-            term.setCursorPos(x, 12); term.write("EN: " .. data.energy)
-            i = i + 1
+            term.setTextColor(colors.white)
+            term.setCursorPos(x + 2, 11); term.write("HP: " .. data.hp)
+            term.setCursorPos(x + 2, 12); term.write("EN: " .. data.energy)
         end
         
+        term.setCursorPos(1, h)
+        term.setBackgroundColor(colors.gray); term.setTextColor(colors.white)
+        term.write(string.rep(" ", w))
         term.setCursorPos(2, h)
-        term.setBackgroundColor(theme.border); term.write(" Press 1-3 to pick ")
+        term.write("Tap card or press 1-3 to pick")
     end
 
     local function drawGame()
-        drawFrame()
+        drawFrame("Combat Arena")
         drawStats()
         local w, h = getSafeSize()
         
+        term.setCursorPos(1, h)
+        term.setBackgroundColor(colors.gray); term.setTextColor(colors.white)
+        term.write(string.rep(" ", w))
+
         if turn == 1 then
-            term.setCursorPos(2, h)
-            term.setBackgroundColor(theme.border)
             local spec = "Special"
-            if myStats.class == "Warrior" then spec = "ShieldBash"
-            elseif myStats.class == "Mage" then spec = "Fireball"
-            elseif myStats.class == "Rogue" then spec = "PoisonStab" end
+            if myStats.class == "Warrior" then spec = "Bash"
+            elseif myStats.class == "Mage" then spec = "Fire"
+            elseif myStats.class == "Rogue" then spec = "Pois" end
             
-            local ult = "ULT (Locked)"
+            local ult = "ULT:Lock"
             if myStats.charge >= 3 then
                 if myStats.class == "Warrior" then ult = "EXECUTE"
                 elseif myStats.class == "Mage" then ult = "ARCANE"
                 elseif myStats.class == "Rogue" then ult = "ASSASSIN" end
             end
 
-            term.write(" [1]Atk [2]" .. spec .. " [3]" .. ult .. " [4]Def [5]Rest [TAB]Quit ")
+            term.setCursorPos(2, h)
+            term.setBackgroundColor(colors.lightGray); term.setTextColor(colors.black)
+            term.write("[1:Atk] [2:" .. spec .. "] [3:" .. ult .. "] [4:Def] [5:Rest] [Q:Quit]")
         elseif isSpectator then
             term.setCursorPos(math.floor(w/2 - 10), h)
-            term.setBackgroundColor(theme.border)
-            term.write(" SPECTATING MATCH ")
+            term.setBackgroundColor(colors.lightGray); term.setTextColor(colors.black)
+            term.write(" [ SPECTATING MATCH ] ")
         elseif turn == 0 or turn == 2 then
-            term.setCursorPos(math.floor(w/2 - 10), h)
-            term.setBackgroundColor(theme.border)
-            term.write(" Waiting for Opponent... ")
+            term.setCursorPos(math.floor(w/2 - 12), h)
+            term.setBackgroundColor(colors.lightGray); term.setTextColor(colors.black)
+            term.write(" [ Waiting for Opponent... ] ")
         end
     end
 
@@ -299,40 +372,53 @@ local function mainGame(...)
     -- Determines host status based on Computer ID.
     -- @return {boolean} True if a match was successfully found.
     local function findMatch()
-        if not socket:checkArcade() then 
-            drawLobby("Mainframe Arcade Server Offline!")
-            sleep(2)
-            -- We can allow direct connect even if arcade is offline, but listing won't work
+        local modeChoice = nil
+        while not modeChoice do
+            local bx, by, bw, bh = drawLobby()
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                if p1 == keys.one then modeChoice = 1; playSfx("playClick")
+                elseif p1 == keys.two then modeChoice = 2; playSfx("playClick")
+                elseif p1 == keys.three then modeChoice = 3; playSfx("playClick")
+                elseif p1 == keys.four then modeChoice = 4; playSfx("playClick")
+                elseif p1 == keys.five then modeChoice = 5; playSfx("playClick")
+                elseif p1 == keys.q or p1 == keys.tab then return false end
+            elseif event == "mouse_click" then
+                local mx, my = p2, p3
+                local w, h = getSafeSize()
+                if my == 1 and mx >= w - 3 then return false end
+                for i = 1, 6 do
+                    if my == by + 2 + i and mx >= bx and mx <= bx + bw then
+                        playSfx("playClick")
+                        if i == 6 then return false else modeChoice = i end
+                        break
+                    end
+                end
+            end
         end
 
-        drawLobby("1: Host | 2: Join | 3: Direct | 4: Spectate")
-        local event, key
-        repeat
-            event, key = os.pullEvent("key")
-        until key == keys.one or key == keys.two or key == keys.three or key == keys.four or key == keys.q or key == keys.tab
-
-        if key == keys.q or key == keys.tab then return false end
-        
         local directTarget = nil
-        if key == keys.three or key == keys.four then
+        if modeChoice == 4 or modeChoice == 5 then
             drawLobby("Enter Host ID: ")
-            term.setCursorPos(math.floor(getSafeSize()/2-5), math.floor(getSafeSize()/2)+1)
+            local w, h = getSafeSize()
+            term.setCursorPos(math.floor(w/2 - 5), math.floor(h/2) + 1)
             term.setBackgroundColor(colors.gray)
+            term.setTextColor(colors.white)
+            term.setCursorBlink(true)
             directTarget = tonumber(read())
+            term.setCursorBlink(false)
             if not directTarget then return false end
         end
 
-        if key == keys.four then
+        if modeChoice == 5 then
             -- SPECTATING
-            opponentId = directTarget -- In spectator mode, the host is the "opponent"
+            opponentId = directTarget
             drawLobby("Spectating Host ID " .. directTarget .. "...")
-            
             socket.lobbyProtocol = "DrunkenDuels_Lobby"
             local reply, err = socket:spectate(directTarget)
             if reply then
                 isSpectator = true
                 isHost = false
-                -- We wait for the first sync to populate stats
                 return true
             else
                 drawLobby(err or "Spectate Failed.")
@@ -342,17 +428,32 @@ local function mainGame(...)
         end
 
         -- Class Selection before match
-        drawClassSelection()
-        local cKey
-        repeat
-            _, cKey = os.pullEvent("key")
-        until cKey == keys.one or cKey == keys.two or cKey == keys.three
-        
-        local classNames = {"Warrior", "Mage", "Rogue"}
-        local myClass = classNames[cKey == keys.one and 1 or (cKey == keys.two and 2 or 3)]
-        local classData = classes[myClass]
-        
-        myStats.class = myClass
+        local chosenClass = nil
+        while not chosenClass do
+            drawClassSelection()
+            local event, p1, p2, p3 = os.pullEvent()
+            local w, h = getSafeSize()
+            if event == "key" then
+                if p1 == keys.one then chosenClass = "Warrior"; playSfx("playClick")
+                elseif p1 == keys.two then chosenClass = "Mage"; playSfx("playClick")
+                elseif p1 == keys.three then chosenClass = "Rogue"; playSfx("playClick")
+                elseif p1 == keys.q or p1 == keys.tab or p1 == keys.backspace then return false end
+            elseif event == "mouse_click" then
+                local mx, my = p2, p3
+                if my == 1 and mx >= w - 3 then return false end
+                for i, cName in ipairs({"Warrior", "Mage", "Rogue"}) do
+                    local cx = 3 + ((i - 1) * 16)
+                    if mx >= cx and mx <= cx + 15 and my >= 5 and my <= 13 then
+                        chosenClass = cName
+                        playSfx("playClick")
+                        break
+                    end
+                end
+            end
+        end
+
+        local classData = classes[chosenClass]
+        myStats.class = chosenClass
         myStats.hp = classData.hp
         myStats.maxHp = classData.hp
         myStats.energy = classData.energy
@@ -361,7 +462,26 @@ local function mainGame(...)
         myStats.username = username
         myStats.status = {}
 
-        if key == keys.one then
+        if modeChoice == 1 then
+            -- SOLO MODE (VS AI BOT)
+            isSolo = true
+            isHost = true
+            local botPool = {"Warrior", "Mage", "Rogue"}
+            local botClass = botPool[math.random(1, 3)]
+            local bData = classes[botClass]
+            oppStats.username = "ShadowBot"
+            oppStats.class = botClass
+            oppStats.hp = bData.hp
+            oppStats.maxHp = bData.hp
+            oppStats.energy = bData.energy
+            oppStats.maxEnergy = bData.energy
+            oppStats.charge = 0
+            oppStats.status = {}
+            addLog("Duelling " .. oppStats.username .. " (" .. botClass .. ")!", colors.yellow)
+            return true
+        end
+
+        if modeChoice == 2 then
             -- HOSTING
             isHost = true
             socket.lobbyProtocol = "DrunkenDuels_Lobby" -- Ensure specific lobby protocol
@@ -375,23 +495,18 @@ local function mainGame(...)
                         local msg = socket:waitForJoin(0.2)
                         if msg then
                             opponentId = socket.peerId
-                            
-                            -- Process handshake data
                             oppStats.username = msg.user
                             oppStats.class = msg.class
-                            local oData = classes[msg.class]
+                            local oData = classes[msg.class] or classes.Warrior
                             oppStats.hp = oData.hp
                             oppStats.maxHp = oData.hp
                             oppStats.energy = oData.energy
                             oppStats.maxEnergy = oData.energy
                             oppStats.charge = 0
                             oppStats.status = {}
-                            
                             success = true
                             break
                         end
-
-                        -- Also check for spectators
                         socket:acceptSpectator(0.1)
                     end
                 end,
@@ -409,21 +524,14 @@ local function mainGame(...)
         else
             -- JOINING (Standard or Direct)
             local targetId = nil
-            if key == keys.two then
+            if modeChoice == 3 then
                 drawLobby("Fetching Lobbies...")
                 local lobbies, err = socket:findLobbies()
-                if not lobbies then
-                    drawLobby(err or "Failed to list lobbies.")
-                    sleep(1)
+                if not lobbies or #lobbies == 0 then
+                    drawLobby(err or "No " .. gameName .. " hosts online.")
+                    sleep(1.5)
                     return false
                 end
-
-                if #lobbies == 0 then
-                    drawLobby("No " .. gameName .. " hosts online.")
-                    sleep(1)
-                    return false
-                end
-                
                 targetId = lobbies[1].id
             else
                 targetId = directTarget
@@ -431,21 +539,17 @@ local function mainGame(...)
 
             opponentId = targetId
             drawLobby("Connecting to ID " .. targetId .. "...")
-            
-            -- Use socket to connect
             socket.lobbyProtocol = "DrunkenDuels_Lobby"
             local reply, err = socket:connect(targetId, {
                 user=username, 
-                class=myClass 
-                -- socket adds version automatically
+                class=chosenClass 
             })
             
             if reply then
                 isHost = false
-                -- Process Accept data
                 oppStats.username = reply.user
                 oppStats.class = reply.class
-                local oData = classes[reply.class]
+                local oData = classes[reply.class] or classes.Warrior
                 oppStats.hp = oData.hp
                 oppStats.maxHp = oData.hp
                 oppStats.energy = oData.energy
@@ -454,7 +558,7 @@ local function mainGame(...)
                 oppStats.status = {}
                 return true
             else
-                drawLobby(err or "Join Failed.")
+                drawLobby(err or "Connection Failed.")
                 sleep(2)
                 return false
             end
@@ -476,11 +580,13 @@ local function mainGame(...)
             if target.class == "Rogue" and math.random(1, 100) <= 15 then
                 addLog(target.username .. " DODGED!", colors.lime)
                 addParticle("MISS", source == "p1" and 5 or (getSafeSize() - 10), 5, colors.white)
+                playTone("hat", 16, 0.5)
                 return 0
             end
             
             target.hp = math.max(0, target.hp - final)
             addParticle("-" .. final, source == "p1" and (getSafeSize() - 10) or 5, 4, colors.red)
+            playTone("bass", 2, 0.8)
             return final
         end
 
@@ -505,8 +611,18 @@ local function mainGame(...)
             local m = moveData[move]
             if not m then return end
             
-            if m.ult then me.charge = 0 else me.charge = math.min(3, me.charge + 1) end
-            me.energy = me.energy - m.cost
+            if m.ult then
+                me.charge = 0
+                playTone("bell", 18, 1.0)
+                playTone("chime", 12, 1.0)
+            else
+                me.charge = math.min(3, me.charge + 1)
+                if move == "attack" then playTone("snare", 8, 0.9)
+                elseif move == "defend" then playTone("bass", 10, 0.8)
+                elseif move == "rest" then playTone("chime", 8, 0.7)
+                else playTone("flute", 12, 0.9) end
+            end
+            me.energy = math.max(0, me.energy - m.cost)
             
             if m.dmg then
                 local d = math.random(m.dmg[1], m.dmg[2])
@@ -568,12 +684,13 @@ local function mainGame(...)
     
     while matchActive do
         drawGame()
+        local w, h = getSafeSize()
         
         local canMove = (turn == 1 and not isSpectator)
         if myStats.status.stun and not isSpectator then
             addLog("STUNNED! Skipping turn...", colors.yellow)
             myStats.status.stun = nil
-            if isHost then myMove = "rest" else socket:send({type="move", move="rest"}) end
+            if isSolo or isHost then myMove = "rest" else socket:send({type="move", move="rest"}) end
             canMove = false
             turn = 0
         end
@@ -583,10 +700,9 @@ local function mainGame(...)
             local move = nil
             
             while not move do
-                local event, p1, p2 = os.pullEvent()
+                local event, p1, p2, p3 = os.pullEvent()
                 if event == "key" then
                     local key = p1
-                    -- Move selection based on Class
                     if key == keys.one then move = "attack"
                     elseif key == keys.two then
                         if myStats.class == "Warrior" then move = "shield_bash"
@@ -599,41 +715,99 @@ local function mainGame(...)
                             elseif myStats.class == "Rogue" then move = "assassinate" end
                         else
                             addLog("Ultimate NOT READY!", colors.red)
+                            playTone("bass", 1, 0.4)
                         end
                     elseif key == keys.four then move = "defend"
                     elseif key == keys.five then move = "rest"
                     elseif key == keys.q or key == keys.tab then move = "forfeit" end
-                    
-                    if move then
-                        local mPrices = {
-                            attack = 2, shield_bash = 4, fireball = 5, poison_stab = 3,
-                            execute = 0, arcane_nova = 0, assassinate = 0,
-                            defend = 1, rest = 0, forfeit = 0
-                        }
-                        if myStats.energy < (mPrices[move] or 0) then
-                            addLog("Not enough energy!", colors.red)
-                            move = nil -- Reset to keep loop going
-                        end
+                elseif event == "mouse_click" then
+                    local mx, my = p2, p3
+                    if my == 1 and mx >= w - 3 then
+                        move = "forfeit"
+                    elseif my == h then
+                        if mx >= 2 and mx <= 8 then move = "attack"
+                        elseif mx >= 10 and mx <= 18 then
+                            if myStats.class == "Warrior" then move = "shield_bash"
+                            elseif myStats.class == "Mage" then move = "fireball"
+                            elseif myStats.class == "Rogue" then move = "poison_stab" end
+                        elseif mx >= 20 and mx <= 30 then
+                            if myStats.charge >= 3 then
+                                if myStats.class == "Warrior" then move = "execute"
+                                elseif myStats.class == "Mage" then move = "arcane_nova"
+                                elseif myStats.class == "Rogue" then move = "assassinate" end
+                            else
+                                addLog("Ultimate NOT READY!", colors.red)
+                                playTone("bass", 1, 0.4)
+                            end
+                        elseif mx >= 32 and mx <= 39 then move = "defend"
+                        elseif mx >= 41 and mx <= 48 then move = "rest"
+                        elseif mx >= 50 and mx <= 58 then move = "forfeit" end
                     end
                 elseif event == "timer" and p1 == timer then
                     addLog("Time out! Automatically resting.", colors.gray)
                     move = "rest"
                 end
+                
+                if move then
+                    local mPrices = {
+                        attack = 2, shield_bash = 4, fireball = 5, poison_stab = 3,
+                        execute = 0, arcane_nova = 0, assassinate = 0,
+                        defend = 1, rest = 0, forfeit = 0
+                    }
+                    if myStats.energy < (mPrices[move] or 0) then
+                        addLog("Not enough energy!", colors.red)
+                        playTone("bass", 1, 0.4)
+                        move = nil
+                    end
+                end
             end
             
-            if isHost then
+            if isSolo then
                 myMove = move
+                turn = 0
+            elseif isHost then
+                myMove = move
+                turn = 0
             else
                 socket:send({type="move", move=move})
+                turn = 0
             end
-            turn = 0
             waitStart = os.epoch("utc")
         elseif turn == 0 or turn == 2 then
-            -- Waiting logic
-            if isHost then
-                -- Wait for guest move
+            if isSolo then
+                -- Smart AI Opponent Turn
+                sleep(0.4)
+                local oppM = "attack"
+                if oppStats.charge >= 3 then
+                    if oppStats.class == "Warrior" then oppM = "execute"
+                    elseif oppStats.class == "Mage" then oppM = "arcane_nova"
+                    elseif oppStats.class == "Rogue" then oppM = "assassinate" end
+                elseif oppStats.hp < 25 and oppStats.energy >= 1 and math.random(1, 10) <= 5 then
+                    oppM = "defend"
+                elseif oppStats.energy >= 4 and math.random(1, 10) <= 6 then
+                    if oppStats.class == "Warrior" then oppM = "shield_bash"
+                    elseif oppStats.class == "Mage" then oppM = "fireball"
+                    elseif oppStats.class == "Rogue" then oppM = "poison_stab" end
+                elseif oppStats.energy >= 2 then
+                    oppM = "attack"
+                else
+                    oppM = "rest"
+                end
+                
+                oppMove = oppM
+                processTurn(myMove, oppMove)
+                screenShake()
+                
+                local ended = (myMove == "forfeit" or oppMove == "forfeit" or myStats.hp <= 0 or oppStats.hp <= 0)
+                if ended then
+                    matchActive = false
+                else
+                    myMove = nil
+                    oppMove = nil
+                    turn = 1
+                end
+            elseif isHost then
                 local msg = socket:receive(0.5)
-                -- Also check for spectators mid-game
                 socket:acceptSpectator(0)
 
                 if msg and msg.type == "move" then
@@ -641,15 +815,10 @@ local function mainGame(...)
                     processTurn(myMove, oppMove)
                     
                     local ended = (myMove == "forfeit" or oppMove == "forfeit" or myStats.hp <= 0 or oppStats.hp <= 0)
-                    
-                    -- Shake if anyone took dmg
                     screenShake()
-
-                    -- Sync state to guest
                     socket:send({type="sync", myStats=oppStats, oppStats=myStats, logs=logs, ended=ended})
                     
                     if ended then matchActive = false end
-                    
                     myMove = nil
                     oppMove = nil
                     turn = 1
@@ -658,12 +827,11 @@ local function mainGame(...)
                     matchActive = false
                 elseif not msg then
                     if os.epoch("utc") - waitStart > 45000 then
-                        addLog("Opponent Timed Out / Out of Range!", colors.red)
+                        addLog("Opponent Timed Out!", colors.red)
                         matchActive = false
                     end
                 end
             else
-                -- Wait for sync from host
                 local msg = socket:receive(1)
                 if msg then
                     if msg.type == "sync" then
@@ -679,7 +847,7 @@ local function mainGame(...)
                     end
                 else
                     if os.epoch("utc") - waitStart > 45000 then
-                        addLog("Host Timed Out / Out of Range!", colors.red)
+                        addLog("Host Timed Out!", colors.red)
                         matchActive = false
                     end
                 end
@@ -693,14 +861,32 @@ local function mainGame(...)
             if oppStats.hp <= 0 then
                 persist.wins = persist.wins + 1
                 saveGame()
-                socket:submitScore(username, persist.wins)
+                pcall(function() socket:submitScore(username, persist.wins) end)
+                addLog("VICTORY! You won the duel!", colors.lime)
+                playSfx("playSuccess")
+            else
+                addLog("DEFEAT! You were slain!", colors.red)
+                playTone("bass", 6, 1.0)
+                sleep(0.1)
+                playTone("bass", 2, 1.0)
             end
         end
     end
     
     drawGame()
-    print("\nPress any key to return.")
-    os.pullEvent("key")
+    local w, h = getSafeSize()
+    term.setCursorPos(math.floor(w/2 - 14), h - 1)
+    term.setBackgroundColor(colors.blue); term.setTextColor(colors.yellow)
+    term.write(" PRESS ANY KEY OR TAP TO EXIT ")
+    while true do
+        local e = os.pullEvent()
+        if e == "key" or e == "mouse_click" then break end
+    end
 end
 
-mainGame(...)
+local ok, err = pcall(mainGame, ...)
+if not ok then
+    term.setBackgroundColor(colors.black); term.clear(); term.setCursorPos(1,1)
+    print("Duels Error: " .. err)
+    os.pullEvent("key")
+end

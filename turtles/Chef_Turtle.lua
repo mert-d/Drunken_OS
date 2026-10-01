@@ -8,7 +8,7 @@
     required ingredients, collects them, and drops them onto the
     Create Depot for processing.
 
-    It knows NOTHING about recipes — it only follows ingredient lists.
+    It knows NOTHING about recipes -- it only follows ingredient lists.
     Modeled after DB_Bank_Clerk.lua pairing pattern.
 ]]
 

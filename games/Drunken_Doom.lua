@@ -11,7 +11,16 @@ if package and package.path then package.path = "/?.lua;" .. package.path end
 local sharedTheme = require("lib.theme")
 local scoreCache = require("lib.score_cache")
 
-local gameVersion = 1.7
+local sound = nil
+pcall(function() sound = require("lib.sound") end)
+local function playSfx(fn, ...)
+    if sound and sound[fn] then pcall(sound[fn], ...) end
+end
+local function playTone(inst, pitch, vol)
+    if sound and sound.playNote then pcall(sound.playNote, colors.white, inst, pitch, vol) end
+end
+
+local gameVersion = 2.1
 local saveFile = ".doom_save"
 
 -- Load arguments (username)
@@ -270,9 +279,9 @@ local function draw(score, hp, lastFrameTime)
     local shakeX = math.random(-math.floor(screenShake), math.floor(screenShake))
     local shakeY = math.random(-math.floor(screenShake), math.floor(screenShake))
     
-    for y = 1, DISPLAY_H do
+    for y = 2, DISPLAY_H - 1 do
         local drawY = y + shakeY
-        if drawY >= 1 and drawY <= DISPLAY_H then
+        if drawY >= 2 and drawY <= DISPLAY_H - 1 then
             term.setCursorPos(1 + shakeX, drawY)
             term.blit(table.concat(screen_chars[y]), table.concat(screen_text[y]), table.concat(screen_bg[y]))
         end
@@ -321,12 +330,52 @@ local function draw(score, hp, lastFrameTime)
         end
     end
 
-    -- HUD
+    -- Win95 Title Bar
+    term.setCursorPos(1, 1)
+    term.setBackgroundColor(colors.blue)
+    term.setTextColor(colors.white)
+    local title = string.format(" Drunken Doom 3D v%s", gameVersion)
+    term.write(title .. string.rep(" ", math.max(0, DISPLAY_W - #title - 3)))
+    term.setCursorPos(DISPLAY_W - 2, 1)
+    term.setBackgroundColor(colors.lightGray)
+    term.setTextColor(colors.black)
+    term.write("[X]")
+
+    -- Win95 Status Bar
+    term.setCursorPos(1, DISPLAY_H)
+    term.setBackgroundColor(colors.gray)
+    term.setTextColor(colors.white)
+    term.write(string.rep(" ", DISPLAY_W))
+
+    local hpCol = hp > 50 and colors.lime or (hp > 25 and colors.yellow or colors.red)
     term.setCursorPos(1, DISPLAY_H)
     term.setBackgroundColor(colors.black)
-    term.setTextColor(theme.text)
-    local fps = lastFrameTime > 0 and math.floor(1 / lastFrameTime) or 0
-    term.write(string.format(" HP: %d | Score: %d | FPS: %d | [M] Map | [Q] Quit", hp, score, fps))
+    term.setTextColor(hpCol)
+    term.write(string.format(" HP:%3d%% ", math.max(0, math.floor(hp))))
+
+    term.setCursorPos(11, DISPLAY_H)
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.yellow)
+    term.write(string.format(" S:%04d ", score))
+
+    local enemyCount = 0
+    for _, obj in ipairs(objects) do
+        if obj.active and obj.type == "enemy" then enemyCount = enemyCount + 1 end
+    end
+    term.setCursorPos(math.max(20, DISPLAY_W - 17), DISPLAY_H)
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.red)
+    term.write(string.format(" E:%d ", enemyCount))
+
+    term.setCursorPos(DISPLAY_W - 10, DISPLAY_H)
+    term.setBackgroundColor(colors.lightGray)
+    term.setTextColor(colors.black)
+    term.write("[MAP]")
+
+    term.setCursorPos(DISPLAY_W - 4, DISPLAY_H)
+    term.setBackgroundColor(colors.red)
+    term.setTextColor(colors.white)
+    term.write("[ATK]")
     
     -- Crosshair
     local crosshairX, crosshairY = math.floor(DISPLAY_W / 2), math.floor(DISPLAY_H / 2)
@@ -351,7 +400,16 @@ local function main(...)
     local arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
 
     -- Title Screen
-    term.setBackgroundColor(colors.black); term.clear()
+    term.setBackgroundColor(colors.lightGray); term.clear()
+    -- Title Bar
+    term.setCursorPos(1, 1)
+    term.setBackgroundColor(colors.blue); term.setTextColor(colors.white)
+    local tTitle = " Drunken Doom 3D - Setup"
+    term.write(tTitle .. string.rep(" ", math.max(0, DISPLAY_W - #tTitle - 3)))
+    term.setCursorPos(DISPLAY_W - 2, 1)
+    term.setBackgroundColor(colors.lightGray); term.setTextColor(colors.black)
+    term.write("[X]")
+
     local titleArt = {
         " ___  __  __  __  __ ",
         "|   \\|  ||  ||  \\/  |",
@@ -364,21 +422,63 @@ local function main(...)
     local startY = math.floor((DISPLAY_H - #titleArt) / 2) - 1
     for i, line in ipairs(titleArt) do
         term.setCursorPos(math.floor((DISPLAY_W - #line) / 2) + 1, startY + i)
-        term.setTextColor(i < #titleArt and colors.red or colors.orange)
+        term.setBackgroundColor(colors.lightGray)
+        term.setTextColor(i < #titleArt and colors.red or colors.brown)
         term.write(line)
     end
     
     term.setCursorPos(math.floor((DISPLAY_W - 19) / 2) + 1, startY + #titleArt + 2)
-    term.setTextColor(colors.white); term.write("PRO VERSION (DDA)")
-    term.setCursorPos(math.floor((DISPLAY_W - 22) / 2) + 1, startY + #titleArt + 4)
-    term.setTextColor(colors.gray); term.write("PRESS ANY KEY TO START")
-    os.pullEvent("key")
+    term.setBackgroundColor(colors.lightGray)
+    term.setTextColor(colors.black); term.write("PRO EDITION (DDA)")
+    term.setCursorPos(math.floor((DISPLAY_W - 24) / 2) + 1, startY + #titleArt + 4)
+    term.setBackgroundColor(colors.blue); term.setTextColor(colors.white)
+    term.write(" [ TAP / KEY TO START ] ")
+    
+    while true do
+        local e, p1, p2, p3 = os.pullEvent()
+        if e == "key" or e == "mouse_click" then
+            if e == "mouse_click" and p3 == 1 and p2 >= DISPLAY_W - 3 then return end
+            playSfx("playClick")
+            break
+        end
+    end
 
     local score = 0
     local hp = 100
     local running = true
     local lastFrame = os.epoch("utc") / 1000
     local frameTime = 0.05
+
+    local function fireWeapon()
+        if isFiring > 0 then return end
+        isFiring = 0.15
+        playTone("snare", 3, 1.0)
+        playTone("bass", 1, 0.8)
+        for _, obj in ipairs(objects) do
+            if obj.active and obj.type == "enemy" then
+                local vecX = obj.x - playerX
+                local vecY = obj.y - playerY
+                local objAngle = math.atan2(vecX, vecY) - playerA
+                if objAngle < -math.pi then objAngle = objAngle + 2*math.pi end
+                if objAngle > math.pi then objAngle = objAngle - 2*math.pi end
+                
+                if math.abs(objAngle) < 0.20 then
+                    local dist = math.sqrt(vecX*vecX + vecY*vecY)
+                    if dist < 8 then
+                        obj.hp = obj.hp - 35
+                        obj.pain = 0.2
+                        playTone("flute", 10, 0.9)
+                        if obj.hp <= 0 then
+                            obj.active = false
+                            score = score + 500
+                            playTone("bass", 2, 1.0)
+                            playTone("snare", 1, 1.0)
+                        end
+                    end
+                end
+            end
+        end
+    end
 
     while running do
         local now = os.epoch("utc") / 1000
@@ -388,40 +488,43 @@ local function main(...)
         draw(score, hp, frameTime)
         
         -- Non-blocking event pull
-        local event, p1 = os.pullEvent()
+        local event, p1, p2, p3 = os.pullEvent()
         
         if event == "key" then
             keysDown[p1] = true
             if p1 == keys.q or p1 == keys.tab then running = false end
-            if p1 == keys.m then showMinimap = not showMinimap end
-            if p1 == keys.space then
-                isFiring = 0.15
-                -- Shoot logic
-                for _, obj in ipairs(objects) do
-                    if obj.active and obj.type == "enemy" then
-                        local vecX = obj.x - playerX
-                        local vecY = obj.y - playerY
-                        local objAngle = math.atan2(vecX, vecY) - playerA
-                        if objAngle < -math.pi then objAngle = objAngle + 2*math.pi end
-                        if objAngle > math.pi then objAngle = objAngle - 2*math.pi end
-                        
-                        -- Tightened hitboxes for the gun
-                        if math.abs(objAngle) < 0.15 then
-                            local dist = math.sqrt(vecX*vecX + vecY*vecY)
-                            if dist < 8 then
-                                obj.hp = obj.hp - 35
-                                obj.pain = 0.2
-                                if obj.hp <= 0 then
-                                    obj.active = false
-                                    score = score + 500
-                                end
-                            end
-                        end
-                    end
-                end
+            if p1 == keys.m then showMinimap = not showMinimap; playSfx("playClick") end
+            if p1 == keys.space or p1 == keys.enter then
+                fireWeapon()
             end
         elseif event == "key_up" then
             keysDown[p1] = nil
+        elseif event == "mouse_click" or event == "mouse_drag" then
+            local mx, my = p2, p3
+            if my == 1 and mx >= DISPLAY_W - 3 then
+                running = false
+            elseif my == DISPLAY_H then
+                if mx >= DISPLAY_W - 11 and mx <= DISPLAY_W - 6 then
+                    showMinimap = not showMinimap
+                    playSfx("playClick")
+                elseif mx >= DISPLAY_W - 5 then
+                    fireWeapon()
+                end
+            else
+                -- Clicked inside viewport: Tap zone movement & fire
+                if mx < DISPLAY_W * 0.3 then
+                    playerA = playerA - rotSpeed * 0.08
+                elseif mx > DISPLAY_W * 0.7 then
+                    playerA = playerA + rotSpeed * 0.08
+                elseif my < DISPLAY_H * 0.5 then
+                    local nextX = playerX + math.sin(playerA) * moveSpeed * 0.08
+                    local nextY = playerY + math.cos(playerA) * moveSpeed * 0.08
+                    if getMapChar(nextX, playerY) ~= "#" then playerX = nextX end
+                    if getMapChar(playerX, nextY) ~= "#" then playerY = nextY end
+                else
+                    fireWeapon()
+                end
+            end
         end
 
         local moved = false
@@ -479,6 +582,8 @@ local function main(...)
                 if obj.type == "gold" and d < 0.8 then
                     obj.active = false
                     score = score + 100
+                    playTone("bell", 14, 0.9)
+                    playTone("chime", 18, 1.0)
                 elseif obj.type == "enemy" then
                     -- Simple approach logic
                     if d < 10 and (obj.pain == nil or obj.pain <= 0) then
@@ -488,6 +593,7 @@ local function main(...)
                     if d < 0.8 then
                         hp = hp - 15 * frameTime -- Continuous damage
                         damageFlash = 0.1 -- Keep flashing while hit
+                        playTone("bass", 1, 0.6)
                         if hp <= 0 then running = false end
                     end
                 end
@@ -498,9 +604,10 @@ local function main(...)
         local anyGold = false
         for _, obj in ipairs(objects) do if obj.active and obj.char == "G" then anyGold = true; break end end
         if not anyGold then
-            term.setBackgroundColor(colors.black); term.clear()
-            term.setCursorPos(math.floor((DISPLAY_W - 10)/2), math.floor(DISPLAY_H/2))
-            term.setTextColor(colors.lime); print("YOU WIN!")
+            term.setBackgroundColor(colors.blue); term.clear()
+            term.setCursorPos(math.floor((DISPLAY_W - 16)/2), math.floor(DISPLAY_H/2))
+            term.setTextColor(colors.yellow); print(" MISSION COMPLETE! ")
+            playSfx("playSuccess")
             sleep(2)
             break
         end
@@ -511,7 +618,14 @@ local function main(...)
     end
     
     term.setBackgroundColor(colors.black); term.clear(); term.setCursorPos(1, 1)
-    if hp <= 0 then term.setTextColor(colors.red); print("MISSION FAILED...") else print("Exiting Game...") end
+    if hp <= 0 then
+        playTone("bass", 6, 1.0)
+        sleep(0.1)
+        playTone("bass", 2, 1.0)
+        term.setTextColor(colors.red); print("MISSION FAILED...")
+    else
+        print("Exiting Game...")
+    end
     print("Final Score: " .. score)
     scoreCache.recordScore(gameName, score, username)
     term.setTextColor(colors.yellow)
@@ -525,7 +639,7 @@ local function main(...)
     end
 end
 
-local ok, err = pcall(main)
+local ok, err = pcall(main, ...)
 if not ok then
     term.setBackgroundColor(colors.black)
     term.clear()

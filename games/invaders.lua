@@ -1,347 +1,491 @@
 --[[
-    Invaders (Gem Standard v1.8)
-    by Gemini Gem
-
-    Purpose:
-    Updated for Drunken OS v12.0 distribution.
+    Space Invaders (v2.0)
+    Windows 95 Arcade Edition for Drunken OS
+    by Gemini Gem & Antigravity
 ]]
 
--- Load shared libraries
 if package and package.path then package.path = "/?.lua;" .. package.path end
 local sharedTheme = require("lib.theme")
 local scoreCache = require("lib.score_cache")
 
-local currentVersion = 7.2
--- ... rest of the invaders game code
+local ok_sound, Sound = pcall(require, "lib.sound")
+if not ok_sound or type(Sound) ~= "table" then
+    Sound = {
+        playClick = function() end,
+        playNote = function() end,
+        playSuccess = function() end
+    }
+end
 
---==============================================================================
--- Main Game Function (to be run inside pcall)
---==============================================================================
+local gameVersion = 2.0
+local gameName = "Invaders"
 
----
--- Main application entry point for Invaders.
--- Manages alien formations, player movement, projectile collisions, and scoring.
+local function safeColor(col, fallback)
+    if term and term.isColor and term.isColor() and colors and colors[col] then
+        return colors[col]
+    end
+    return fallback or colors.white
+end
+
 local function mainGame(...)
     local args = {...}
-    local username = args[1] or "Guest" -- Fallback to Guest
-    -- if not username then ... (removed check)
+    local username = args[1] or "Guest"
 
-    local gameName = "Invaders"
-    local arcadeServerId = nil
+    local w, h = term.getSize()
+    local isPocket = (w <= 30)
 
-    local player, aliens, bullets, bombs = {}, {}, {}, {}
-    local score, lives, gameOver, level = 0, 3, false, 1 -- **NEW**: Added level tracking
-    local alienDirection, alienMoveTimer, alienDropTimer = 1, 0, 0
+    -- Windows 95 Theme Palette
+    local cWinBg = safeColor("lightGray", colors.black)
+    local cBoardBg = colors.black
+    local cTitleBg = safeColor("blue", colors.gray)
+    local cTitleText = colors.white
+    local cPlayer = safeColor("lime", colors.white)
+    local cAlien = safeColor("yellow", colors.white)
+    local cAlienAlt = safeColor("purple", colors.white)
+    local cBullet = safeColor("cyan", colors.white)
+    local cBomb = safeColor("red", colors.white)
+    local cShield = safeColor("lightBlue", colors.white)
 
-    -- Use shared theme colors
-    local theme = {
-        bg = sharedTheme.bg,
-        windowBg = sharedTheme.windowBg,
-        title = sharedTheme.game.target,
-        prompt = sharedTheme.prompt,
-        player = sharedTheme.game.player,
-        alien = sharedTheme.game.enemy,
-        bullet = sharedTheme.game.gold,
-        bomb = sharedTheme.game.damage,
-        text = sharedTheme.text,
-    }
+    -- Boundaries
+    local minY = 3
+    local maxY = h - 2
+    local playW = w - 2
 
-    local function getSafeSize()
-        local w, h = term.getSize()
-        while not w or not h do sleep(0.05); w, h = term.getSize() end
-        return w, h
+    -- Game State
+    local player = { x = math.floor(w / 2), y = maxY - 1 }
+    local aliens = {}
+    local bullets = {}
+    local bombs = {}
+    local shields = {}
+    local score = 0
+    local lives = 3
+    local wave = 1
+    local gameOver = false
+    local victory = false
+    local gameTimer = nil
+    local alienDir = 1
+    local alienTick = 0
+    local personalBest = scoreCache.getPersonalBest(gameName)
+
+    local function createShields()
+        shields = {}
+        local shieldCount = isPocket and 3 or 4
+        local spacing = math.floor(w / (shieldCount + 1))
+        local shieldY = maxY - 3
+
+        for i = 1, shieldCount do
+            local sx = i * spacing
+            for dx = -1, 1 do
+                table.insert(shields, { x = sx + dx, y = shieldY, hp = 3 })
+            end
+        end
     end
 
     local function createAliens()
         aliens = {}
-        for r = 1, 4 do
-            for c = 1, 8 do
-                table.insert(aliens, { x = c * 3, y = r * 2 + 1, alive = true })
+        local rows = isPocket and 3 or 4
+        local cols = isPocket and 6 or 8
+        local startX = math.floor((w - cols * 3) / 2) + 1
+
+        for r = 1, rows do
+            for c = 1, cols do
+                table.insert(aliens, {
+                    x = startX + (c - 1) * 3,
+                    y = minY + (r - 1) * 2,
+                    alive = true,
+                    row = r
+                })
             end
+        end
+        alienDir = 1
+        alienTick = 0
+    end
+
+    local function initGame()
+        w, h = term.getSize()
+        isPocket = (w <= 30)
+        minY = 3
+        maxY = h - 2
+        playW = w - 2
+
+        player = { x = math.floor(w / 2), y = maxY - 1 }
+        bullets = {}
+        bombs = {}
+        score = 0
+        lives = 3
+        wave = 1
+        gameOver = false
+        victory = false
+        personalBest = scoreCache.getPersonalBest(gameName)
+
+        createAliens()
+        createShields()
+    end
+
+    local function fireBullet()
+        if gameOver then return end
+        if #bullets < 2 then
+            table.insert(bullets, { x = player.x, y = player.y - 1 })
+            Sound.playNote("chime", 0.5, 20)
         end
     end
 
-    local function updateAliens()
-        -- **NEW**: Alien speed increases with each level.
-        local alienSpeed = 10 - level
-        if alienSpeed < 2 then alienSpeed = 2 end -- Set a max speed
+    local function update()
+        if gameOver then return end
 
-        alienMoveTimer = alienMoveTimer + 1
-        if alienMoveTimer < alienSpeed then return end
-        alienMoveTimer = 0
+        -- 1. Move Player Bullets
+        for i = #bullets, 1, -1 do
+            local b = bullets[i]
+            b.y = b.y - 1
 
-        local w, h = getSafeSize()
-        local drop = false
-        for _, alien in ipairs(aliens) do
-            if alien.alive then
-                if (alien.x >= w and alienDirection == 1) or (alien.x <= 1 and alienDirection == -1) then
-                    drop = true
+            -- Check Collision with Shields
+            local hitShield = false
+            for si = #shields, 1, -1 do
+                local s = shields[si]
+                if s.x == b.x and s.y == b.y then
+                    s.hp = s.hp - 1
+                    if s.hp <= 0 then table.remove(shields, si) end
+                    hitShield = true
                     break
                 end
             end
-        end
 
-        if drop then
-            alienDirection = -alienDirection
-            for _, alien in ipairs(aliens) do
-                alien.y = alien.y + 1
-                if alien.alive and alien.y >= player.y then
-                    gameOver = true
-                end
-            end
-        else
-            for _, alien in ipairs(aliens) do
-                alien.x = alien.x + alienDirection
-            end
-        end
-    end
-
-    local function updateBullets()
-        for i = #bullets, 1, -1 do
-            local bullet = bullets[i]
-            bullet.y = bullet.y - 1
-            if bullet.y < 1 then
-                table.remove(bullets, i)
-            else
-                for j, alien in ipairs(aliens) do
-                    if alien.alive and bullet.x == alien.x and bullet.y == alien.y then
-                        alien.alive = false
-                        score = score + 100
-                        table.remove(bullets, i)
+            -- Check Collision with Aliens
+            local hitAlien = false
+            if not hitShield then
+                for _, a in ipairs(aliens) do
+                    if a.alive and a.y == b.y and (b.x >= a.x and b.x <= a.x + 1) then
+                        a.alive = false
+                        hitAlien = true
+                        score = score + (5 - a.row) * 20
+                        Sound.playNote("hat", 0.8, 16)
                         break
                     end
                 end
             end
-        end
-    end
 
-    local function updateBombs()
-        -- **NEW**: Bomb drop speed increases with each level.
-        local bombSpeed = 20 - level
-        if bombSpeed < 5 then bombSpeed = 5 end
-
-        alienDropTimer = alienDropTimer + 1
-        if alienDropTimer > bombSpeed and #aliens > 0 then
-            alienDropTimer = 0
-            local aliveAliens = {}
-            for _, alien in ipairs(aliens) do
-                if alien.alive then table.insert(aliveAliens, alien) end
-            end
-            if #aliveAliens > 0 then
-                local shooter = aliveAliens[math.random(#aliveAliens)]
-                table.insert(bombs, { x = shooter.x, y = shooter.y + 1 })
+            if hitShield or hitAlien or b.y < minY then
+                table.remove(bullets, i)
             end
         end
 
-        local _, h = getSafeSize()
+        -- 2. Move Alien Bombs
         for i = #bombs, 1, -1 do
-            local bomb = bombs[i]
-            bomb.y = bomb.y + 1
-            if bomb.y > h then
-                table.remove(bombs, i)
-            elseif bomb.x == player.x and bomb.y == player.y then
-                lives = lives - 1
-                if lives <= 0 then gameOver = true end
-                table.remove(bombs, i)
-            end
-        end
-    end
+            local bm = bombs[i]
+            bm.y = bm.y + 1
 
-    -- **NEW**: A function to check if all aliens are defeated.
-    local function checkLevelComplete()
-        for _, alien in ipairs(aliens) do
-            if alien.alive then
-                return false -- Found a live alien, level is not complete
-            end
-        end
-        return true -- No live aliens found
-    end
-
-    local function draw()
-        local w, h = getSafeSize()
-        term.setBackgroundColor(theme.windowBg)
-        term.clear()
-        
-        -- Draw subtle frame/border
-        term.setBackgroundColor(colors.cyan)
-        term.setCursorPos(1, 1); term.write(string.rep(" ", w))
-        term.setCursorPos(1, h); term.write(string.rep(" ", w))
-        for i = 2, h - 1 do
-            term.setCursorPos(1, i); term.write(" ")
-            term.setCursorPos(w, i); term.write(" ")
-        end
-
-        term.setCursorPos(1, 1)
-        term.setTextColor(theme.text)
-        local titleText = " " .. (gameName or "Drunken OS Game") .. " "
-        local titleStart = math.floor((w - #titleText) / 2) + 1
-        term.setCursorPos(titleStart, 1)
-        term.write(titleText)
-
-        term.setBackgroundColor(theme.windowBg)
-        term.setTextColor(theme.player)
-        term.setCursorPos(player.x, player.y); term.write("^")
-
-        term.setTextColor(theme.alien)
-        for _, alien in ipairs(aliens) do
-            if alien.alive and alien.y > 1 and alien.y < h then
-                term.setCursorPos(alien.x, alien.y); term.write("V")
-            end
-        end
-
-        term.setTextColor(theme.bullet)
-        for _, bullet in ipairs(bullets) do
-            if bullet.y > 1 and bullet.y < h then
-                term.setCursorPos(bullet.x, bullet.y); term.write("l")
-            end
-        end
-
-        term.setTextColor(theme.bomb)
-        for _, bomb in ipairs(bombs) do
-            if bomb.y > 1 and bomb.y < h then
-                term.setCursorPos(bomb.x, bomb.y); term.write("*")
-            end
-        end
-
-        term.setTextColor(theme.text)
-        local scoreText = "S:" .. score .. " L:" .. lives .. " LV:" .. level
-        term.setCursorPos(math.floor(w / 2 - #scoreText / 2), h)
-        term.setBackgroundColor(colors.cyan)
-        term.write(" " .. scoreText .. " ")
-    end
-
-    local function submitScore() 
-        scoreCache.recordScore(gameName, score, username)
-    end
-
-    local function showGameOverScreen()
-        submitScore()
-        local w, h = getSafeSize()
-        term.setBackgroundColor(theme.windowBg); term.clear()
-        local boxWidth = 32; local boxHeight = 18
-        local boxX = math.floor((w - boxWidth) / 2); local boxY = math.floor((h - boxHeight) / 2)
-        for y = 0, boxHeight - 1 do term.setCursorPos(boxX, boxY + y); term.write(string.rep(" ", boxWidth)) end
-        local title = "Game Over"
-        term.setCursorPos(boxX + math.floor((boxWidth - #title) / 2), boxY + 1); term.setTextColor(colors.red); term.write(title)
-        local scoreText = "Final Score: " .. score
-        term.setCursorPos(boxX + math.floor((boxWidth - #scoreText) / 2), boxY + 3); term.setTextColor(theme.text); term.write(scoreText)
-        
-        local sortedScores = nil
-        local isOffline = false
-        if arcadeServerId then
-            rednet.send(arcadeServerId, {type = "get_leaderboard", game = gameName}, "ArcadeGames")
-            local _, response = rednet.receive("ArcadeGames", 0.8)
-            if response and response.leaderboard then
-                sortedScores = {}
-                for user, s in pairs(response.leaderboard) do table.insert(sortedScores, {user = user, score = s}) end
-                table.sort(sortedScores, function(a,b) return a.score > b.score end)
-            end
-        end
-
-        if not sortedScores or #sortedScores == 0 then
-            isOffline = true
-            sortedScores = scoreCache.getLocalLeaderboard(gameName)
-        end
-
-        local lbTitle = isOffline and "-- Local Best (Offline) --" or "--- Leaderboard ---"
-        term.setCursorPos(boxX + math.floor((boxWidth - #lbTitle) / 2), boxY + 5); term.setTextColor(theme.title); term.write(lbTitle)
-        term.setTextColor(theme.text)
-        if #sortedScores == 0 then
-            local emptyMsg = "No high scores recorded yet"
-            term.setCursorPos(boxX + math.floor((boxWidth - #emptyMsg) / 2), boxY + 7)
-            term.write(emptyMsg)
-        else
-            for i = 1, math.min(7, #sortedScores) do
-                local entry = string.format("%2d. %-14s %d", i, tostring(sortedScores[i].user or "Player"):sub(1, 14), sortedScores[i].score or 0)
-                term.setCursorPos(boxX + 2, boxY + 6 + i); term.write(entry)
-            end
-        end
-
-        local prompt = "Tap or press key to exit..."
-        term.setCursorPos(boxX + math.floor((boxWidth - #prompt) / 2), boxY + boxHeight - 2); term.setTextColor(theme.prompt); term.write(prompt)
-
-        sleep(0.5)
-        while true do
-            local e = os.pullEvent()
-            if e == "key" or e == "mouse_click" then break end
-        end
-    end
-
-    local modem = peripheral.find("modem")
-    if modem then rednet.open(peripheral.getName(modem)) end
-    arcadeServerId = rednet.lookup("ArcadeGames", "arcade.server")
-
-    local w, h = getSafeSize()
-
-    term.setBackgroundColor(theme.windowBg)
-    term.clear()
-    local startMsg = "Press any key to start"
-    term.setCursorPos(math.floor(w/2 - #startMsg/2), math.floor(h/2))
-    term.setTextColor(theme.prompt)
-    term.write(startMsg)
-    os.pullEvent("key")
-
-    player.x = math.floor(w / 2)
-    player.y = h - 1
-    createAliens()
-
-    local gameTimer = os.startTimer(0.1)
-
-    while not gameOver do
-        local event, p1 = os.pullEvent()
-
-        if event == "key" then
-            local w, h = getSafeSize()
-            if p1 == keys.left and player.x > 1 then
-                player.x = player.x - 1
-            elseif p1 == keys.right and player.x < w then
-                player.x = player.x + 1
-            elseif p1 == keys.space then
-                if #bullets < 3 then
-                    table.insert(bullets, { x = player.x, y = player.y - 1 })
+            -- Check Shield Collision
+            local hitShield = false
+            for si = #shields, 1, -1 do
+                local s = shields[si]
+                if s.x == bm.x and s.y == bm.y then
+                    s.hp = s.hp - 1
+                    if s.hp <= 0 then table.remove(shields, si) end
+                    hitShield = true
+                    break
                 end
-            elseif p1 == keys.q or p1 == keys.tab then
-                gameOver = true
-            end
-        elseif event == "timer" and p1 == gameTimer then
-            updateAliens()
-            updateBullets()
-            updateBombs()
-
-            if checkLevelComplete() then
-                level = level + 1
-                score = score + 1000 -- Level clear bonus
-                createAliens()
-                term.setBackgroundColor(theme.windowBg); term.clear()
-                local levelMsg = "Level " .. level
-                term.setCursorPos(math.floor(w/2 - #levelMsg/2), math.floor(h/2))
-                term.setTextColor(theme.title); term.write(levelMsg)
-                sleep(2)
             end
 
-            draw()
-            gameTimer = os.startTimer(0.1)
-        elseif event == "terminate" then
+            -- Check Player Collision
+            local hitPlayer = false
+            if not hitShield and bm.y == player.y and (math.abs(bm.x - player.x) <= 1) then
+                hitPlayer = true
+                lives = lives - 1
+                Sound.playNote("bass", 1.5, 4)
+                if lives <= 0 then
+                    gameOver = true
+                    scoreCache.recordScore(gameName, score, username)
+                end
+            end
+
+            if hitShield or hitPlayer or bm.y > maxY then
+                table.remove(bombs, i)
+            end
+        end
+
+        -- 3. Move Aliens Formation
+        alienTick = alienTick + 1
+        local aliveCount = 0
+        for _, a in ipairs(aliens) do if a.alive then aliveCount = aliveCount + 1 end end
+
+        if aliveCount == 0 then
+            -- Wave Complete!
+            wave = wave + 1
+            score = score + 500
+            Sound.playSuccess()
+            createAliens()
+            createShields()
+            return
+        end
+
+        local speedTicks = math.max(1, math.floor(aliveCount / 4) + 1)
+        if alienTick >= speedTicks then
+            alienTick = 0
+            local shouldDrop = false
+
+            for _, a in ipairs(aliens) do
+                if a.alive then
+                    if (alienDir == 1 and a.x >= w - 3) or (alienDir == -1 and a.x <= 2) then
+                        shouldDrop = true
+                        break
+                    end
+                end
+            end
+
+            if shouldDrop then
+                alienDir = -alienDir
+                for _, a in ipairs(aliens) do
+                    a.y = a.y + 1
+                    if a.alive and a.y >= player.y then
+                        gameOver = true
+                        Sound.playNote("bass", 1.5, 4)
+                        scoreCache.recordScore(gameName, score, username)
+                    end
+                end
+            else
+                for _, a in ipairs(aliens) do
+                    a.x = a.x + alienDir
+                end
+            end
+
+            -- Random alien bomb drop
+            if #bombs < 3 and math.random(1, 4) == 1 then
+                local shooter = nil
+                local aliveAliens = {}
+                for _, a in ipairs(aliens) do if a.alive then table.insert(aliveAliens, a) end end
+                if #aliveAliens > 0 then
+                    local sel = aliveAliens[math.random(#aliveAliens)]
+                    table.insert(bombs, { x = sel.x, y = sel.y + 1 })
+                end
+            end
+        end
+    end
+
+    local function drawGame()
+        w, h = term.getSize()
+        isPocket = (w <= 30)
+
+        term.setBackgroundColor(cWinBg)
+        term.clear()
+
+        -- Title Bar
+        term.setCursorPos(1, 1)
+        term.setBackgroundColor(cTitleBg)
+        term.setTextColor(cTitleText)
+        term.clearLine()
+        term.write(" Space Invaders")
+        term.setCursorPos(w - 2, 1)
+        term.write("[X]")
+
+        -- Top Score & Lives Bar
+        term.setCursorPos(2, 2)
+        term.setBackgroundColor(cWinBg)
+        term.setTextColor(colors.black)
+        term.write(string.format("Score: %05d", score))
+
+        local livesStr = "Lives: " .. string.rep("<3 ", math.max(0, lives))
+        term.setCursorPos(math.max(16, w - #livesStr - 2), 2)
+        term.setTextColor(colors.red)
+        term.write(livesStr)
+
+        -- Black Space Canvas
+        term.setBackgroundColor(cBoardBg)
+        for y = minY, maxY do
+            term.setCursorPos(1, y)
+            term.write(string.rep(" ", w))
+        end
+
+        -- Draw Shields
+        for _, s in ipairs(shields) do
+            if s.y >= minY and s.y <= maxY and s.x >= 1 and s.x <= w then
+                term.setCursorPos(s.x, s.y)
+                term.setBackgroundColor(cBoardBg)
+                term.setTextColor(s.hp == 3 and colors.lightBlue or (s.hp == 2 and colors.cyan or colors.gray))
+                term.write("#")
+            end
+        end
+
+        -- Draw Aliens
+        for _, a in ipairs(aliens) do
+            if a.alive and a.y >= minY and a.y <= maxY and a.x >= 1 and a.x <= w - 1 then
+                term.setCursorPos(a.x, a.y)
+                term.setBackgroundColor(cBoardBg)
+                term.setTextColor((a.row % 2 == 1) and cAlien or cAlienAlt)
+                term.write("}{")
+            end
+        end
+
+        -- Draw Player Bullets
+        for _, b in ipairs(bullets) do
+            if b.y >= minY and b.y <= maxY and b.x >= 1 and b.x <= w then
+                term.setCursorPos(b.x, b.y)
+                term.setBackgroundColor(cBoardBg)
+                term.setTextColor(cBullet)
+                term.write("|")
+            end
+        end
+
+        -- Draw Alien Bombs
+        for _, bm in ipairs(bombs) do
+            if bm.y >= minY and bm.y <= maxY and bm.x >= 1 and bm.x <= w then
+                term.setCursorPos(bm.x, bm.y)
+                term.setBackgroundColor(cBoardBg)
+                term.setTextColor(cBomb)
+                term.write("v")
+            end
+        end
+
+        -- Draw Player Cannon
+        if player.y >= minY and player.y <= maxY then
+            term.setCursorPos(math.max(1, player.x - 1), player.y)
+            term.setBackgroundColor(cBoardBg)
+            term.setTextColor(cPlayer)
+            term.write("/^\\")
+        end
+
+        -- Bottom Hint / Touch Buttons
+        term.setCursorPos(1, h)
+        term.setBackgroundColor(cWinBg)
+        term.setTextColor(colors.black)
+        term.clearLine()
+        if isPocket then
+            term.setCursorPos(2, h)
+            term.write("[<] [FIRE] [>]")
+            term.setCursorPos(w - 3, h)
+            term.write("[Q]")
+        else
+            term.setCursorPos(2, h)
+            term.write("Left/Right: Move | Space/Click: Fire | [Q] Quit")
+        end
+
+        -- Game Over Modal
+        if gameOver then
+            local gW = math.min(w - 4, 22)
+            local gX = math.floor((w - gW) / 2) + 1
+            local gY = math.floor(h / 2) - 1
+
+            term.setCursorPos(gX, gY)
+            term.setBackgroundColor(colors.red)
+            term.setTextColor(colors.white)
+            term.write("  === GAME OVER ===  ")
+
+            term.setCursorPos(gX, gY + 1)
+            term.setBackgroundColor(colors.black)
+            term.setTextColor(colors.yellow)
+            term.write(string.format("  Score: %-10d  ", score))
+
+            term.setCursorPos(gX, gY + 2)
+            term.setTextColor(colors.white)
+            term.write("  [Space/Tap] Restart ")
+        end
+    end
+
+    -- Initial Start Screen
+    initGame()
+    drawGame()
+
+    local startMsg = "Tap or Space to start"
+    term.setCursorPos(math.floor((w - #startMsg) / 2) + 1, math.floor(h / 2))
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.yellow)
+    term.write(" " .. startMsg .. " ")
+
+    while true do
+        local e, p1 = os.pullEvent()
+        if e == "key" then
+            if p1 == keys.q or p1 == keys.tab then return end
+            break
+        elseif e == "mouse_click" then
+            if p1 == 1 and p2 and p3 and p3 == 1 and p2 >= w - 3 then return end
             break
         end
     end
 
-    showGameOverScreen()
-    term.clear()
-end
+    gameTimer = os.startTimer(0.08)
 
---==============================================================================
--- Protected Call Wrapper
---==============================================================================
+    while true do
+        drawGame()
 
-local ok, err = pcall(mainGame, ...)
+        local event, p1, p2, p3 = os.pullEvent()
 
-if not ok then
+        if event == "timer" and p1 == gameTimer then
+            if not gameOver then
+                update()
+                gameTimer = os.startTimer(0.08)
+            end
+
+        elseif event == "key" then
+            local key = p1
+            if key == keys.q or key == keys.tab then
+                if score > 0 then scoreCache.recordScore(gameName, score, username) end
+                break
+            elseif gameOver then
+                if key == keys.space or key == keys.enter or key == keys.r then
+                    initGame()
+                    gameTimer = os.startTimer(0.08)
+                end
+            else
+                if (key == keys.left or key == keys.a) and player.x > 2 then
+                    player.x = player.x - 1
+                elseif (key == keys.right or key == keys.d) and player.x < w - 2 then
+                    player.x = player.x + 1
+                elseif key == keys.space or key == keys.up or key == keys.w then
+                    fireBullet()
+                end
+            end
+
+        elseif event == "mouse_click" or event == "mouse_drag" then
+            local btn, cx, cy = p1, p2, p3
+
+            -- Title Bar [X] to quit
+            if cy == 1 and cx >= w - 3 then
+                if score > 0 then scoreCache.recordScore(gameName, score, username) end
+                break
+            end
+
+            -- Restart on Game Over
+            if gameOver then
+                initGame()
+                gameTimer = os.startTimer(0.08)
+            elseif isPocket and cy == h then
+                -- Pocket on-screen touch buttons: "[<] [FIRE] [>]   [Q]"
+                if cx >= 2 and cx <= 4 and player.x > 2 then
+                    player.x = player.x - 1
+                elseif cx >= 6 and cx <= 11 then
+                    fireBullet()
+                elseif cx >= 13 and cx <= 15 and player.x < w - 2 then
+                    player.x = player.x + 1
+                elseif cx >= w - 3 then
+                    if score > 0 then scoreCache.recordScore(gameName, score, username) end
+                    break
+                end
+            else
+                -- Click on screen to direct Cannon and Fire
+                if cx < player.x and player.x > 2 then
+                    player.x = player.x - 1
+                elseif cx > player.x and player.x < w - 2 then
+                    player.x = player.x + 1
+                end
+                if event == "mouse_click" then
+                    fireBullet()
+                end
+            end
+        end
+    end
+
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
     term.clear()
     term.setCursorPos(1, 1)
+end
+
+local ok, err = pcall(mainGame, ...)
+if not ok and err then
+    term.setBackgroundColor(colors.black)
     term.setTextColor(colors.red)
-    print("A critical error occurred:")
-    print(err)
-    print("\nPress any key to exit.")
-    os.pullEvent("key")
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("Space Invaders Error: " .. tostring(err))
+    print("Press any key to return...")
+    pcall(os.pullEvent)
 end

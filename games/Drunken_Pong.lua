@@ -10,6 +10,10 @@
 -- Load shared libraries
 if package and package.path then package.path = "/?.lua;" .. package.path end
 local sharedTheme = require("lib.theme")
+local ok_sound, Sound = pcall(require, "lib.sound")
+if not ok_sound or type(Sound) ~= "table" then
+    Sound = { playClick = function() end, playNote = function() end, playSuccess = function() end }
+end
 
 local gameVersion = 2.2
 local P2P_Socket = require("lib.p2p_socket")
@@ -39,6 +43,7 @@ local function mainGame(...)
     local gameName = "DrunkenPong"
     local socket = P2P_Socket.new(gameName, gameVersion, "DrunkenPong_Game")
     local isHost = false
+    local isSolo = false
 
     -- Use shared theme colors
     local theme = {
@@ -130,8 +135,9 @@ local function mainGame(...)
         local w, h = getSafeSize()
         
         -- Draw Scores (Sleek Blit)
-        local scoreMsg = string.format(" %s %02d | %02d %s ", username, score.me, score.opp, "Opponent")
-        local scoreColor = string.rep("5", #username + 4) .. "f" .. string.rep("e", 11)
+        local oppDisplayName = isSolo and "AI Bot" or "Opponent"
+        local scoreMsg = string.format(" %s %02d | %02d %s ", username, score.me, score.opp, oppDisplayName)
+        local scoreColor = string.rep("5", #username + 4) .. "f" .. string.rep("e", #oppDisplayName + 4)
         term.setCursorPos(math.floor(w/2 - #scoreMsg/2), 2)
         term.blit(scoreMsg, scoreColor, string.rep("f", #scoreMsg))
 
@@ -179,21 +185,38 @@ local function mainGame(...)
     local socket = P2P_Socket.new("DrunkenPong", gameVersion, "DrunkenPong_Game")
     
     local function findMatch()
-        if not socket:checkArcade() then 
-            drawLobby("Mainframe Arcade Server Offline!")
-            sleep(2)
+        drawLobby("1: Solo (vs AI) | 2: Host | 3: Join | 4: Direct ID")
+        local key = nil
+        while not key do
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                if p1 == keys.one or p1 == keys.two or p1 == keys.three or p1 == keys.four or p1 == keys.q or p1 == keys.tab then
+                    key = p1
+                end
+            elseif event == "mouse_click" then
+                local cx, cy = p2, p3
+                local sw, sh = getSafeSize()
+                if cy == sh and cx >= sw - 12 then
+                    key = keys.q
+                elseif cy >= math.floor(sh / 2) - 1 and cy <= math.floor(sh / 2) + 1 then
+                    if cx < math.floor(sw / 4) then key = keys.one
+                    elseif cx < math.floor(sw / 2) then key = keys.two
+                    elseif cx < math.floor(sw * 3 / 4) then key = keys.three
+                    else key = keys.four end
+                end
+            end
         end
-
-        drawLobby("1: Host | 2: Join | 3: Direct Connect")
-        local event, key
-        repeat
-            event, key = os.pullEvent("key")
-        until key == keys.one or key == keys.two or key == keys.three or key == keys.q or key == keys.tab
 
         if key == keys.q or key == keys.tab then return false end
 
+        if key == keys.one then
+            isSolo = true
+            isHost = true
+            return true
+        end
+
         local directTarget = nil
-        if key == keys.three then
+        if key == keys.four then
             drawLobby("Enter Host ID: ")
             term.setCursorPos(math.floor(getSafeSize()/2-5), math.floor(getSafeSize()/2)+1)
             term.setBackgroundColor(colors.gray)
@@ -201,7 +224,7 @@ local function mainGame(...)
             if not directTarget then return false end
         end
 
-        if key == keys.one then
+        if key == keys.two then
             -- HOSTING
             isHost = true
             socket.lobbyProtocol = "DrunkenPong_Lobby"
@@ -309,21 +332,32 @@ local function mainGame(...)
                     end
                     -- Immediate Sync on move
                     socket:send({type="move", y=myY})
-                elseif event == "mouse_click" then
+                elseif event == "mouse_click" or event == "mouse_drag" then
                     local btn, cx, cy = p1, p2, p3
                     local sw, sh = getSafeSize()
-                    if cy < sh / 2 and myY > 1 then
-                        myY = math.max(1, myY - 2)
-                    elseif cy >= sh / 2 and myY < INT_H - PADDLE_HEIGHT then
-                        myY = math.min(INT_H - PADDLE_HEIGHT, myY + 2)
-                    end
-                    socket:send({type="move", y=myY})
+                    local targetY = math.floor(((cy - 2) / math.max(1, sh - 2)) * INT_H)
+                    myY = math.min(INT_H - myHeight, math.max(1, targetY))
+                    if not isSolo then socket:send({type="move", y=myY}) end
                 end
             end
         end,
         function() -- Ball Physics (Host Only) & Tick
             while matchActive do
                 if isHost then
+                    if isSolo then
+                        -- Smart AI Opponent
+                        for _, b in ipairs(balls) do
+                            if b.dx > 0 and b.x > INT_W / 4 then
+                                local targetOppY = b.y - math.floor(oppHeight / 2)
+                                if oppY < targetOppY and oppY < INT_H - oppHeight then
+                                    oppY = math.min(INT_H - oppHeight, oppY + 0.6)
+                                elseif oppY > targetOppY and oppY > 1 then
+                                    oppY = math.max(1, oppY - 0.6)
+                                end
+                            end
+                        end
+                    end
+
                     -- Ball Progression & Trail Logic
                     for bi, b in ipairs(balls) do
                         table.insert(trails, {x=b.x, y=b.y})
@@ -333,7 +367,8 @@ local function mainGame(...)
                         b.y = b.y + b.dy * ballSpeed
                         
                         if b.y <= 1 or b.y >= INT_H - 1 then 
-                            b.dy = -b.dy 
+                            b.dy = -b.dy
+                            Sound.playNote("snare", 0.4, 12)
                             for i=1,3 do addParticle(b.x, b.y, theme.ball) end
                         end
                         
@@ -341,11 +376,11 @@ local function mainGame(...)
                         if b.x <= 2 then
                             if b.y >= myY and b.y < myY + myHeight then
                                 b.dx = math.abs(b.dx)
-                                -- Curved Shot
                                 local hitOffset = (b.y - (myY + myHeight/2)) / (myHeight/2)
                                 b.dy = b.dy + hitOffset * 0.5
                                 ballSpeed = math.min(ballSpeed + 0.02, 1.5)
                                 shake = 2
+                                Sound.playNote("hat", 0.8, 18)
                                 for i=1,5 do addParticle(b.x, b.y, theme.player, "*") end
                             else
                                 score.opp = score.opp + 1
@@ -354,6 +389,7 @@ local function mainGame(...)
                                 ballSpeed = 0.5
                                 flash = colors.red
                                 shake = 5
+                                Sound.playNote("bass", 1.2, 6)
                             end
                         elseif b.x >= INT_W - 1 then
                             -- Paddle Hit - Remote
@@ -363,6 +399,7 @@ local function mainGame(...)
                                 b.dy = b.dy + hitOffset * 0.5
                                 ballSpeed = math.min(ballSpeed + 0.02, 1.5)
                                 shake = 2
+                                Sound.playNote("hat", 0.8, 18)
                                 for i=1,5 do addParticle(b.x, b.y, theme.opponent, "*") end
                             else
                                 score.me = score.me + 1
@@ -371,6 +408,7 @@ local function mainGame(...)
                                 ballSpeed = 0.5
                                 flash = colors.lime
                                 shake = 5
+                                Sound.playNote("pling", 1.2, 20)
                             end
                         end
                     end
@@ -397,7 +435,7 @@ local function mainGame(...)
                         end
                     end
                     
-                    if os.epoch("utc") - lastSync > 50 then
+                    if not isSolo and os.epoch("utc") - lastSync > 50 then
                         socket:send({
                             type="sync", 
                             balls=balls, 
@@ -423,6 +461,10 @@ local function mainGame(...)
             end
         end,
         function() -- Receiving
+            if isSolo then
+                while matchActive do sleep(0.2) end
+                return
+            end
             local lastRecv = os.epoch("utc")
             while matchActive do
                 local msg = socket:receive(0.5)

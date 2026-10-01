@@ -10,6 +10,10 @@
 local theme = require("lib.theme")
 local utils = require("lib.utils")
 local scoreCache = require("lib.score_cache")
+local ok_sound, Sound = pcall(require, "lib.sound")
+if not ok_sound or type(Sound) ~= "table" then
+    Sound = { playClick = function() end, playNote = function() end, playSuccess = function() end }
+end
 
 local SIZE = 6
 local SHIPS = {
@@ -316,6 +320,7 @@ function game.run(context)
             
             if fireX and fireY then
                 if not enemyRadar[fireX][fireY].probed then
+                    Sound.playNote("snare", 0.8, 10)
                     if not isMultiplayer then
                         -- AI Opponent evaluation
                         local res, ship = game.fireShot(enemyFleet, fireX, fireY)
@@ -323,12 +328,15 @@ function game.run(context)
                         if res == "hit" then
                             enemyRadar[fireX][fireY].hit = true
                             statusMsg = "DIRECT HIT on " .. (ship or "Warship") .. "!"
+                            Sound.playNote("bass", 1.5, 4)
                             if game.isFleetSunk(enemyFleet) then
                                 gameOver = true
                                 winner = "Player"
+                                Sound.playSuccess()
                             end
                         else
                             statusMsg = "Splash! Shot missed."
+                            Sound.playNote("chime", 0.5, 8)
                             myTurn = false
                         end
                     else
@@ -340,12 +348,15 @@ function game.run(context)
                             if res.hit then
                                 enemyRadar[fireX][fireY].hit = true
                                 statusMsg = "DIRECT HIT on " .. (res.ship or "ship") .. "!"
+                                Sound.playNote("bass", 1.5, 4)
                                 if res.fleetSunk then
                                     gameOver = true
                                     winner = "Player"
+                                    Sound.playSuccess()
                                 end
                             else
                                 statusMsg = "Splash! Shot missed."
+                                Sound.playNote("chime", 0.5, 8)
                                 myTurn = false
                             end
                         else
@@ -365,12 +376,15 @@ function game.run(context)
                 local res, ship = game.fireShot(myFleet, aiX, aiY)
                 if res == "hit" then
                     statusMsg = string.format("WARNING: Enemy struck %s at %s%d!", ship or "ship", string.char(64+aiY), aiX)
+                    Sound.playNote("bass", 1.2, 5)
                     if game.isFleetSunk(myFleet) then
                         gameOver = true
                         winner = "Opponent"
+                        Sound.playNote("bass", 1.5, 3)
                     end
                 else
                     statusMsg = string.format("Enemy missed at %s%d! Your turn.", string.char(64+aiY), aiX)
+                    Sound.playNote("chime", 0.4, 8)
                     myTurn = true
                 end
             else
