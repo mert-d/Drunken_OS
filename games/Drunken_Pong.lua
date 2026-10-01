@@ -99,8 +99,10 @@ local function mainGame(...)
 
         term.setCursorPos(1, 1)
         term.setTextColor(theme.text)
-        local titleText = " [ DRUNKEN PONG NEON ] "
-        term.setCursorPos(math.floor((w - #titleText)/2), 1); term.write(titleText)
+        local titleText = isSolo and " [X] Drunken Pong (Solo) " or " [X] Drunken Pong "
+        if #titleText > w then titleText = " [X] Pong " end
+        term.setCursorPos(math.max(1, math.floor((w - #titleText)/2) + 1), 1)
+        term.write(titleText)
         
         if shake > 0 then shake = shake - 1 end
         if flash then flash = nil end
@@ -115,10 +117,14 @@ local function mainGame(...)
         local w, h = getSafeSize()
         term.setBackgroundColor(theme.bg)
         term.setTextColor(theme.text)
-        term.setCursorPos(math.floor(w/2 - #msg/2), math.floor(h/2))
-        term.write(msg)
-        term.setCursorPos(math.floor(w/2 - 10), h)
-        term.setBackgroundColor(theme.border); term.write(" TAB: Back ")
+        local safeMsg = tostring(msg or "")
+        if #safeMsg > w - 2 then safeMsg = safeMsg:sub(1, w - 2) end
+        term.setCursorPos(math.max(1, math.floor((w - #safeMsg)/2) + 1), math.floor(h/2))
+        term.write(safeMsg)
+        term.setCursorPos(math.max(1, math.floor((w - 12)/2) + 1), h)
+        term.setBackgroundColor(theme.border)
+        term.setTextColor(colors.white)
+        term.write(" [TAB: Back] ")
     end
 
     -- Coordinate Scaling (Internal Grid 51x19)
@@ -134,12 +140,23 @@ local function mainGame(...)
         drawFrame()
         local w, h = getSafeSize()
         
-        -- Draw Scores (Sleek Blit)
-        local oppDisplayName = isSolo and "AI Bot" or "Opponent"
-        local scoreMsg = string.format(" %s %02d | %02d %s ", username, score.me, score.opp, oppDisplayName)
-        local scoreColor = string.rep("5", #username + 4) .. "f" .. string.rep("e", #oppDisplayName + 4)
-        term.setCursorPos(math.floor(w/2 - #scoreMsg/2), 2)
-        term.blit(scoreMsg, scoreColor, string.rep("f", #scoreMsg))
+        -- Draw Scores (Sleek Blit - Guaranteed equal argument lengths)
+        local scoreMsg
+        local scoreColor
+        local scoreBg
+        if w < 34 then
+            scoreMsg   = string.format(" %02d | %02d ", score.me, score.opp)
+            scoreColor = " 55 7 ee "
+            scoreBg    = " fffffff "
+        else
+            local uName = (#username > 8) and username:sub(1, 7) .. "." or username
+            local oName = isSolo and "AI Bot" or "Opponent"
+            scoreMsg   = string.format(" %s %02d | %02d %s ", uName, score.me, score.opp, oName)
+            scoreColor = " " .. string.rep("5", #uName) .. " 55 7 ee " .. string.rep("e", #oName) .. " "
+            scoreBg    = string.rep("f", #scoreMsg)
+        end
+        term.setCursorPos(math.max(1, math.floor((w - #scoreMsg)/2) + 1), 2)
+        term.blit(scoreMsg, scoreColor, scoreBg)
 
         -- Draw Trails
         term.setBackgroundColor(theme.bg)
@@ -184,30 +201,78 @@ local function mainGame(...)
     -- Networking
     local socket = P2P_Socket.new("DrunkenPong", gameVersion, "DrunkenPong_Game")
     
+    local function drawModePicker()
+        drawFrame()
+        local w, h = getSafeSize()
+        local dw = math.min(24, w - 2)
+        local dh = 11
+        local dx = math.floor((w - dw)/2) + 1
+        local dy = math.max(2, math.floor((h - dh)/2) + 1)
+        
+        paintutils.drawFilledBox(dx, dy, dx + dw - 1, dy + dh - 1, colors.lightGray)
+        paintutils.drawBox(dx, dy, dx + dw - 1, dy + dh - 1, colors.gray)
+        
+        term.setCursorPos(dx + 1, dy)
+        term.setBackgroundColor(colors.blue)
+        term.setTextColor(colors.white)
+        local title = " [X] Drunken Pong"
+        term.write(title .. string.rep(" ", math.max(0, dw - #title - 2)))
+        
+        local buttons = {
+            { id = 1, text = "[ 1: Solo vs AI ]" },
+            { id = 2, text = "[ 2: Host Game  ]" },
+            { id = 3, text = "[ 3: Join Lobby ]" },
+            { id = 4, text = "[ 4: Direct ID  ]" },
+        }
+        
+        for i, b in ipairs(buttons) do
+            local by = dy + 1 + (i * 2 - 1)
+            term.setCursorPos(dx + math.floor((dw - #b.text)/2), by)
+            term.setBackgroundColor(colors.gray)
+            term.setTextColor(colors.white)
+            term.write(b.text)
+        end
+        
+        term.setCursorPos(dx + math.floor((dw - 13)/2), dy + dh - 1)
+        term.setBackgroundColor(colors.red)
+        term.setTextColor(colors.white)
+        term.write("[ TAB: Exit ]")
+        
+        return dx, dy, dw, dh
+    end
+
     local function findMatch()
-        drawLobby("1: Solo (vs AI) | 2: Host | 3: Join | 4: Direct ID")
+        local dx, dy, dw, dh = drawModePicker()
         local key = nil
         while not key do
             local event, p1, p2, p3 = os.pullEvent()
             if event == "key" then
-                if p1 == keys.one or p1 == keys.two or p1 == keys.three or p1 == keys.four or p1 == keys.q or p1 == keys.tab then
+                if p1 == keys.one or p1 == keys.two or p1 == keys.three or p1 == keys.four or p1 == keys.q or p1 == keys.tab or p1 == keys.esc then
                     key = p1
                 end
             elseif event == "mouse_click" then
-                local cx, cy = p2, p3
+                local btn, cx, cy = p1, p2, p3
                 local sw, sh = getSafeSize()
-                if cy == sh and cx >= sw - 12 then
+                if cy == dy and cx >= dx and cx <= dx + 4 then
                     key = keys.q
-                elseif cy >= math.floor(sh / 2) - 1 and cy <= math.floor(sh / 2) + 1 then
-                    if cx < math.floor(sw / 4) then key = keys.one
-                    elseif cx < math.floor(sw / 2) then key = keys.two
-                    elseif cx < math.floor(sw * 3 / 4) then key = keys.three
-                    else key = keys.four end
+                elseif cy == dy + dh - 1 then
+                    key = keys.q
+                else
+                    for i = 1, 4 do
+                        local by = dy + 1 + (i * 2 - 1)
+                        if cy == by and cx >= dx and cx <= dx + dw then
+                            if i == 1 then key = keys.one
+                            elseif i == 2 then key = keys.two
+                            elseif i == 3 then key = keys.three
+                            elseif i == 4 then key = keys.four end
+                            break
+                        end
+                    end
                 end
             end
         end
 
-        if key == keys.q or key == keys.tab then return false end
+        if key == keys.q or key == keys.tab or key == keys.esc then return false end
 
         if key == keys.one then
             isSolo = true
@@ -217,9 +282,11 @@ local function mainGame(...)
 
         local directTarget = nil
         if key == keys.four then
-            drawLobby("Enter Host ID: ")
-            term.setCursorPos(math.floor(getSafeSize()/2-5), math.floor(getSafeSize()/2)+1)
+            drawLobby("Enter Host ID:")
+            local sw, sh = getSafeSize()
+            term.setCursorPos(math.max(1, math.floor(sw/2 - 5)), math.floor(sh/2) + 1)
             term.setBackgroundColor(colors.gray)
+            term.setTextColor(colors.white)
             directTarget = tonumber(read())
             if not directTarget then return false end
         end
@@ -229,7 +296,7 @@ local function mainGame(...)
             isHost = true
             socket.lobbyProtocol = "DrunkenPong_Lobby"
             socket:hostGame(username)
-            drawLobby("Hosting... Waiting for Player...")
+            drawLobby("Hosting... (Q: Cancel)")
             
             local success = false
             parallel.waitForAny(
@@ -246,7 +313,7 @@ local function mainGame(...)
                 function()
                     while true do
                         local event, p1 = os.pullEventRaw("key")
-                        if p1 == keys.q or p1 == keys.tab then
+                        if p1 == keys.q or p1 == keys.tab or p1 == keys.esc then
                             socket:stopHosting()
                             break
                         end
@@ -255,20 +322,20 @@ local function mainGame(...)
             )
             return success
         else
-            -- JOINING
+            -- JOINING (key == keys.three or directTarget was entered)
             local targetId = nil
-            if key == keys.two then
-                drawLobby("Fetching Lobbies...")
+            if key == keys.three then
+                drawLobby("Searching Lobbies...")
                 local lobbies, err = socket:findLobbies()
                 if not lobbies then
                     drawLobby(err or "Failed to list lobbies.")
-                    sleep(1)
+                    sleep(1.5)
                     return false
                 end
 
                 if #lobbies == 0 then
-                    drawLobby("No " .. gameName .. " hosts online.")
-                    sleep(1)
+                    drawLobby("No Pong hosts online.")
+                    sleep(1.5)
                     return false
                 end
                 targetId = lobbies[1].id
@@ -277,7 +344,7 @@ local function mainGame(...)
             end
 
             opponentId = targetId
-            drawLobby("Connecting to ID " .. targetId .. "...")
+            drawLobby("Connecting to ID " .. tostring(targetId) .. "...")
             
             socket.lobbyProtocol = "DrunkenPong_Lobby"
             local reply, err = socket:connect(targetId, {user=username})
@@ -287,7 +354,7 @@ local function mainGame(...)
                 return true
             else
                 drawLobby(err or "Join Failed.")
-                sleep(1)
+                sleep(1.5)
                 return false
             end
         end
