@@ -537,6 +537,21 @@ end
 
 local function startServer()
     local haCfg = getHyperAuthConfig()
+    local userCount = 0
+    if users then for _ in pairs(users) do userCount = userCount + 1 end end
+
+    local details = {
+        { label = "Service", value = "Drunken OS Authentication Authority", color = colors.white },
+        { label = "User Database", value = string.format("%d registered user(s)", userCount), color = colors.lime },
+        { label = "HyperAuth Link", value = isPaired() and "PAIRED (" .. (haCfg.CLIENT_ID or "ok") .. ")" or "UNPAIRED", color = isPaired() and colors.lime or colors.yellow },
+        { label = "External Proto", value = AUTH_SERVER_PROTOCOL, color = colors.lightGray },
+        { label = "Interlink Proto", value = AUTH_INTERLINK_PROTOCOL, color = colors.lightGray },
+    }
+
+    if ServiceGuard and ServiceGuard.drawServerDashboard then
+        ServiceGuard.drawServerDashboard("AUTH SERVER", details, "ONLINE", "Listening for auth & registration | Zero-Downtime Supervisor")
+    end
+
     logActivity("Auth Server starting up...")
     logActivity("Listening for external auth on: " .. AUTH_SERVER_PROTOCOL)
     logActivity("Listening for interlink on: " .. AUTH_INTERLINK_PROTOCOL)

@@ -133,7 +133,7 @@ function game.drawBoard(board, selectedCol, turnText, context)
     for c = 1, COLS do
         if c == selectedCol then
             term.setTextColor(colors.yellow)
-            term.write("▼" .. c .. " ")
+            term.write("v" .. c .. " ")
         else
             term.setTextColor(theme.mutedText or colors.gray)
             term.write("[" .. c .. "]")
@@ -150,13 +150,13 @@ function game.drawBoard(board, selectedCol, turnText, context)
             term.write("|")
             if val == P1 then
                 term.setTextColor(colors.yellow)
-                term.write("●")
+                term.write("O")
             elseif val == P2 then
                 term.setTextColor(colors.red)
-                term.write("■")
+                term.write("X")
             else
                 term.setTextColor(colors.gray)
-                term.write("·")
+                term.write(".")
             end
             term.setTextColor(colors.blue)
             term.write("|")
@@ -166,12 +166,16 @@ function game.drawBoard(board, selectedCol, turnText, context)
     -- Bottom frame
     term.setCursorPos(startX, startY + ROWS * 2)
     term.setTextColor(colors.blue)
-    term.write(string.rep("═", 21))
+    term.write(string.rep("=", 21))
     
     -- Navigation Hint
     term.setCursorPos(2, h - 1)
     term.setTextColor(theme.mutedText or colors.gray)
-    term.write("Tap [1-7] or press 1-7 • [Q] Quit")
+    if w <= 30 then
+        term.write("[1-7]Drop [Q]Quit")
+    else
+        term.write("Tap [1-7] or press 1-7 - [Q] Quit")
+    end
 end
 
 function game.run(context)

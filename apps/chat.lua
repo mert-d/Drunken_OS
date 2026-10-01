@@ -15,17 +15,23 @@ end
 -- Starts parallel threads for typing input and receiving network messages.
 -- @param context table: The OS app context.
 function chat.run(context)
-    if not getParent(context).chatServerId then
+    local chatServerId = getParent(context).chatServerId or rednet.lookup("SimpleChat", "chat.server")
+    if not chatServerId then
         context.showMessage("Error", "Chat server not found.")
         return
     end
+    getParent(context).chatServerId = chatServerId
+
     context.drawWindow("General Chat")
     term.setCursorPos(2, 4)
     term.write("Fetching history...")
-    rednet.send(getParent(context).mailServerId, {type = "get_chat_history"}, "SimpleMail")
-    local _, response = rednet.receive("SimpleMail", 5)
-    
-    local history = (response and response.history) or {}
+    local mailServerId = getParent(context).mailServerId or rednet.lookup("SimpleMail", "mail.server")
+    local history = {}
+    if mailServerId then
+        rednet.send(mailServerId, {type = "get_chat_history"}, "SimpleMail")
+        local _, response = rednet.receive("SimpleMail", 3)
+        if response and response.history then history = response.history end
+    end
     local input = ""
     local lastMessage = ""
 
@@ -100,7 +106,8 @@ function chat.run(context)
                     if input ~= "" then
                         local messageToSend = { from = getParent(context).username, text = input }
                         rednet.send(getParent(context).chatServerId, messageToSend, "SimpleChat")
-                        lastMessage = string.format("[%s]: %s", getParent(context).nickname, messageToSend.text)
+                        local senderName = getParent(context).nickname or getParent(context).username or "Me"
+                        lastMessage = string.format("[%s]: %s", senderName, messageToSend.text)
                         table.insert(history, lastMessage)
                         if #history > 100 then
                             table.remove(history, 1)

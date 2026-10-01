@@ -52,7 +52,7 @@ function radarApp.run(context)
     local serverStats = {
         { name = "Bank Server", proto = "DB_Bank", host = "bank.server", online = false, ping = 0 },
         { name = "Arcade Server", proto = "ArcadeGames", host = "arcade.server", online = false, ping = 0 },
-        { name = "Mail Server", proto = "MailServer", host = "mail.server", online = false, ping = 0 }
+        { name = "Mail Server", proto = "SimpleMail", host = "mail.server", online = false, ping = 0 }
     }
     local statusText = "Ready to scan."
 
@@ -64,7 +64,7 @@ function radarApp.run(context)
         drawWindow("NetRadar")
         term.setCursorPos(2, 4)
         term.setTextColor(theme.prompt or colors.yellow)
-        term.write("📡 Scanning Rednet frequencies...")
+        term.write("[*] Scanning Rednet frequencies...")
 
         rednet.broadcast({
             type = "radar_ping",

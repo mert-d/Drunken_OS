@@ -13,6 +13,10 @@ local function getParent(context)
     return (context and context.parent) or context or {}
 end
 
+local function logActivity(msg)
+    -- Safe stub for activity tracking
+end
+
 local function loadCatalog(context)
     local path = fs.combine(context.programDir, MERCHANT_CATALOG_FILE)
     if fs.exists(path) then
@@ -58,14 +62,20 @@ function merchant.cashier(context)
         if selected == 1 then
             broadcasting = not broadcasting
             if broadcasting then
-                logActivity("Shop '" .. getParent(context).nickname .. "' opened.")
+                local shopOwner = getParent(context).nickname or getParent(context).username or "Merchant"
+                logActivity("Shop '" .. shopOwner .. "' opened.")
                 context.drawWindow("Shop Open")
-                context.drawText("Broadcasting...", 2, 4)
-                context.drawText("Press Q or Enter to Close", 2, 6)
+                if context.drawText then
+                    context.drawText("Broadcasting...", 2, 4)
+                    context.drawText("Press Q or Enter to Close", 2, 6)
+                else
+                    term.setCursorPos(2, 4); term.write("Broadcasting...")
+                    term.setCursorPos(2, 6); term.write("Press Q or Enter to Close")
+                end
                 parallel.waitForAny(
                     function()
                         while broadcasting do
-                            rednet.broadcast({ type = "shop_heartbeat", name = getParent(context).nickname .. "'s Shop" }, MERCHANT_BROADCAST_PROTOCOL)
+                            rednet.broadcast({ type = "shop_heartbeat", name = shopOwner .. "'s Shop" }, MERCHANT_BROADCAST_PROTOCOL)
                             sleep(5)
                         end
                     end,
@@ -73,10 +83,15 @@ function merchant.cashier(context)
                         while broadcasting do
                             local _, msg = rednet.receive("DB_Merchant_Recv", 1)
                             if msg and msg.type == "payment_proof" then
-                                context.showMessage("SALE", string.format("Received $%d from %s", msg.amount, msg.from))
+                                context.showMessage("SALE", string.format("Received $%d from %s", msg.amount or 0, msg.from or "unknown"))
                                 context.drawWindow("Shop Open")
-                                context.drawText("Broadcasting...", 2, 4)
-                                context.drawText("Press Q or Enter to Close", 2, 6)
+                                if context.drawText then
+                                    context.drawText("Broadcasting...", 2, 4)
+                                    context.drawText("Press Q or Enter to Close", 2, 6)
+                                else
+                                    term.setCursorPos(2, 4); term.write("Broadcasting...")
+                                    term.setCursorPos(2, 6); term.write("Press Q or Enter to Close")
+                                end
                             end
                         end
                     end,

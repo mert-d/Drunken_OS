@@ -24,48 +24,19 @@ local context = {
 -- 3. Defines the UI functions
 -- 4. Calls the app
 
-local w, h = term.getSize()
-local theme = {
-    bg = colors.black,
-    text = colors.white,
-    titleBg = colors.blue,
-    titleText = colors.white,
-    prompt = colors.yellow
-}
-
-local function drawFrame(title)
-    local w, h = term.getSize()
-    term.setBackgroundColor(theme.bg)
-    term.clear()
-    
-    -- Draw subtle frame/border
-    term.setBackgroundColor(theme.titleBg)
-    term.setCursorPos(1, 1); term.write(string.rep(" ", w))
-    term.setCursorPos(1, h); term.write(string.rep(" ", w))
-    for i = 2, h - 1 do
-        term.setCursorPos(1, i); term.write(" ")
-        term.setCursorPos(w, i); term.write(" ")
-    end
-
-    term.setCursorPos(1, 1)
-    term.setTextColor(theme.titleText)
-    local titleText = " " .. (title or "Merchant POS") .. " "
-    local titleStart = math.floor((w - #titleText) / 2) + 1
-    term.setCursorPos(titleStart, 1)
-    term.write(titleText)
-    
-    term.setBackgroundColor(theme.bg)
-    term.setTextColor(theme.text)
-end
-
 local context = {}
 context.programDir = programDir
-context.theme = theme
+context.theme = sharedTheme
+context.parent = {
+    mailServerId = nil,
+    username = nil,
+    nickname = nil
+}
 
 function context.getSafeSize() return w, h end
 
 function context.drawWindow(title)
-    drawFrame(title)
+    utils.drawWindow(title or "Merchant POS", context)
 end
 
 function context.showMessage(title, msg)

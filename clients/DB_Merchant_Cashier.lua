@@ -10,20 +10,9 @@ local utils = require("lib.utils")
 
 -- Minimal UI Context Framework
 local w, h = term.getSize()
-local theme = {
-    bg = colors.black,
-    text = colors.white,
-    titleBg = colors.green,
-    titleText = colors.black,
-    prompt = colors.yellow,
-    highlightBg = colors.white,
-    highlightText = colors.black,
-    windowBg = colors.black
-}
-
 local context = {}
 context.programDir = programDir
-context.theme = theme
+context.theme = sharedTheme
 context.parent = {
     mailServerId = nil,
     username = nil,
@@ -34,28 +23,7 @@ context.parent = {
 function context.getSafeSize() return w, h end
 
 function context.drawWindow(title)
-    local w, h = term.getSize()
-    term.setBackgroundColor(theme.bg)
-    term.clear()
-    
-    -- Draw subtle frame/border
-    term.setBackgroundColor(theme.titleBg)
-    term.setCursorPos(1, 1); term.write(string.rep(" ", w))
-    term.setCursorPos(1, h); term.write(string.rep(" ", w))
-    for i = 2, h - 1 do
-        term.setCursorPos(1, i); term.write(" ")
-        term.setCursorPos(w, i); term.write(" ")
-    end
-
-    term.setCursorPos(1, 1)
-    term.setTextColor(theme.titleText)
-    local titleText = " " .. (title or "Merchant Cashier") .. " "
-    local titleStart = math.floor((w - #titleText) / 2) + 1
-    term.setCursorPos(titleStart, 1)
-    term.write(titleText)
-    
-    term.setBackgroundColor(theme.bg)
-    term.setTextColor(theme.text)
+    utils.drawWindow(title or "Merchant Cashier", context)
 end
 
 function context.showMessage(title, msg)

@@ -8,6 +8,7 @@
 ]]
 
 local theme = require("lib.theme")
+local utils = require("lib.utils")
 local DrunkenOS = { _VERSION = 1.0 }
 
 --==============================================================================
@@ -15,17 +16,11 @@ local DrunkenOS = { _VERSION = 1.0 }
 --==============================================================================
 DrunkenOS.UI = {}
 
---- Draws a standard window frame and clears the screen.
+--- Draws a standard window frame and clears the screen using the Unified UI Engine.
 -- @param title string: The window title.
-function DrunkenOS.UI.drawWindow(title)
-    local w, h = term.getSize()
-    term.setBackgroundColor(theme.bg)
-    term.clear()
-    term.setBackgroundColor(theme.titleBg)
-    term.setTextColor(theme.titleText)
-    term.setCursorPos(1, 1); term.write(string.rep(" ", w))
-    term.setCursorPos(math.floor((w - #title)/2)+1, 1); term.write(title)
-    term.setBackgroundColor(theme.bg)
+-- @param context table: Optional execution context.
+function DrunkenOS.UI.drawWindow(title, context)
+    utils.drawWindow(title, context or { theme = theme })
 end
 
 local function wrapMessage(text, maxW)

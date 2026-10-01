@@ -227,7 +227,7 @@ function remoteApp.run(context)
                 term.setCursorPos(2, rowY)
                 if idx == selectedIndex then
                     term.setTextColor(colors.yellow)
-                    term.write("▶")
+                    term.write(">")
                 else
                     term.write(" ")
                 end
@@ -236,27 +236,28 @@ function remoteApp.run(context)
                 term.setTextColor(idx == selectedIndex and (theme.highlightText or colors.white) or (theme.text or colors.white))
                 local nameStr = string.format("[%d] %s", idx, sw.name)
                 term.setCursorPos(4, rowY)
-                term.write(nameStr:sub(1, w - 16))
+                local maxNameLen = isPocket and (w - 11) or (w - 16)
+                term.write(nameStr:sub(1, math.max(1, maxNameLen)))
 
                 -- State Tag
-                local tagX = w - 10
+                local tagX = isPocket and (w - 6) or (w - 12)
                 term.setCursorPos(tagX, rowY)
                 if not sw.online then
                     term.setBackgroundColor(colors.gray)
                     term.setTextColor(colors.lightGray or colors.white)
-                    term.write(" [OFFLINE] ")
+                    term.write(isPocket and "[OFF] " or " [OFFLINE] ")
                 elseif sw.mode == "pulse" then
                     term.setBackgroundColor(colors.purple)
                     term.setTextColor(colors.white)
-                    term.write(string.format(" [⚡ %ds] ", sw.pulseDuration or 2))
+                    term.write(isPocket and string.format("[P%ds]", sw.pulseDuration or 2) or string.format(" [P %ds] ", sw.pulseDuration or 2))
                 elseif sw.state then
                     term.setBackgroundColor(colors.green)
                     term.setTextColor(colors.white)
-                    term.write(" [  ACTIVE ] ")
+                    term.write(isPocket and "[ ON ]" or " [ ACTIVE ] ")
                 else
                     term.setBackgroundColor(colors.red)
                     term.setTextColor(colors.white)
-                    term.write(" [ INACTIVE ] ")
+                    term.write(isPocket and "[OFF ]" or " [INACTIVE] ")
                 end
                 term.setBackgroundColor(theme.windowBg or theme.bg or colors.black)
             end

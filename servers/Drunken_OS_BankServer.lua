@@ -30,7 +30,7 @@ local ServiceGuard = require("lib.service_guard")
 
 local accounts, currencyRates, currentStock = {}, {}, {}
 -- NOTE: `ledger` is declared in the Ledger & Integrity section below.
--- Do NOT add a second declaration here — it shadows the real table and breaks dbPointers.
+-- Do NOT add a second declaration here -- it shadows the real table and breaks dbPointers.
 local mainServerId = nil
 local wired_modem_name, wireless_modem_name = nil, nil
 local adminInput = ""
@@ -83,13 +83,15 @@ local safeColor = sharedTheme.safeColor
 local theme = {
     bg = safeColor("black", colors.black),
     text = safeColor("white", colors.white),
-    windowBg = safeColor("gray", colors.gray),
-    title = safeColor("lightBlue", colors.lightBlue),
-    prompt = safeColor("cyan", colors.cyan),
-    statusBarBg = safeColor("gray", colors.lightGray),
+    windowBg = safeColor("black", colors.black),
+    titleBg = safeColor("blue", colors.blue),
+    titleText = safeColor("white", colors.white),
+    title = safeColor("blue", colors.blue),
+    prompt = safeColor("yellow", colors.yellow),
+    statusBarBg = safeColor("gray", colors.gray),
     statusBarText = safeColor("white", colors.white),
-    highlightBg = safeColor("blue", colors.blue),
-    highlightText = safeColor("white", colors.white),
+    highlightBg = safeColor("cyan", colors.cyan),
+    highlightText = safeColor("black", colors.black),
     error = safeColor("red", colors.red),
 }
 
@@ -1378,30 +1380,41 @@ end
 
 local function redrawAdminUI()
     local w, h = term.getSize()
-    term.setBackgroundColor(theme.windowBg)
+    term.setBackgroundColor(theme.bg or colors.black)
     term.clear()
 
-    -- Title Bar
-    term.setBackgroundColor(theme.title)
+    -- 1. Unified Top Title Bar
+    term.setBackgroundColor(theme.titleBg or colors.blue)
     term.setCursorPos(1, 1)
     term.write((" "):rep(w))
-    term.setTextColor(colors.white)
-    local title = " Bank Server Admin Console "
-    term.setCursorPos(math.floor((w - #title) / 2) + 1, 1)
+    term.setTextColor(theme.titleText or colors.white)
+    term.setCursorPos(2, 1)
+    local title = "[*] Bank Server Admin Console"
     term.write(title)
 
-    -- Status Bar
-    term.setBackgroundColor(theme.statusBarBg)
-    term.setTextColor(theme.statusBarText)
+    local rightInfo = ""
+    if os.getComputerID then
+        rightInfo = string.format("#%d [NET] ", os.getComputerID())
+    end
+    if os.time and textutils and textutils.formatTime then
+        pcall(function() rightInfo = rightInfo .. textutils.formatTime(os.time(), false) .. " " end)
+    end
+    if #rightInfo > 0 and w > #title + #rightInfo + 2 then
+        term.setCursorPos(w - #rightInfo + 1, 1)
+        term.write(rightInfo)
+    end
+
+    -- 2. Unified Bottom Status Bar
+    term.setBackgroundColor(theme.statusBarBg or colors.gray)
+    term.setTextColor(theme.statusBarText or colors.white)
     term.setCursorPos(1, h)
     term.write((" "):rep(w))
-    local status = "RUNNING | Type 'help' for commands"
     term.setCursorPos(2, h)
-    term.write(status)
+    term.write("RUNNING | Type 'help' for commands | Ctrl+T to exit")
 
     -- Log Area
-    term.setBackgroundColor(theme.windowBg)
-    term.setTextColor(theme.text)
+    term.setBackgroundColor(theme.bg or colors.black)
+    term.setTextColor(theme.text or colors.white)
     local logAreaHeight = h - 4
     local displayLines = {}
     for i = #logHistory, 1, -1 do
@@ -1421,9 +1434,9 @@ local function redrawAdminUI()
     term.setCursorPos(1, h - 2)
     term.write(('-'):rep(w))
     term.setCursorPos(1, h - 1)
-    term.setTextColor(theme.prompt)
+    term.setTextColor(theme.prompt or colors.yellow)
     term.write("> ")
-    term.setTextColor(theme.text)
+    term.setTextColor(theme.text or colors.white)
     term.write(adminInput)
 end
 

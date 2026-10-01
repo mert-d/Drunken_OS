@@ -35,7 +35,7 @@ local classes = {
         passive = "Tenacity: -20% Dmg taken",
         color = colors.orange,
         portrait = {
-            "  [══]  ",
+            "  [==]  ",
             " /[||]\\ ",
             "  /  \\  "
         }
@@ -126,7 +126,7 @@ local function mainGame(...)
         term.setCursorPos(barX, y)
         term.setTextColor(color)
         term.write("[")
-        term.write(string.rep("█", fillWidth))
+        term.write(string.rep("=", fillWidth))
         term.setTextColor(colors.gray)
         term.write(string.rep("-", width - fillWidth))
         term.setTextColor(color)

@@ -125,7 +125,11 @@ function bites.run(ctx)
 
         -- Controls
         term.setCursorPos(1, h-1); term.setTextColor(ctx.theme.prompt or colors.yellow)
-        term.write(" [Enter]Add [-]Remove [C]Checkout")
+        if w <= 30 then
+            term.write(" [Enter]+ [-]- [C]Order")
+        else
+            term.write(" [Enter]Add [-]Remove [C]Checkout")
+        end
         term.setCursorPos(1, h); term.setTextColor(colors.gray)
         term.write(" [Q] Cancel")
         term.setTextColor(ctx.theme.text or colors.white)
@@ -196,7 +200,7 @@ function bites.run(ctx)
     term.write("TOTAL: $" .. cartTotal)
     term.setTextColor(ctx.theme.text or colors.white)
 
-    local promptMsg = string.format("Deliver to Table # (1-%d): ", tblCount or 4)
+    local promptMsg = (w <= 30) and string.format("Table (1-%d): ", tblCount or 4) or string.format("Deliver to Table # (1-%d): ", tblCount or 4)
     local tblNum = tonumber(ctx.readInput(promptMsg, y + 3))
     if not tblNum or tblNum < 1 or (tblCount and tblNum > tblCount) then
         ctx.showMessage("Invalid Table", string.format("Please enter a valid table number (1 to %d).", tblCount or 4))

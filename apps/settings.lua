@@ -47,7 +47,11 @@ function settings_app.run(context)
         term.setBackgroundColor(theme.bg)
         term.setCursorPos(2, h-2)
         term.setTextColor(colors.gray)
-        term.write("Press ENTER to Apply. REBOOT required.")
+        if w <= 30 then
+            term.write("Enter: Apply & Reboot")
+        else
+            term.write("Press ENTER to Apply. REBOOT required.")
+        end
 
         local event, key = os.pullEvent("key")
         if key == keys.up then
@@ -64,7 +68,7 @@ function settings_app.run(context)
             term.setCursorPos(2, h-2)
             term.setTextColor(colors.lime)
             term.clearLine()
-            term.write("Theme Saved! Rebooting...")
+            term.write(w <= 30 and "Saved! Rebooting..." or "Theme Saved! Rebooting...")
             os.sleep(1)
             os.reboot()
         elseif key == keys.q or key == keys.tab then

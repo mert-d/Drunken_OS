@@ -272,7 +272,7 @@ function doctor.run(context)
 
         term.setCursorPos(2, curY)
         term.setTextColor(statusCol)
-        term.write("■ " .. report.overallHealth)
+        term.write("[*] " .. report.overallHealth)
         curY = curY + 2
 
         local lines = {}

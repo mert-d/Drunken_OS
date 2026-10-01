@@ -364,23 +364,28 @@ local function drawWindow(title)
     term.setBackgroundColor(theme.bg)
     term.clear()
     
-    -- Draw title and bottom borders
+    -- 1. Top Title Bar (Unified Drunken OS Style)
     term.setBackgroundColor(theme.titleBg)
     term.setCursorPos(1, 1); term.write(string.rep(" ", w))
-    term.setCursorPos(1, h); term.write(string.rep(" ", w))
-    -- Draw side borders
-    for i = 2, h - 1 do
-        term.setCursorPos(1, i); term.write(" ")
-        term.setCursorPos(w, i); term.write(" ")
+    term.setTextColor(theme.titleText)
+    term.setCursorPos(2, 1)
+    local fullTitle = "[*] " .. (title or "Master Installer")
+    term.write(fullTitle)
+    
+    local rightInfo = "v1.6 "
+    if os.getComputerID then rightInfo = string.format("#%d  v1.6 ", os.getComputerID()) end
+    if w > #fullTitle + #rightInfo + 2 then
+        term.setCursorPos(w - #rightInfo + 1, 1)
+        term.write(rightInfo)
     end
 
-    -- Render the centered title text
-    term.setCursorPos(1, 1)
+    -- 2. Bottom Status Bar (Unified Navigation Hints)
+    term.setCursorPos(1, h)
+    term.setBackgroundColor(theme.titleBg)
+    term.clearLine()
     term.setTextColor(theme.titleText)
-    local titleText = " " .. (title or "Master Installer") .. " "
-    local titleStart = math.floor((w - #titleText) / 2) + 1
-    term.setCursorPos(titleStart, 1)
-    term.write(titleText)
+    term.setCursorPos(2, h)
+    term.write("Arrows: Navigate | Enter: Select | Q: Back/Exit")
     
     term.setBackgroundColor(theme.bg)
     term.setTextColor(theme.text)

@@ -64,13 +64,32 @@ end
 
 local function drawHeader(title)
     local w, h = term.getSize()
-    term.setBackgroundColor(colors.gray)
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    
+    -- Top Title Bar
+    term.setBackgroundColor(colors.blue)
     term.setTextColor(colors.white)
     term.setCursorPos(1, 1)
     term.write(string.rep(" ", w))
-    term.setCursorPos(math.floor((w - #title) / 2) + 1, 1)
-    term.write(title)
+    term.setCursorPos(2, 1)
+    term.write("[*] " .. (title or "Bank Clerk Terminal"))
+
+    local rightInfo = "CLERK "
+    if os.getComputerID then rightInfo = string.format("#%d  CLERK ", os.getComputerID()) end
+    term.setCursorPos(w - #rightInfo + 1, 1)
+    term.write(rightInfo)
+
+    -- Bottom Status Bar
+    term.setCursorPos(1, h)
+    term.setBackgroundColor(colors.blue)
+    term.clearLine()
+    term.setTextColor(colors.white)
+    term.setCursorPos(2, h)
+    term.write("TELLER DESK | [Q] Exit | Up/Down: Navigate")
+    
     term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
 end
 
 local function drawMenu(options, selected, startX, startY)
@@ -78,12 +97,12 @@ local function drawMenu(options, selected, startX, startY)
         term.setCursorPos(startX, startY + i - 1)
         if i == selected then
             term.setTextColor(colors.black)
-            term.setBackgroundColor(colors.yellow)
-            term.write("> " .. option .. " ")
+            term.setBackgroundColor(colors.cyan)
+            term.write(" > " .. option .. " ")
         else
             term.setTextColor(colors.white)
             term.setBackgroundColor(colors.black)
-            term.write("  " .. option .. " ")
+            term.write("   " .. option .. " ")
         end
     end
     term.setBackgroundColor(colors.black)

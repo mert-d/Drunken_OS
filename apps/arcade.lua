@@ -294,9 +294,13 @@ function arcade.run(context)
         end
         
         -- Controls Footer
-        term.setCursorPos(2, 18)
+        term.setCursorPos(2, h - 1)
         term.setTextColor(theme.mutedText or colors.gray)
-        term.write("[ENTER] Play  [L] Refresh  [Q] Quit")
+        if w <= 30 then
+            term.write("[Enter]Play [Q]Quit")
+        else
+            term.write("[ENTER] Play  [L] Refresh  [Q] Quit")
+        end
         
         -- Input Handling
         local event, p1 = os.pullEvent("key")

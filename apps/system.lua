@@ -15,10 +15,15 @@ end
 ---
 -- Prompts the user to change their global nickname.
 function system.changeNickname(context)
+    local authId = getParent(context).authServerId or rednet.lookup("auth.secure.v1", "auth.server")
+    if not authId then
+        context.showMessage("Error", "Auth server unreachable.")
+        return
+    end
     context.drawWindow("Change Nickname")
     local new_nick = context.readInput("New nickname: ", 4)
     if new_nick and new_nick ~= "" then
-        rednet.send(getParent(context).authServerId, { type = "set_nickname", user = getParent(context).username, new_nickname = new_nick, session_token = getParent(context).session_token }, "auth.secure.v1")
+        rednet.send(authId, { type = "set_nickname", user = getParent(context).username, new_nickname = new_nick, session_token = getParent(context).session_token }, "auth.secure.v1")
         context.drawWindow("Updating...")
         local _, response = rednet.receive("auth.secure.v1", 15)
         if response and response.success then

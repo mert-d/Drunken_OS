@@ -31,17 +31,20 @@ local logHistory = {}
 local arcadeLobbies = {} -- { [id] = { user = "name", game = "Game" } }
 
 local hasColor = term.isColor and term.isColor()
+local safeColor = sharedTheme.safeColor
 local theme = {
-    bg = colors.black,
-    windowBg = colors.black,
-    title = colors.cyan,
-    text = colors.white,
-    prompt = colors.lime,
-    statusBarBg = colors.gray,
-    statusBarText = colors.white,
-    highlightBg = colors.blue,
-    highlightText = colors.white,
-    error = colors.red,
+    bg = safeColor("black", colors.black),
+    windowBg = safeColor("black", colors.black),
+    titleBg = safeColor("blue", colors.blue),
+    titleText = safeColor("white", colors.white),
+    title = safeColor("blue", colors.blue),
+    text = safeColor("white", colors.white),
+    prompt = safeColor("yellow", colors.yellow),
+    statusBarBg = safeColor("gray", colors.gray),
+    statusBarText = safeColor("white", colors.white),
+    highlightBg = safeColor("cyan", colors.cyan),
+    highlightText = safeColor("black", colors.black),
+    error = safeColor("red", colors.red),
 }
 
 local currentScreen = "dashboard" -- "dashboard", "logs"
@@ -114,18 +117,31 @@ local function drawWindow(title)
     term.setBackgroundColor(theme.bg); term.clear()
     
     -- Title Bar
-    term.setBackgroundColor(theme.title)
+    term.setBackgroundColor(theme.titleBg or colors.blue)
     term.setCursorPos(1, 1); term.write(string.rep(" ", w))
-    term.setTextColor(colors.black)
-    local titleText = " " .. (title or "DRUNKEN ARCADE SERVER") .. " "
-    term.setCursorPos(math.floor((w - #titleText) / 2) + 1, 1); term.write(titleText)
+    term.setTextColor(theme.titleText or colors.white)
+    term.setCursorPos(2, 1)
+    local titleText = "[*] " .. (title or "Arcade Server")
+    term.write(titleText)
+
+    local rightInfo = ""
+    if os.getComputerID then
+        rightInfo = string.format("#%d [NET] ", os.getComputerID())
+    end
+    if os.time and textutils and textutils.formatTime then
+        pcall(function() rightInfo = rightInfo .. textutils.formatTime(os.time(), false) .. " " end)
+    end
+    if #rightInfo > 0 and w > #titleText + #rightInfo + 2 then
+        term.setCursorPos(w - #rightInfo + 1, 1)
+        term.write(rightInfo)
+    end
     
     -- Status Bar
-    term.setBackgroundColor(theme.statusBarBg)
+    term.setBackgroundColor(theme.statusBarBg or colors.gray)
     term.setCursorPos(1, h); term.write(string.rep(" ", w))
-    term.setTextColor(theme.statusBarText)
+    term.setTextColor(theme.statusBarText or colors.white)
     local footer = "[D] Dash | [L] Logs | [S] Sync | [ENTER] Cmd"
-    term.setCursorPos(math.floor((w - #footer) / 2) + 1, h); term.write(footer)
+    term.setCursorPos(2, h); term.write(footer)
 
     term.setBackgroundColor(theme.bg)
     term.setTextColor(theme.text)

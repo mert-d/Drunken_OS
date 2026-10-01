@@ -7,7 +7,7 @@
     - Window-buffered screen memory (window.create): 0 screen corruption on toast dismissal
     - Floating toast notifications (Mail, Chat, Bank, AirDrop, Radar)
     - Zero tick delay or input lag for fast games & apps
-    - Fast task switcher via F1/Ctrl or mouse tap [≡]
+    - Fast task switcher via F1/Ctrl or mouse tap [=]
 ]]
 
 local TaskManager = {}
@@ -70,7 +70,7 @@ end
 --==============================================================================
 
 --- Displays a non-intrusive floating toast overlay.
--- @param title string: Bold header (e.g. "💬 Chat", "💰 Bank")
+-- @param title string: Bold header (e.g. "Chat", "Bank")
 -- @param message string: Preview text
 -- @param color number: Background color constant
 -- @param duration number: Display duration in seconds (defaults to 3.5)

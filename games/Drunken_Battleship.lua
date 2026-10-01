@@ -205,7 +205,11 @@ function game.drawRadar(enemyRadar, myFleet, curX, curY, statusText, context)
     -- Footer Hint
     term.setCursorPos(2, h - 1)
     term.setTextColor(theme.mutedText or colors.gray)
-    term.write("Tap Radar Cell or Arrows+Enter • [Q] Quit")
+    if w <= 30 then
+        term.write("Arrows+Enter [Q]Quit")
+    else
+        term.write("Tap Radar Cell or Arrows+Enter - [Q] Quit")
+    end
 end
 
 function game.run(context)

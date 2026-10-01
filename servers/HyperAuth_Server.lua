@@ -307,43 +307,35 @@ end
 
 -- Header Banner
 local function drawHeader()
-    local isColor = term.isColor and term.isColor()
-    term.clear()
-    term.setCursorPos(1, 1)
-
-    if isColor then term.setTextColor(colors.cyan) end
-    print("========================================================")
-    print("       HYPERAUTH 2FA TOKEN AUTHORITY (v1.0)             ")
-    print("========================================================")
-
-    if isColor then term.setTextColor(colors.white) end
-    local cmdStatus = hasCommandsAPI and "Available (Command PC)" or "Unavailable (Simulated)"
-    print(string.format(" Computer ID : #%d", os.getComputerID()))
-    print(string.format(" Commands API: %s", cmdStatus))
-
+    local cmdStatus = hasCommandsAPI and "Command PC (/tellraw)" or "Simulated Terminal"
+    local modemDesc = "None [!]"
+    local modemCol = colors.red
     if #openModems > 0 then
         local modemDescs = {}
         for _, m in ipairs(openModems) do
             table.insert(modemDescs, string.format("%s (%s)", m.wireless and "Wireless" or "Wired", m.side))
         end
-        print(string.format(" Modem(s)    : %s [OPEN]", table.concat(modemDescs, ", ")))
-    else
-        if isColor then term.setTextColor(colors.red) end
-        print(" Modem(s)    : [!] NO MODEM DETECTED! (Attach Wireless Modem)")
-        if isColor then term.setTextColor(colors.white) end
+        modemDesc = table.concat(modemDescs, ", ") .. " [OPEN]"
+        modemCol = colors.lime
     end
 
     local vendorCount = 0
     for _ in pairs(vendor_cache_by_id) do vendorCount = vendorCount + 1 end
-    print(string.format(" Vendors DB  : %d active vendor(s)", vendorCount))
-    print(string.format(" Protocols   : %s", table.concat(PROTOCOLS, ", ")))
 
-    if isColor then term.setTextColor(colors.cyan) end
-    print("========================================================")
-    if isColor then term.setTextColor(colors.yellow) end
-    print(" Type 'help' for commands. Listening for auth requests...")
-    if isColor then term.setTextColor(colors.white) end
-    print("")
+    local details = {
+        { label = "Service", value = "HyperAuth 2FA Token Authority v1.0", color = colors.white },
+        { label = "Commands API", value = cmdStatus, color = hasCommandsAPI and colors.lime or colors.yellow },
+        { label = "Modem(s)", value = modemDesc, color = modemCol },
+        { label = "Vendors DB", value = string.format("%d active vendor(s)", vendorCount), color = colors.white },
+        { label = "Protocols", value = table.concat(PROTOCOLS, ", "), color = colors.lightGray },
+    }
+
+    if ServiceGuard and ServiceGuard.drawServerDashboard then
+        ServiceGuard.drawServerDashboard("HYPERAUTH 2FA SERVER", details, "ONLINE", "Type 'help' for commands | Listening for auth requests...")
+    else
+        term.clear(); term.setCursorPos(1, 1)
+        print("=== HYPERAUTH 2FA SERVER ===")
+    end
 end
 
 -- Request Processor

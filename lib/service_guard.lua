@@ -125,6 +125,89 @@ function ServiceGuard.protectHandler(handlerName, func, logger, ...)
     return true, table.unpack(results)
 end
 
+--- Draws a standardized server console dashboard providing the unified Drunken OS look across all servers.
+-- @param serverName string: Name of the server (e.g. "Mainframe Gateway", "HyperAuth 2FA", "Bank Server").
+-- @param details table: Array of { label = string, value = string, color = number (optional) }.
+-- @param statusMessage string: Optional status message or state indicator (e.g. "ONLINE", "LISTENING").
+-- @param hintText string: Optional footer hint (e.g. "Type 'help' for commands | Ctrl+T to stop").
+function ServiceGuard.drawServerDashboard(serverName, details, statusMessage, hintText)
+    local w, h = term.getSize()
+    local isColor = not term.isColor or term.isColor()
+    local titleBg = isColor and colors.blue or colors.black
+    local titleFg = isColor and colors.white or colors.white
+    local statusBg = isColor and colors.gray or colors.black
+    local statusFg = isColor and colors.white or colors.white
+
+    term.setBackgroundColor(colors.black)
+    term.clear()
+
+    -- 1. Top Title Bar
+    term.setCursorPos(1, 1)
+    term.setBackgroundColor(titleBg)
+    term.clearLine()
+    term.setTextColor(titleFg)
+
+    local titleStr = " [*] " .. (serverName or "Drunken OS Server")
+    term.write(titleStr)
+
+    -- Right Info: ID + Clock
+    local rightParts = {}
+    if os.getComputerID then
+        table.insert(rightParts, "#" .. os.getComputerID())
+    end
+    if rednet and rednet.isOpen and rednet.isOpen() then
+        table.insert(rightParts, "[NET]")
+    end
+    if os.time and textutils and textutils.formatTime then
+        pcall(function() table.insert(rightParts, textutils.formatTime(os.time(), false)) end)
+    end
+    local rightStr = table.concat(rightParts, " ") .. " "
+    if #rightStr > 1 and w > #titleStr + #rightStr then
+        term.setCursorPos(w - #rightStr + 1, 1)
+        term.write(rightStr)
+    end
+
+    -- 2. Metadata / Details Box
+    term.setBackgroundColor(colors.black)
+    local curY = 3
+    if details and type(details) == "table" then
+        for _, item in ipairs(details) do
+            if curY > h - 3 then break end
+            term.setCursorPos(2, curY)
+            term.setTextColor(isColor and colors.cyan or colors.white)
+            term.write(string.format("%-14s: ", item.label or ""))
+            term.setTextColor(item.color or (isColor and colors.white or colors.white))
+            term.write(tostring(item.value or ""))
+            curY = curY + 1
+        end
+    end
+
+    -- 3. Divider
+    if curY <= h - 3 then
+        term.setCursorPos(1, curY)
+        term.setTextColor(isColor and colors.gray or colors.white)
+        term.write(string.rep("-", w))
+    end
+
+    -- 4. Bottom Status Bar
+    term.setCursorPos(1, h)
+    term.setBackgroundColor(statusBg)
+    term.clearLine()
+    term.setTextColor(statusFg)
+    term.setCursorPos(2, h)
+    local footer = hintText or "RUNNING | Type 'help' for commands | Ctrl+T to exit"
+    if statusMessage and #statusMessage > 0 then
+        footer = "[" .. statusMessage .. "] " .. footer
+    end
+    if #footer > w - 2 then footer = footer:sub(1, w - 2) end
+    term.write(footer)
+
+    -- Reset
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.setCursorPos(1, math.min(h - 2, curY + 1))
+end
+
 -- Runs a server main function inside a self-healing supervisor loop.
 function ServiceGuard.runSupervisor(serviceName, mainFunc, cleanupFunc, logger, delaySeconds)
     local log = logger or function(m, isErr)

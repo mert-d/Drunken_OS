@@ -54,11 +54,21 @@ function store.run(context)
         
         -- Custom Menu Loop for Install Status
         local cursor = 1
+        local scroll = 1
         while true do
             SDK.UI.drawWindow("App Store")
+            local w, h = term.getSize()
+            local isPocket = (w <= 30)
+            local maxVisible = h - 5
+            if maxVisible < 3 then maxVisible = 3 end
+            
+            if cursor < scroll then scroll = cursor end
+            if cursor >= scroll + maxVisible then scroll = cursor - maxVisible + 1 end
             
             local y = 4
-            for i, appName in ipairs(apps) do
+            for idx = scroll, math.min(#apps, scroll + maxVisible - 1) do
+                 local i = idx
+                 local appName = apps[i]
                  if appName == "Exit" then
                      term.setCursorPos(2, y)
                      if i == cursor then term.setTextColor(context.theme.highlightText or colors.cyan); term.write("> " .. appName)
@@ -68,17 +78,21 @@ function store.run(context)
                      local installed = fs.exists(path)
                      
                      term.setCursorPos(2, y)
+                     local maxNameLen = isPocket and (w - 9) or (w - 15)
+                     local displayName = (#appName > maxNameLen) and (appName:sub(1, maxNameLen - 1) .. ".") or appName
                      if i == cursor then 
                         term.setTextColor(context.theme.highlightText or colors.cyan)
-                        term.write("> " .. appName)
+                        term.write("> " .. displayName)
                      else 
                         term.setTextColor(context.theme.text or colors.white)
-                        term.write("  " .. appName) 
+                        term.write("  " .. displayName) 
                      end
                      
-                     term.setCursorPos(20, y)
+                     local tagX = isPocket and (w - 5) or math.max(20, w - 12)
+                     local tagText = isPocket and (installed and "[OK]" or "[GET]") or (installed and "[INSTALLED]" or "[GET]")
+                     term.setCursorPos(tagX, y)
                      term.setTextColor(installed and (context.theme.successText or colors.green) or (context.theme.mutedText or colors.gray))
-                     term.write(installed and "[INSTALLED]" or "[GET]")
+                     term.write(tagText)
                  end
                  y = y + 1
             end

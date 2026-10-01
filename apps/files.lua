@@ -54,13 +54,13 @@ end
 function files.fileActionModal(context, file, isCloud)
     local options = {}
     if not file.isDir then
-        if not isCloud and file.ext == ".lua" then table.insert(options, "🚀 Run") end
-        if not isCloud then table.insert(options, "☁️ Sync to Cloud") end
-        if isCloud then table.insert(options, "💾 Download Local") end
-        table.insert(options, "📧 Mail to...")
-        if not isCloud then table.insert(options, "📡 Beam (AirDrop)") end
+        if not isCloud and file.ext == ".lua" then table.insert(options, "[>] Run") end
+        if not isCloud then table.insert(options, "[^] Sync to Cloud") end
+        if isCloud then table.insert(options, "[v] Download Local") end
+        table.insert(options, "[@] Mail to...")
+        if not isCloud then table.insert(options, "[~] Beam (AirDrop)") end
     end
-    table.insert(options, "🗑️ Delete")
+    table.insert(options, "[X] Delete")
     table.insert(options, "Cancel")
 
     local selected = 1
@@ -206,7 +206,7 @@ function files.run(context)
                     selected = 1; scroll = 1
                 else
                     local action = files.fileActionModal(context, f, storageMode == "Cloud")
-                    if action == "🚀 Run" then
+                    if action == "[>] Run" then
                         context.clear()
                         local run_shell = context.shell or _G.shell
                         if run_shell and run_shell.run then
@@ -215,19 +215,19 @@ function files.run(context)
                             context.showMessage("Error", "Shell API unavailable.")
                         end
                         context.showMessage("Exited", "Finished.")
-                    elseif action == "☁️ Sync to Cloud" then
+                    elseif action == "[^] Sync to Cloud" then
                         local file = fs.open(fs.combine(currentPath, f.name), "r")
                         local content = file.readAll(); file.close()
                         rednet.send(getParent(context).mailServerId, { type = "sync_file", user = getParent(context).username, filename = f.name, content = content, session_token = getParent(context).session_token }, "SimpleMail")
                         local _, resp = rednet.receive("SimpleMail", 5); context.showMessage("Sync", (resp and resp.success) and "Uploaded!" or "Failed")
-                    elseif action == "💾 Download Local" then
+                    elseif action == "[v] Download Local" then
                         rednet.send(getParent(context).mailServerId, { type = "download_cloud", user = getParent(context).username, filename = f.name, session_token = getParent(context).session_token }, "SimpleMail")
                         local _, resp = rednet.receive("SimpleMail", 10)
                         if resp and resp.success then
                             local file = fs.open(fs.combine(currentPath, f.name), "w")
                             file.write(resp.content); file.close(); context.showMessage("Sync", "Downloaded!")
                         end
-                    elseif action == "📧 Mail to..." then
+                    elseif action == "[@] Mail to..." then
                         local to = context.readInput("To: ", h - 1)
                         if to and to ~= "" then
                             local content
@@ -243,7 +243,7 @@ function files.run(context)
                                 context.showMessage("Mail", "Sent!")
                             end
                         end
-                    elseif action == "📡 Beam (AirDrop)" then
+                    elseif action == "[~] Beam (AirDrop)" then
                         local transfer = require("lib.transfer")
                         if not rednet.isOpen() then
                             local m = peripheral.find("modem")
@@ -309,7 +309,7 @@ function files.run(context)
                                 context.showMessage("AirDrop Failed", err or "Transmission timed out.")
                             end
                         end
-                    elseif action == "🗑️ Delete" then
+                    elseif action == "[X] Delete" then
                         if storageMode == "Local" then fs.delete(fs.combine(currentPath, f.name))
                         else rednet.send(getParent(context).mailServerId, { type = "delete_cloud", user = getParent(context).username, filename = f.name, session_token = getParent(context).session_token }, "SimpleMail")
                              rednet.receive("SimpleMail", 2); refreshCloud() end

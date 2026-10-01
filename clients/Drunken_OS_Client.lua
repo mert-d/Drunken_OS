@@ -157,6 +157,12 @@ local function getSafeSize()
     return term.getSize()
 end
 
+local function drawText(text, x, y, color)
+    term.setCursorPos(x or 1, y or 1)
+    if color then term.setTextColor(color) end
+    term.write(text or "")
+end
+
 --==============================================================================
 -- Networking & Initialization
 --==============================================================================
@@ -842,6 +848,9 @@ local function main()
             context.taskManager = taskManager
             context.notify = notify
             context.appLoader = state.appLoader
+            context.drawText = drawText
+            context.utils = utils
+            context.crypto = state.crypto
 
             state.username = nil
             state.isAdmin = false

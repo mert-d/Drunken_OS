@@ -11,17 +11,13 @@
     - Parallel Event Loop: Decoupled admin prompt from network listening.
 ]]
 
---==============================================================================
 -- Environment Setup
---==============================================================================
 
 -- Set up the package path to correctly resolve libraries from the root.
 -- This ensures that `require("lib.sha1_hmac")` correctly maps to `/lib/sha1_hmac.lua`.
 package.path = "/?.lua;" .. package.path
 
---==============================================================================
 -- API & Library Initialization
---==============================================================================
 
 -- Load internal server modules
 local ChatModule = require("servers.modules.chat")
@@ -32,9 +28,7 @@ local DB = require("lib.db")
 local utils = require("lib.utils")
 local ServiceGuard = require("lib.service_guard")
 
---==============================================================================
 -- Configuration & State
---==============================================================================
 
 local admins = {} -- This will now be loaded from a file
 local games, chatHistory, gameList, pendingApps = {}, {}, {}, {}
@@ -80,9 +74,7 @@ local function queueSave(dbPath)
     end
 end
 
---==============================================================================
 -- UI & Theme Configuration
---==============================================================================
 
 local hasColor = term.isColor and term.isColor()
 local theme = {
@@ -98,11 +90,6 @@ local theme = {
 -- Use shared wordWrap from lib/utils
 local wordWrap = utils.wordWrap
 
----
--- Parses a Lua file content string to extract a numeric version string.
--- Supported formats: `local appVersion = X.Y`, `(vX.Y)`, `-- Version: X.Y`.
--- @param content The raw script content.
--- @return {number} The parsed version, defaulting to 1.0 if not found.
 local function parseVersion(content)
     if not content then return 0 end
     local v = content:match("local%s+[gac]%w*Version%s*=%s*([%d%.]+)") or
@@ -112,9 +99,6 @@ local function parseVersion(content)
     return tonumber(v) or 1.0
 end
 
----
--- Redraws the entire admin console UI on the server's terminal.
--- This includes the title bar, a scrollable log area, and an interactive input prompt.
 local function getLogDisplayLines(maxLines, width)
     local lines = {}
     for i = #logHistory, 1, -1 do
@@ -129,26 +113,40 @@ end
 
 local function redrawAdminUI()
     local w, h = term.getSize()
-    term.setBackgroundColor(theme.windowBg)
+    term.setBackgroundColor(theme.bg or colors.black)
     term.clear()
 
-    term.setBackgroundColor(theme.title)
+    -- 1. Unified Top Title Bar
+    term.setBackgroundColor(theme.titleBg or colors.blue)
     term.setCursorPos(1, 1)
     term.write((" "):rep(w))
-    term.setTextColor(colors.white)
-    local title = " Mainframe Admin Console "
-    term.setCursorPos(math.floor((w - #title) / 2) + 1, 1)
+    term.setTextColor(theme.titleText or colors.white)
+    term.setCursorPos(2, 1)
+    local title = "[*] Mainframe Admin Console"
     term.write(title)
 
-    term.setBackgroundColor(theme.statusBarBg)
-    term.setTextColor(theme.statusBarText)
+    local rightInfo = ""
+    if os.getComputerID then
+        rightInfo = string.format("#%d [NET] ", os.getComputerID())
+    end
+    if os.time and textutils and textutils.formatTime then
+        pcall(function() rightInfo = rightInfo .. textutils.formatTime(os.time(), false) .. " " end)
+    end
+    if #rightInfo > 0 and w > #title + #rightInfo + 2 then
+        term.setCursorPos(w - #rightInfo + 1, 1)
+        term.write(rightInfo)
+    end
+
+    -- 2. Unified Bottom Status Bar
+    term.setBackgroundColor(theme.statusBarBg or colors.gray)
+    term.setTextColor(theme.statusBarText or colors.white)
     term.setCursorPos(1, h)
     term.write((" "):rep(w))
     term.setCursorPos(2, h)
-    term.write("RUNNING | Type 'help' for commands")
+    term.write("RUNNING | Type 'help' for commands | Ctrl+T to exit")
 
-    term.setBackgroundColor(theme.windowBg)
-    term.setTextColor(theme.text)
+    term.setBackgroundColor(theme.bg or colors.black)
+    term.setTextColor(theme.text or colors.white)
     local logAreaHeight = h - 4
     local displayLines = getLogDisplayLines(logAreaHeight, w - 2)
     for i = 1, math.min(#displayLines, logAreaHeight) do
@@ -159,9 +157,9 @@ local function redrawAdminUI()
     term.setCursorPos(1, h - 2)
     term.write(('-'):rep(w))
     term.setCursorPos(1, h - 1)
-    term.setTextColor(theme.prompt)
+    term.setTextColor(theme.prompt or colors.yellow)
     term.write("> ")
-    term.setTextColor(theme.text)
+    term.setTextColor(theme.text or colors.white)
     term.write(adminInput)
 end
 
@@ -192,11 +190,6 @@ local function redrawMonitorUI()
     end
 end
 
----
--- Logs a message to the internal history, the display UI, and a persistent log file.
--- Automatically prunes history to prevent memory leaks (max 200 entries).
--- @param message The message to log.
--- @param isError (Optional) True if the message should be flagged as an error.
 local logBuffer = {}
 local logWriteIdx = 0
 local LOG_MAX = 200
@@ -222,9 +215,6 @@ local function logActivity(message, isError)
     uiDirty = true
 end
 
----
--- Flushes the in-memory log buffer to the 'server.log' persistent file.
--- Created to batch disk writes and minimize main thread halting.
 local function flushLogs()
     if #logBuffer == 0 then return end
     if not logsDirExists then
@@ -243,27 +233,17 @@ local function flushLogs()
 end
 
 
---==============================================================================
 -- Data Persistence Functions
---==============================================================================
 
 -- Use shared database functions from lib/db
 local function saveTableToFile(path, data)
     return DB.saveTableToFile(path, data, logActivity)
 end
 
----
--- Helper to load a database file into memory, wrapped for error logging.
--- @param path The database file path.
--- @return {table} The deserialized table.
 local function loadTableFromFile(path)
     return DB.loadTableFromFile(path, logActivity)
 end
 
----
--- Background thread that periodically saves modified databases to disk.
--- Employs a dirty-flag tracker to only serialize databases that have actually changed.
--- Runs every 30 seconds.
 local function persistenceLoop()
     -- Initialize tracker now that logActivity is defined
     if not dbTracker then
@@ -283,9 +263,6 @@ local function persistenceLoop()
     end
 end
 
----
--- Background thread overseeing terminal repainting.
--- Caps rendering at 20 FPS to prevent locking ComputerCraft's event loop when logs rapidly update.
 local function uiRenderLoop()
     while true do
         if uiDirty then
@@ -297,10 +274,6 @@ local function uiRenderLoop()
     end
 end
 
----
--- Loads all server databases from disk into memory.
--- Initializes missing files with defaults (e.g., ensuring a default admin exists).
--- Scans the 'games/' directory to automatically populate the arcade catalog.
 local function loadAllData()
     admins = loadTableFromFile(ADMINS_DB)
     if not admins.MuhendizBey then
@@ -378,16 +351,10 @@ local function loadAllData()
     logActivity("Mainframe data loaded.")
 end
 
---==============================================================================
 -- Helper Closure for Context
---==============================================================================
 
 local serverContext = nil
 
----
--- Creates and returns a shared state context.
--- Required by the modular handlers (auth, chat, mail) to easily interface with global variables.
--- @return {table} The server context table.
 local function getContext()
     if not serverContext then
         serverContext = {
@@ -411,9 +378,7 @@ local function getContext()
     return serverContext
 end
 
---==============================================================================
 -- Network Request Handlers
---==============================================================================
 
 local mailHandlers = {}
 
@@ -535,7 +500,7 @@ function mailHandlers.get_update(senderId, message)
     rednet.send(senderId, { code = resolveProgramCode(message.program) }, "SimpleMail")
 end
 
-    -- Duplicate handlers removed (get_manifest and get_file — see authoritative definitions above)
+    -- Duplicate handlers removed (get_manifest and get_file -- see authoritative definitions above)
 
 -- Backwards compatibility: older clients send get_game_update instead of get_file
 function mailHandlers.get_game_update(senderId, message)
@@ -769,7 +734,7 @@ end
 
 
 -- NOTE: user_exists is handled by AuthModule.handleUserExists (see line ~670).
--- Stale inline override removed — it referenced message.recipient instead of message.user
+-- Stale inline override removed -- it referenced message.recipient instead of message.user
 -- and would have crashed with a nil index error.
 
 function mailHandlers.is_admin_check(senderId, message)
@@ -808,9 +773,7 @@ function mailHandlers.get_admin_tool(senderId, message)
     end
 end
 
---==============================================================================
 -- Admin Command Handlers & Main Loops (REPAIRED)
---==============================================================================
 
 --==============================================================================
 -- Admin Command Implementation
@@ -820,8 +783,6 @@ end
 
 -- adminCommands table is forward-declared above (before mailHandlers.admin_action)
 
----
--- Displays a list of available admin commands.
 function adminCommands.help()
     logActivity("--- Mainframe Admin Commands ---")
     logActivity(" [User Management] ")
@@ -836,8 +797,6 @@ end
 adminCommands.commands = adminCommands.help
 adminCommands["?"] = adminCommands.help
 
----
--- Lists all registered users and their nicknames.
 function adminCommands.users()
     logActivity("Users:")
     for u, d in pairs(users) do
@@ -1255,14 +1214,6 @@ local function executeAdminCommand(command)
     return table.concat(output, "\n")
 end
 
----
--- Central dispatcher for all incoming rednet messages.
--- The central dispatcher for all incoming Rednet messages.
--- This function handles proxy unwrapping, session verification, and routing
--- messages to specialized handlers (mail, chat, admin, etc).
--- @param senderId The Rednet ID of the message sender (or proxy).
--- @param message The raw message table.
--- @param protocol The Rednet protocol string.
 local function handleRednetMessage(senderId, message, protocol)
     local actualMsg = message
     local origSender = senderId
@@ -1373,10 +1324,6 @@ local function handleRednetMessage(senderId, message, protocol)
     end
 end
 
----
--- Processes character and key-press events from the local terminal to build admin commands.
--- @param event The event type string ("key" or "char").
--- @param p1 The keycode or character pressed.
 local function handleTerminalInput(event, p1)
     if event == "key" then
         if p1 == keys.enter then
@@ -1395,8 +1342,6 @@ local function handleTerminalInput(event, p1)
     uiDirty = true
 end
 
----
--- Protocol registration helper for startup and hot-plug events.
 local function registerProtocols()
     local protos = {
         { proto = "SimpleMail_Internal", host = "mail.server.internal" },
@@ -1411,8 +1356,6 @@ local function registerProtocols()
     end
 end
 
----
--- Flushes all dirty database state and persistent logs on shutdown or recovery.
 local function flushMainframeState()
     if dbTracker and dbTracker.backgroundSave then
         pcall(dbTracker.backgroundSave)
@@ -1420,9 +1363,6 @@ local function flushMainframeState()
     flushLogs()
 end
 
----
--- Orchestrates the core server threads concurrently using parallel.waitForAny.
--- Includes the admin prompt, rednet listener, persistent save loop, and UI rendering loop.
 local function mainEventLoop()
     -- Admin Prompt logic needs to be factored out for parallel
     local function adminPrompt()
@@ -1459,12 +1399,6 @@ local function mainEventLoop()
     parallel.waitForAny(adminPrompt, rednetListener, persistenceLoop, uiRenderLoop)
 end
 
----
--- Server entry point sequence:
--- 1. Load data from disk.
--- 2. Detect and initialize external monitors.
--- 3. Open modems and host rednet protocols.
--- 4. Kick off the supervised event loop with zero downtime auto-restart.
 local function main()
     loadAllData()
     

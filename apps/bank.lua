@@ -42,11 +42,21 @@ local function getBankSession(context)
         return nil, nil
     end
 
-    local pin_hash = getParent(context).crypto.hex(pin_str)
+    local crypto = (context and context.crypto) or (getParent(context) and getParent(context).crypto)
+    if not crypto then
+        local ok, lib = pcall(require, "lib.sha1_hmac")
+        if ok and lib then crypto = lib end
+    end
+    if not crypto or not crypto.hex then
+        context.showMessage("Error", "Crypto module unavailable.")
+        return nil, nil
+    end
+
+    local pin_hash = crypto.hex(pin_str)
     
     context.drawWindow("Verifying...")
     rednet.send(bankServerId, { type = "login", user = getParent(context).username, pin_hash = pin_hash }, BANK_PROTOCOL)
-    local _, response = rednet.receive(BANK_PROTOCOL, 2.0)
+    local _, response = rednet.receive(BANK_PROTOCOL, 5.0)
 
     if response and response.success then
         return bankServerId, pin_hash, response.balance, response.rates or {}

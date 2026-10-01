@@ -17,6 +17,7 @@ local tests = {
     { name = "Chunked File Streaming",    file = "tests/test_transfer.lua" },
     { name = "Non-Blocking Net RPC Layer", file = "tests/test_rpc.lua" },
     { name = "Calc & Create Mod Ratios",   file = "tests/test_calc.lua" },
+    { name = "Engineer Toolkit & Create SU", file = "tests/test_calculator.lua" },
     { name = "Score Cache & Offline Sync", file = "tests/test_score_cache.lua" },
     { name = "Connect 4 Physics & AI",     file = "tests/test_connect4.lua" },
     { name = "Battleship Naval AI & Radar", file = "tests/test_battleship.lua" },

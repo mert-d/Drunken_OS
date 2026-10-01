@@ -75,17 +75,17 @@ local safeColor = sharedTheme.safeColor
 local theme = {
     bg           = safeColor("black", colors.black),
     text         = safeColor("white", colors.white),
-    title        = safeColor("orange", colors.yellow),
-    titleBg      = safeColor("brown", colors.gray),
+    title        = safeColor("blue", colors.blue),
+    titleBg      = safeColor("blue", colors.blue),
     titleText    = safeColor("white", colors.white),
     prompt       = safeColor("yellow", colors.yellow),
-    statusBarBg  = safeColor("gray", colors.lightGray),
+    statusBarBg  = safeColor("gray", colors.gray),
     statusBarText= safeColor("white", colors.white),
-    success      = safeColor("lime", colors.white),
+    success      = safeColor("lime", colors.lime),
     error        = safeColor("red", colors.red),
-    orderNew     = safeColor("lime", colors.white),
-    orderCook    = safeColor("orange", colors.yellow),
-    orderDone    = safeColor("cyan", colors.white),
+    orderNew     = safeColor("lime", colors.lime),
+    orderCook    = safeColor("yellow", colors.yellow),
+    orderDone    = safeColor("cyan", colors.cyan),
 }
 
 --==============================================================================
@@ -620,7 +620,7 @@ function handlers.work_complete(senderId, message)
     }, RESTAURANT_PROTOCOL)
 end
 
---- Chef reports a missing ingredient — trigger crisis management.
+--- Chef reports a missing ingredient -- trigger crisis management.
 function handlers.missing_item(senderId, message)
     if senderId ~= config.chef_turtle_id then return end
 
@@ -694,7 +694,7 @@ end
 -- Main Loops (Non-Blocking)
 --==============================================================================
 
---- Network listener loop — dispatches all incoming rednet messages.
+--- Network listener loop -- dispatches all incoming rednet messages.
 local function networkLoop()
     while true do
         local senderId, message, proto = rednet.receive()
@@ -728,7 +728,7 @@ local function networkLoop()
     end
 end
 
---- Tick loop — processes the order queue and dispatches work to idle turtles.
+--- Tick loop -- processes the order queue and dispatches work to idle turtles.
 local function tickLoop()
     while true do
         sleep(2)
@@ -780,12 +780,25 @@ local function drawUI()
     term.clear()
 
     -- Title bar
-    term.setBackgroundColor(theme.titleBg)
-    term.setTextColor(theme.titleText)
+    term.setBackgroundColor(theme.titleBg or colors.blue)
+    term.setTextColor(theme.titleText or colors.white)
     term.setCursorPos(1, 1)
-    local titleStr = " " .. (config.restaurant_name or "Restaurant Server") .. " "
-    local pad = string.rep(" ", math.max(0, w - #titleStr))
-    term.write(titleStr .. pad)
+    term.write(string.rep(" ", w))
+    term.setCursorPos(2, 1)
+    local titleStr = "[*] " .. (config.restaurant_name or "Restaurant Server")
+    term.write(titleStr)
+
+    local rightInfo = ""
+    if os.getComputerID then
+        rightInfo = string.format("#%d [NET] ", os.getComputerID())
+    end
+    if os.time and textutils and textutils.formatTime then
+        pcall(function() rightInfo = rightInfo .. textutils.formatTime(os.time(), false) .. " " end)
+    end
+    if #rightInfo > 0 and w > #titleStr + #rightInfo + 2 then
+        term.setCursorPos(w - #rightInfo + 1, 1)
+        term.write(rightInfo)
+    end
 
     -- Status bar
     term.setCursorPos(1, 2)
@@ -799,7 +812,7 @@ local function drawUI()
         end
     end
 
-    local statusStr = string.format(" Orders: %d | Chef: %s | Waiter: %s | Menu: %d items ",
+    local statusStr = string.format(" Orders: %d | Chef: %s | Waiter: %s | Menu: %d items",
         activeOrders,
         chefBusy and "BUSY" or "IDLE",
         waiterBusy and "BUSY" or "IDLE",
@@ -852,14 +865,16 @@ local function drawUI()
 
     -- Bottom bar
     term.setCursorPos(1, h)
-    term.setBackgroundColor(theme.titleBg)
-    term.setTextColor(theme.titleText)
-    local bottomStr = " [R]eload Menu | [Q]uit "
-    term.write(bottomStr .. string.rep(" ", math.max(0, w - #bottomStr)))
+    term.setBackgroundColor(theme.statusBarBg or colors.gray)
+    term.setTextColor(theme.statusBarText or colors.white)
+    term.write(string.rep(" ", w))
+    local bottomStr = "[R] Reload Menu | [Q] Quit"
+    term.setCursorPos(2, h)
+    term.write(bottomStr)
     term.setBackgroundColor(theme.bg)
 end
 
---- Admin input loop — handles keyboard input for admin controls.
+--- Admin input loop -- handles keyboard input for admin controls.
 local function adminLoop()
     while true do
         drawUI()

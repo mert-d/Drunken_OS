@@ -57,14 +57,14 @@ function app.run(context)
                     term.setTextColor(theme.highlightText or colors.white)
                     term.setBackgroundColor(theme.highlightBg or colors.blue)
                     local title = note.title or "Untitled"
-                    if #title > (w - 6) then title = title:sub(1, w - 8) .. "…" end
-                    term.write(" • " .. title .. string.rep(" ", math.max(0, w - #title - 6)) .. " ")
+                    if #title > (w - 6) then title = title:sub(1, w - 8) .. ".." end
+                    term.write(" * " .. title .. string.rep(" ", math.max(0, w - #title - 6)) .. " ")
                     term.setBackgroundColor(theme.bg or colors.black)
                 else
                     term.setTextColor(theme.text or colors.white)
                     local title = note.title or "Untitled"
-                    if #title > (w - 6) then title = title:sub(1, w - 8) .. "…" end
-                    term.write(" • " .. title)
+                    if #title > (w - 6) then title = title:sub(1, w - 8) .. ".." end
+                    term.write(" * " .. title)
                 end
             end
         end
@@ -72,7 +72,11 @@ function app.run(context)
         -- Footer hints
         term.setCursorPos(2, h - 1)
         term.setTextColor(theme.mutedText or colors.gray)
-        term.write("[N] New  [Enter] View  [D] Delete")
+        if w <= 30 then
+            term.write("[N]New [Enter]Open [D]Del")
+        else
+            term.write("[N] New  [Enter] View  [D] Delete")
+        end
         
         local event, p1, p2, p3 = os.pullEvent()
         if event == "key" then
