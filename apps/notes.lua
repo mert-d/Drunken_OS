@@ -147,8 +147,8 @@ function app.run(context)
                 
                 term.setCursorPos(2, h - 1)
                 term.setTextColor(theme.mutedText or colors.gray)
-                term.write("Press any key to return...")
-                os.pullEvent("key")
+                term.write(w <= 30 and "Tap/Key to return..." or "Press any key or tap to return...")
+                os.pullEvent()
             elseif k == keys.d and #notes > 0 then
                 -- Delete Selected Note
                 local delNote = table.remove(notes, selected)

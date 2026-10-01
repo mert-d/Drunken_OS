@@ -284,7 +284,7 @@ function bites.run(ctx)
                             term.write(msg.message)
                         end
                         term.setCursorPos(2, h-1); term.setTextColor(colors.gray)
-                        term.write("Press any key..."); os.pullEvent("key"); return
+                        term.write("Press any key or tap..."); os.pullEvent(); return
                     else
                         term.setTextColor(ctx.theme.text or colors.white)
                         term.write("Status: " .. (msg.status or "..."))

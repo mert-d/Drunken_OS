@@ -97,10 +97,52 @@ function store.run(context)
                  y = y + 1
             end
             
-            local _, k = os.pullEvent("key")
-            if k == keys.up then cursor = (cursor==1) and #apps or cursor-1
-            elseif k == keys.down then cursor = (cursor==#apps) and 1 or cursor+1
-            elseif k == keys.enter then break end
+            -- Draw Store Footer
+            term.setCursorPos(2, h - 1)
+            term.setTextColor(context.theme.mutedText or colors.gray)
+            if isPocket then
+                term.write("[Enter:Select] [Q:Exit]")
+            else
+                term.write("[Enter] Select  [Q] Exit")
+            end
+            
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                local k = p1
+                if k == keys.up then cursor = (cursor == 1) and #apps or cursor - 1
+                elseif k == keys.down then cursor = (cursor == #apps) and 1 or cursor + 1
+                elseif k == keys.enter then break
+                elseif k == keys.q or k == keys.tab or k == keys.x then cursor = #apps; break end
+            elseif event == "mouse_scroll" then
+                local dir = p1
+                if dir < 0 then
+                    cursor = (cursor == 1) and #apps or cursor - 1
+                else
+                    cursor = (cursor == #apps) and 1 or cursor + 1
+                end
+            elseif event == "mouse_click" then
+                local btn, cx, cy = p1, p2, p3
+                if cy >= 4 and cy < 4 + maxVisible then
+                    local clickedIdx = scroll + (cy - 4)
+                    if clickedIdx >= 1 and clickedIdx <= #apps then
+                        if cursor == clickedIdx then
+                            break
+                        else
+                            cursor = clickedIdx
+                        end
+                    end
+                elseif cy == h - 1 then
+                    if cx <= math.floor(w / 2) then
+                        break
+                    else
+                        cursor = #apps
+                        break
+                    end
+                elseif cy == 1 and cx >= w - 3 then
+                    cursor = #apps
+                    break
+                end
+            end
         end
         
         local choice = apps[cursor]
@@ -110,37 +152,62 @@ function store.run(context)
         if fs.exists(path) then
              -- Uninstall Flow
              SDK.UI.drawWindow("Manage App")
-             term.setCursorPos(2,4); term.write(choice)
-             term.setCursorPos(2,6); term.write("Press ENTER to Uninstall")
-             term.setCursorPos(2,7); term.write("Press Q to Cancel")
+             term.setCursorPos(2, 4); term.write(choice)
+             term.setCursorPos(2, 6); term.write("Press ENTER to Uninstall")
+             term.setCursorPos(2, 7); term.write("Press Q to Cancel")
              
              while true do
-                 local _, k = os.pullEvent("key")
-                 if k == keys.enter then
-                     updater.uninstall_app(path)
-                     SDK.UI.showMessage("Success", "Uninstalled " .. choice)
-                     break
-                 elseif k == keys.q then break end
+                 local event, p1, p2, p3 = os.pullEvent()
+                 if event == "key" then
+                     local k = p1
+                     if k == keys.enter then
+                         updater.uninstall_app(path)
+                         SDK.UI.showMessage("Success", "Uninstalled " .. choice)
+                         break
+                     elseif k == keys.q or k == keys.tab then break end
+                 elseif event == "mouse_click" then
+                     local _, cx, cy = p1, p2, p3
+                     if cy == 6 then
+                         updater.uninstall_app(path)
+                         SDK.UI.showMessage("Success", "Uninstalled " .. choice)
+                         break
+                     elseif cy == 7 or (cy == 1 and cx >= 20) then
+                         break
+                     end
+                 end
              end
         else
              -- Install Flow
              SDK.UI.drawWindow("Install App")
-             term.setCursorPos(2,4); term.write(choice)
-             term.setCursorPos(2,6); term.write("Press ENTER to Download")
-             term.setCursorPos(2,7); term.write("Press Q to Cancel")
+             term.setCursorPos(2, 4); term.write(choice)
+             term.setCursorPos(2, 6); term.write("Press ENTER to Download")
+             term.setCursorPos(2, 7); term.write("Press Q to Cancel")
              
              while true do
-                 local _, k = os.pullEvent("key")
-                 if k == keys.enter then
-                     SDK.UI.drawWindow("Downloading...")
-                     local success = updater.install_app(choice, function(msg) 
-                         -- minimal UI feedback
-                         term.setCursorPos(2, 6); term.clearLine(); term.write(msg)
-                     end)
-                     
-                     if success then SDK.UI.showMessage("Success", "Installed " .. choice) end
-                     break
-                 elseif k == keys.q then break end
+                 local event, p1, p2, p3 = os.pullEvent()
+                 if event == "key" then
+                     local k = p1
+                     if k == keys.enter then
+                         SDK.UI.drawWindow("Downloading...")
+                         local success = updater.install_app(choice, function(msg) 
+                             term.setCursorPos(2, 6); term.clearLine(); term.write(msg)
+                         end)
+                         if success then SDK.UI.showMessage("Success", "Installed " .. choice) end
+                         break
+                     elseif k == keys.q or k == keys.tab then break end
+                 elseif event == "mouse_click" then
+                     local _, cx, cy = p1, p2, p3
+                     if cy == 6 then
+                         SDK.UI.drawWindow("Downloading...")
+                         local success = updater.install_app(choice, function(msg) 
+                             term.setCursorPos(2, 6); term.clearLine(); term.write(msg)
+                         end)
+                         if success then SDK.UI.showMessage("Success", "Installed " .. choice) end
+                         break
+                     elseif cy == 7 or (cy == 1 and cx >= 20) then
+                         break
+                     end
+                 end
              end
         end
     end

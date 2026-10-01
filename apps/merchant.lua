@@ -52,11 +52,27 @@ function merchant.cashier(context)
         while true do
             context.drawWindow("Merchant Cashier")
             context.drawMenu(options, selected, 2, 4)
-            local event, key = os.pullEvent("key")
-            if key == keys.up then selected = (selected == 1) and #options or selected - 1
-            elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-            elseif key == keys.enter then break
-            elseif key == keys.tab then return end
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                local key = p1
+                if key == keys.up then selected = (selected == 1) and #options or selected - 1
+                elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
+                elseif key == keys.enter then break
+                elseif key == keys.tab or key == keys.q then return end
+            elseif event == "mouse_scroll" then
+                local dir = p1
+                if dir < 0 then selected = (selected == 1) and #options or selected - 1
+                else selected = (selected == #options) and 1 or selected + 1 end
+            elseif event == "mouse_click" then
+                local btn, cx, cy = p1, p2, p3
+                local clickedIdx = cy - 4 + 1
+                if clickedIdx >= 1 and clickedIdx <= #options then
+                    selected = clickedIdx
+                    break
+                elseif cy == 1 and cx >= 20 then
+                    return
+                end
+            end
         end
 
         if selected == 1 then
@@ -165,11 +181,27 @@ function merchant.pos(context)
             
             context.drawMenu(options, menuSel, 2, 14)
             
-            local event, key = os.pullEvent("key")
-            if key == keys.up then menuSel = (menuSel == 1) and #options or menuSel - 1
-            elseif key == keys.down then menuSel = (menuSel == #options) and 1 or menuSel + 1
-            elseif key == keys.enter then break
-            elseif key == keys.tab then return end
+            local event, p1, p2, p3 = os.pullEvent()
+            if event == "key" then
+                local key = p1
+                if key == keys.up then menuSel = (menuSel == 1) and #options or menuSel - 1
+                elseif key == keys.down then menuSel = (menuSel == #options) and 1 or menuSel + 1
+                elseif key == keys.enter then break
+                elseif key == keys.tab or key == keys.q then return end
+            elseif event == "mouse_scroll" then
+                local dir = p1
+                if dir < 0 then menuSel = (menuSel == 1) and #options or menuSel - 1
+                else menuSel = (menuSel == #options) and 1 or menuSel + 1 end
+            elseif event == "mouse_click" then
+                local btn, cx, cy = p1, p2, p3
+                local clickedIdx = cy - 14 + 1
+                if clickedIdx >= 1 and clickedIdx <= #options then
+                    menuSel = clickedIdx
+                    break
+                elseif cy == 1 and cx >= 20 then
+                    return
+                end
+            end
         end
         
         if menuSel == 4 then return end
@@ -191,10 +223,28 @@ function merchant.pos(context)
                 while true do
                     context.drawWindow("Add Item")
                     context.drawMenu(itemOpts, iSel, 2, 4)
-                    local _, k = os.pullEvent("key")
-                    if k==keys.up  then iSel=(iSel==1) and #itemOpts or iSel-1
-                    elseif k==keys.down then iSel=(iSel==#itemOpts) and 1 or iSel+1
-                    elseif k==keys.enter then break end
+                    local event, p1, p2, p3 = os.pullEvent()
+                    if event == "key" then
+                        local k = p1
+                        if k == keys.up then iSel = (iSel == 1) and #itemOpts or iSel - 1
+                        elseif k == keys.down then iSel = (iSel == #itemOpts) and 1 or iSel + 1
+                        elseif k == keys.enter then break
+                        elseif k == keys.tab or k == keys.q then iSel = #itemOpts; break end
+                    elseif event == "mouse_scroll" then
+                        local dir = p1
+                        if dir < 0 then iSel = (iSel == 1) and #itemOpts or iSel - 1
+                        else iSel = (iSel == #itemOpts) and 1 or iSel + 1 end
+                    elseif event == "mouse_click" then
+                        local btn, cx, cy = p1, p2, p3
+                        local clickedIdx = cy - 4 + 1
+                        if clickedIdx >= 1 and clickedIdx <= #itemOpts then
+                            iSel = clickedIdx
+                            break
+                        elseif cy == 1 and cx >= 20 then
+                            iSel = #itemOpts
+                            break
+                        end
+                    end
                 end
             end
             
@@ -267,8 +317,9 @@ function merchant.pos(context)
                 term.setCursorPos(2, 10); term.write("Waiting...")
                 
                 -- Allow Exit
-                local e, k = os.pullEvent("key")
-                if k == keys.q then break end
+                local e, p1 = os.pullEvent()
+                if e == "key" and (p1 == keys.q or p1 == keys.tab) then break
+                elseif e == "mouse_click" then break end
             end
             
             if verified then

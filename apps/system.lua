@@ -107,24 +107,73 @@ end
 function system.run(context)
     local options = {"Change Nickname", "System Settings", "Check for Updates", "Back"}
     local selected = 1
+    local ok_sound, Sound = pcall(require, "lib.sound")
+    if not ok_sound or type(Sound) ~= "table" then
+        Sound = { playClick = function() end }
+    end
+
+    local function executeOption(idx)
+        if idx == 1 then
+            system.changeNickname(context)
+        elseif idx == 2 then
+            local ok, loader = pcall(require, "lib.app_loader")
+            if ok then
+                loader.run("settings", context)
+            else
+                context.showMessage("Error", "Could not load settings app.")
+            end
+        elseif idx == 3 then
+            system.updateAll(context)
+        elseif idx == 4 then
+            return false
+        end
+        return true
+    end
+
     while true do
         context.drawWindow("System")
         context.drawMenu(options, selected, 2, 4)
-        local event, key = os.pullEvent("key")
-        if key == keys.up then selected = (selected == 1) and #options or selected - 1
-        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-        elseif key == keys.enter then
-            if selected == 1 then system.changeNickname(context)
-            elseif selected == 2 then
-                local ok, loader = pcall(require, "lib.app_loader")
-                if ok then
-                    loader.run("settings", context)
-                else
-                    context.showMessage("Error", "Could not load settings app.")
-                end
-            elseif selected == 3 then system.updateAll(context)
-            elseif selected == 4 then break end
-        elseif key == keys.tab then break end
+
+        local w, h = term.getSize()
+        term.setCursorPos(2, h - 1)
+        term.setTextColor(context.theme and context.theme.mutedText or colors.gray)
+        term.write("[Enter:Select] [Q:Back]")
+
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "key" then
+            local key = p1
+            if key == keys.up then
+                selected = (selected == 1) and #options or selected - 1
+                if Sound and Sound.playClick then Sound.playClick() end
+            elseif key == keys.down then
+                selected = (selected == #options) and 1 or selected + 1
+                if Sound and Sound.playClick then Sound.playClick() end
+            elseif key == keys.enter then
+                if not executeOption(selected) then break end
+            elseif key == keys.tab or key == keys.q or key == keys.x then
+                break
+            end
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir < 0 then
+                selected = (selected == 1) and #options or selected - 1
+            else
+                selected = (selected == #options) and 1 or selected + 1
+            end
+            if Sound and Sound.playClick then Sound.playClick() end
+        elseif event == "mouse_click" then
+            local btn, cx, cy = p1, p2, p3
+            local clickedIdx = cy - 4 + 1
+            if clickedIdx >= 1 and clickedIdx <= #options then
+                selected = clickedIdx
+                if Sound and Sound.playClick then Sound.playClick() end
+                if not executeOption(clickedIdx) then break end
+            elseif cy == h - 1 and cx > math.floor(w / 2) then
+                break
+            elseif cy == 1 and cx >= w - 3 then
+                break
+            end
+        end
     end
 end
 

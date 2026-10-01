@@ -63,7 +63,8 @@ local function mainMenu(context)
             term.setCursorPos(2,5); term.write("DK.UI.showMessage(title, text)")
             term.setCursorPos(2,6); term.write("DK.Net.createGameSocket(id)")
             term.setCursorPos(2,8); term.write("See github for full guide.")
-            os.pullEvent("key")
+            term.setCursorPos(2,10); term.setTextColor(colors.gray); term.write("Press any key or tap to return...")
+            os.pullEvent()
 
         elseif selected == "Submit App" then
             SDK.UI.drawWindow("Submit App")

@@ -61,14 +61,16 @@ function mail.readMail(context)
             term.setTextColor(context.theme.prompt); term.setCursorPos(2, h - 2); term.write("Press TAB to return...")
         end
 
-        local event, key = os.pullEvent("key")
-        if key == keys.up then
-            scroll = math.max(1, scroll - 1)
-        elseif key == keys.down then
-            scroll = math.min(math.max(1, #bodyLines - bodyDisplayHeight + 1), scroll + 1)
-        elseif key == keys.tab then
-            break
-        elseif mailData.attachment and key == keys.y then
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "key" then
+            local key = p1
+            if key == keys.up then
+                scroll = math.max(1, scroll - 1)
+            elseif key == keys.down then
+                scroll = math.min(math.max(1, #bodyLines - bodyDisplayHeight + 1), scroll + 1)
+            elseif key == keys.tab or key == keys.q then
+                break
+            elseif mailData.attachment and key == keys.y then
             local saveName = mailData.attachment.name
             if fs.exists(saveName) then
                 if context.readInput("Overwrite '"..saveName.."'? (y/n): ", y + 1):lower() ~= "y" then
@@ -88,6 +90,19 @@ function mail.readMail(context)
         elseif mailData.attachment and key == keys.n then
             context.showMessage("Cancelled", "Save operation cancelled.")
             break
+        end
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir < 0 then
+                scroll = math.max(1, scroll - 1)
+            else
+                scroll = math.min(math.max(1, #bodyLines - bodyDisplayHeight + 1), scroll + 1)
+            end
+        elseif event == "mouse_click" then
+            local _, cx, cy = p1, p2, p3
+            if (cy == 1 and cx >= w - 3) or (not mailData.attachment and cy >= h - 2) then
+                break
+            end
         end
     end
 end
@@ -145,23 +160,52 @@ function mail.viewInbox(context)
         term.setCursorPos(w - #helpText, h - 2)
         term.write(helpText)
         
-        local event, key = os.pullEvent("key")
-        if key == keys.up then
-            selected = math.max(1, selected - 1)
-            if selected < scroll then scroll = selected end
-        elseif key == keys.down then
-            selected = math.min(#inbox, selected + 1)
-            if selected >= scroll + listHeight then scroll = selected - listHeight + 1 end
-        elseif key == keys.enter then
-            context.mail_to_read = inbox[selected]
-            mail.readMail(context)
-        elseif key == keys.delete or key == keys.d then
-            rednet.send(getParent(context).mailServerId, {type = "delete", user = getParent(context).username, session_token = getParent(context).session_token, id = inbox[selected].id}, "SimpleMail")
-            table.remove(inbox, selected)
-            if #inbox == 0 then break end
-            selected = math.max(1, math.min(selected, #inbox))
-        elseif key == keys.tab then
-            break
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "key" then
+            local key = p1
+            if key == keys.up then
+                selected = math.max(1, selected - 1)
+                if selected < scroll then scroll = selected end
+            elseif key == keys.down then
+                selected = math.min(#inbox, selected + 1)
+                if selected >= scroll + listHeight then scroll = selected - listHeight + 1 end
+            elseif key == keys.enter then
+                context.mail_to_read = inbox[selected]
+                mail.readMail(context)
+            elseif key == keys.delete or key == keys.d then
+                rednet.send(getParent(context).mailServerId, {type = "delete", user = getParent(context).username, session_token = getParent(context).session_token, id = inbox[selected].id}, "SimpleMail")
+                table.remove(inbox, selected)
+                if #inbox == 0 then break end
+                selected = math.max(1, math.min(selected, #inbox))
+            elseif key == keys.tab or key == keys.q then
+                break
+            end
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir < 0 then
+                selected = math.max(1, selected - 1)
+                if selected < scroll then scroll = selected end
+            else
+                selected = math.min(#inbox, selected + 1)
+                if selected >= scroll + listHeight then scroll = selected - listHeight + 1 end
+            end
+        elseif event == "mouse_click" then
+            local btn, cx, cy = p1, p2, p3
+            if cy >= 4 and cy < 4 + listHeight then
+                local clickedIdx = scroll + (cy - 4)
+                if clickedIdx >= 1 and clickedIdx <= #inbox then
+                    if selected == clickedIdx then
+                        context.mail_to_read = inbox[selected]
+                        mail.readMail(context)
+                    else
+                        selected = clickedIdx
+                    end
+                end
+            elseif cy >= h - 2 and cx > math.floor(w * 0.6) then
+                break
+            elseif cy == 1 and cx >= w - 3 then
+                break
+            end
         end
     end
 end
@@ -230,72 +274,103 @@ end
 function mail.manageLists(context)
     local options = {"View All Lists", "Create a List", "Join a List", "Back"}
     local selected = 1
+
+    local function executeListOption(idx)
+        if idx == 1 then
+            context.drawWindow("All Lists")
+            term.setCursorPos(2, 4); term.write("Fetching lists...")
+            rednet.send(getParent(context).mailServerId, { type = "get_lists", user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
+            local response = receiveMailResponse(function(m)
+                return m.lists ~= nil or m.reason ~= nil or m.original_type == "get_lists"
+            end, 6.0)
+            if response and response.lists then
+                context.drawWindow("All Lists")
+                local listTable = {}
+                for name, members in pairs(response.lists) do
+                    table.insert(listTable, {name = name, members = #members})
+                end
+                if #listTable == 0 then
+                    context.showMessage("All Lists", "There are no mailing lists.")
+                else
+                    local y = 4
+                    for _, listData in ipairs(listTable) do
+                        term.setCursorPos(2, y)
+                        term.write(string.format("@%s (%d members)", listData.name, listData.members))
+                        y = y + 1
+                    end
+                    term.setCursorPos(2, y + 1)
+                    term.setTextColor(context.theme.prompt)
+                    term.write("Press any key or tap to continue...")
+                    os.pullEvent()
+                end
+            else
+                context.showMessage("Error", (response and (response.reason or "Could not fetch lists.")) or "Could not fetch lists (timed out).")
+            end
+        elseif idx == 2 then
+            context.drawWindow("Create List")
+            local name = context.readInput("New list name: @", 4)
+            if name and name ~= "" then
+                rednet.send(getParent(context).mailServerId, { type = "create_list", name = name, creator = getParent(context).username, user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
+                local r = receiveMailResponse(function(m)
+                    return m.status ~= nil or m.reason ~= nil or m.success ~= nil or m.original_type == "create_list"
+                end, 6.0)
+                local msg = (r and (r.status or r.reason or (r.success and "List created.") or "Unknown response")) or "No response from server."
+                context.showMessage("Server Response", msg)
+            end
+        elseif idx == 3 then
+            context.drawWindow("Join List")
+            local name = context.readInput("List to join: @", 4)
+            if name and name ~= "" then
+                rednet.send(getParent(context).mailServerId, { type = "join_list", name = name, user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
+                local r = receiveMailResponse(function(m)
+                    return m.status ~= nil or m.reason ~= nil or m.success ~= nil or m.original_type == "join_list"
+                end, 6.0)
+                local msg = (r and (r.status or r.reason or (r.success and "Joined list.") or "Unknown response")) or "No response from server."
+                context.showMessage("Server Response", msg)
+            end
+        elseif idx == 4 then
+            return false
+        end
+        return true
+    end
+
     while true do
         context.drawWindow("Mailing Lists")
         context.drawMenu(options, selected, 2, 4)
-        local event, key = os.pullEvent("key")
-        if key == keys.up then
-            selected = (selected == 1) and #options or selected - 1
-        elseif key == keys.down then
-            selected = (selected == #options) and 1 or selected + 1
-        elseif key == keys.enter then
-            if selected == 1 then
-                context.drawWindow("All Lists")
-                term.setCursorPos(2, 4); term.write("Fetching lists...")
-                rednet.send(getParent(context).mailServerId, { type = "get_lists", user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
-                local response = receiveMailResponse(function(m)
-                    return m.lists ~= nil or m.reason ~= nil or m.original_type == "get_lists"
-                end, 6.0)
-                if response and response.lists then
-                    context.drawWindow("All Lists")
-                    local listTable = {}
-                    for name, members in pairs(response.lists) do
-                        table.insert(listTable, {name = name, members = #members})
-                    end
-                    if #listTable == 0 then
-                        context.showMessage("All Lists", "There are no mailing lists.")
-                    else
-                        local y = 4
-                        for _, listData in ipairs(listTable) do
-                            term.setCursorPos(2, y)
-                            term.write(string.format("@%s (%d members)", listData.name, listData.members))
-                            y = y + 1
-                        end
-                        term.setCursorPos(2, y + 1)
-                        term.setTextColor(context.theme.prompt)
-                        term.write("Press any key to continue...")
-                        os.pullEvent("key")
-                    end
-                else
-                    context.showMessage("Error", (response and (response.reason or "Could not fetch lists.")) or "Could not fetch lists (timed out).")
-                end
-            elseif selected == 2 then
-                context.drawWindow("Create List")
-                local name = context.readInput("New list name: @", 4)
-                if name and name ~= "" then
-                    rednet.send(getParent(context).mailServerId, { type = "create_list", name = name, creator = getParent(context).username, user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
-                    local r = receiveMailResponse(function(m)
-                        return m.status ~= nil or m.reason ~= nil or m.success ~= nil or m.original_type == "create_list"
-                    end, 6.0)
-                    local msg = (r and (r.status or r.reason or (r.success and "List created.") or "Unknown response")) or "No response from server."
-                    context.showMessage("Server Response", msg)
-                end
-            elseif selected == 3 then
-                context.drawWindow("Join List")
-                local name = context.readInput("List to join: @", 4)
-                if name and name ~= "" then
-                    rednet.send(getParent(context).mailServerId, { type = "join_list", name = name, user = getParent(context).username, session_token = getParent(context).session_token }, "SimpleMail")
-                    local r = receiveMailResponse(function(m)
-                        return m.status ~= nil or m.reason ~= nil or m.success ~= nil or m.original_type == "join_list"
-                    end, 6.0)
-                    local msg = (r and (r.status or r.reason or (r.success and "Joined list.") or "Unknown response")) or "No response from server."
-                    context.showMessage("Server Response", msg)
-                end
-            elseif selected == 4 then
+
+        local w, h = term.getSize()
+        term.setCursorPos(2, h - 1)
+        term.setTextColor(context.theme and context.theme.mutedText or colors.gray)
+        term.write("[Enter:Select] [Q:Back]")
+
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "key" then
+            local key = p1
+            if key == keys.up then
+                selected = (selected == 1) and #options or selected - 1
+            elseif key == keys.down then
+                selected = (selected == #options) and 1 or selected + 1
+            elseif key == keys.enter then
+                if not executeListOption(selected) then break end
+            elseif key == keys.tab or key == keys.q then
                 break
             end
-        elseif key == keys.tab then
-            break
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir < 0 then
+                selected = (selected == 1) and #options or selected - 1
+            else
+                selected = (selected == #options) and 1 or selected + 1
+            end
+        elseif event == "mouse_click" then
+            local btn, cx, cy = p1, p2, p3
+            local clickedIdx = cy - 4 + 1
+            if clickedIdx >= 1 and clickedIdx <= #options then
+                selected = clickedIdx
+                if not executeListOption(clickedIdx) then break end
+            elseif (cy == h - 1 and cx > math.floor(w / 2)) or (cy == 1 and cx >= w - 3) then
+                break
+            end
         end
     end
 end
@@ -307,18 +382,58 @@ end
 function mail.run(context)
     local options = {"View Inbox", "Send Mail", "Mailing Lists", "Back"}
     local selected = 1
+
+    local function executeMailOption(idx)
+        if idx == 1 then
+            mail.viewInbox(context)
+        elseif idx == 2 then
+            mail.sendMail(context)
+        elseif idx == 3 then
+            mail.manageLists(context)
+        elseif idx == 4 then
+            return false
+        end
+        return true
+    end
+
     while true do
         context.drawWindow("Mail Menu")
         context.drawMenu(options, selected, 2, 4)
-        local event, key = os.pullEvent("key")
-        if key == keys.up then selected = (selected == 1) and #options or selected - 1
-        elseif key == keys.down then selected = (selected == #options) and 1 or selected + 1
-        elseif key == keys.enter then
-            if selected == 1 then mail.viewInbox(context)
-            elseif selected == 2 then mail.sendMail(context)
-            elseif selected == 3 then mail.manageLists(context)
-            elseif selected == 4 then break end
-        elseif key == keys.tab then break end
+
+        local w, h = term.getSize()
+        term.setCursorPos(2, h - 1)
+        term.setTextColor(context.theme and context.theme.mutedText or colors.gray)
+        term.write("[Enter:Select] [Q:Back]")
+
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "key" then
+            local key = p1
+            if key == keys.up then
+                selected = (selected == 1) and #options or selected - 1
+            elseif key == keys.down then
+                selected = (selected == #options) and 1 or selected + 1
+            elseif key == keys.enter then
+                if not executeMailOption(selected) then break end
+            elseif key == keys.tab or key == keys.q then
+                break
+            end
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir < 0 then
+                selected = (selected == 1) and #options or selected - 1
+            else
+                selected = (selected == #options) and 1 or selected + 1
+            end
+        elseif event == "mouse_click" then
+            local btn, cx, cy = p1, p2, p3
+            local clickedIdx = cy - 4 + 1
+            if clickedIdx >= 1 and clickedIdx <= #options then
+                selected = clickedIdx
+                if not executeMailOption(clickedIdx) then break end
+            elseif (cy == h - 1 and cx > math.floor(w / 2)) or (cy == 1 and cx >= w - 3) then
+                break
+            end
+        end
     end
 end
 
