@@ -1,15 +1,17 @@
 --[[
-    Drunken City Builder (v2.0)
+    Drunken City Builder (v2.2 - Enterprise Edition)
     A strategy and simulation game for Drunken OS.
-    Windows 95 aesthetic, full mouse/touch controls, and audio effects.
+    Windows 95 aesthetic, full Pocket (26x20) and Desktop support,
+    touchscreen/mouse building, auto-saving, and live economic simulation.
     
     Controls:
-    - Mouse / Touch: Tap map to target/preview, tap targeted tile to build!
-    - Tap on Build Menu to select structures or Place.
+    - Tap Map: Move Cursor / Target tile
+    - Tap [PLACE] or Double-tap tile: Construct selected building
+    - Tap [PICK] or [BUILD]: Open structure selector
     - Arrow Keys / WASD: Move Cursor
-    - Enter / Space: Place Building
-    - Tab: Toggle Build Menu
-    - Esc / Q: System Menu
+    - Enter / Space: Construct building
+    - Tab: Toggle Build Mode
+    - Esc / Q / [X]: System Menu / Exit
 ]]
 
 if package and package.path then package.path = "/?.lua;" .. package.path end
@@ -30,6 +32,8 @@ end
 --==============================================================================
 local MAP_W, MAP_H = 128, 128
 local MIN_W, MIN_H = 26, 12
+local SAVE_FILE = ".city_save"
+
 local TILES = {
     GROUND = { char=".", fg=colors.lightGray, bg=colors.black, solid=false },
     ROCK   = { char="#", fg=colors.gray, bg=colors.black, solid=true },
@@ -39,14 +43,14 @@ local TILES = {
 
 -- Building Definitions
 local STRUCTURES = {
-    { name="Road",    char="+", fg=colors.lightGray, bg=colors.gray, cost={minerals=1}, desc="Connects buildings." },
-    { name="Mine",    char="M", fg=colors.black, bg=colors.yellow, cost={minerals=10}, desc="Produces +1 Mineral/s",
+    { name="Road",    char="+", fg=colors.lightGray, bg=colors.gray, cost={minerals=1}, desc="Connects city areas." },
+    { name="Mine",    char="M", fg=colors.black, bg=colors.yellow, cost={minerals=10}, desc="Produces +1 Min/s (Ore only)",
       production={minerals=1}, consumption={energy=1} },
       
     { name="Factory", char="F", fg=colors.orange, bg=colors.gray, cost={minerals=50, energy=10}, desc="Refines 2 Min -> 1 Alloy/s",
       production={alloys=1}, consumption={minerals=2, energy=2} },
       
-    { name="House",   char="H", fg=colors.white, bg=colors.brown, cost={alloys=10}, desc="Workers. Consumes Energy.",
+    { name="House",   char="H", fg=colors.white, bg=colors.brown, cost={alloys=10}, desc="Workers (+1 Pop). Consumes Energy.",
       production={pop=1}, consumption={energy=1} }, 
       
     { name="Solar",   char="S", fg=colors.cyan, bg=colors.gray, cost={alloys=20}, desc="Generates +5 Energy/s",
@@ -62,6 +66,7 @@ local STRUCTURES = {
 local state = {
     map = nil,
     camera = nil,
+    seed = 12345,
     cursor = { x=10, y=10 },
     resources = { 
         minerals = 100, 
@@ -71,8 +76,10 @@ local state = {
     },
     buildings = {}, 
     running = true,
-    mode = "view", -- view, build, system
+    mode = "view", -- view, build, pick, system
     selectedBuildIdx = 1,
+    statusMsg = "Welcome, Mayor!",
+    statusColor = colors.yellow,
     lastAutoSave = os.epoch("utc"),
     speaker = peripheral.find("speaker")
 }
@@ -89,10 +96,14 @@ local function canPlace(bDef, x, y)
     if tile.solid and bDef.name ~= "Mine" then return false, "Terrain blocked" end
     
     for res, amt in pairs(bDef.cost) do
-        if state.resources[res] < amt then return false, "Need " .. amt .. " " .. res end
+        if (state.resources[res] or 0) < amt then 
+            return false, "Need " .. amt .. " " .. res 
+        end
     end
     
-    if bDef.name == "Mine" and tile.resource ~= "ore" then return false, "Must place on Ore" end
+    if bDef.name == "Mine" and tile.resource ~= "ore" then 
+        return false, "Must place on Ore (%)" 
+    end
     
     for _, b in ipairs(state.buildings) do
         if b.x == x and b.y == y then return false, "Occupied" end
@@ -100,6 +111,9 @@ local function canPlace(bDef, x, y)
     
     return true
 end
+
+-- Forward declaration of saveGame
+local saveGame = nil
 
 local function placeBuildingAtCursor()
     local bDef = STRUCTURES[state.selectedBuildIdx]
@@ -109,15 +123,20 @@ local function placeBuildingAtCursor()
             state.resources[res] = state.resources[res] - amt 
         end
         table.insert(state.buildings, { 
-            x=state.cursor.x, 
-            y=state.cursor.y, 
-            def=bDef, 
-            lastTick=os.epoch("utc") 
+            x = state.cursor.x, 
+            y = state.cursor.y, 
+            def = bDef, 
+            lastTick = os.epoch("utc") 
         })
+        state.statusMsg = "[+] Built " .. bDef.name .. "!"
+        state.statusColor = colors.lime
         playSnd("playNote", "pling", 1.2, 18)
         playSound("entity.experience_orb.pickup", 1, 1.2)
+        if saveGame then saveGame("auto", true) end
         return true
     else
+        state.statusMsg = "[X] " .. reason
+        state.statusColor = colors.orange
         playSnd("playError")
         playSound("block.note_block.bass", 1, 0.5)
         return false, reason
@@ -127,15 +146,19 @@ end
 --==============================================================================
 -- TERRAIN GENERATION
 --==============================================================================
-local function generateWorld()
+local function generateWorld(seed)
+    local s = tonumber(seed) or math.random(10000, 999999)
+    math.randomseed(s)
     local map = Engine.newMap(MAP_W, MAP_H, TILES.GROUND)
     
-    for i=1, (MAP_W * MAP_H) * 0.10 do
+    -- 1. Scatter Rocks (Obstacles)
+    for i=1, math.floor((MAP_W * MAP_H) * 0.10) do
         local x, y = math.random(1, MAP_W), math.random(1, MAP_H)
         map:set(x, y, TILES.ROCK)
     end
     
-    for i=1, (MAP_W * MAP_H) * 0.05 do
+    -- 2. Scatter Ore Veins (Resources)
+    for i=1, math.floor((MAP_W * MAP_H) * 0.05) do
         local cx, cy = math.random(1, MAP_W), math.random(1, MAP_H)
         for ox=-1,1 do for oy=-1,1 do
             if math.random() > 0.3 then
@@ -144,33 +167,35 @@ local function generateWorld()
         end end
     end
     
+    -- 3. Safety Clearing (Start Zone)
     for x=5,15 do for y=5,15 do
         map:set(x, y, TILES.GROUND)
     end end
     
-    return map
+    return map, s
 end
 
 --==============================================================================
 -- SIMULATION (ECONOMY)
 --==============================================================================
 local function simulationTick()
+    local powerShortage = false
+    
     for _, b in ipairs(state.buildings) do
         local def = b.def
         
         local canProduce = true
         if def.consumption then
             for res, amt in pairs(def.consumption) do
-                if state.resources[res] < amt then
+                if (state.resources[res] or 0) < amt then
                     canProduce = false
+                    if res == "energy" then powerShortage = true end
                     break
                 end
             end
         end
         
         if canProduce then
-            local netProd = {}
-            
             if b.def.name == "Export" then
                 if state.resources.alloys >= 10 then
                     local username, token = nil, nil
@@ -188,7 +213,6 @@ local function simulationTick()
                     
                     if username and token then
                         state.resources.alloys = state.resources.alloys - 10
-                        netProd.alloys = (netProd.alloys or 0) - 10
                         pcall(function()
                             peripheral.find("modem", rednet.open)
                             local bankId = rednet.lookup("DB_Bank", "bank.server")
@@ -201,71 +225,74 @@ local function simulationTick()
             else
                 if b.def.production then
                     for res, amt in pairs(b.def.production) do
-                        state.resources[res] = state.resources[res] + amt
-                        netProd[res] = (netProd[res] or 0) + amt
+                        state.resources[res] = (state.resources[res] or 0) + amt
                     end
                 end
                 
                 if b.def.consumption then
                     for res, amt in pairs(b.def.consumption) do
-                        if state.resources[res] and state.resources[res] >= amt then
+                        if (state.resources[res] or 0) >= amt then
                             state.resources[res] = state.resources[res] - amt
-                            netProd[res] = (netProd[res] or 0) - amt
                         end
                     end
                 end
             end
         end
     end
+    
+    if powerShortage and state.resources.energy <= 0 then
+        state.statusMsg = "[!] LOW POWER: Build Solar (+5E)!"
+        state.statusColor = colors.red
+    end
 end
 
 --==============================================================================
 -- PERSISTENCE
 --==============================================================================
-local SAVE_DIR = "games/saves/"
+local function getSavePath(slotName)
+    if slotName == "auto" or not slotName then
+        return SAVE_FILE
+    else
+        return ".city_save_" .. slotName
+    end
+end
 
-local function saveGame(slotName)
-    if not fs.exists(SAVE_DIR) then fs.makeDir(SAVE_DIR) end
-    
+saveGame = function(slotName, silent)
     local data = {
-        w = MAP_W, h = MAP_H,
-        mapData = {},
-        buildings = state.buildings,
+        version = 2.2,
+        seed = state.seed,
+        buildings = {},
         resources = state.resources,
+        cursor = state.cursor,
         timestamp = os.epoch("utc")
     }
     
-    for y=1, MAP_H do
-        data.mapData[y] = {}
-        for x=1, MAP_W do
-            local tile = state.map:get(x, y)
-            local tType = "GROUND"
-            if tile == TILES.ROCK then tType = "ROCK"
-            elseif tile == TILES.ORE then tType = "ORE"
-            elseif tile == TILES.WATER then tType = "WATER" end
-            data.mapData[y][x] = tType
-        end
+    for _, b in ipairs(state.buildings) do
+        table.insert(data.buildings, {
+            x = b.x,
+            y = b.y,
+            name = (b.def and b.def.name) or "Road",
+            lastTick = b.lastTick or os.epoch("utc")
+        })
     end
     
-    local path = SAVE_DIR .. "city_" .. slotName .. ".save"
+    local path = getSavePath(slotName)
     local f = fs.open(path, "w")
     if f then
         f.write(textutils.serialize(data))
         f.close()
     end
     
-    playSnd("playSuccess")
-    
-    local w, h = term.getSize()
-    term.setCursorPos(1, h)
-    term.setBackgroundColor(colors.lime)
-    term.setTextColor(colors.black)
-    term.write(" [Saved to " .. slotName .. "!] ")
-    sleep(0.3)
+    if not silent then
+        playSnd("playSuccess")
+        state.statusMsg = "[Saved to " .. (slotName or "auto") .. "!]"
+        state.statusColor = colors.lime
+    end
+    return true
 end
 
 local function loadGame(slotName)
-    local path = SAVE_DIR .. "city_" .. slotName .. ".save"
+    local path = getSavePath(slotName)
     if not fs.exists(path) then return false end
     
     local f = fs.open(path, "r")
@@ -273,31 +300,38 @@ local function loadGame(slotName)
     local data = textutils.unserialize(f.readAll())
     f.close()
     
-    if not data then return false end
+    if not data or type(data) ~= "table" then return false end
     
-    state.resources = data.resources
-    state.buildings = data.buildings
+    state.resources = data.resources or state.resources
+    state.seed = tonumber(data.seed) or state.seed
+    state.map = generateWorld(state.seed)
+    state.cursor = data.cursor or { x=10, y=10 }
     
-    for _, b in ipairs(state.buildings) do
-        for _, s in ipairs(STRUCTURES) do
-            if s.name == b.def.name then
-                b.def = s
-                break
+    state.buildings = {}
+    if data.buildings then
+        for _, b in ipairs(data.buildings) do
+            local bName = b.name or (b.def and b.def.name)
+            for _, s in ipairs(STRUCTURES) do
+                if s.name == bName then
+                    table.insert(state.buildings, {
+                        x = b.x,
+                        y = b.y,
+                        def = s,
+                        lastTick = b.lastTick or os.epoch("utc")
+                    })
+                    break
+                end
             end
         end
     end
     
-    state.map = Engine.newMap(data.w, data.h, TILES.GROUND)
-    for y=1, data.h do
-        for x=1, data.w do
-            local tType = data.mapData[y][x]
-            if TILES[tType] then
-                state.map:set(x, y, TILES[tType])
-            end
-        end
+    if state.camera then
+        state.camera:centerOn(state.cursor.x, state.cursor.y, MAP_W, MAP_H)
     end
     
     playSnd("playToast", "default")
+    state.statusMsg = string.format("City Loaded! (%d buildings)", #state.buildings)
+    state.statusColor = colors.lime
     return true
 end
 
@@ -312,11 +346,33 @@ local function drawUI()
     term.setBackgroundColor(colors.blue)
     term.setTextColor(colors.white)
     term.clearLine()
-    term.write(" [X] Drunken City Builder")
-    if w >= 45 then
-        local rightBtns = "[Build] [Save] [Menu]"
-        term.setCursorPos(w - #rightBtns, 1)
-        term.write(rightBtns)
+    
+    if state.mode == "build" then
+        local bDef = STRUCTURES[state.selectedBuildIdx]
+        local titleStr = " [X] Build: " .. bDef.name
+        if w >= 40 then
+            titleStr = " [X] City Builder  [Mode: " .. bDef.name .. "]"
+            term.write(titleStr)
+            local right = "[PICK] [DONE]"
+            term.setCursorPos(w - #right, 1)
+            term.write(right)
+        else
+            term.write(titleStr)
+            local right = "[DONE]"
+            term.setCursorPos(w - #right, 1)
+            term.write(right)
+        end
+    else
+        term.write(" [X] Drunken City")
+        if w >= 45 then
+            local rightBtns = "[BUILD] [SAVE] [MENU]"
+            term.setCursorPos(w - #rightBtns, 1)
+            term.write(rightBtns)
+        elseif w >= 34 then
+            local rightBtns = "[BUILD] [MENU]"
+            term.setCursorPos(w - #rightBtns, 1)
+            term.write(rightBtns)
+        end
     end
     
     -- Row 2: Win95 Resource Status Bar
@@ -324,37 +380,165 @@ local function drawUI()
     term.setBackgroundColor(colors.lightGray)
     term.setTextColor(colors.black)
     term.clearLine()
-    local resStr = string.format(" Min:[%04d]  Alloy:[%04d]  Pop:[%03d]  Energy:[%04d]", 
-        state.resources.minerals, state.resources.alloys, state.resources.pop, state.resources.energy)
-    if #resStr > w then
-        resStr = string.format(" M:%d A:%d P:%d E:%d", 
+    
+    local resStr = ""
+    if w >= 45 then
+        resStr = string.format(" Min:[%04d]  Alloy:[%04d]  Pop:[%03d]  Energy:[%04d]", 
             state.resources.minerals, state.resources.alloys, state.resources.pop, state.resources.energy)
+    else
+        local eStr = (state.resources.energy <= 0) and "0!" or tostring(state.resources.energy)
+        resStr = string.format(" M:%d A:%d P:%d E:%s", 
+            state.resources.minerals, state.resources.alloys, state.resources.pop, eStr)
     end
     term.write(resStr)
+    
+    -- Row h - 1: Status / Feedback Bar
+    term.setCursorPos(1, h - 1)
+    term.setBackgroundColor(colors.black)
+    term.clearLine()
+    
+    if state.mode == "build" then
+        local bDef = STRUCTURES[state.selectedBuildIdx]
+        local valid, reason = canPlace(bDef, state.cursor.x, state.cursor.y)
+        if valid then
+            term.setTextColor(colors.lime)
+            term.write(" [OK] Tap tile or [PLACE]!")
+        else
+            term.setTextColor(colors.orange)
+            local msg = " [X] " .. reason
+            if #msg > w then msg = msg:sub(1, w) end
+            term.write(msg)
+        end
+    else
+        term.setTextColor(state.statusColor or colors.yellow)
+        local msg = " " .. (state.statusMsg or "")
+        if #msg > w then msg = msg:sub(1, w) end
+        term.write(msg)
+    end
     
     -- Row h: Bottom Status & Control Bar
     term.setCursorPos(1, h)
     term.setBackgroundColor(colors.gray)
     term.setTextColor(colors.white)
     term.clearLine()
+    
     local tile = state.map:get(state.cursor.x, state.cursor.y)
     local tName = "Ground"
     if tile == TILES.ROCK then tName = "Rock"
     elseif tile == TILES.ORE then tName = "Ore" 
     elseif tile == TILES.WATER then tName = "Water" end
     
-    local posTxt = string.format(" Pos: %03d,%03d [%s] ", state.cursor.x, state.cursor.y, tName)
+    local posTxt = string.format(" %03d,%03d [%s]", state.cursor.x, state.cursor.y, tName)
     term.write(posTxt)
     
-    if w >= 48 then
-        local btmBtns = "[TAB:Build] [Save] [Menu] [Quit]"
+    if state.mode == "build" then
+        local btmBtns = (w >= 36) and "[PICK] [PLACE] [DONE]" or "[PICK] [PLACE]"
         term.setCursorPos(w - #btmBtns, h)
         term.write(btmBtns)
-    elseif w >= 36 then
-        local btmBtns = "[Build] [Menu] [Quit]"
+    else
+        local btmBtns = ""
+        if w >= 48 then
+            btmBtns = "[BUILD] [SAVE] [MENU] [QUIT]"
+        elseif w >= 36 then
+            btmBtns = "[BUILD] [SAVE] [MENU]"
+        elseif w >= 26 then
+            btmBtns = "[BUILD] [MENU]"
+        end
         term.setCursorPos(w - #btmBtns, h)
         term.write(btmBtns)
     end
+end
+
+--==============================================================================
+-- STRUCTURE PICKER MODAL (Fits all screens including Pocket 26x20)
+--==============================================================================
+local function drawStructurePicker()
+    local w, h = term.getSize()
+    local pw = math.min(24, w - 2)
+    local ph = #STRUCTURES + 4
+    local px = math.floor((w - pw)/2) + 1
+    local py = math.max(3, math.floor((h - ph)/2))
+    
+    paintutils.drawFilledBox(px, py, px + pw - 1, py + ph - 1, colors.lightGray)
+    paintutils.drawBox(px, py, px + pw - 1, py + ph - 1, colors.gray)
+    
+    term.setCursorPos(px + 1, py)
+    term.setBackgroundColor(colors.blue)
+    term.setTextColor(colors.white)
+    local title = " [X] Select Building"
+    term.write(title .. string.rep(" ", math.max(0, pw - #title - 2)))
+    
+    for i, struc in ipairs(STRUCTURES) do
+        local sy = py + 1 + i
+        term.setCursorPos(px + 1, sy)
+        if i == state.selectedBuildIdx then
+            term.setBackgroundColor(colors.blue)
+            term.setTextColor(colors.yellow)
+            term.write(string.format(" > %d:%-7s ", i, struc.name))
+        else
+            term.setBackgroundColor(colors.lightGray)
+            term.setTextColor(colors.black)
+            term.write(string.format("   %d:%-7s ", i, struc.name))
+        end
+        
+        term.setTextColor(colors.gray)
+        local cstr = ""
+        for res, amt in pairs(struc.cost) do
+            cstr = cstr .. amt .. res:sub(1,1):upper() .. " "
+        end
+        term.write(cstr)
+    end
+    
+    local closeBtn = "[ Close / Build ]"
+    term.setCursorPos(px + math.floor((pw - #closeBtn)/2), py + ph - 1)
+    term.setBackgroundColor(colors.gray)
+    term.setTextColor(colors.white)
+    term.write(closeBtn)
+    
+    return px, py, pw, ph
+end
+
+--==============================================================================
+-- SYSTEM MENU MODAL
+--==============================================================================
+local function drawSystemMenu()
+    local w, h = term.getSize()
+    local mw = math.min(24, w - 2)
+    local mh = 11
+    local mx = math.floor((w - mw)/2) + 1
+    local my = math.max(3, math.floor((h - mh)/2))
+    
+    paintutils.drawFilledBox(mx, my, mx + mw - 1, my + mh - 1, colors.lightGray)
+    paintutils.drawBox(mx, my, mx + mw - 1, my + mh - 1, colors.gray)
+    
+    term.setCursorPos(mx + 1, my)
+    term.setBackgroundColor(colors.blue)
+    term.setTextColor(colors.white)
+    local mTitle = " [X] System Menu"
+    term.write(mTitle .. string.rep(" ", math.max(0, mw - #mTitle - 2)))
+    
+    local items = {
+        { id=1, text="[ 1: Resume Game ]" },
+        { id=2, text="[ 2: Save City   ]" },
+        { id=3, text="[ 3: Load City   ]" },
+        { id=4, text="[ 4: New City    ]" },
+        { id=5, text="[ 5: Exit to OS  ]" },
+    }
+    
+    for i, it in ipairs(items) do
+        local iy = my + 1 + i * 2 - 1
+        term.setCursorPos(mx + math.floor((mw - #it.text)/2), iy)
+        if i == 5 then
+            term.setBackgroundColor(colors.red)
+            term.setTextColor(colors.white)
+        else
+            term.setBackgroundColor(colors.gray)
+            term.setTextColor(colors.white)
+        end
+        term.write(it.text)
+    end
+    
+    return mx, my, mw, mh
 end
 
 --==============================================================================
@@ -371,25 +555,36 @@ local function main(...)
         return
     end
 
-    state.map = generateWorld()
+    -- Auto-load or generate initial world
+    if fs.exists(SAVE_FILE) then
+        local ok = loadGame("auto")
+        if not ok then
+            state.map, state.seed = generateWorld()
+        end
+    else
+        state.map, state.seed = generateWorld()
+    end
+    
     w, h = term.getSize()
-    state.camera = Engine.newCamera(1, 1, w, h - 3)
+    local OFF_X, OFF_Y = 1, 3
+    state.camera = Engine.newCamera(1, 1, w, h - 4)
+    state.camera:centerOn(state.cursor.x, state.cursor.y, MAP_W, MAP_H)
     
     local timerId = os.startTimer(1)
-    local OFF_X, OFF_Y = 1, 3
     
     while state.running do
         w, h = term.getSize()
+        local viewBottom = h - 2
         
-        -- 1. Draw Map
-        Engine.Renderer.draw(state.map, state.camera, OFF_X, OFF_Y)
+        -- 1. Draw Map (FORCE = TRUE to prevent delta-cache ghost cursor bugs)
+        Engine.Renderer.draw(state.map, state.camera, OFF_X, OFF_Y, true)
         
         -- 2. Draw Buildings (Overlay)
         for _, b in ipairs(state.buildings) do
              local scrX = b.x - state.camera.x + OFF_X
              local scrY = b.y - state.camera.y + OFF_Y
              
-             if scrX >= 1 and scrX <= w and scrY >= OFF_Y and scrY <= h - 1 then
+             if scrX >= 1 and scrX <= w and scrY >= OFF_Y and scrY <= viewBottom then
                   term.setCursorPos(scrX, scrY)
                   term.setTextColor(b.def.fg)
                   term.setBackgroundColor(b.def.bg)
@@ -400,7 +595,7 @@ local function main(...)
         -- 3. Draw Cursor
         local scrX = state.cursor.x - state.camera.x + OFF_X
         local scrY = state.cursor.y - state.camera.y + OFF_Y
-        if scrX >= 1 and scrX <= w and scrY >= OFF_Y and scrY <= h - 1 then
+        if scrX >= 1 and scrX <= w and scrY >= OFF_Y and scrY <= viewBottom then
             term.setCursorPos(scrX, scrY)
             if state.mode == "view" then
                 term.setBackgroundColor(colors.white) 
@@ -416,97 +611,20 @@ local function main(...)
             end
         end
         
-        -- 4. Draw Header/Footer UI
+        -- 4. Draw Header, Status, and Footer UI
         drawUI()
         
-        -- 4b. Draw Build Menu
-        local bw = math.min(28, math.floor(w * 0.55))
-        local bh = #STRUCTURES + 4
-        local bx = w - bw - 1
-        local by = 3
+        -- 5. Draw Active Modals (Pick Structure or System Menu)
+        local px, py, pw, ph = nil, nil, nil, nil
+        local mx0, my0, mw0, mh0 = nil, nil, nil, nil
         
-        if state.mode == "build" then
-            paintutils.drawFilledBox(bx, by, bx + bw, by + bh, colors.lightGray)
-            paintutils.drawBox(bx, by, bx + bw, by + bh, colors.gray)
-            
-            term.setCursorPos(bx + 1, by)
-            term.setBackgroundColor(colors.blue)
-            term.setTextColor(colors.white)
-            local bTitle = " [X] Build Structure"
-            term.write(bTitle .. string.rep(" ", math.max(0, bw - #bTitle)))
-            
-            for i, struc in ipairs(STRUCTURES) do
-                local sy = by + 1 + i
-                term.setCursorPos(bx + 1, sy)
-                if i == state.selectedBuildIdx then
-                    term.setBackgroundColor(colors.blue)
-                    term.setTextColor(colors.yellow)
-                    term.write(string.format(" > %-8s ", struc.name))
-                else
-                    term.setBackgroundColor(colors.lightGray)
-                    term.setTextColor(colors.black)
-                    term.write(string.format("   %-8s ", struc.name))
-                end
-                
-                term.setTextColor(colors.gray)
-                local cstr = ""
-                for res, amt in pairs(struc.cost) do
-                    cstr = cstr .. amt .. res:sub(1,1):upper() .. " "
-                end
-                term.write(cstr)
-            end
-            
-            local sel = STRUCTURES[state.selectedBuildIdx]
-            term.setCursorPos(bx + 1, by + bh - 1)
-            term.setBackgroundColor(colors.lightGray)
-            term.setTextColor(colors.black)
-            local dtxt = sel.desc
-            if #dtxt > bw - 2 then dtxt = dtxt:sub(1, bw - 5) .. "..." end
-            term.write(dtxt)
-            
-            term.setCursorPos(bx + 2, by + bh)
-            term.setBackgroundColor(colors.green)
-            term.setTextColor(colors.white)
-            term.write(" [ Place at Cursor ] ")
-            
+        if state.mode == "pick" then
+            px, py, pw, ph = drawStructurePicker()
         elseif state.mode == "system" then
-            local mw, mh = math.min(34, w - 2), 10
-            local mx, my = math.floor((w - mw)/2), math.floor((h - mh)/2)
-            
-            paintutils.drawFilledBox(mx, my, mx + mw, my + mh, colors.lightGray)
-            paintutils.drawBox(mx, my, mx + mw, my + mh, colors.gray)
-            
-            term.setTextColor(colors.white)
-            term.setBackgroundColor(colors.blue)
-            term.setCursorPos(mx + 1, my)
-            local mTitle = " [X] System Menu"
-            term.write(mTitle .. string.rep(" ", math.max(0, mw - #mTitle)))
-            
-            term.setBackgroundColor(colors.lightGray)
-            term.setTextColor(colors.black)
-            
-            term.setCursorPos(mx + 2, my + 2)
-            term.setBackgroundColor(colors.gray); term.setTextColor(colors.white)
-            term.write(" [R: Resume] ")
-            
-            term.setCursorPos(mx + 2, my + 4)
-            term.setBackgroundColor(colors.lightGray); term.setTextColor(colors.black)
-            term.write("SAVE: ")
-            term.setBackgroundColor(colors.gray); term.setTextColor(colors.white)
-            term.write("[1:Auto] [2:Slot2] [3:Slot3]")
-            
-            term.setCursorPos(mx + 2, my + 6)
-            term.setBackgroundColor(colors.lightGray); term.setTextColor(colors.black)
-            term.write("LOAD: ")
-            term.setBackgroundColor(colors.gray); term.setTextColor(colors.white)
-            term.write("[F1:Auto] [F2:Slot2]")
-            
-            term.setCursorPos(mx + 2, my + 8)
-            term.setBackgroundColor(colors.red); term.setTextColor(colors.white)
-            term.write(" [Q: Quit Game] ")
+            mx0, my0, mw0, mh0 = drawSystemMenu()
         end
         
-        -- 5. Unified Input Handling (Keyboard, Mouse Click, Drag, Scroll)
+        -- 6. Unified Input Handling
         local event, p1, p2, p3 = os.pullEvent()
         
         if event == "timer" and p1 == timerId then
@@ -514,8 +632,8 @@ local function main(...)
             timerId = os.startTimer(1)
             
             local now = os.epoch("utc")
-            if (now - (state.lastAutoSave or 0)) > 60000 then
-                 saveGame("auto")
+            if (now - (state.lastAutoSave or 0)) > 30000 then
+                 saveGame("auto", true)
                  state.lastAutoSave = now
             end
             
@@ -523,22 +641,35 @@ local function main(...)
             local key = p1
             
             if state.mode == "system" then
-                if key == keys.r or key == keys.esc or key == keys.space or key == keys.enter then
+                if key == keys.r or key == keys.esc or key == keys.space or key == keys.enter or key == keys.one then
                     state.mode = "view"
                     playSnd("playClick")
-                elseif key == keys.q then
-                    saveGame("auto")
-                    state.running = false
-                elseif key == keys.one then
-                    saveGame("auto")
                 elseif key == keys.two then
-                    saveGame("slot2")
+                    saveGame("auto")
                 elseif key == keys.three then
-                    saveGame("slot3")
-                elseif key == keys.f1 then
                     loadGame("auto"); state.mode = "view"
-                elseif key == keys.f2 then
-                    loadGame("slot2"); state.mode = "view"
+                elseif key == keys.four then
+                    -- New City
+                    state.buildings = {}
+                    state.resources = { minerals=100, alloys=50, energy=100, pop=5 }
+                    state.map, state.seed = generateWorld()
+                    state.mode = "view"
+                    saveGame("auto")
+                    state.statusMsg = "Brand new city founded!"
+                    state.statusColor = colors.yellow
+                elseif key == keys.q or key == keys.five then
+                    saveGame("auto", true)
+                    state.running = false
+                end
+                
+            elseif state.mode == "pick" then
+                if key >= keys.one and key <= keys.six then
+                    state.selectedBuildIdx = (key - keys.one) + 1
+                    state.mode = "build"
+                    playSnd("playClick")
+                elseif key == keys.esc or key == keys.q or key == keys.enter or key == keys.space then
+                    state.mode = "build"
+                    playSnd("playClick")
                 end
                 
             else
@@ -554,15 +685,16 @@ local function main(...)
                 elseif key == keys.right or key == keys.d then
                     if state.cursor.x < MAP_W then state.cursor.x = state.cursor.x + 1 end
                 elseif key == keys.tab then
-                    state.mode = (state.mode == "view") and "build" or "view"
+                    if state.mode == "view" then
+                        state.mode = "build"
+                    else
+                        state.mode = "view"
+                    end
                     playSnd("playClick")
                 elseif state.mode == "build" then
-                    if key == keys.one then state.selectedBuildIdx = 1; playSnd("playClick")
-                    elseif key == keys.two then state.selectedBuildIdx = 2; playSnd("playClick")
-                    elseif key == keys.three then state.selectedBuildIdx = 3; playSnd("playClick")
-                    elseif key == keys.four then state.selectedBuildIdx = 4; playSnd("playClick")
-                    elseif key == keys.five then state.selectedBuildIdx = 5; playSnd("playClick")
-                    elseif key == keys.six then state.selectedBuildIdx = 6; playSnd("playClick")
+                    if key >= keys.one and key <= keys.six then
+                        state.selectedBuildIdx = (key - keys.one) + 1
+                        playSnd("playClick")
                     elseif key == keys.enter or key == keys.space then
                         placeBuildingAtCursor()
                     end
@@ -579,81 +711,118 @@ local function main(...)
         elseif event == "mouse_click" then
             local btn, mx, my = p1, p2, p3
             
-            -- Row 1: Title bar
-            if my == 1 then
+            -- Modal: Structure Picker Interception
+            if state.mode == "pick" and px then
+                if my == py and mx >= px and mx <= px + 4 then
+                    state.mode = "view"
+                    playSnd("playClick")
+                elseif my >= py + 2 and my <= py + 1 + #STRUCTURES then
+                    state.selectedBuildIdx = my - (py + 1)
+                    state.mode = "build"
+                    playSnd("playClick")
+                elseif my == py + ph - 1 then
+                    state.mode = "build"
+                    playSnd("playClick")
+                else
+                    state.mode = "build"
+                    playSnd("playClick")
+                end
+                
+            -- Modal: System Menu Interception
+            elseif state.mode == "system" and mx0 then
+                if my == my0 and mx >= mx0 and mx <= mx0 + 4 then
+                    state.mode = "view"
+                    playSnd("playClick")
+                elseif my == my0 + 2 then
+                    state.mode = "view"
+                    playSnd("playClick")
+                elseif my == my0 + 4 then
+                    saveGame("auto")
+                elseif my == my0 + 6 then
+                    loadGame("auto"); state.mode = "view"
+                elseif my == my0 + 8 then
+                    state.buildings = {}
+                    state.resources = { minerals=100, alloys=50, energy=100, pop=5 }
+                    state.map, state.seed = generateWorld()
+                    state.mode = "view"
+                    saveGame("auto")
+                    state.statusMsg = "Brand new city founded!"
+                    state.statusColor = colors.yellow
+                elseif my == my0 + 10 then
+                    saveGame("auto", true)
+                    state.running = false
+                end
+                
+            -- Row 1: Title Bar Clicks
+            elseif my == 1 then
                 if mx >= 2 and mx <= 4 then
                     state.mode = (state.mode == "system") and "view" or "system"
                     playSnd("playClick")
-                elseif w >= 45 then
-                    if mx >= w - 21 and mx <= w - 15 then
-                        state.mode = (state.mode == "build") and "view" or "build"
+                elseif state.mode == "build" then
+                    if mx >= w - 6 and mx <= w then
+                        state.mode = "view"
                         playSnd("playClick")
-                    elseif mx >= w - 13 and mx <= w - 8 then
-                        saveGame("auto")
+                    elseif w >= 40 and mx >= w - 13 and mx <= w - 8 then
+                        state.mode = "pick"
+                        playSnd("playClick")
+                    end
+                else
+                    if w >= 45 then
+                        if mx >= w - 21 and mx <= w - 15 then
+                            state.mode = "build"
+                            playSnd("playClick")
+                        elseif mx >= w - 13 and mx <= w - 8 then
+                            saveGame("auto")
+                        elseif mx >= w - 6 and mx <= w then
+                            state.mode = "system"
+                            playSnd("playClick")
+                        end
+                    elseif w >= 34 then
+                        if mx >= w - 14 and mx <= w - 8 then
+                            state.mode = "build"
+                            playSnd("playClick")
+                        elseif mx >= w - 6 and mx <= w then
+                            state.mode = "system"
+                            playSnd("playClick")
+                        end
+                    end
+                end
+                
+            -- Row h: Bottom Action Bar Clicks
+            elseif my == h then
+                if state.mode == "build" then
+                    if mx >= w - 7 and mx <= w then
+                        -- [PLACE]
+                        placeBuildingAtCursor()
+                    elseif mx >= w - 14 and mx <= w - 8 then
+                        -- [PICK]
+                        state.mode = "pick"
+                        playSnd("playClick")
+                    elseif w >= 36 and mx >= w - 6 and mx <= w then
+                        state.mode = "view"
+                        playSnd("playClick")
+                    end
+                else
+                    if mx >= w - 14 and mx <= w - 8 then
+                        state.mode = "build"
+                        playSnd("playClick")
                     elseif mx >= w - 6 and mx <= w then
-                        state.mode = (state.mode == "system") and "view" or "system"
+                        state.mode = "system"
                         playSnd("playClick")
                     end
                 end
                 
-            -- Row h: Bottom bar
-            elseif my == h then
-                if mx >= w - 25 and mx <= w - 18 then
-                    state.mode = (state.mode == "build") and "view" or "build"
-                    playSnd("playClick")
-                elseif mx >= w - 16 and mx <= w - 12 then
-                    saveGame("auto")
-                elseif mx >= w - 10 and mx <= w - 6 then
-                    state.mode = (state.mode == "system") and "view" or "system"
-                    playSnd("playClick")
-                elseif mx >= w - 5 and mx <= w then
-                    saveGame("auto")
-                    state.running = false
-                end
-                
-            -- System Menu Interactions
-            elseif state.mode == "system" then
-                local mw, mh = math.min(34, w - 2), 10
-                local mx0, my0 = math.floor((w - mw)/2), math.floor((h - mh)/2)
-                if my == my0 and mx >= mx0 + 1 and mx <= mx0 + 4 then
-                    state.mode = "view"
-                    playSnd("playClick")
-                elseif my == my0 + 2 and mx >= mx0 + 2 and mx <= mx0 + 14 then
-                    state.mode = "view"
-                    playSnd("playClick")
-                elseif my == my0 + 4 then
-                    if mx >= mx0 + 8 and mx <= mx0 + 16 then saveGame("auto")
-                    elseif mx >= mx0 + 17 and mx <= mx0 + 26 then saveGame("slot2")
-                    elseif mx >= mx0 + 27 and mx <= mx0 + 36 then saveGame("slot3") end
-                elseif my == my0 + 6 then
-                    if mx >= mx0 + 8 and mx <= mx0 + 16 then loadGame("auto"); state.mode = "view"
-                    elseif mx >= mx0 + 17 and mx <= mx0 + 26 then loadGame("slot2"); state.mode = "view" end
-                elseif my == my0 + 8 and mx >= mx0 + 2 and mx <= mx0 + 17 then
-                    saveGame("auto")
-                    state.running = false
-                end
-                
-            -- Build Menu Interactions
-            elseif state.mode == "build" and mx >= bx and mx <= bx + bw and my >= by and my <= by + bh then
-                if my == by and mx >= bx + 1 and mx <= bx + 4 then
-                    state.mode = "view"
-                    playSnd("playClick")
-                elseif my >= by + 2 and my <= by + 1 + #STRUCTURES then
-                    state.selectedBuildIdx = my - (by + 1)
-                    playSnd("playClick")
-                elseif my == by + bh then
-                    placeBuildingAtCursor()
-                end
-                
-            -- Map Clicks (Viewport Rows OFF_Y to h - 1)
-            elseif my >= OFF_Y and my <= h - 1 then
+            -- Map Clicks (Viewport Rows OFF_Y to viewBottom)
+            elseif my >= OFF_Y and my <= viewBottom then
                 local worldX = mx + state.camera.x - OFF_X
                 local worldY = my + state.camera.y - OFF_Y
                 if worldX >= 1 and worldX <= MAP_W and worldY >= 1 and worldY <= MAP_H then
                     if state.mode == "build" then
                         if state.cursor.x == worldX and state.cursor.y == worldY then
+                            -- Double tap same tile: place!
                             placeBuildingAtCursor()
                         else
+                            -- Move cursor & preview
                             state.cursor.x = worldX
                             state.cursor.y = worldY
                             state.camera:centerOn(state.cursor.x, state.cursor.y, MAP_W, MAP_H)
@@ -670,8 +839,8 @@ local function main(...)
             
         elseif event == "mouse_drag" then
             local btn, mx, my = p1, p2, p3
-            if my >= OFF_Y and my <= h - 1 then
-                if state.mode ~= "system" then
+            if my >= OFF_Y and my <= viewBottom then
+                if state.mode == "view" or state.mode == "build" then
                     local worldX = mx + state.camera.x - OFF_X
                     local worldY = my + state.camera.y - OFF_Y
                     if worldX >= 1 and worldX <= MAP_W and worldY >= 1 and worldY <= MAP_H then
