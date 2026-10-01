@@ -7,7 +7,9 @@
     Monitors central World Spawn servers (Bank, Arcade, Mail) and calculates round-trip latency.
 ]]
 
-package.path = "/?.lua;" .. package.path
+if package and package.path then
+    package.path = "/?.lua;" .. package.path
+end
 local utils = require("lib.utils")
 local theme = require("lib.theme")
 local ok_sound, Sound = pcall(require, "lib.sound")

@@ -7,7 +7,9 @@
     base machinery, blast gates, clutches, pumps, and sirens.
 ]]
 
-package.path = "/?.lua;" .. package.path
+if package and package.path then
+    package.path = "/?.lua;" .. package.path
+end
 local utils = require("lib.utils")
 local theme = require("lib.theme")
 
@@ -233,7 +235,7 @@ function remoteApp.run(context)
                 end
 
                 -- Label
-                term.setTextColor(idx == selectedIndex and (theme.highlightText or colors.white) or (theme.text or colors.white))
+                term.setTextColor(idx == selectedIndex and (theme.accent or colors.yellow) or (theme.text or colors.white))
                 local nameStr = string.format("[%d] %s", idx, sw.name)
                 term.setCursorPos(4, rowY)
                 local maxNameLen = isPocket and (w - 11) or (w - 16)

@@ -7,7 +7,7 @@
 ]]
 
 -- Load shared libraries
-package.path = "/?.lua;" .. package.path
+if package and package.path then package.path = "/?.lua;" .. package.path end
 local sharedTheme = require("lib.theme")
 
 local currentVersion = 7.2

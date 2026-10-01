@@ -71,7 +71,7 @@ function store.run(context)
                  local appName = apps[i]
                  if appName == "Exit" then
                      term.setCursorPos(2, y)
-                     if i == cursor then term.setTextColor(context.theme.highlightText or colors.cyan); term.write("> " .. appName)
+                     if i == cursor then term.setTextColor(context.theme.prompt or colors.cyan); term.write("> " .. appName)
                      else term.setTextColor(context.theme.text or colors.white); term.write("  " .. appName) end
                  else
                      local path = listing[appName]
@@ -81,7 +81,7 @@ function store.run(context)
                      local maxNameLen = isPocket and (w - 9) or (w - 15)
                      local displayName = (#appName > maxNameLen) and (appName:sub(1, maxNameLen - 1) .. ".") or appName
                      if i == cursor then 
-                        term.setTextColor(context.theme.highlightText or colors.cyan)
+                        term.setTextColor(context.theme.prompt or colors.cyan)
                         term.write("> " .. displayName)
                      else 
                         term.setTextColor(context.theme.text or colors.white)

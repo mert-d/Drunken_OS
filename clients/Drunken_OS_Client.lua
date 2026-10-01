@@ -17,6 +17,7 @@ local paths = {
     (programDir ~= "" and fs.combine(programDir, "?/init.lua") or nil)
 }
 package.path = table.concat(paths, ";") .. ";" .. package.path
+if package and not _G.package then _G.package = package end
 local crypto = require("lib.sha1_hmac")
 local ok_dns, dns = pcall(require, "lib.dns")
 if ok_dns and dns and dns.patchRednet then

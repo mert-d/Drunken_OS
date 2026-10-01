@@ -220,7 +220,7 @@ function app.run(context)
             -- Pocket 26x20 width
             local function drawTab(id, label, isSel)
                 if isSel then
-                    term.setTextColor(theme.highlightText or colors.yellow)
+                    term.setTextColor(theme.accent or colors.yellow)
                     term.write("[" .. id .. "." .. label .. "]")
                 else
                     term.setTextColor(theme.mutedText or colors.gray)
@@ -236,7 +236,7 @@ function app.run(context)
             -- Desktop 51x19 width
             local function drawTab(id, label, isSel)
                 if isSel then
-                    term.setTextColor(theme.highlightText or colors.yellow)
+                    term.setTextColor(theme.accent or colors.yellow)
                     term.write("[" .. id .. ". " .. label .. "]")
                 else
                     term.setTextColor(theme.mutedText or colors.gray)
@@ -259,7 +259,7 @@ function app.run(context)
             term.setCursorPos(2, 7)
             term.setTextColor(theme.prompt or colors.cyan)
             term.write("> ")
-            term.setTextColor(theme.highlightText or colors.white)
+            term.setTextColor(theme.accent or colors.yellow)
             term.write(inputStr)
             
             local startH = 9
@@ -292,7 +292,7 @@ function app.run(context)
             term.setCursorPos(2, 7)
             term.setTextColor(theme.prompt or colors.cyan)
             term.write("> ")
-            term.setTextColor(theme.highlightText or colors.white)
+            term.setTextColor(theme.accent or colors.yellow)
             term.write(inputStr)
             
             local startH = 9
@@ -302,7 +302,7 @@ function app.run(context)
                 local entry = rpmHistory[i]
                 if startH < h - 2 then
                     term.setCursorPos(2, startH)
-                    term.setTextColor(theme.highlightText or colors.yellow)
+                    term.setTextColor(theme.accent or colors.yellow)
                     term.write(string.format("%d -> %d RPM", entry.src, entry.dst))
                     startH = startH + 1
                     
@@ -332,7 +332,7 @@ function app.run(context)
             term.setCursorPos(2, 7)
             term.setTextColor(theme.prompt or colors.cyan)
             term.write("> ")
-            term.setTextColor(theme.highlightText or colors.white)
+            term.setTextColor(theme.accent or colors.yellow)
             term.write(inputStr)
             
             local startH = 9
@@ -342,7 +342,7 @@ function app.run(context)
                 local entry = suHistory[i]
                 if startH < h - 2 then
                     term.setCursorPos(2, startH)
-                    term.setTextColor(theme.highlightText or colors.yellow)
+                    term.setTextColor(theme.accent or colors.yellow)
                     term.write(entry.title:sub(1, w - 3))
                     startH = startH + 1
                     
@@ -360,6 +360,10 @@ function app.run(context)
                 end
             end
         end
+        
+        -- Position cursor and enable blinking on active input
+        term.setCursorPos(math.min(w - 1, 4 + #inputStr), 7)
+        if term.setCursorBlink then term.setCursorBlink(true) end
         
         -- Footer hints
         term.setCursorPos(2, h - 1)
@@ -389,12 +393,12 @@ function app.run(context)
                             context.showMessage("Calc Error", err or "Invalid expression")
                         end
                     elseif mode == "rpm" then
-                        local src, dst = inputStr:match("(%d+)%s*[,%-%>]%s*(%d+)")
-                        if not src then
-                            src, dst = inputStr:match("(%d+)%s+(%d+)")
+                        local nums = {}
+                        for num in inputStr:gmatch("(%d+%.?%d*)") do
+                            table.insert(nums, tonumber(num))
                         end
-                        if src and dst then
-                            local sN, dN = tonumber(src), tonumber(dst)
+                        if #nums >= 2 then
+                            local sN, dN = nums[1], nums[2]
                             local ratioInfo = app.calculateCreateRatio(sN, dN)
                             if not ratioInfo.error then
                                 table.insert(rpmHistory, { src = sN, dst = dN, desc = ratioInfo.description, steps = ratioInfo.steps })
@@ -440,6 +444,7 @@ function app.run(context)
         end
     end
     
+    if term.setCursorBlink then term.setCursorBlink(false) end
     return true
 end
 

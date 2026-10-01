@@ -43,10 +43,12 @@ function loader.run(appName, context, entryPoint)
     end
 
     -- Construct a robust environment
+    local envPkg = package or (getfenv and getfenv().package) or _G.package or { path = "/?.lua;?.lua;" }
     local env = setmetatable({
         require = require,
         shell = shell,
         multishell = multishell,
+        package = envPkg,
     }, { __index = _G })
 
     local appFunc, loadErr

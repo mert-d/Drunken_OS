@@ -27,7 +27,7 @@ local function getFileInfo(path, filename, context)
     local theme = (context and context.theme) or {}
     if info.isDir then
         info.icon = ">"
-        info.color = theme.highlightText or colors.lightBlue
+        info.color = theme.prompt or colors.lightBlue
     elseif info.ext == ".lua" then
         if fullPath:match("games/") then
             info.icon = "*"
@@ -116,7 +116,7 @@ function files.run(context)
             for i, f in ipairs(cloudFiles) do
                 f.ext = f.name:match("^.+(%.%w+)$") or ""
                 f.icon = f.isDir and ">" or "-"
-                f.color = f.isDir and (context.theme.highlightText or colors.lightBlue) or (context.theme.text or colors.white)
+                f.color = f.isDir and (context.theme.prompt or colors.lightBlue) or (context.theme.text or colors.white)
             end
         else
             context.showMessage("Error", "Cloud Offline"); storageMode = "Local"
@@ -139,7 +139,7 @@ function files.run(context)
         local w, h = context.getSafeSize()
         term.setCursorPos(2, 2); term.setTextColor(storageMode == "Local" and (context.theme.text or colors.white) or (context.theme.mutedText or colors.gray)); term.write("[Local]")
         term.setCursorPos(10, 2); term.setTextColor(storageMode == "Cloud" and (context.theme.text or colors.white) or (context.theme.mutedText or colors.gray)); term.write("[Cloud]")
-        term.setCursorPos(2, 3); term.setTextColor(context.theme.highlightText or colors.cyan); term.write("/" .. currentPath)
+        term.setCursorPos(2, 3); term.setTextColor(context.theme.prompt or colors.cyan); term.write("/" .. currentPath)
         
         local listHeight = h - 5
         selected = math.max(1, math.min(selected, #files))
@@ -291,7 +291,7 @@ function files.run(context)
                             fp.close()
                             
                             context.drawWindow("AirDrop Streaming")
-                            term.setCursorPos(2, 4); term.setTextColor(context.theme.highlightText or colors.white)
+                            term.setCursorPos(2, 4); term.setTextColor(context.theme.prompt or colors.yellow)
                             term.write("Beaming: " .. f.name)
                             
                             local success, err = transfer.sendStreaming(targetId, f.name, data, "DrunkenAirDrop", function(sent, total, idx, totChunks)

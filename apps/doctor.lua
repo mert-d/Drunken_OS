@@ -11,7 +11,9 @@
     - 1-Click Auto-Repair (re-opens modems, flushes stale DNS, cleans orphaned .tmp files)
 ]]
 
-package.path = "/?.lua;" .. package.path
+if package and package.path then
+    package.path = "/?.lua;" .. package.path
+end
 local utils = require("lib.utils")
 local theme = require("lib.theme")
 local ok_sound, Sound = pcall(require, "lib.sound")

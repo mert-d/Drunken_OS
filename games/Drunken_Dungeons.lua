@@ -8,7 +8,7 @@
 ]]
 
 -- Load shared libraries
-package.path = "/?.lua;" .. package.path
+if package and package.path then package.path = "/?.lua;" .. package.path end
 local sharedTheme = require("lib.theme")
 
 local P2P_Socket = require("lib.p2p_socket")
