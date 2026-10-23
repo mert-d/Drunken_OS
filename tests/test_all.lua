@@ -30,6 +30,7 @@ local tests = {
     { name = "Installer Disk & Boot Sim",   file = "tests/test_installer.lua" },
     { name = "HyperAuth Auto-Pairing Handshake", file = "tests/test_hyperauth_pairing.lua" },
     { name = "Mail Proxy & Interlink Flow", file = "tests/test_mail_interlink_proxy.lua" },
+    { name = "AP Chat Box 2FA & Failover", file = "tests/test_ap_chatbox.lua" },
 }
 
 print("========================================================")

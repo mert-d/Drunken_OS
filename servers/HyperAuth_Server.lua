@@ -248,6 +248,25 @@ local function dm_player_with_code(player_username, code_text, ttl_millis)
     local minutes = math.max(1, math.floor((ttl_millis or 0) / 60000))
 
     if not hasCommandsAPI then
+        -- Check if an Advanced Peripherals Chat Box is attached on this computer
+        local apChatBox = nil
+        pcall(function()
+            local candidates = { "/lib/ap_chatbox.lua", "lib/ap_chatbox.lua", "lib.ap_chatbox", "ap_chatbox" }
+            for _, c in ipairs(candidates) do
+                local ok, mod = pcall(require, c)
+                if ok and type(mod) == "table" then apChatBox = mod; break end
+            end
+        end)
+        if apChatBox and apChatBox.isAvailable and apChatBox.isAvailable() then
+            local ok, err = apChatBox.sendAuthCode(player_username, code_text, minutes)
+            if ok then
+                logActivity(string.format("[AP CHATBOX] Delivered 2FA code to '%s' (%dm)", player_username, minutes))
+                return true
+            else
+                logActivity(string.format("[AP CHATBOX ERROR] Delivery to '%s' failed: %s", player_username, tostring(err)), true)
+            end
+        end
+
         logActivity(string.format("[SIMULATED TELLRAW] Code for '%s': %s (Expires %dm)", player_username, code_text, minutes))
         return true
     end
@@ -307,7 +326,12 @@ end
 
 -- Header Banner
 local function drawHeader()
-    local cmdStatus = hasCommandsAPI and "Command PC (/tellraw)" or "Simulated Terminal"
+    local hasApChatBox = false
+    pcall(function()
+        local ok, mod = pcall(require, "lib.ap_chatbox")
+        if ok and mod and mod.isAvailable and mod.isAvailable() then hasApChatBox = true end
+    end)
+    local cmdStatus = hasCommandsAPI and "Command PC (/tellraw)" or (hasApChatBox and "Advanced PC (AP ChatBox)" or "Simulated Terminal")
     local modemDesc = "None [!]"
     local modemCol = colors.red
     if #openModems > 0 then

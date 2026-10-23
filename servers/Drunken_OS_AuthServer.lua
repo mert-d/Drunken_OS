@@ -85,6 +85,37 @@ end
 local DB = require("lib.db")
 local ServiceGuard = require("lib.service_guard")
 
+local APChatBox = nil
+local chatbox_candidates = {
+    "/lib/ap_chatbox.lua",
+    "lib/ap_chatbox.lua",
+    "/ap_chatbox.lua",
+    "ap_chatbox.lua",
+    "/disk/lib/ap_chatbox.lua",
+    "disk/lib/ap_chatbox.lua"
+}
+for _, p in ipairs(chatbox_candidates) do
+    if fs and fs.exists and fs.exists(p) then
+        local fn, err = loadfile(p)
+        if fn then
+            if setfenv and getfenv then pcall(setfenv, fn, getfenv()) end
+            local ok, mod = pcall(fn)
+            if ok and type(mod) == "table" then
+                APChatBox = mod
+                break
+            end
+        end
+    end
+end
+if not APChatBox then
+    local ok_ap, mod = pcall(require, "lib.ap_chatbox")
+    if not ok_ap then ok_ap, mod = pcall(require, "lib/ap_chatbox") end
+    if not ok_ap then ok_ap, mod = pcall(require, "ap_chatbox") end
+    if ok_ap and type(mod) == "table" then
+        APChatBox = mod
+    end
+end
+
 -- State
 local users = {}
 local pendingAuths = {}
@@ -224,6 +255,11 @@ local function performAutoPairing()
     print("\n  Broadcasting pairing request to HyperAuth Server...")
     print("  Please approve this request on the HyperAuth console.")
     print("  (Type 'pair accept " .. myId .. "' or 'y' on the Command Computer)")
+    if APChatBox and APChatBox.isAvailable() then
+        if isColor then term.setTextColor(colors.lime) end
+        print("  [+] AP Chat Box detected! Press 'S' to run standalone AP 2FA mode.")
+        if isColor then term.setTextColor(colors.lightGray or colors.white) end
+    end
     print("\n  [Press 'S' to skip pairing and use local defaults]\n")
 
     -- Ensure modems are open
@@ -355,32 +391,83 @@ local function performAutoPairing()
     return false
 end
 
---- Initiates a 2FA request via HyperAuth
+--- Initiates a 2FA request via HyperAuth (Command PC) or fallback AP Chat Box
 local function requestAuthCode(username, password, nickname, senderId, purpose)
-    logActivity("Requesting auth code for '" .. username .. "'...")
-    local cfg = getHyperAuthConfig()
-    local apiProto = cfg.PROTOCOL_NAME or AUTH_INTERNAL_API or "auth.secure.v1"
-    local vendorId = cfg.CLIENT_ID or "drunken_os_server"
-
-    local reply, err = AuthClient.requestCode(apiProto, {
-        username = username, password = password,
-        vendorID = vendorId, computerID = os.getComputerID(),
-        extra = { purpose = purpose or "unknown" },
-    })
-
-    if not reply or not reply.request_id then
-        local detail = reply and (reply.reason or reply.error or "Missing request_id") or tostring(err)
-        logActivity("HyperAuth error: " .. detail, true)
-        rednet.send(senderId, { success = false, reason = "Auth service error: " .. detail }, AUTH_SERVER_PROTOCOL)
-        return false
-    end
+    logActivity("Requesting auth code for '" .. username .. "' (purpose: " .. (purpose or "unknown") .. ")...")
     
-    logActivity("Auth request ID created: " .. reply.request_id)
-    pendingAuths[username] = {
-        request_id = reply.request_id, password = password, nickname = nickname,
-        senderId = senderId, timestamp = os.epoch("utc")
-    }
-    return true
+    local chatBoxAvailable = (APChatBox and APChatBox.isAvailable and APChatBox.isAvailable())
+    local hyperAuthPaired = isPaired()
+    local lastError = nil
+
+    -- 1. Try HyperAuth Server via Command Computer if configured and paired
+    if hyperAuthPaired then
+        local cfg = getHyperAuthConfig()
+        local apiProto = cfg.PROTOCOL_NAME or AUTH_INTERNAL_API or "auth.secure.v1"
+        local vendorId = cfg.CLIENT_ID or "drunken_os_server"
+
+        local reply, err = AuthClient.requestCode(apiProto, {
+            username = username, password = password,
+            vendorID = vendorId, computerID = os.getComputerID(),
+            extra = { purpose = purpose or "unknown" },
+        })
+
+        if reply and reply.request_id then
+            logActivity("HyperAuth request ID created: " .. reply.request_id)
+            pendingAuths[username] = {
+                request_id = reply.request_id,
+                provider = "hyperauth",
+                password = password,
+                nickname = nickname,
+                senderId = senderId,
+                timestamp = os.epoch("utc")
+            }
+            return true
+        else
+            lastError = reply and (reply.reason or reply.error or "Missing request_id") or tostring(err)
+            logActivity("HyperAuth unavailable (" .. tostring(lastError) .. "). Evaluating Chat Box fallback...", true)
+        end
+    else
+        lastError = "HyperAuth is unpaired"
+    end
+
+    -- 2. Fallback / Standalone: Dispatch via Advanced Peripherals Chat Box
+    if chatBoxAvailable then
+        logActivity("Activating AP Chat Box 2FA dispatch for '" .. username .. "'...")
+        math.randomseed(os.epoch("utc") + os.getComputerID() + math.random(1000, 9999))
+        local code = string.format("%06d", math.random(100000, 999999))
+        local reqId = "ap_" .. crypto.hex(os.epoch("utc") .. username .. tostring(math.random()))
+
+        local sendOk, sendErr = APChatBox.sendAuthCode(username, code, 5)
+        if sendOk then
+            logActivity("AP Chat Box delivered 2FA code to '" .. username .. "' (Req: " .. reqId .. ")")
+            pendingAuths[username] = {
+                request_id = reqId,
+                local_code = code,
+                provider = "chatbox",
+                password = password,
+                nickname = nickname,
+                senderId = senderId,
+                timestamp = os.epoch("utc")
+            }
+            return true
+        else
+            logActivity("AP Chat Box dispatch failed for '" .. username .. "': " .. tostring(sendErr), true)
+            rednet.send(senderId, {
+                success = false,
+                reason = "2FA Delivery failed: Player '" .. username .. "' unreachable via Chat Box."
+            }, AUTH_SERVER_PROTOCOL)
+            return false
+        end
+    end
+
+    -- 3. If neither 2FA provider succeeded
+    local reasonMsg = "2FA service unavailable: " .. tostring(lastError)
+    if not chatBoxAvailable then
+        reasonMsg = reasonMsg .. " (No AP Chat Box attached)"
+    end
+    logActivity("Auth failed for '" .. username .. "': " .. reasonMsg, true)
+    rednet.send(senderId, { success = false, reason = reasonMsg }, AUTH_SERVER_PROTOCOL)
+    return false
 end
 
 -- Broadcasts session validity to the Mainframe
@@ -451,20 +538,39 @@ local function handleMessage(senderId, message, protocol)
                 return
             end
             
-            local cfg = getHyperAuthConfig()
-            local apiProto = cfg.PROTOCOL_NAME or AUTH_INTERNAL_API or "auth.secure.v1"
-            local reply, err = AuthClient.verifyCode(apiProto, { request_id = authData.request_id, code = code })
+            local tokenVerified = false
+            local verifyReason = nil
+
+            if authData.local_code then
+                -- Local verification for AP Chat Box 2FA
+                if tostring(code) == tostring(authData.local_code) then
+                    tokenVerified = true
+                else
+                    verifyReason = "Invalid verification code."
+                end
+            else
+                -- Upstream HyperAuth Command Computer verification
+                local cfg = getHyperAuthConfig()
+                local apiProto = cfg.PROTOCOL_NAME or AUTH_INTERNAL_API or "auth.secure.v1"
+                local reply, err = AuthClient.verifyCode(apiProto, { request_id = authData.request_id, code = code })
+                if reply and reply.ok then
+                    tokenVerified = true
+                else
+                    verifyReason = (reply and (reply.reason or reply.error)) or "Invalid code."
+                end
+            end
             
-            if reply and reply.ok then
+            if tokenVerified then
                 local token = crypto.hex(os.time() .. math.random())
+                local authMethod = authData.provider or "hyperauth"
                 if not users[user] then
                     users[user] = { password = authData.password, nickname = authData.nickname, session_token = token }
                     DB.saveTableToFile(USERS_DB, users, logActivity)
-                    logActivity("User '" .. user .. "' registered.")
+                    logActivity("User '" .. user .. "' registered (2FA: " .. authMethod .. ").")
                 else
                     users[user].session_token = token
                     DB.saveTableToFile(USERS_DB, users, logActivity)
-                    logActivity("User '" .. user .. "' logged in.")
+                    logActivity("User '" .. user .. "' logged in (2FA: " .. authMethod .. ").")
                 end
                 
                 broadcastSession(user, users[user].nickname, token)
@@ -475,7 +581,7 @@ local function handleMessage(senderId, message, protocol)
                 
                 pendingAuths[user] = nil
             else
-                rednet.send(senderId, { success = false, reason = (reply and reply.reason) or "Invalid code." }, AUTH_SERVER_PROTOCOL)
+                rednet.send(senderId, { success = false, reason = verifyReason or "Invalid code." }, AUTH_SERVER_PROTOCOL)
             end
             
         elseif message.type == "set_nickname" then
@@ -540,10 +646,19 @@ local function startServer()
     local userCount = 0
     if users then for _ in pairs(users) do userCount = userCount + 1 end end
 
+    local cbStatus = APChatBox and APChatBox.getStatus and APChatBox.getStatus()
+    local apStatusStr = "NOT DETECTED"
+    local apColor = colors.lightGray
+    if cbStatus and cbStatus.available then
+        apStatusStr = string.format("ONLINE (%s)", cbStatus.name or "chatBox")
+        apColor = colors.lime
+    end
+
     local details = {
         { label = "Service", value = "Drunken OS Authentication Authority", color = colors.white },
         { label = "User Database", value = string.format("%d registered user(s)", userCount), color = colors.lime },
         { label = "HyperAuth Link", value = isPaired() and "PAIRED (" .. (haCfg.CLIENT_ID or "ok") .. ")" or "UNPAIRED", color = isPaired() and colors.lime or colors.yellow },
+        { label = "AP ChatBox 2FA", value = apStatusStr, color = apColor },
         { label = "External Proto", value = AUTH_SERVER_PROTOCOL, color = colors.lightGray },
         { label = "Interlink Proto", value = AUTH_INTERLINK_PROTOCOL, color = colors.lightGray },
     }
@@ -556,6 +671,11 @@ local function startServer()
     logActivity("Listening for external auth on: " .. AUTH_SERVER_PROTOCOL)
     logActivity("Listening for interlink on: " .. AUTH_INTERLINK_PROTOCOL)
     logActivity("HyperAuth 2FA Link: Protocol='" .. (haCfg.PROTOCOL_NAME or "auth.secure.v1") .. "', Vendor='" .. (haCfg.CLIENT_ID or "drunken_os_server") .. "'")
+    if cbStatus and cbStatus.available then
+        logActivity("AP Chat Box 2FA: Online on '" .. tostring(cbStatus.name) .. "' (Toast=" .. tostring(cbStatus.canToast) .. ", Formatted=" .. tostring(cbStatus.canFormatted) .. ")")
+    else
+        logActivity("AP Chat Box 2FA: Not detected (ready for hotplug)")
+    end
     
     while true do
         local event, p1, p2, p3 = os.pullEventRaw()
@@ -564,6 +684,16 @@ local function startServer()
             ServiceGuard.protectHandler("Auth:message", handleMessage, logActivity, senderId, message, protocol)
         elseif event == "peripheral" or event == "peripheral_detach" then
             ServiceGuard.handlePeripheralEvent(event, p1, registerProtocols, logActivity)
+            if event == "peripheral" and APChatBox then
+                local cb, name = APChatBox.find()
+                if cb and (p1 == name or peripheral.getType(p1) == "chatBox" or peripheral.getType(p1) == "chat_box") then
+                    logActivity("Advanced Peripherals Chat Box attached on '" .. tostring(p1) .. "'")
+                end
+            elseif event == "peripheral_detach" then
+                if APChatBox and not APChatBox.isAvailable() then
+                    logActivity("Advanced Peripherals Chat Box detached ('" .. tostring(p1) .. "')", true)
+                end
+            end
         elseif event == "terminate" then
             error("Terminated", 0)
         end

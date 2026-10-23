@@ -31,6 +31,7 @@ return {
         "lib/service_guard.lua",
         "lib/db.lua",
         "lib/sound.lua",
+        "lib/ap_chatbox.lua",
         "manifest.lua"
     },
 
@@ -64,6 +65,7 @@ return {
                 "lib/sha1_hmac.lua",
                 "lib/db.lua",
                 "lib/service_guard.lua",
+                "lib/ap_chatbox.lua",
                 -- HyperAuthClient Dependencies
                 "HyperAuthClient/config.lua",
                 "HyperAuthClient/api/auth_api.lua",
@@ -84,6 +86,7 @@ return {
                 "servers/hyperauth/secure.lua",
                 "servers/hyperauth/sha1.lua",
                 "lib/service_guard.lua",
+                "lib/ap_chatbox.lua",
                 "vendors.jsonl",
                 "manifest.lua"
             },
