@@ -134,7 +134,7 @@ assert_eq(TaskManager.getActiveTask().name, "GameLoop", "Switched back to Task 1
 
 -- 5. Toast Notification Subsystem
 redrawnWindows = {}
-TaskManager.notify("💬 Chat", "Steve: Are you online?", colors.blue, 3.5, "chat")
+TaskManager.notify("[Chat]", "Steve: Are you online?", colors.blue, 3.5, "chat")
 
 -- Verify notification dismiss timer
 local toastTimerId = nextTimer

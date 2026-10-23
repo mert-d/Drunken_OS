@@ -108,8 +108,46 @@ _Goal: Add retro 8-bit note block sound effects, interactive in-game diagnostic 
 
 ---
 
+## 💾 Phase 11: Floppy Diskette Packaging & Headless Auto-Installer (Completed in v18.0)
+_Goal: Guarantee all core servers, apps, and microservices fit within ComputerCraft's strict 125,000-byte floppy limit with zero-touch bootloaders._
+
+- [x] **Headless Multi-Package Master Installer (`installer/Master_Installer.lua`)**: Interactive and disk-driven installer generating self-contained bootable disks for Mainframe, Auth Server, Bank Server, Mail Server, and Arcade Gateways.
+- [x] **Strict 125 KB Floppy Limit Compliance**: Optimized module dependencies and deduplicated shared libraries (`auth_server`: ~76 KB, `hyperauth_server`: ~74 KB, `server`: ~108 KB) with verified safety margins.
+- [x] **Automated Test Coverage (21 Suites)**: Created `tests/test_installer.lua` simulating disk writing, floppy ejection, and target computer reboots.
+
+---
+
+## 🔐 Phase 12: HyperAuth 2FA Infrastructure & Auto-Pairing (Completed in v18.1)
+_Goal: Eliminate hardcoded cryptographic secrets and implement secure out-of-band 2FA authentication._
+
+- [x] **Dedicated HyperAuth 2FA Microservice (`servers/HyperAuth_Server.lua`)**: Command Computer-based 2FA token authority with HMAC verification, replay attack prevention, and in-game `/tellraw` code whispers.
+- [x] **Dynamic Auto-Pairing Protocol (`hyperauth.pair.v1`)**: Zero-conf handshake with 4-digit verification PIN, cryptographically generated secrets, and automatic `HyperAuthClient/config.lua` generation.
+- [x] **Automated Test Coverage (23 Suites)**: Created `tests/test_hyperauth_pairing.lua` and `tests/test_mail_interlink_proxy.lua`.
+
+---
+
+## 🕹️ Phase 13: Arcade Touch/Mouse Overhaul & All 14 Games Retro Overhaul (Completed in v19.0)
+_Goal: Deliver Windows 95 quality graphics, touch/mouse controls, procedural SFX, and offline leaderboards across all 14 Drunken OS games._
+
+- [x] **Arcade Launcher Touch & Mouse Navigation (`apps/arcade.lua`)**: Responsive touch scrolling, categorized game directories, top-tier leaderboard previews, and unified styling.
+- [x] **All 14 Games Overhauled**: Retro Windows 95 styling, 8-bit sound effects, touch/click coordinates, solo AI opponents, and responsive Pocket (26x20) modes (`minesweeper`, `tetris`, `pong`, `snake`, `connect4`, `dungeons`, `battleship`, `solitaire`, `flappy`, `space_invaders`, `doom`, `city`, `roulette`, `2048`).
+- [x] **City Simulator Fixes (`games/city.lua`)**: Fixed ghost cursor rendering, pocket modal building selector, live building placement, and persistent `.city_save` storage.
+- [x] **Pong Scoreboard Blit Fix (`games/Drunken_Pong.lua`)**: Resolved `term.blit` argument length mismatch and clamped paddle rendering bounds.
+
+---
+
+## 💬 Phase 14: Advanced Peripherals Chat Box 2FA & Standalone Failover (Completed in v19.1)
+_Goal: Enable survival-friendly, non-OP in-game 2FA delivery using Advanced Peripherals Chat Box._
+
+- [x] **Advanced Peripherals Chat Box Driver (`lib/ap_chatbox.lua`)**: Probes `chatBox` and `chat_box` peripherals with JSON tellraw (`copy_to_clipboard`), toast popups (`sendToastToPlayer`), and plain-text fallback.
+- [x] **Auth Server Hybrid Failover (`servers/Drunken_OS_AuthServer.lua`)**: Automatically falls back to local Chat Box OTP generation when HyperAuth Command Computer is unreachable or unpaired.
+- [x] **HyperAuth Server AP Fallback (`servers/HyperAuth_Server.lua`)**: Allows running HyperAuth Server on standard survival Advanced Computers with an attached Chat Box when Command Computer API is absent.
+- [x] **System Doctor Peripheral Audit (`apps/doctor.lua`)**: Automatically audits and reports attached AP Chat Box peripherals (`[2FA Ready]`).
+- [x] **Automated Test Coverage (25 Suites)**: Created `tests/test_ap_chatbox.lua`, achieving 25/25 test suites passing (100%).
+
+---
+
 ## 💡 Future Wishlist & Next Frontiers
 
 - [ ] **Astral Telemetry Satellite**: Specialized turtle or computer reading Create Astral space rocket data or train station departures.
-- [ ] **Advanced Peripheral Integration**: Native printing support with ComputerCraft printers and multi-block external monitor displays.
 - [ ] **Decentralized Arcade Mirror Proxies**: Autonomous proxy relays that mirror high score catalogs across faraway mining dimensions.

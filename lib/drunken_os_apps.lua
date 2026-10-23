@@ -17,7 +17,7 @@ end
 local function completeAuthentication(context, user)
     context.drawWindow("Authentication Required")
     local w, h = context.getSafeSize()
-    local message = "A verification token has been sent to you via the HyperAuth API. Please enter the code below to finalize your registration/login."
+    local message = "A verification code has been sent to you in-game (Chat / 2FA). Please enter the 6-digit code below to finalize your login/registration."
     local lines = context.wordWrap(message, w - 4)
     for i, line in ipairs(lines) do
         term.setCursorPos(3, 4 + i - 1)

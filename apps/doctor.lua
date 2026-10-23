@@ -60,7 +60,7 @@ function doctor.diagnose()
     })
 
     -- 2. Peripheral Audit
-    local wiredModem, wirelessModem, speaker, monitor, diskDrive = nil, nil, nil, nil, nil
+    local wiredModem, wirelessModem, speaker, monitor, diskDrive, chatBox = nil, nil, nil, nil, nil, nil
     if peripheral and peripheral.getNames then
         for _, name in ipairs(peripheral.getNames()) do
             local pType = peripheral.getType(name)
@@ -77,6 +77,8 @@ function doctor.diagnose()
                 monitor = name
             elseif pType == "drive" then
                 diskDrive = name
+            elseif pType == "chatBox" or pType == "chat_box" then
+                chatBox = name
             end
         end
     end
@@ -112,6 +114,14 @@ function doctor.diagnose()
         val = diskDrive and ("Attached (" .. diskDrive .. ")") or "None",
         status = "INFO"
     })
+
+    if chatBox then
+        table.insert(report.peripherals, {
+            name = "AP Chat Box",
+            val = "Attached (" .. chatBox .. ") [2FA Ready]",
+            status = "OK"
+        })
+    end
 
     -- 3. Rednet Channel Check
     local rednetOpen = rednet and rednet.isOpen and rednet.isOpen()
