@@ -699,7 +699,7 @@ local function installToPocketComputer(program, drive)
 
     -- Create the startup files on the pocket computer (modern + legacy)
     local mainProgramName = fs.getName(program.path)
-    local startupCode = "shell.run('/" .. mainProgramName .. "')\n"
+    local startupCode = "if package and package.path then package.path = '/?.lua;/lib/?.lua;?.lua;' .. package.path end\nshell.run('/" .. mainProgramName .. "')\n"
     local startupPath = mountPath .. "/startup.lua"
     local startupFile, err = fs.open(startupPath, "w")
     if not startupFile then

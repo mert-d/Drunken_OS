@@ -161,7 +161,7 @@ local function doInstallation()
         startupContent = sf.readAll()
         sf.close()
     else
-        startupContent = 'shell.run("' .. tostring(config.main_program) .. '")\n'
+        startupContent = 'if package and package.path then package.path = "/?.lua;/lib/?.lua;?.lua;" .. package.path end\nshell.run("' .. tostring(config.main_program) .. '")\n'
     end
 
     local outStartup = fs.open("/startup.lua", "w")

@@ -1,21 +1,60 @@
 -- apps/flight_control.lua
 -- Drunken OS Primary Flight Display (PFD) & Autopilot Cockpit App
 
-local Avionics = require("lib.avionics")
+-- Ensure standard Drunken OS library paths are resolvable across standalone and sub-shell execution
+if package and package.path then
+    package.path = "/?.lua;/lib/?.lua;?.lua;lib/?.lua;" .. package.path
+end
+
+local Avionics
+local okAvionics, modAvionics = pcall(require, "lib.avionics")
+if okAvionics and type(modAvionics) == "table" then
+    Avionics = modAvionics
+else
+    local ok2, mod2 = pcall(require, "avionics")
+    if ok2 and type(mod2) == "table" then
+        Avionics = mod2
+    elseif fs and fs.exists and (fs.exists("/lib/avionics.lua") or fs.exists("lib/avionics.lua") or fs.exists("avionics.lua") or fs.exists("/avionics.lua")) then
+        local candidate = fs.exists("/lib/avionics.lua") and "/lib/avionics.lua"
+            or (fs.exists("lib/avionics.lua") and "lib/avionics.lua"
+            or (fs.exists("/avionics.lua") and "/avionics.lua" or "avionics.lua"))
+        Avionics = dofile(candidate)
+    else
+        error("Drunken Avionics HAL missing! Could not load lib.avionics: " .. tostring(modAvionics))
+    end
+end
+
 local okSound, Sound = pcall(require, "lib.sound")
+if not okSound or type(Sound) ~= "table" then
+    local ok2, mod2 = pcall(require, "sound")
+    if ok2 and type(mod2) == "table" then
+        Sound = mod2
+        okSound = true
+    elseif fs and fs.exists and (fs.exists("/lib/sound.lua") or fs.exists("lib/sound.lua")) then
+        local p = fs.exists("/lib/sound.lua") and "/lib/sound.lua" or "lib/sound.lua"
+        local okLoad, modLoad = pcall(dofile, p)
+        if okLoad and type(modLoad) == "table" then
+            Sound = modLoad
+            okSound = true
+        end
+    end
+end
 
 local function run(context)
     context = context or {}
     local parentTerm = context.parent or term.current()
+    local isColor = parentTerm.isColor and parentTerm.isColor()
+    if isColor == nil and term.isColor then isColor = term.isColor() end
+
     local theme = context.theme or {
         bg      = colors.black,
         fg      = colors.white,
-        accent  = colors.cyan,
-        header  = colors.blue,
-        ok      = colors.lime,
-        warn    = colors.orange,
-        err     = colors.red,
-        muted   = colors.gray
+        accent  = isColor and colors.cyan or colors.white,
+        header  = isColor and colors.blue or colors.white,
+        ok      = isColor and colors.lime or colors.white,
+        warn    = isColor and colors.orange or colors.white,
+        err     = isColor and colors.red or colors.white,
+        muted   = isColor and colors.gray or colors.white
     }
 
     local fc = Avionics.new({
@@ -55,23 +94,23 @@ local function run(context)
                     if dy == 0 and math.abs(dx) <= 2 then
                         -- Center Aircraft Reticle
                         parentTerm.setBackgroundColor(colors.black)
-                        parentTerm.setTextColor(colors.yellow)
+                        parentTerm.setTextColor(isColor and colors.yellow or colors.white)
                         parentTerm.write(dx == 0 and "+" or "-")
                     elseif dy < horizonY then
                         -- Sky
-                        parentTerm.setBackgroundColor(colors.blue)
+                        parentTerm.setBackgroundColor(isColor and colors.blue or colors.black)
                         parentTerm.setTextColor(colors.white)
                         parentTerm.write(" ")
                     elseif dy == horizonY then
                         -- Horizon Line
-                        parentTerm.setBackgroundColor(colors.cyan)
+                        parentTerm.setBackgroundColor(isColor and colors.cyan or colors.black)
                         parentTerm.setTextColor(colors.white)
                         parentTerm.write("-")
                     else
                         -- Ground
-                        parentTerm.setBackgroundColor(colors.brown)
-                        parentTerm.setTextColor(colors.lightGray)
-                        parentTerm.write(" ")
+                        parentTerm.setBackgroundColor(isColor and colors.brown or colors.black)
+                        parentTerm.setTextColor(isColor and colors.lightGray or colors.white)
+                        parentTerm.write(isColor and " " or "#")
                     end
                 end
             end
