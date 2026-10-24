@@ -62,11 +62,30 @@ local function run(context)
     })
 
     local running = true
+    local activeTab = "PFD" -- "PFD" or "IO"
+    local selectedIOIdx = 1
+    local ioScrollOffset = 0
+    local hotplugNotice = nil
+    local hotplugTimer = 0
+
     local lastTel = fc:readTelemetry(0.05)
     if lastTel.altitude and lastTel.altitude ~= 0 then
         fc.ap.targetAlt = math.floor(lastTel.altitude + 0.5)
     end
     local tickCount = 0
+
+    local ROLE_DESC = {
+        AUTO         = "Otomatik: Blok tipine gore varsayilan gorev",
+        LIFT_BURNER  = "Irtifa / Kazan: PID yukseklik sinyali (0-15)",
+        THRUST_MAIN  = "Ana Itki: Ileri/Geri ana gaz sinyali (0-15)",
+        THRUST_PORT  = "Sol Itki (Port): Diferansiyel sol motor gucu",
+        THRUST_STBD  = "Sag Itki (Stbd): Diferansiyel sag motor gucu",
+        AUX_BOOST    = "Boost Thruster: Gaz >= 12 oldugunda tam guc",
+        CLUTCH_BRAKE = "Debriyaj / Fren: [B] Fren veya Gaz=0'da keser",
+        GEAR_REVERSE = "Geri Vites (Gearshift): [G] ile yonu tersler",
+        RUDDER_YAW   = "Dumen (Rudder): Yonlendirme acisi / sinyali",
+        IGNORE       = "Devre Disi: Ucus bilgisayari bu bloga dokunmaz"
+    }
 
     -- Open wireless modem for ADS-B Radar Telemetry & ILS Beacon Reception
     local modem = peripheral.find("modem", function(_, m) return m.isWireless and m.isWireless() end)
@@ -83,16 +102,36 @@ local function run(context)
         end
     end
 
+    local function makeBar(val, maxVal, width)
+        local filled = math.floor( math.max(0, math.min(1, val / math.max(1, maxVal))) * width + 0.5 )
+        return "[" .. string.rep("|", filled) .. string.rep(".", width - filled) .. "]"
+    end
+
+    local function formatCompassTape(hdgDeg, width)
+        local tape = "N...NE...E...SE...S...SW...W...NW..."
+        local totalChars = #tape
+        local centerIdx = math.floor(((hdgDeg % 360) / 360) * totalChars) + 1
+        local half = math.floor(width / 2)
+        local out = {}
+        for i = -half, half do
+            local idx = ((centerIdx + i - 1) % totalChars) + 1
+            table.insert(out, tape:sub(idx, idx))
+        end
+        return table.concat(out)
+    end
+
     local function drawArtificialHorizon(cx, cy, width, height, pitchRad, rollRad)
         local pitchDeg = math.deg(pitchRad)
         local rollSlope = math.tan(rollRad)
         local pitchOffset = math.floor((pitchDeg / 10) + 0.5)
+        local halfW = math.floor(width / 2)
+        local halfH = math.floor(height / 2)
 
-        for dy = -math.floor(height / 2), math.floor(height / 2) do
+        for dy = -halfH, halfH do
             local y = cy + dy
-            if y >= 2 and y <= 18 then
-                parentTerm.setCursorPos(cx - math.floor(width / 2), y)
-                for dx = -math.floor(width / 2), math.floor(width / 2) do
+            if y >= 3 and y <= 14 then
+                parentTerm.setCursorPos(cx - halfW, y)
+                for dx = -halfW, halfW do
                     local horizonY = pitchOffset + math.floor(dx * rollSlope + 0.5)
                     if dy == 0 and math.abs(dx) <= 2 then
                         -- Center Aircraft Reticle
@@ -120,43 +159,173 @@ local function run(context)
         end
     end
 
-    local function renderPFD()
-        local w, h = parentTerm.getSize()
-        parentTerm.setBackgroundColor(theme.bg)
-        parentTerm.clear()
-
-        -- Top Status Bar
+    local function renderHeader(w)
         parentTerm.setCursorPos(1, 1)
         parentTerm.setBackgroundColor(theme.header or colors.blue)
         parentTerm.setTextColor(colors.white)
+        local tabLabel = (activeTab == "PFD") and "[PFD] [P:I/O]" or "[P:PFD] [I/O]"
         local headerText = string.format(
-            " DRUNKEN AVIONICS | %s [%s] | AP: %s ",
+            " DOS AVIONICS | %s [%s] | %s | %s",
             lastTel.callsign,
-            lastTel.vehicleType,
-            fc.ap.mode
+            lastTel.vehicleType == "ZEPPELIN" and "ZEP" or "AIR",
+            fc.ap.mode,
+            tabLabel
         )
+        if #headerText > w then headerText = headerText:sub(1, w) end
         parentTerm.write(headerText .. string.rep(" ", math.max(0, w - #headerText)))
+    end
+
+    local function renderIOConfigurator(w, h)
+        parentTerm.setBackgroundColor(theme.bg)
+        parentTerm.clear()
+        renderHeader(w)
+
+        parentTerm.setBackgroundColor(isColor and colors.gray or colors.black)
+        parentTerm.setTextColor(isColor and colors.yellow or colors.white)
+        parentTerm.setCursorPos(1, 2)
+        local colHdr = string.format(" %-18s %-12s %-12s %-4s", "CIHAZ / KANAL", "TIP", "GOREV (ROLE)", "INV")
+        parentTerm.write(colHdr .. string.rep(" ", math.max(0, w - #colHdr)))
+
+        local devs = fc.ioDevices or {}
+        local maxRows = math.max(3, h - 6)
+        if selectedIOIdx > #devs then selectedIOIdx = math.max(1, #devs) end
+        if selectedIOIdx < ioScrollOffset + 1 then
+            ioScrollOffset = math.max(0, selectedIOIdx - 1)
+        elseif selectedIOIdx > ioScrollOffset + maxRows then
+            ioScrollOffset = selectedIOIdx - maxRows
+        end
+
+        for row = 1, maxRows do
+            local idx = ioScrollOffset + row
+            local y = 2 + row
+            parentTerm.setCursorPos(1, y)
+            if idx <= #devs then
+                local item = devs[idx]
+                local cfg = fc:getDeviceConfig(item.name)
+                local isSel = (idx == selectedIOIdx)
+                parentTerm.setBackgroundColor(isSel and (isColor and colors.cyan or colors.white) or theme.bg)
+                parentTerm.setTextColor(isSel and colors.black or theme.fg)
+
+                local shortName = item.name
+                if #shortName > 17 then shortName = shortName:sub(1, 15) .. ".." end
+                local shortKind = item.kind:gsub("create_connected_", ""):gsub("create_", "")
+                if #shortKind > 11 then shortKind = shortKind:sub(1, 11) end
+
+                local invStr = cfg.invert and "TERS" or "NRM "
+                local lineStr = string.format(
+                    "%s%-17s %-12s %-12s %-4s",
+                    isSel and ">" or " ",
+                    shortName,
+                    shortKind,
+                    cfg.role,
+                    invStr
+                )
+                if #lineStr > w then lineStr = lineStr:sub(1, w) end
+                parentTerm.write(lineStr .. string.rep(" ", math.max(0, w - #lineStr)))
+            else
+                parentTerm.setBackgroundColor(theme.bg)
+                parentTerm.write(string.rep(" ", w))
+            end
+        end
+
+        -- Role Description Row
+        local selItem = devs[selectedIOIdx]
+        local selCfg = selItem and fc:getDeviceConfig(selItem.name) or { role = "AUTO" }
+        parentTerm.setBackgroundColor(theme.bg)
+        parentTerm.setCursorPos(2, h - 2)
+        parentTerm.setTextColor(theme.accent or colors.cyan)
+        local desc = ROLE_DESC[selCfg.role] or ""
+        parentTerm.write(desc:sub(1, w - 2))
+
+        parentTerm.setCursorPos(2, h - 1)
+        parentTerm.setTextColor(theme.ok or colors.lime)
+        parentTerm.write("[Up/Dn]:Sec [Sol/Sag/Enter]:Gorev [I]:Invert")
+
+        parentTerm.setCursorPos(2, h)
+        parentTerm.setTextColor(colors.lightGray)
+        parentTerm.write("[X]:AUTO Sifirla | [R]:Yeniden Tara | [P/Tab]:PFD Don")
+    end
+
+    local function renderPFD()
+        local w, h = parentTerm.getSize()
+        if activeTab == "IO" then
+            renderIOConfigurator(w, h)
+            return
+        end
+
+        parentTerm.setBackgroundColor(theme.bg)
+        parentTerm.clear()
+        renderHeader(w)
+
+        local hdgDeg = math.deg(lastTel.heading) % 360
+        local tgtHdgDeg = math.deg(fc.ap.targetHdg) % 360
+
+        -- Sub-header & Compass Tape (Row 2)
+        parentTerm.setBackgroundColor(theme.bg)
+        parentTerm.setTextColor(theme.muted)
+        parentTerm.setCursorPos(2, 2)
+        parentTerm.write("-- ITKI & MOTOR --")
+
+        if w >= 45 then
+            local cx = math.floor(w / 2)
+            local tape = formatCompassTape(hdgDeg, 13)
+            parentTerm.setCursorPos(cx - 7, 2)
+            parentTerm.setTextColor(theme.accent or colors.cyan)
+            parentTerm.write("[" .. tape .. "]")
+        end
+
+        local rightCol = math.max(33, w - 17)
+        parentTerm.setCursorPos(rightCol, 2)
+        parentTerm.setTextColor(theme.muted)
+        parentTerm.write("-- IRTIFA & NAV --")
 
         -- Artificial Horizon (Center)
         if w >= 45 and h >= 16 then
-            drawArtificialHorizon(math.floor(w / 2), 7, 16, 7, lastTel.pitch, lastTel.roll)
+            drawArtificialHorizon(math.floor(w / 2), 6, 13, 7, lastTel.pitch, lastTel.roll)
         end
 
-        -- Left Tape: Speed, Pitch/Roll, Engine Stress
+        -- Left Tape: Speed, Throttle Bar, Reverse Gear, Burner Bar, RPM, Stress
         parentTerm.setBackgroundColor(theme.bg)
         parentTerm.setTextColor(theme.fg)
         parentTerm.setCursorPos(2, 3)
         parentTerm.write(string.format("SPD : %5.1f m/s", lastTel.speed))
+
         parentTerm.setCursorPos(2, 4)
-        parentTerm.write(string.format("THR : %2d / 15", fc.ap.baseThrottle))
+        parentTerm.setTextColor(fc.ap.baseThrottle > 0 and (theme.ok or colors.lime) or theme.fg)
+        parentTerm.write(string.format("THR : %s %2d", makeBar(fc.ap.baseThrottle, 15, 5), fc.ap.baseThrottle))
+
         parentTerm.setCursorPos(2, 5)
-        parentTerm.write(string.format("PTCH: %+5.1f deg", math.deg(lastTel.pitch)))
-        parentTerm.setCursorPos(2, 6)
-        parentTerm.write(string.format("ROLL: %+5.1f deg", math.deg(lastTel.roll)))
-        parentTerm.setCursorPos(2, 7)
-        parentTerm.write(string.format("RPM : %5.0f", lastTel.rpm))
+        if fc.ap.reverseGear then
+            parentTerm.setTextColor(theme.warn or colors.orange)
+            parentTerm.write("VTS : GERI (REV)")
+        else
+            parentTerm.setTextColor(theme.fg)
+            parentTerm.write("VTS : ILERI(FWD)")
+        end
+
+        if lastTel.vehicleType == "ZEPPELIN" then
+            local bCmd = lastTel.burnerCmd or 0
+            local bIn  = lastTel.burnerActual or 0
+            parentTerm.setCursorPos(2, 6)
+            parentTerm.setTextColor(bCmd > 0 and (theme.warn or colors.orange) or theme.muted)
+            parentTerm.write(string.format("BRNR: %s %2d", makeBar(bCmd, 15, 5), bCmd))
+
+            parentTerm.setCursorPos(2, 7)
+            parentTerm.setTextColor(bIn > 0 and (theme.ok or colors.lime) or theme.muted)
+            parentTerm.write(string.format("KAZN: IN:%2d/15 %s", bIn, lastTel.burnerActive and "ON" or "--"))
+        else
+            parentTerm.setCursorPos(2, 6)
+            parentTerm.setTextColor(theme.fg)
+            parentTerm.write(string.format("PTCH: %+5.1f deg", math.deg(lastTel.pitch)))
+            parentTerm.setCursorPos(2, 7)
+            parentTerm.write(string.format("ROLL: %+5.1f deg", math.deg(lastTel.roll)))
+        end
 
         parentTerm.setCursorPos(2, 8)
+        parentTerm.setTextColor(theme.fg)
+        parentTerm.write(string.format("RPM : %5.0f RPM", lastTel.rpm))
+
+        parentTerm.setCursorPos(2, 9)
         if lastTel.overstressed then
             parentTerm.setTextColor(theme.err or colors.red)
             parentTerm.write("STRS: OVERSTRESS!")
@@ -165,46 +334,56 @@ local function run(context)
             parentTerm.write("STRS: NOMINAL")
         end
 
-        if lastTel.vehicleType == "ZEPPELIN" then
-            parentTerm.setCursorPos(2, 9)
-            parentTerm.setTextColor((lastTel.burnerActual and lastTel.burnerActual > 0) and (theme.warn or colors.orange) or theme.muted)
-            parentTerm.write(string.format("BRNR: %2d/15 (IN:%2d)", lastTel.burnerCmd or 0, lastTel.burnerActual or 0))
-        end
-
-        -- Right Tape: Altitude, VSI, Heading, Radar AGL
-        local rightCol = math.max(30, w - 18)
+        -- Right Tape: Altitude, Target, VSI, Heading, Course, Radar AGL
         parentTerm.setTextColor(theme.fg)
         parentTerm.setCursorPos(rightCol, 3)
-        parentTerm.write(string.format("ALT: %6.1f m", lastTel.altitude))
+        parentTerm.write(string.format("ALT : %6.1f m", lastTel.altitude))
+
+        local altDiff = fc.ap.targetAlt - lastTel.altitude
+        local trendChar = math.abs(altDiff) < 0.5 and "=" or (altDiff > 0 and "^" or "v")
         parentTerm.setCursorPos(rightCol, 4)
         parentTerm.setTextColor(theme.accent or colors.cyan)
-        parentTerm.write(string.format("TGT: %6.1f m", fc.ap.targetAlt))
+        parentTerm.write(string.format("TGT : %6.1f m%s", fc.ap.targetAlt, trendChar))
+
+        parentTerm.setCursorPos(rightCol, 5)
+        if lastTel.vSpeed > 0.2 then
+            parentTerm.setTextColor(theme.ok or colors.lime)
+        elseif lastTel.vSpeed < -0.2 then
+            parentTerm.setTextColor(theme.warn or colors.orange)
+        else
+            parentTerm.setTextColor(theme.fg)
+        end
+        parentTerm.write(string.format("VSI : %+5.1f m/s", lastTel.vSpeed))
 
         parentTerm.setTextColor(theme.fg)
-        parentTerm.setCursorPos(rightCol, 5)
-        parentTerm.write(string.format("VSI: %+5.1f m/s", lastTel.vSpeed))
-
-        local hdgDeg = math.deg(lastTel.heading) % 360
-        local tgtHdgDeg = math.deg(fc.ap.targetHdg) % 360
         parentTerm.setCursorPos(rightCol, 6)
-        parentTerm.write(string.format("HDG: %05.1f deg", hdgDeg))
+        parentTerm.write(string.format("HDG : %05.1f deg", hdgDeg))
         parentTerm.setCursorPos(rightCol, 7)
         parentTerm.setTextColor(theme.accent or colors.cyan)
-        parentTerm.write(string.format("CRS: %05.1f deg", tgtHdgDeg))
+        parentTerm.write(string.format("CRS : %05.1f deg", tgtHdgDeg))
 
         parentTerm.setCursorPos(rightCol, 8)
         parentTerm.setTextColor(theme.fg)
         if lastTel.agl then
-            parentTerm.write(string.format("AGL: %5.1f m", lastTel.agl))
+            parentTerm.write(string.format("AGL : %6.1f m", lastTel.agl))
         else
-            parentTerm.write("AGL: ---.- m")
+            parentTerm.write("AGL :  ---.- m")
         end
 
-        -- ILS / RTB Deviation Row (Row 10)
-        parentTerm.setCursorPos(2, 10)
-        parentTerm.setBackgroundColor(theme.bg)
-        if fc.ap.mode == "RTB" and fc.ap.homeBase then
-            parentTerm.setTextColor(colors.cyan)
+        parentTerm.setCursorPos(rightCol, 9)
+        parentTerm.setTextColor(theme.muted)
+        parentTerm.write(string.format("P:%+4.0f R:%+4.0f", math.deg(lastTel.pitch), math.deg(lastTel.roll)))
+
+        -- Row 11: Hot-Plug Toast Notification OR ILS Status
+        parentTerm.setCursorPos(2, 11)
+        if hotplugNotice and hotplugTimer > 0 then
+            parentTerm.setBackgroundColor(isColor and colors.cyan or colors.white)
+            parentTerm.setTextColor(colors.black)
+            local msg = " " .. hotplugNotice .. " ([P] Ayarla) "
+            parentTerm.write(msg:sub(1, w - 2))
+        elseif fc.ap.mode == "RTB" and fc.ap.homeBase then
+            parentTerm.setBackgroundColor(theme.bg)
+            parentTerm.setTextColor(theme.accent or colors.cyan)
             parentTerm.write(string.format(
                 "ILS [%s/%s] LOC:%+5.1fm GS:%+5.1fm DST:%4.0fm",
                 tostring(fc.ap.homeBase.runwayId or "RWY"),
@@ -214,16 +393,25 @@ local function run(context)
                 fc.ap.ilsDev.dist or 0
             ))
         elseif fc.ap.homeBase then
+            parentTerm.setBackgroundColor(theme.bg)
             parentTerm.setTextColor(colors.lightGray)
             parentTerm.write(string.format(
-                "ILS BEACON LOCKED: %s (%s) - Press [R] for RTB",
+                "ILS LOCKED: %s (%s) - [R] RTB",
                 tostring(fc.ap.homeBase.baseName or "BASE"),
                 tostring(fc.ap.homeBase.runwayId or "RWY")
             ))
+        else
+            parentTerm.setBackgroundColor(theme.bg)
+            parentTerm.setTextColor(theme.muted)
+            local periphCount = math.max(0, #(fc.ioDevices or {}) - 6)
+            parentTerm.write(string.format(
+                "BAGLI DONANIM: %d Cihaz + 6 Redstone Kanal ([P] Konfigure Et)",
+                periphCount
+            ):sub(1, w - 2))
         end
 
-        -- Warnings Banner (GPWS / Stall / Gear)
-        parentTerm.setCursorPos(2, 11)
+        -- Row 12: Warnings Banner (GPWS / Stall / Gear & Clutch)
+        parentTerm.setCursorPos(2, 12)
         if lastTel.gpwsWarning then
             parentTerm.setBackgroundColor(colors.red)
             parentTerm.setTextColor(colors.white)
@@ -233,31 +421,41 @@ local function run(context)
             parentTerm.setTextColor(colors.black)
             parentTerm.write(" !! STALL WARNING - LOWER NOSE !! ")
         else
+            local clutchCut = fc.ap.parkingBrake or (fc.ap.baseThrottle <= 0)
             parentTerm.setBackgroundColor(theme.bg)
-            parentTerm.setTextColor(lastTel.weightOnWheels and colors.lime or colors.lightGray)
+            parentTerm.setTextColor(lastTel.weightOnWheels and (theme.ok or colors.lime) or colors.lightGray)
             parentTerm.write(string.format(
-                "GEAR: %s | BRAKE: %s | POS: (%d, %d, %d)",
-                lastTel.weightOnWheels and "DOWN/LOCKED" or "AIRBORNE",
+                "CLUTCH:%s | BRK:%s | POS:(%d,%d,%d)",
+                clutchCut and "KESIK" or "AKTIF",
                 fc.ap.parkingBrake and "ON " or "OFF",
                 math.floor(lastTel.pos.x),
                 math.floor(lastTel.pos.y),
                 math.floor(lastTel.pos.z)
-            ))
+            ):sub(1, w - 2))
         end
 
-        -- Mode Annunciator Row
+        -- Bottom Dock Separator & Keybind Controls
         parentTerm.setBackgroundColor(theme.bg)
-        parentTerm.setCursorPos(2, h - 3)
-        parentTerm.setTextColor(fc.ap.enabled and colors.lime or colors.orange)
-        parentTerm.write(string.format(
-            "[A]AP:%s [H]HVR [C]CRS [R]RTB [L]LND [B]BRK:%s",
-            fc.ap.enabled and "ON " or "OFF",
-            fc.ap.parkingBrake and "ON" or "OFF"
-        ))
+        parentTerm.setCursorPos(1, h - 3)
+        parentTerm.setTextColor(theme.muted)
+        parentTerm.write(string.rep("-", w))
 
         parentTerm.setCursorPos(2, h - 2)
+        parentTerm.setTextColor(fc.ap.enabled and (theme.ok or colors.lime) or (theme.warn or colors.orange))
+        parentTerm.write(string.format(
+            "[A]AP:%s [H]HVR [C]CRS [G]VTS:%s [B]BRK:%s [R]RTB",
+            fc.ap.enabled and "ON " or "OFF",
+            fc.ap.reverseGear and "REV" or "FWD",
+            fc.ap.parkingBrake and "ON " or "OFF"
+        ):sub(1, w - 2))
+
+        parentTerm.setCursorPos(2, h - 1)
+        parentTerm.setTextColor(theme.accent or colors.cyan)
+        parentTerm.write("[P / Tab]: Donanim & Hot-Plug Atama Menusu (I/O Matrix)")
+
+        parentTerm.setCursorPos(2, h)
         parentTerm.setTextColor(colors.lightGray)
-        parentTerm.write("[Up/Dn]:Alt +-5m | [Lt/Rt]:Hdg +-5d | [W/S]:Thr | [Q]:Exit")
+        parentTerm.write("[Up/Dn]:Alt+-5 [Lt/Rt]:Hdg+-5 [W/S]:Thr [L]:Lnd [Q]:Cik")
     end
 
     -- Background 20Hz Flight Control & Telemetry Loop
@@ -265,6 +463,9 @@ local function run(context)
         while running do
             lastTel = fc:step(0.05)
             tickCount = tickCount + 1
+            if hotplugTimer > 0 then
+                hotplugTimer = hotplugTimer - 1
+            end
 
             if lastTel.gpwsWarning and (tickCount % 10 == 0) then
                 playAlert("GPWS")
@@ -291,7 +492,7 @@ local function run(context)
         end
     end
 
-    -- Pilot Input & Network Event Loop (Keyboard & Rednet ILS Beacon)
+    -- Pilot Input, Hot-Plug & Network Event Loop (Keyboard, Peripherals & Rednet ILS Beacon)
     local function pilotInputLoop()
         while running do
             local ev, p1, p2, p3 = os.pullEvent()
@@ -300,6 +501,15 @@ local function run(context)
                 if protocol == "DRUNKEN_ILS" and type(msg) == "table" and msg.type == "AVIONICS_ILS_BEACON" then
                     fc:setHomeBase(msg)
                 end
+            elseif ev == "peripheral" then
+                fc:scanPeripherals()
+                hotplugNotice = "HOTPLUG + " .. tostring(p1) .. " baglandi!"
+                hotplugTimer = 80
+                playAlert("CLICK")
+            elseif ev == "peripheral_detach" then
+                fc:scanPeripherals()
+                hotplugNotice = "HOTPLUG - " .. tostring(p1) .. " ayrildi!"
+                hotplugTimer = 80
             elseif ev == "key" then
                 local key = p1
                 playAlert("CLICK")
@@ -309,40 +519,73 @@ local function run(context)
                     fc:setMode("MANUAL", lastTel)
                     fc:step(0.05)
                     running = false
-                elseif key == keys.a then
-                    if fc.ap.enabled then
-                        fc:setMode("MANUAL", lastTel)
+                elseif key == keys.p or key == keys.tab then
+                    if activeTab == "PFD" then
+                        fc:scanPeripherals()
+                        activeTab = "IO"
                     else
-                        fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                        activeTab = "PFD"
                     end
-                elseif key == keys.c then
-                    fc:setMode("CRUISE", lastTel)
-                elseif key == keys.h then
-                    fc:setMode("HOVER", lastTel)
-                elseif key == keys.r then
-                    fc:engageRTB(lastTel)
-                elseif key == keys.l then
-                    fc:setMode("AUTOLAND", lastTel)
-                elseif key == keys.b then
-                    fc.ap.parkingBrake = not fc.ap.parkingBrake
-                elseif key == keys.up then
-                    if not fc.ap.enabled then
-                        fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                elseif activeTab == "IO" then
+                    local devs = fc.ioDevices or {}
+                    local selItem = devs[selectedIOIdx]
+                    if key == keys.up then
+                        selectedIOIdx = math.max(1, selectedIOIdx - 1)
+                    elseif key == keys.down then
+                        selectedIOIdx = math.min(math.max(1, #devs), selectedIOIdx + 1)
+                    elseif (key == keys.right or key == keys.enter) and selItem then
+                        fc:cycleRole(selItem.name, 1)
+                    elseif key == keys.left and selItem then
+                        fc:cycleRole(selItem.name, -1)
+                    elseif key == keys.i and selItem then
+                        fc:toggleInvert(selItem.name)
+                    elseif key == keys.x and selItem then
+                        local cfg = fc:getDeviceConfig(selItem.name)
+                        cfg.role = "AUTO"
+                        cfg.invert = false
+                        fc:saveIOMap()
+                    elseif key == keys.r then
+                        fc:scanPeripherals()
                     end
-                    fc.ap.targetAlt = fc.ap.targetAlt + 5
-                elseif key == keys.down then
-                    if not fc.ap.enabled then
-                        fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                else
+                    -- PFD Flight Controls
+                    if key == keys.a then
+                        if fc.ap.enabled then
+                            fc:setMode("MANUAL", lastTel)
+                        else
+                            fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                        end
+                    elseif key == keys.c then
+                        fc:setMode("CRUISE", lastTel)
+                    elseif key == keys.h then
+                        fc:setMode("HOVER", lastTel)
+                    elseif key == keys.r then
+                        fc:engageRTB(lastTel)
+                    elseif key == keys.l then
+                        fc:setMode("AUTOLAND", lastTel)
+                    elseif key == keys.b then
+                        fc.ap.parkingBrake = not fc.ap.parkingBrake
+                    elseif key == keys.g then
+                        fc.ap.reverseGear = not fc.ap.reverseGear
+                    elseif key == keys.up then
+                        if not fc.ap.enabled then
+                            fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                        end
+                        fc.ap.targetAlt = fc.ap.targetAlt + 5
+                    elseif key == keys.down then
+                        if not fc.ap.enabled then
+                            fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                        end
+                        fc.ap.targetAlt = math.max(0, fc.ap.targetAlt - 5)
+                    elseif key == keys.left then
+                        fc.ap.targetHdg = (fc.ap.targetHdg - math.rad(5)) % (2 * math.pi)
+                    elseif key == keys.right then
+                        fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(5)) % (2 * math.pi)
+                    elseif key == keys.w then
+                        fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
+                    elseif key == keys.s then
+                        fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
                     end
-                    fc.ap.targetAlt = math.max(0, fc.ap.targetAlt - 5)
-                elseif key == keys.left then
-                    fc.ap.targetHdg = (fc.ap.targetHdg - math.rad(5)) % (2 * math.pi)
-                elseif key == keys.right then
-                    fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(5)) % (2 * math.pi)
-                elseif key == keys.w then
-                    fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
-                elseif key == keys.s then
-                    fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
                 end
             end
         end

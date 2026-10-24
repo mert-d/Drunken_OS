@@ -206,6 +206,28 @@ local function runTests()
     assert(mockState.stbdSignal == 11, "Expected manual throttle to reach stbd transmission")
     print("  PASS: Test 5: Manual Mode Throttle Transmission ([W]/[S] Passthrough)")
 
+    -- Test 6: 1D Negative Velocity Sensor Speed Fix & Configurable I/O Roles / Gearshift
+    local gearshiftState = 0
+    _G.peripheral.find = function(pType)
+        if pType == "velocity_sensor" then
+            return { getVelocity = function() return -12.5 end }
+        elseif pType == "gearshift" then
+            return { setSignal = function(s) gearshiftState = s end }
+        end
+        return nil
+    end
+    local cfgFC = Avionics.new({ callsign = "CFG-01" })
+    local cfgTel = cfgFC:readTelemetry(0.05)
+    assert(cfgTel.speed == 12.5, "Expected negative 1D velocity sensor reading (-12.5) to yield positive speed (12.5)")
+    cfgFC.ap.reverseGear = true
+    cfgFC:step(0.05)
+    assert(gearshiftState == 15, "Expected reverseGear=true to drive gearshift to 15")
+    local newRole = cfgFC:cycleRole("RS:back", 1)
+    assert(newRole == "LIFT_BURNER", "Expected cycleRole on RS:back to advance from AUTO to LIFT_BURNER")
+    local inv = cfgFC:toggleInvert("RS:back")
+    assert(inv == true, "Expected toggleInvert on RS:back to set invert=true")
+    print("  PASS: Test 6: Positive Airspeed Fix, Reverse Gearshift & Configurable I/O Matrix")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

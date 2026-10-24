@@ -84,11 +84,29 @@ local function callKinetic(dev, fn, ...)
     return nil
 end
 
+Avionics.ROLES = {
+    "AUTO",
+    "LIFT_BURNER",
+    "THRUST_MAIN",
+    "THRUST_PORT",
+    "THRUST_STBD",
+    "AUX_BOOST",
+    "CLUTCH_BRAKE",
+    "GEAR_REVERSE",
+    "RUDDER_YAW",
+    "IGNORE"
+}
+
+local IO_CONFIG_PATH = "/avionics_iomap.cfg"
+
 function Avionics.new(config)
     local self = setmetatable({}, Avionics)
     self.config = config or {}
     self.callsign = self.config.callsign or ("DOS-" .. tostring(os.getComputerID and os.getComputerID() or 0))
+    self.ioMap = {}
+    self.ioDevices = {}
 
+    self:loadIOMap()
     self:scanPeripherals()
 
     -- Autopilot State & Setpoints
@@ -104,6 +122,7 @@ function Avionics.new(config)
         targetSpd    = 10.0,     -- m/s
         baseThrottle = 8,        -- 0..15 Redstone/Transmission scale
         parkingBrake = false,
+        reverseGear  = false,    -- Gearshift / Reverse Thrust toggle ([G])
         waypoint     = nil,      -- { x = 0, y = 120, z = 0, name = "HOME" }
         homeBase     = nil,      -- ILS Beacon packet or manual base table
         rtbPhase     = "NONE",   -- NONE, RTB_IAF, RTB_ILS, RTB_MAST
@@ -121,6 +140,57 @@ function Avionics.new(config)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
 
     return self
+end
+
+function Avionics:loadIOMap()
+    if fs and fs.exists and fs.exists(IO_CONFIG_PATH) and textutils and textutils.unserialize then
+        local ok, f = pcall(fs.open, IO_CONFIG_PATH, "r")
+        if ok and f then
+            local content = f.readAll()
+            f.close()
+            local parsed = textutils.unserialize(content)
+            if type(parsed) == "table" then
+                self.ioMap = parsed
+            end
+        end
+    end
+end
+
+function Avionics:saveIOMap()
+    if fs and fs.open and textutils and textutils.serialize then
+        local ok, f = pcall(fs.open, IO_CONFIG_PATH, "w")
+        if ok and f then
+            f.write(textutils.serialize(self.ioMap))
+            f.close()
+        end
+    end
+end
+
+function Avionics:getDeviceConfig(devName)
+    if not self.ioMap[devName] then
+        self.ioMap[devName] = { role = "AUTO", invert = false }
+    end
+    return self.ioMap[devName]
+end
+
+function Avionics:cycleRole(devName, dir)
+    dir = dir or 1
+    local cfg = self:getDeviceConfig(devName)
+    local idx = 1
+    for i, r in ipairs(Avionics.ROLES) do
+        if r == cfg.role then idx = i break end
+    end
+    idx = ((idx - 1 + dir) % #Avionics.ROLES) + 1
+    cfg.role = Avionics.ROLES[idx]
+    self:saveIOMap()
+    return cfg.role
+end
+
+function Avionics:toggleInvert(devName)
+    local cfg = self:getDeviceConfig(devName)
+    cfg.invert = not cfg.invert
+    self:saveIOMap()
+    return cfg.invert
 end
 
 function Avionics:scanPeripherals()
@@ -148,6 +218,11 @@ function Avionics:scanPeripherals()
         self.wheels      = { peripheral.find("wheel_mount") }
         self.engines     = { peripheral.find("portable_engine") }
         self.clutches    = { peripheral.find("create_connected_inverted_clutch") }
+        self.gearshifts  = {}
+        for _, gType in ipairs({ "gearshift", "create_sequenced_gearshift", "create_connected_gearshift", "redstone_relay" }) do
+            local found = { peripheral.find(gType) }
+            for _, g in ipairs(found) do table.insert(self.gearshifts, g) end
+        end
     else
         self.burners     = {}
         self.gearboxes   = {}
@@ -156,6 +231,41 @@ function Avionics:scanPeripherals()
         self.wheels      = {}
         self.engines     = {}
         self.clutches    = {}
+        self.gearshifts  = {}
+    end
+
+    -- Build unified I/O device list for Hot-Plug & Role Configurator UI
+    self.ioDevices = {}
+    if peripheral and peripheral.getNames then
+        local okNames, names = pcall(peripheral.getNames)
+        if okNames and type(names) == "table" then
+            table.sort(names)
+            for _, name in ipairs(names) do
+                local okT, pType = pcall(peripheral.getType, name)
+                local pStr = tostring(okT and pType or "peripheral")
+                if pStr ~= "modem" and pStr ~= "monitor" and pStr ~= "speaker" and pStr ~= "drive" then
+                    local okW, handle = pcall(peripheral.wrap, name)
+                    self:getDeviceConfig(name)
+                    table.insert(self.ioDevices, {
+                        name       = name,
+                        kind       = pStr,
+                        handle     = okW and handle or nil,
+                        isRedstone = false
+                    })
+                end
+            end
+        end
+    end
+    for _, side in ipairs({ "back", "front", "left", "right", "top", "bottom" }) do
+        local rsName = "RS:" .. side
+        self:getDeviceConfig(rsName)
+        table.insert(self.ioDevices, {
+            name       = rsName,
+            side       = side,
+            kind       = "redstone_out",
+            handle     = nil,
+            isRedstone = true
+        })
     end
 
     -- Determine Vehicle Type
@@ -208,9 +318,10 @@ function Avionics:readTelemetry(dt)
         end
     end
 
-    -- 4. Velocity & Airspeed
+    -- 4. Velocity & Airspeed (Always positive magnitude for SPD display regardless of sensor block axis orientation)
     local vel = { x = 0, y = vsi, z = 0 }
     local speed = 0
+    local rawVel = 0
     if self.velSensor then
         local v = safeCall(self.velSensor.getVelocity)
         if type(v) == "table" then
@@ -218,8 +329,10 @@ function Avionics:readTelemetry(dt)
             vel.y = tonumber(v.y) or vsi
             vel.z = tonumber(v.z) or 0
             speed = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
+            rawVel = speed
         elseif type(v) == "number" then
-            speed = v
+            rawVel = v
+            speed = math.abs(v)
         end
     end
 
@@ -510,15 +623,27 @@ function Avionics:step(dt)
         end
     end
 
+    local function driveBooleanOrSignal(dev, active, sigVal, inv)
+        local finalActive = inv and (not active) or active
+        local finalSig = inv and (15 - sigVal) or sigVal
+        if dev.setPowered then callKinetic(dev, dev.setPowered, finalActive) end
+        if dev.setSignal then callKinetic(dev, dev.setSignal, finalSig)
+        else driveSignal(dev, finalSig) end
+    end
+
     local function emitRedstoneBurner(sig)
         if redstone and redstone.setAnalogOutput then
             for _, side in ipairs({ "left", "right", "front", "back", "top", "bottom" }) do
-                pcall(redstone.setAnalogOutput, side, sig)
+                local cfg = self:getDeviceConfig("RS:" .. side)
+                if cfg.role == "AUTO" or cfg.role == "LIFT_BURNER" then
+                    local outSig = cfg.invert and (15 - sig) or sig
+                    pcall(redstone.setAnalogOutput, side, outSig)
+                end
             end
         end
     end
 
-    -- 1. Landing Gear Brakes, Inverted Clutches & Steering / Rudder Deflection
+    -- 1. Landing Gear Brakes, Inverted Clutches, Gearshifts & Steering / Rudder Deflection
     local brakeVal = self.ap.parkingBrake and 1.0 or 0.0
     local steerVal = 0.0
     if self.steerWheel and self.steerWheel.getSteering then
@@ -547,18 +672,82 @@ function Avionics:step(dt)
         end)
     end
 
+    -- Drive Gearshifts (Reverse Thrust / Reverse Gear [G])
+    local revActive = self.ap.reverseGear == true
+    for _, gs in ipairs(self.gearshifts or {}) do
+        table.insert(tasks, function()
+            driveBooleanOrSignal(gs, revActive, revActive and 15 or 0, false)
+        end)
+    end
+
+    local mainThrottleSig = math.floor(clamp(self.ap.baseThrottle, 0, 15))
+    local portSignal = math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
+    local stbdSignal = math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
+    local boostSignal = (self.ap.baseThrottle >= 12) and 15 or 0
+    local burnerSignal = mainThrottleSig
+
+    -- Route custom I/O role mappings (Hot-plug peripherals & Redstone sides)
+    local function routeCustomRoleDevices(bSig)
+        for _, item in ipairs(self.ioDevices or {}) do
+            local cfg = self:getDeviceConfig(item.name)
+            local role = cfg.role
+            local inv = cfg.invert == true
+            if role ~= "AUTO" or (inv and item.isRedstone) then
+                local sig = nil
+                local boolState = nil
+                if role == "IGNORE" then
+                    sig = nil
+                elseif role == "LIFT_BURNER" or (role == "AUTO" and item.isRedstone) then
+                    sig = bSig
+                elseif role == "THRUST_MAIN" then
+                    sig = mainThrottleSig
+                elseif role == "THRUST_PORT" then
+                    sig = portSignal
+                elseif role == "THRUST_STBD" then
+                    sig = stbdSignal
+                elseif role == "AUX_BOOST" then
+                    sig = boostSignal
+                elseif role == "CLUTCH_BRAKE" then
+                    boolState = not clutchCut
+                    sig = clutchCut and 0 or math.max(1, mainThrottleSig)
+                elseif role == "GEAR_REVERSE" then
+                    boolState = revActive
+                    sig = revActive and 15 or 0
+                elseif role == "RUDDER_YAW" then
+                    sig = math.floor(clamp(8 + steerVal * 7, 0, 15))
+                end
+
+                if item.isRedstone and sig ~= nil and redstone and redstone.setAnalogOutput then
+                    local outSig = inv and (15 - sig) or sig
+                    pcall(redstone.setAnalogOutput, item.side, outSig)
+                elseif not item.isRedstone and item.handle and role ~= "IGNORE" then
+                    local dev = item.handle
+                    table.insert(tasks, function()
+                        if role == "RUDDER_YAW" and dev.setSteering then
+                            safeCall(dev.setSteering, inv and -steerVal or steerVal)
+                        elseif boolState ~= nil then
+                            driveBooleanOrSignal(dev, boolState, sig or 0, inv)
+                        elseif sig ~= nil then
+                            local outSig = inv and (15 - sig) or sig
+                            driveSignal(dev, outSig)
+                        end
+                    end)
+                end
+            end
+        end
+    end
+
     -- If Autopilot is disabled, apply baseThrottle to gearboxes/throttles and clear manual gyro locks
     if not self.ap.enabled then
-        local manualSig = math.floor(clamp(self.ap.baseThrottle, 0, 15))
-        self.lastBurnerSignal = manualSig
-        tel.burnerCmd = manualSig
+        self.lastBurnerSignal = mainThrottleSig
+        tel.burnerCmd = mainThrottleSig
         for _, gb in ipairs(self.gearboxes) do
-            table.insert(tasks, function() driveSignal(gb, manualSig) end)
+            table.insert(tasks, function() driveSignal(gb, mainThrottleSig) end)
         end
         if self.vehicleType == "ZEPPELIN" then
-            emitRedstoneBurner(manualSig)
+            emitRedstoneBurner(mainThrottleSig)
             for _, thr in ipairs(self.throttles) do
-                table.insert(tasks, function() driveSignal(thr, manualSig) end)
+                table.insert(tasks, function() driveSignal(thr, mainThrottleSig) end)
             end
         end
         for _, gyro in ipairs(self.gyros) do
@@ -566,6 +755,7 @@ function Avionics:step(dt)
                 table.insert(tasks, function() safeCall(gyro.clearManualTarget) end)
             end
         end
+        routeCustomRoleDevices(mainThrottleSig)
         if #tasks > 0 and parallel and parallel.waitForAll then
             parallel.waitForAll(table.unpack(tasks))
         end
@@ -574,13 +764,10 @@ function Avionics:step(dt)
 
     -- 2. Differential Thrust on Analog Transmissions
     if #self.gearboxes >= 2 then
-        local portSignal = math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
-        local stbdSignal = math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
         table.insert(tasks, function() driveSignal(self.gearboxes[1], portSignal) end)
         table.insert(tasks, function() driveSignal(self.gearboxes[2], stbdSignal) end)
     elseif #self.gearboxes == 1 then
-        local mainSignal = math.floor(clamp(self.ap.baseThrottle, 0, 15))
-        table.insert(tasks, function() driveSignal(self.gearboxes[1], mainSignal) end)
+        table.insert(tasks, function() driveSignal(self.gearboxes[1], mainThrottleSig) end)
     end
 
     -- 3. Altitude PID & Attitude Stabilization
@@ -588,7 +775,7 @@ function Avionics:step(dt)
         local altCmd = self.altPID:compute(self.ap.targetAlt, tel.altitude, dt)
 
         if self.vehicleType == "ZEPPELIN" then
-            local burnerSignal = math.floor(clamp(8 + altCmd, 0, 15))
+            burnerSignal = math.floor(clamp(8 + altCmd, 0, 15))
             self.lastBurnerSignal = burnerSignal
             tel.burnerCmd = burnerSignal
             emitRedstoneBurner(burnerSignal)
@@ -622,6 +809,8 @@ function Avionics:step(dt)
             end
         end
     end
+
+    routeCustomRoleDevices(burnerSignal)
 
     -- Execute all mainThread actuator setters in parallel within a single server tick
     if #tasks > 0 and parallel and parallel.waitForAll then
