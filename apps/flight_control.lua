@@ -62,7 +62,8 @@ local function run(context)
     })
 
     local running = true
-    local activeTab = "PFD" -- "PFD" or "IO"
+    local activeTab = fc.hasSavedProfile and "PFD" or "PROFILE" -- "PROFILE", "PFD", or "IO"
+    local selectedProfileIdx = (fc.vehicleType == "MOTHERSHIP" and 3) or (fc.vehicleType == "AIRCRAFT" and 2) or 1
     local selectedIOIdx = 1
     local ioScrollOffset = 0
     local hotplugNotice = nil
@@ -74,8 +75,36 @@ local function run(context)
     end
     local tickCount = 0
 
+    local PROFILE_LIST = {
+        {
+            id    = "ZEPPELIN",
+            title = "[1] ZEPPELIN (Hava Gemisi / Balon)",
+            desc1 = "3x Hot Air Burner (Irtifa PID) + Arka Pervane",
+            desc2 = "Inverted Clutch Fren + Dumen / Yatay Gyro Donus"
+        },
+        {
+            id    = "AIRCRAFT",
+            title = "[2] AIRCRAFT (Sabit Kanat / VTOL Ucak)",
+            desc1 = "Cift/Tek Motor Diferansiyel Itki + Inis Takimi",
+            desc2 = "3D Gyroscopic Propeller Vektorleme (12 deg Koni)"
+        },
+        {
+            id    = "MOTHERSHIP",
+            title = "[3] MOTHERSHIP (4x Dikey Lift + 3x Arka Itki)",
+            desc1 = "4 Buyuk Dikey Motor: Gimbal (Pitch/Roll) + Irtifa Denge",
+            desc2 = "3 Arka Manevra Motoru: Sol/Orta/Sag Diferansiyel Donus"
+        }
+    }
+
     local ROLE_DESC = {
         AUTO         = "Otomatik: Blok tipine gore varsayilan gorev",
+        LIFT_FL      = "[1] Mothership ON-SOL Dikey Lift & Gimbal Denge",
+        LIFT_FR      = "[2] Mothership ON-SAG Dikey Lift & Gimbal Denge",
+        LIFT_RL      = "[3] Mothership ARKA-SOL Dikey Lift & Gimbal Denge",
+        LIFT_RR      = "[4] Mothership ARKA-SAG Dikey Lift & Gimbal Denge",
+        REAR_LEFT    = "[5] Mothership ARKA-SOL Manevra & Ileri/Geri Itki",
+        REAR_CENTER  = "[6] Mothership ARKA-ORTA Ana Ileri/Geri Itki",
+        REAR_RIGHT   = "[7] Mothership ARKA-SAG Manevra & Ileri/Geri Itki",
         LIFT_BURNER  = "Irtifa / Kazan: PID yukseklik sinyali (0-15)",
         THRUST_MAIN  = "Ana Itki: Ileri/Geri ana gaz sinyali (0-15)",
         THRUST_PORT  = "Sol Itki (Port): Diferansiyel sol motor gucu",
@@ -163,16 +192,56 @@ local function run(context)
         parentTerm.setCursorPos(1, 1)
         parentTerm.setBackgroundColor(theme.header or colors.blue)
         parentTerm.setTextColor(colors.white)
-        local tabLabel = (activeTab == "PFD") and "[PFD] [P:I/O]" or "[P:PFD] [I/O]"
+        local vShort = (lastTel.vehicleType == "MOTHERSHIP" and "MSHIP")
+            or (lastTel.vehicleType == "ZEPPELIN" and "ZEP")
+            or "AIR"
+        local tabLabel = (activeTab == "PFD") and "[PFD] [P:I/O] [V:ARAC]"
+            or ((activeTab == "IO") and "[P:PFD] [I/O] [V:ARAC]" or "[ARAC SECIMI]")
         local headerText = string.format(
-            " DOS AVIONICS | %s [%s] | %s | %s",
+            " DOS | %s [%s] | %s | %s",
             lastTel.callsign,
-            lastTel.vehicleType == "ZEPPELIN" and "ZEP" or "AIR",
+            vShort,
             fc.ap.mode,
             tabLabel
         )
         if #headerText > w then headerText = headerText:sub(1, w) end
         parentTerm.write(headerText .. string.rep(" ", math.max(0, w - #headerText)))
+    end
+
+    local function renderProfileSelector(w, h)
+        parentTerm.setBackgroundColor(theme.bg)
+        parentTerm.clear()
+        renderHeader(w)
+
+        parentTerm.setCursorPos(2, 3)
+        parentTerm.setTextColor(theme.accent or colors.cyan)
+        parentTerm.write("=== ARAC KONTROL PROFILINI SECIN ===")
+
+        for i, p in ipairs(PROFILE_LIST) do
+            local baseY = 4 + (i - 1) * 4
+            local isSel = (i == selectedProfileIdx)
+            parentTerm.setCursorPos(2, baseY)
+            parentTerm.setBackgroundColor(isSel and (isColor and colors.cyan or colors.white) or theme.bg)
+            parentTerm.setTextColor(isSel and colors.black or (theme.ok or colors.lime))
+            local lineTitle = (isSel and " > " or "   ") .. p.title
+            parentTerm.write(lineTitle .. string.rep(" ", math.max(0, w - 3 - #lineTitle)))
+
+            parentTerm.setBackgroundColor(theme.bg)
+            parentTerm.setTextColor(theme.fg)
+            parentTerm.setCursorPos(5, baseY + 1)
+            parentTerm.write(p.desc1:sub(1, w - 6))
+            parentTerm.setTextColor(theme.muted)
+            parentTerm.setCursorPos(5, baseY + 2)
+            parentTerm.write(p.desc2:sub(1, w - 6))
+        end
+
+        parentTerm.setBackgroundColor(theme.bg)
+        parentTerm.setCursorPos(2, h - 1)
+        parentTerm.setTextColor(theme.ok or colors.lime)
+        parentTerm.write("[1/2/3] veya [Up/Dn + Enter]: Profili Kur & Baslat")
+        parentTerm.setCursorPos(2, h)
+        parentTerm.setTextColor(colors.lightGray)
+        parentTerm.write("[P]: I/O Motor Siralamasi | [V/Tab]: Kokpite Don")
     end
 
     local function renderIOConfigurator(w, h)
@@ -203,12 +272,16 @@ local function run(context)
                 local item = devs[idx]
                 local cfg = fc:getDeviceConfig(item.name)
                 local isSel = (idx == selectedIOIdx)
-                parentTerm.setBackgroundColor(isSel and (isColor and colors.cyan or colors.white) or theme.bg)
-                parentTerm.setTextColor(isSel and colors.black or theme.fg)
+                local isTesting = (fc.spinTest and fc.spinTest.name == item.name)
+                parentTerm.setBackgroundColor(
+                    isTesting and (isColor and colors.orange or colors.white)
+                    or (isSel and (isColor and colors.cyan or colors.white) or theme.bg)
+                )
+                parentTerm.setTextColor((isSel or isTesting) and colors.black or theme.fg)
 
                 local shortName = item.name
                 if #shortName > 17 then shortName = shortName:sub(1, 15) .. ".." end
-                local shortKind = item.kind:gsub("create_connected_", ""):gsub("create_", "")
+                local shortKind = item.kind:gsub("create_connected_", ""):gsub("create_", ""):gsub("rotation_", "")
                 if #shortKind > 11 then shortKind = shortKind:sub(1, 11) end
 
                 local invStr = cfg.invert and "TERS" or "NRM "
@@ -239,16 +312,19 @@ local function run(context)
 
         parentTerm.setCursorPos(2, h - 1)
         parentTerm.setTextColor(theme.ok or colors.lime)
-        parentTerm.write("[Up/Dn]:Sec [Sol/Sag/Enter]:Gorev [I]:Invert")
+        parentTerm.write("[Sol/Sag]:Gorev [1-7]:MothershipMotor [T]:SpinTest")
 
         parentTerm.setCursorPos(2, h)
         parentTerm.setTextColor(colors.lightGray)
-        parentTerm.write("[X]:AUTO Sifirla | [R]:Yeniden Tara | [P/Tab]:PFD Don")
+        parentTerm.write("[I]:Invert [X]:AUTO [V]:AracProfil [P/Tab]:Kokpit")
     end
 
     local function renderPFD()
         local w, h = parentTerm.getSize()
-        if activeTab == "IO" then
+        if activeTab == "PROFILE" then
+            renderProfileSelector(w, h)
+            return
+        elseif activeTab == "IO" then
             renderIOConfigurator(w, h)
             return
         end
@@ -284,7 +360,7 @@ local function run(context)
             drawArtificialHorizon(math.floor(w / 2), 6, 13, 7, lastTel.pitch, lastTel.roll)
         end
 
-        -- Left Tape: Speed, Throttle Bar, Reverse Gear, Burner Bar, RPM, Stress
+        -- Left Tape: Speed, Throttle Bar, Reverse Gear, Vehicle-Specific Propulsion, RPM, Stress
         parentTerm.setBackgroundColor(theme.bg)
         parentTerm.setTextColor(theme.fg)
         parentTerm.setCursorPos(2, 3)
@@ -303,7 +379,17 @@ local function run(context)
             parentTerm.write("VTS : ILERI(FWD)")
         end
 
-        if lastTel.vehicleType == "ZEPPELIN" then
+        if lastTel.vehicleType == "MOTHERSHIP" then
+            local ms = lastTel.mothership or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 }
+            parentTerm.setCursorPos(2, 6)
+            parentTerm.setTextColor(theme.accent or colors.cyan)
+            parentTerm.write(string.format("L-ON: FL%2d FR%2d", ms.fl, ms.fr))
+            parentTerm.setCursorPos(2, 7)
+            parentTerm.write(string.format("L-AR: RL%2d RR%2d", ms.rl, ms.rr))
+            parentTerm.setCursorPos(2, 8)
+            parentTerm.setTextColor(theme.ok or colors.lime)
+            parentTerm.write(string.format("ARKA: %+3d %+3d %+3d", ms.rearL, ms.rearC, ms.rearR))
+        elseif lastTel.vehicleType == "ZEPPELIN" then
             local bCmd = lastTel.burnerCmd or 0
             local bIn  = lastTel.burnerActual or 0
             parentTerm.setCursorPos(2, 6)
@@ -313,17 +399,19 @@ local function run(context)
             parentTerm.setCursorPos(2, 7)
             parentTerm.setTextColor(bIn > 0 and (theme.ok or colors.lime) or theme.muted)
             parentTerm.write(string.format("KAZN: IN:%2d/15 %s", bIn, lastTel.burnerActive and "ON" or "--"))
+
+            parentTerm.setCursorPos(2, 8)
+            parentTerm.setTextColor(theme.fg)
+            parentTerm.write(string.format("RPM : %5.0f RPM", lastTel.rpm))
         else
             parentTerm.setCursorPos(2, 6)
             parentTerm.setTextColor(theme.fg)
             parentTerm.write(string.format("PTCH: %+5.1f deg", math.deg(lastTel.pitch)))
             parentTerm.setCursorPos(2, 7)
             parentTerm.write(string.format("ROLL: %+5.1f deg", math.deg(lastTel.roll)))
+            parentTerm.setCursorPos(2, 8)
+            parentTerm.write(string.format("RPM : %5.0f RPM", lastTel.rpm))
         end
-
-        parentTerm.setCursorPos(2, 8)
-        parentTerm.setTextColor(theme.fg)
-        parentTerm.write(string.format("RPM : %5.0f RPM", lastTel.rpm))
 
         parentTerm.setCursorPos(2, 9)
         if lastTel.overstressed then
@@ -405,7 +493,8 @@ local function run(context)
             parentTerm.setTextColor(theme.muted)
             local periphCount = math.max(0, #(fc.ioDevices or {}) - 6)
             parentTerm.write(string.format(
-                "BAGLI DONANIM: %d Cihaz + 6 Redstone Kanal ([P] Konfigure Et)",
+                "PROFIL: %s | %d Cihaz ([V] Profil Sec | [P] I/O Ayarla)",
+                lastTel.vehicleType,
                 periphCount
             ):sub(1, w - 2))
         end
@@ -425,9 +514,10 @@ local function run(context)
             parentTerm.setBackgroundColor(theme.bg)
             parentTerm.setTextColor(lastTel.weightOnWheels and (theme.ok or colors.lime) or colors.lightGray)
             parentTerm.write(string.format(
-                "CLUTCH:%s | BRK:%s | POS:(%d,%d,%d)",
+                "CLUTCH:%s | BRK:%s | RPM:%.0f | POS:(%d,%d,%d)",
                 clutchCut and "KESIK" or "AKTIF",
                 fc.ap.parkingBrake and "ON " or "OFF",
+                lastTel.rpm,
                 math.floor(lastTel.pos.x),
                 math.floor(lastTel.pos.y),
                 math.floor(lastTel.pos.z)
@@ -451,7 +541,7 @@ local function run(context)
 
         parentTerm.setCursorPos(2, h - 1)
         parentTerm.setTextColor(theme.accent or colors.cyan)
-        parentTerm.write("[P / Tab]: Donanim & Hot-Plug Atama Menusu (I/O Matrix)")
+        parentTerm.write("[V]:Arac Profili (Zep/Air/Mothership) | [P]:I/O Matrix")
 
         parentTerm.setCursorPos(2, h)
         parentTerm.setTextColor(colors.lightGray)
@@ -519,16 +609,55 @@ local function run(context)
                     fc:setMode("MANUAL", lastTel)
                     fc:step(0.05)
                     running = false
+                elseif key == keys.v then
+                    if activeTab == "PROFILE" then
+                        activeTab = "PFD"
+                    else
+                        activeTab = "PROFILE"
+                    end
                 elseif key == keys.p or key == keys.tab then
-                    if activeTab == "PFD" then
+                    if activeTab == "IO" then
+                        activeTab = "PFD"
+                    else
                         fc:scanPeripherals()
                         activeTab = "IO"
-                    else
+                    end
+                elseif activeTab == "PROFILE" then
+                    if key == keys.up then
+                        selectedProfileIdx = math.max(1, selectedProfileIdx - 1)
+                    elseif key == keys.down then
+                        selectedProfileIdx = math.min(#PROFILE_LIST, selectedProfileIdx + 1)
+                    elseif key == keys.one or key == keys.numPad1 then
+                        selectedProfileIdx = 1
+                        fc:setVehicleProfile("ZEPPELIN", false)
                         activeTab = "PFD"
+                    elseif key == keys.two or key == keys.numPad2 then
+                        selectedProfileIdx = 2
+                        fc:setVehicleProfile("AIRCRAFT", false)
+                        activeTab = "PFD"
+                    elseif key == keys.three or key == keys.numPad3 then
+                        selectedProfileIdx = 3
+                        fc:setVehicleProfile("MOTHERSHIP", true)
+                        activeTab = "PFD"
+                    elseif key == keys.enter then
+                        local chosen = PROFILE_LIST[selectedProfileIdx]
+                        if chosen then
+                            fc:setVehicleProfile(chosen.id, chosen.id == "MOTHERSHIP")
+                            activeTab = "PFD"
+                        end
                     end
                 elseif activeTab == "IO" then
                     local devs = fc.ioDevices or {}
                     local selItem = devs[selectedIOIdx]
+                    local quickRoles = {
+                        [keys.one]   = "LIFT_FL",
+                        [keys.two]   = "LIFT_FR",
+                        [keys.three] = "LIFT_RL",
+                        [keys.four]  = "LIFT_RR",
+                        [keys.five]  = "REAR_LEFT",
+                        [keys.six]   = "REAR_CENTER",
+                        [keys.seven] = "REAR_RIGHT"
+                    }
                     if key == keys.up then
                         selectedIOIdx = math.max(1, selectedIOIdx - 1)
                     elseif key == keys.down then
@@ -537,6 +666,10 @@ local function run(context)
                         fc:cycleRole(selItem.name, 1)
                     elseif key == keys.left and selItem then
                         fc:cycleRole(selItem.name, -1)
+                    elseif quickRoles[key] and selItem then
+                        fc:setDeviceRole(selItem.name, quickRoles[key])
+                    elseif key == keys.t and selItem then
+                        fc:triggerSpinTest(selItem.name)
                     elseif key == keys.i and selItem then
                         fc:toggleInvert(selItem.name)
                     elseif key == keys.x and selItem then
@@ -549,11 +682,12 @@ local function run(context)
                     end
                 else
                     -- PFD Flight Controls
+                    local isAirshipOrMothership = (lastTel.vehicleType == "ZEPPELIN" or lastTel.vehicleType == "MOTHERSHIP")
                     if key == keys.a then
                         if fc.ap.enabled then
                             fc:setMode("MANUAL", lastTel)
                         else
-                            fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                            fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel)
                         end
                     elseif key == keys.c then
                         fc:setMode("CRUISE", lastTel)
@@ -569,18 +703,26 @@ local function run(context)
                         fc.ap.reverseGear = not fc.ap.reverseGear
                     elseif key == keys.up then
                         if not fc.ap.enabled then
-                            fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                            fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel)
                         end
                         fc.ap.targetAlt = fc.ap.targetAlt + 5
                     elseif key == keys.down then
                         if not fc.ap.enabled then
-                            fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                            fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel)
                         end
                         fc.ap.targetAlt = math.max(0, fc.ap.targetAlt - 5)
                     elseif key == keys.left then
-                        fc.ap.targetHdg = (fc.ap.targetHdg - math.rad(5)) % (2 * math.pi)
+                        if not fc.ap.enabled and lastTel.vehicleType == "MOTHERSHIP" then
+                            fc.ap.manualYaw = math.max(-6, (fc.ap.manualYaw or 0) - 2)
+                        else
+                            fc.ap.targetHdg = (fc.ap.targetHdg - math.rad(5)) % (2 * math.pi)
+                        end
                     elseif key == keys.right then
-                        fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(5)) % (2 * math.pi)
+                        if not fc.ap.enabled and lastTel.vehicleType == "MOTHERSHIP" then
+                            fc.ap.manualYaw = math.min(6, (fc.ap.manualYaw or 0) + 2)
+                        else
+                            fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(5)) % (2 * math.pi)
+                        end
                     elseif key == keys.w then
                         fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
                     elseif key == keys.s then

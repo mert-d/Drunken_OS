@@ -223,10 +223,48 @@ local function runTests()
     cfgFC:step(0.05)
     assert(gearshiftState == 15, "Expected reverseGear=true to drive gearshift to 15")
     local newRole = cfgFC:cycleRole("RS:back", 1)
-    assert(newRole == "LIFT_BURNER", "Expected cycleRole on RS:back to advance from AUTO to LIFT_BURNER")
+    assert(newRole == "LIFT_FL", "Expected cycleRole on RS:back to advance from AUTO to LIFT_FL")
     local inv = cfgFC:toggleInvert("RS:back")
     assert(inv == true, "Expected toggleInvert on RS:back to set invert=true")
     print("  PASS: Test 6: Positive Airspeed Fix, Reverse Gearshift & Configurable I/O Matrix")
+
+    -- Test 7: Mothership Profile (4x Quad-Lift Gimbal Horizon Balance + 3x Rear Thruster Differential Yaw)
+    local scRPMs = { 0, 0, 0, 0, 0, 0, 0 }
+    local scMocks = {}
+    for i = 1, 7 do
+        scMocks[i] = {
+            setTargetSpeed = function(rpm) scRPMs[i] = rpm end,
+            getTargetSpeed = function() return scRPMs[i] end
+        }
+    end
+    _G.peripheral.find = function(pType)
+        if pType == "rotation_speed_controller" then
+            return table.unpack(scMocks)
+        elseif pType == "altitude_sensor" then
+            return { getHeight = function() return 100.0 end, getVerticalSpeed = function() return 0 end }
+        elseif pType == "gimbal_sensor" then
+            -- Nose pitched down (-0.15 rad) and rolled left (-0.12 rad)
+            return { getPitch = function() return -0.15 end, getRoll = function() return -0.12 end }
+        elseif pType == "navigation_table" then
+            return { getHeadingRad = function() return 0.0 end }
+        end
+        return nil
+    end
+
+    local msFC = Avionics.new({ callsign = "MS-SKYFIRE", profile = "MOTHERSHIP" })
+    assert(msFC.vehicleType == "MOTHERSHIP", "Expected MOTHERSHIP vehicle type")
+    msFC:setMode("CRUISE", msFC:readTelemetry(0.05))
+    msFC.ap.baseThrottle = 10
+    msFC.ap.targetAlt = 110.0 -- Climb 10m
+    msFC.ap.targetHdg = math.rad(30) -- Turn right
+    msFC:step(0.05)
+
+    -- Since nose is pitched down and rolled left, Front-Left (scRPMs[1]) must spin faster than Rear-Right (scRPMs[4])
+    assert(scRPMs[1] > scRPMs[4], "Expected Front-Left Lift Rotor RPM > Rear-Right Lift Rotor RPM when pitched down & rolled left")
+    -- Rear thrusters (5:Left, 6:Center, 7:Right) should show differential yaw during turn
+    assert(scRPMs[6] > 0, "Expected Rear-Center Thruster to produce forward RPM")
+    assert(scRPMs[5] ~= scRPMs[7], "Expected Rear-Left and Rear-Right Thrusters to produce differential yaw RPM")
+    print("  PASS: Test 7: Mothership 4x Quad-Lift Gimbal Stabilization & 3x Rear Thruster Differential Yaw")
 
     -- Restore globals
     _G.peripheral = origPeripheral

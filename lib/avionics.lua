@@ -86,6 +86,13 @@ end
 
 Avionics.ROLES = {
     "AUTO",
+    "LIFT_FL",
+    "LIFT_FR",
+    "LIFT_RL",
+    "LIFT_RR",
+    "REAR_LEFT",
+    "REAR_CENTER",
+    "REAR_RIGHT",
     "LIFT_BURNER",
     "THRUST_MAIN",
     "THRUST_PORT",
@@ -97,12 +104,24 @@ Avionics.ROLES = {
     "IGNORE"
 }
 
+Avionics.MOTHERSHIP_ROLES = {
+    "LIFT_FL",
+    "LIFT_FR",
+    "LIFT_RL",
+    "LIFT_RR",
+    "REAR_LEFT",
+    "REAR_CENTER",
+    "REAR_RIGHT"
+}
+
 local IO_CONFIG_PATH = "/avionics_iomap.cfg"
 
 function Avionics.new(config)
     local self = setmetatable({}, Avionics)
     self.config = config or {}
     self.callsign = self.config.callsign or ("DOS-" .. tostring(os.getComputerID and os.getComputerID() or 0))
+    self.profile = self.config.profile or nil -- "ZEPPELIN", "AIRCRAFT", "MOTHERSHIP", or nil (auto)
+    self.hasSavedProfile = false
     self.ioMap = {}
     self.ioDevices = {}
 
@@ -116,11 +135,12 @@ function Avionics.new(config)
         altHold      = false,
         hdgHold      = false,
         spdHold      = false,
-        sasEnabled   = true,     -- Stability Augmentation System
+        sasEnabled   = true,     -- Stability Augmentation System (Gimbal Active Horizon Balance)
         targetAlt    = 120.0,
         targetHdg    = 0.0,      -- Radians
         targetSpd    = 10.0,     -- m/s
-        baseThrottle = 8,        -- 0..15 Redstone/Transmission scale
+        baseThrottle = 8,        -- 0..15 Redstone/Transmission scale (or 0..256 RPM scale)
+        manualYaw    = 0,        -- -5..+5 manual rudder/thruster turn trim
         parkingBrake = false,
         reverseGear  = false,    -- Gearshift / Reverse Thrust toggle ([G])
         waypoint     = nil,      -- { x = 0, y = 120, z = 0, name = "HOME" }
@@ -139,6 +159,10 @@ function Avionics.new(config)
     self.pitchPID = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
 
+    -- Mothership Quad-Lift Gimbal Horizon Stabilization PIDs (output in -6..+6 lift signal units)
+    self.msPitchPID = createPID(14.0, 1.5, 4.5, -6.0, 6.0)
+    self.msRollPID  = createPID(14.0, 1.5, 4.5, -6.0, 6.0)
+
     return self
 end
 
@@ -150,7 +174,15 @@ function Avionics:loadIOMap()
             f.close()
             local parsed = textutils.unserialize(content)
             if type(parsed) == "table" then
-                self.ioMap = parsed
+                if parsed.ioMap and type(parsed.ioMap) == "table" then
+                    self.ioMap = parsed.ioMap
+                    if type(parsed.profile) == "string" then
+                        self.profile = parsed.profile
+                        self.hasSavedProfile = true
+                    end
+                else
+                    self.ioMap = parsed
+                end
             end
         end
     end
@@ -160,7 +192,10 @@ function Avionics:saveIOMap()
     if fs and fs.open and textutils and textutils.serialize then
         local ok, f = pcall(fs.open, IO_CONFIG_PATH, "w")
         if ok and f then
-            f.write(textutils.serialize(self.ioMap))
+            f.write(textutils.serialize({
+                profile = self.profile,
+                ioMap   = self.ioMap
+            }))
             f.close()
         end
     end
@@ -171,6 +206,13 @@ function Avionics:getDeviceConfig(devName)
         self.ioMap[devName] = { role = "AUTO", invert = false }
     end
     return self.ioMap[devName]
+end
+
+function Avionics:setDeviceRole(devName, roleName)
+    local cfg = self:getDeviceConfig(devName)
+    cfg.role = roleName
+    self:saveIOMap()
+    return cfg.role
 end
 
 function Avionics:cycleRole(devName, dir)
@@ -191,6 +233,43 @@ function Avionics:toggleInvert(devName)
     cfg.invert = not cfg.invert
     self:saveIOMap()
     return cfg.invert
+end
+
+-- Auto-assigns the first 4 speed controllers/gearboxes to Quad-Lift (FL, FR, RL, RR)
+-- and the next 3 to Rear Thrusters (REAR_LEFT, REAR_CENTER, REAR_RIGHT)
+function Avionics:autoAssignMothershipRoles(forceOverwrite)
+    local candidates = {}
+    for _, item in ipairs(self.ioDevices or {}) do
+        if not item.isRedstone then
+            local k = item.kind:lower()
+            if k:find("speed_controller") or k:find("rotationspeedcontroller")
+                or k:find("analog_transmission") or k:find("gearbox")
+                or k:find("sequenced_gearshift") or k:find("throttle_lever") then
+                table.insert(candidates, item.name)
+            end
+        end
+    end
+    local assignedCount = 0
+    for _, devName in ipairs(candidates) do
+        local cfg = self:getDeviceConfig(devName)
+        if forceOverwrite or cfg.role == "AUTO" then
+            assignedCount = assignedCount + 1
+            if assignedCount <= #Avionics.MOTHERSHIP_ROLES then
+                cfg.role = Avionics.MOTHERSHIP_ROLES[assignedCount]
+            end
+        end
+    end
+    self:saveIOMap()
+end
+
+function Avionics:setVehicleProfile(profileName, forceAutoAssign)
+    self.profile = profileName
+    self.hasSavedProfile = true
+    self.vehicleType = profileName
+    if profileName == "MOTHERSHIP" then
+        self:autoAssignMothershipRoles(forceAutoAssign)
+    end
+    self:saveIOMap()
 end
 
 function Avionics:scanPeripherals()
@@ -223,15 +302,26 @@ function Avionics:scanPeripherals()
             local found = { peripheral.find(gType) }
             for _, g in ipairs(found) do table.insert(self.gearshifts, g) end
         end
+        self.speedControllers = {}
+        for _, scType in ipairs({ "Create_RotationSpeedController", "rotation_speed_controller", "create:rotation_speed_controller", "speed_controller" }) do
+            local found = { peripheral.find(scType) }
+            for _, sc in ipairs(found) do table.insert(self.speedControllers, sc) end
+        end
+        table.sort(self.speedControllers, function(a, b)
+            local na = (peripheral.getName and pcall(peripheral.getName, a) and peripheral.getName(a)) or ""
+            local nb = (peripheral.getName and pcall(peripheral.getName, b) and peripheral.getName(b)) or ""
+            return tostring(na) < tostring(nb)
+        end)
     else
-        self.burners     = {}
-        self.gearboxes   = {}
-        self.throttles   = {}
-        self.gyros       = {}
-        self.wheels      = {}
-        self.engines     = {}
-        self.clutches    = {}
-        self.gearshifts  = {}
+        self.burners          = {}
+        self.gearboxes        = {}
+        self.throttles        = {}
+        self.gyros            = {}
+        self.wheels           = {}
+        self.engines          = {}
+        self.clutches         = {}
+        self.gearshifts       = {}
+        self.speedControllers = {}
     end
 
     -- Build unified I/O device list for Hot-Plug & Role Configurator UI
@@ -255,6 +345,27 @@ function Avionics:scanPeripherals()
                 end
             end
         end
+    else
+        for idx, sc in ipairs(self.speedControllers or {}) do
+            local name = "rotation_speed_controller_" .. tostring(idx - 1)
+            self:getDeviceConfig(name)
+            table.insert(self.ioDevices, {
+                name       = name,
+                kind       = "rotation_speed_controller",
+                handle     = sc,
+                isRedstone = false
+            })
+        end
+        for idx, gb in ipairs(self.gearboxes or {}) do
+            local name = "analog_transmission_" .. tostring(idx - 1)
+            self:getDeviceConfig(name)
+            table.insert(self.ioDevices, {
+                name       = name,
+                kind       = "analog_transmission",
+                handle     = gb,
+                isRedstone = false
+            })
+        end
     end
     for _, side in ipairs({ "back", "front", "left", "right", "top", "bottom" }) do
         local rsName = "RS:" .. side
@@ -268,8 +379,16 @@ function Avionics:scanPeripherals()
         })
     end
 
-    -- Determine Vehicle Type
-    if #self.burners > 0 then
+    -- Determine Vehicle Type (Respect explicit saved profile first; otherwise auto-detect)
+    if self.profile == "MOTHERSHIP" or self.profile == "ZEPPELIN" or self.profile == "AIRCRAFT" then
+        self.vehicleType = self.profile
+        if self.profile == "MOTHERSHIP" then
+            self:autoAssignMothershipRoles(false)
+        end
+    elseif #self.speedControllers >= 4 or #self.gearboxes >= 4 then
+        self.vehicleType = "MOTHERSHIP"
+        self:autoAssignMothershipRoles(false)
+    elseif #self.burners > 0 then
         self.vehicleType = "ZEPPELIN"
     else
         self.vehicleType = "AIRCRAFT"
@@ -391,6 +510,17 @@ function Avionics:readTelemetry(dt)
         end
     end
 
+    for _, sc in ipairs(self.speedControllers or {}) do
+        local scRpm = tonumber(callKinetic(sc, sc.getTargetSpeed))
+                   or tonumber(callKinetic(sc, sc.getSpeed))
+                   or tonumber(callKinetic(sc, sc.getOutputSpeed))
+                   or 0
+        maxRpm = math.max(maxRpm, math.abs(scRpm))
+        if callKinetic(sc, sc.isOverstressed) == true then
+            overstressed = true
+        end
+    end
+
     for _, b in ipairs(self.burners) do
         if gasType == "NONE" then
             local gt = safeCall(b.getGasType)
@@ -428,9 +558,14 @@ function Avionics:readTelemetry(dt)
         burnerCmd      = self.lastBurnerSignal or 0,
         burnerActual   = burnerActual,
         burnerActive   = burnerActive,
+        mothership     = self.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
         gpwsWarning    = gpwsWarning,
         stallWarning   = stallWarning
     }
+end
+
+function Avionics:triggerSpinTest(devName)
+    self.spinTest = { name = devName, ticks = 30 } -- 1.5 seconds at 20Hz
 end
 
 function Avionics:setHomeBase(ilsBeacon)
@@ -444,7 +579,7 @@ function Avionics:engageRTB(currentTel)
     self.ap.hdgHold  = true
     self.ap.mode     = "RTB"
 
-    if self.vehicleType == "ZEPPELIN" and self.ap.homeBase.zeppelinMast then
+    if (self.vehicleType == "ZEPPELIN" or self.vehicleType == "MOTHERSHIP") and self.ap.homeBase.zeppelinMast then
         self.ap.rtbPhase = "RTB_MAST"
     else
         self.ap.rtbPhase = "RTB_IAF"
@@ -460,6 +595,8 @@ function Avionics:setMode(modeName, currentTel)
     self.hdgPID:reset()
     self.pitchPID:reset()
     self.rollPID:reset()
+    self.msPitchPID:reset()
+    self.msRollPID:reset()
 
     if modeName == "MANUAL" then
         self.ap.enabled = false
@@ -479,6 +616,7 @@ function Avionics:setMode(modeName, currentTel)
         self.ap.altHold = true
         self.ap.hdgHold = true
         self.ap.baseThrottle = 0
+        self.ap.manualYaw = 0
         if currentTel then
             self.ap.targetAlt = math.floor(currentTel.altitude + 0.5)
             self.ap.targetHdg = currentTel.heading
@@ -503,6 +641,11 @@ function Avionics:step(dt)
     local tel = self:readTelemetry(dt)
     local tasks = {}
 
+    if self.spinTest and self.spinTest.ticks > 0 then
+        self.spinTest.ticks = self.spinTest.ticks - 1
+        if self.spinTest.ticks <= 0 then self.spinTest = nil end
+    end
+
     -- Handle Waypoint LNAV Bearing Calculation
     if self.ap.enabled and self.ap.mode == "LNAV" and self.ap.waypoint then
         local dx = self.ap.waypoint.x - tel.pos.x
@@ -513,7 +656,7 @@ function Avionics:step(dt)
             if self.ap.waypoint.y then
                 self.ap.targetAlt = self.ap.waypoint.y
             end
-        elseif self.vehicleType == "ZEPPELIN" then
+        elseif self.vehicleType == "ZEPPELIN" or self.vehicleType == "MOTHERSHIP" then
             self:setMode("HOVER", tel)
         end
     end
@@ -612,14 +755,24 @@ function Avionics:step(dt)
         yawDiff = self.hdgPID:compute(0, -hdgErr, dt)
     end
 
-    local function driveSignal(dev, sig)
-        if dev.setSignal then callKinetic(dev, dev.setSignal, sig)
-        elseif dev.setThrottle then callKinetic(dev, dev.setThrottle, sig)
-        elseif dev.setTarget then callKinetic(dev, dev.setTarget, sig)
-        elseif dev.setLevel then callKinetic(dev, dev.setLevel, sig)
-        elseif dev.setOutput then callKinetic(dev, dev.setOutput, sig)
-        elseif dev.setSignalStrength then callKinetic(dev, dev.setSignalStrength, sig)
-        elseif dev.setControl then callKinetic(dev, dev.setControl, sig)
+    -- Supports both Create Rotation Speed Controllers (setTargetSpeed in -256..+256 RPM) and 0..15 Signal peripherals
+    local function driveSignal(dev, sig, inv)
+        if dev.setTargetSpeed then
+            local rpm = math.floor((sig / 15.0) * 256 + 0.5)
+            if inv then rpm = -rpm end
+            callKinetic(dev, dev.setTargetSpeed, rpm)
+            return
+        end
+        local clampedSig = math.floor(clamp(math.abs(sig), 0, 15))
+        local outSig = inv and (15 - clampedSig) or clampedSig
+        if dev.setSignal then callKinetic(dev, dev.setSignal, outSig)
+        elseif dev.setThrottle then callKinetic(dev, dev.setThrottle, outSig)
+        elseif dev.setTarget then callKinetic(dev, dev.setTarget, outSig)
+        elseif dev.setLevel then callKinetic(dev, dev.setLevel, outSig)
+        elseif dev.setOutput then callKinetic(dev, dev.setOutput, outSig)
+        elseif dev.setSignalStrength then callKinetic(dev, dev.setSignalStrength, outSig)
+        elseif dev.setControl then callKinetic(dev, dev.setControl, outSig)
+        elseif dev.setSpeed then callKinetic(dev, dev.setSpeed, outSig)
         end
     end
 
@@ -628,7 +781,7 @@ function Avionics:step(dt)
         local finalSig = inv and (15 - sigVal) or sigVal
         if dev.setPowered then callKinetic(dev, dev.setPowered, finalActive) end
         if dev.setSignal then callKinetic(dev, dev.setSignal, finalSig)
-        else driveSignal(dev, finalSig) end
+        else driveSignal(dev, sigVal, inv) end
     end
 
     local function emitRedstoneBurner(sig)
@@ -686,17 +839,76 @@ function Avionics:step(dt)
     local boostSignal = (self.ap.baseThrottle >= 12) and 15 or 0
     local burnerSignal = mainThrottleSig
 
-    -- Route custom I/O role mappings (Hot-plug peripherals & Redstone sides)
+    -- Compute Mothership 4-Lift + 3-Rear Thruster Mixing Matrix (Gimbal Pitch/Roll + Altitude + Yaw)
+    local altCmd = 0
+    if self.ap.altHold then
+        altCmd = self.altPID:compute(self.ap.targetAlt, tel.altitude, dt)
+    end
+    local pitchTrim = 0
+    local rollTrim  = 0
+    if self.ap.sasEnabled then
+        pitchTrim = self.msPitchPID:compute(0, tel.pitch, dt)
+        rollTrim  = self.msRollPID:compute(0, tel.roll, dt)
+    end
+
+    local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
+    if not (not self.ap.enabled and self.ap.parkingBrake) then
+        local hoverBase = self.ap.altHold and 8.0 or mainThrottleSig
+        liftFL = math.floor(clamp(hoverBase + altCmd + pitchTrim + rollTrim, 0, 15) + 0.5)
+        liftFR = math.floor(clamp(hoverBase + altCmd + pitchTrim - rollTrim, 0, 15) + 0.5)
+        liftRL = math.floor(clamp(hoverBase + altCmd - pitchTrim + rollTrim, 0, 15) + 0.5)
+        liftRR = math.floor(clamp(hoverBase + altCmd - pitchTrim - rollTrim, 0, 15) + 0.5)
+    end
+
+    local fwdSig = self.ap.parkingBrake and 0 or (revActive and -mainThrottleSig or mainThrottleSig)
+    local turnYaw = self.ap.hdgHold and yawDiff or ((steerVal ~= 0 and (steerVal * 6.0)) or (self.ap.manualYaw or 0))
+    local rearL = math.floor(clamp(fwdSig - turnYaw, -15, 15) + 0.5)
+    local rearC = math.floor(clamp(fwdSig, -15, 15) + 0.5)
+    local rearR = math.floor(clamp(fwdSig + turnYaw, -15, 15) + 0.5)
+
+    self.lastMothershipState = {
+        fl    = liftFL,
+        fr    = liftFR,
+        rl    = liftRL,
+        rr    = liftRR,
+        rearL = rearL,
+        rearC = rearC,
+        rearR = rearR
+    }
+    tel.mothership = self.lastMothershipState
+
+    -- Route custom I/O role mappings (Hot-plug peripherals, Mothership 7-motor roles & Redstone sides)
     local function routeCustomRoleDevices(bSig)
         for _, item in ipairs(self.ioDevices or {}) do
             local cfg = self:getDeviceConfig(item.name)
             local role = cfg.role
             local inv = cfg.invert == true
-            if role ~= "AUTO" or (inv and item.isRedstone) then
+
+            -- Spin Test Override ([T] in I/O Configurator)
+            if self.spinTest and self.spinTest.name == item.name and not item.isRedstone and item.handle then
+                local dev = item.handle
+                table.insert(tasks, function()
+                    driveSignal(dev, 8, inv)
+                end)
+            elseif role ~= "AUTO" or (inv and item.isRedstone) then
                 local sig = nil
                 local boolState = nil
                 if role == "IGNORE" then
                     sig = nil
+                elseif role == "LIFT_FL" then
+                    sig = liftFL
+                elseif role == "LIFT_FR" then
+                    sig = liftFR
+                elseif role == "LIFT_RL" then
+                    sig = liftRL
+                elseif role == "LIFT_RR" then
+                    sig = liftRR
+                elseif role == "REAR_LEFT" then
+                    sig = rearL
+                elseif role == "REAR_CENTER" then
+                    sig = rearC
+                elseif role == "REAR_RIGHT" then
+                    sig = rearR
                 elseif role == "LIFT_BURNER" or (role == "AUTO" and item.isRedstone) then
                     sig = bSig
                 elseif role == "THRUST_MAIN" then
@@ -718,7 +930,8 @@ function Avionics:step(dt)
                 end
 
                 if item.isRedstone and sig ~= nil and redstone and redstone.setAnalogOutput then
-                    local outSig = inv and (15 - sig) or sig
+                    local clamped = math.floor(clamp(math.abs(sig), 0, 15))
+                    local outSig = inv and (15 - clamped) or clamped
                     pcall(redstone.setAnalogOutput, item.side, outSig)
                 elseif not item.isRedstone and item.handle and role ~= "IGNORE" then
                     local dev = item.handle
@@ -728,8 +941,7 @@ function Avionics:step(dt)
                         elseif boolState ~= nil then
                             driveBooleanOrSignal(dev, boolState, sig or 0, inv)
                         elseif sig ~= nil then
-                            local outSig = inv and (15 - sig) or sig
-                            driveSignal(dev, outSig)
+                            driveSignal(dev, sig, inv)
                         end
                     end)
                 end
@@ -741,13 +953,15 @@ function Avionics:step(dt)
     if not self.ap.enabled then
         self.lastBurnerSignal = mainThrottleSig
         tel.burnerCmd = mainThrottleSig
-        for _, gb in ipairs(self.gearboxes) do
-            table.insert(tasks, function() driveSignal(gb, mainThrottleSig) end)
+        if self.vehicleType ~= "MOTHERSHIP" then
+            for _, gb in ipairs(self.gearboxes) do
+                table.insert(tasks, function() driveSignal(gb, mainThrottleSig, false) end)
+            end
         end
         if self.vehicleType == "ZEPPELIN" then
             emitRedstoneBurner(mainThrottleSig)
             for _, thr in ipairs(self.throttles) do
-                table.insert(tasks, function() driveSignal(thr, mainThrottleSig) end)
+                table.insert(tasks, function() driveSignal(thr, mainThrottleSig, false) end)
             end
         end
         for _, gyro in ipairs(self.gyros) do
@@ -762,25 +976,25 @@ function Avionics:step(dt)
         return tel
     end
 
-    -- 2. Differential Thrust on Analog Transmissions
-    if #self.gearboxes >= 2 then
-        table.insert(tasks, function() driveSignal(self.gearboxes[1], portSignal) end)
-        table.insert(tasks, function() driveSignal(self.gearboxes[2], stbdSignal) end)
-    elseif #self.gearboxes == 1 then
-        table.insert(tasks, function() driveSignal(self.gearboxes[1], mainThrottleSig) end)
+    -- 2. Differential Thrust on Analog Transmissions (for non-Mothership or unassigned gearboxes)
+    if self.vehicleType ~= "MOTHERSHIP" then
+        if #self.gearboxes >= 2 then
+            table.insert(tasks, function() driveSignal(self.gearboxes[1], portSignal, false) end)
+            table.insert(tasks, function() driveSignal(self.gearboxes[2], stbdSignal, false) end)
+        elseif #self.gearboxes == 1 then
+            table.insert(tasks, function() driveSignal(self.gearboxes[1], mainThrottleSig, false) end)
+        end
     end
 
     -- 3. Altitude PID & Attitude Stabilization
     if self.ap.altHold then
-        local altCmd = self.altPID:compute(self.ap.targetAlt, tel.altitude, dt)
-
         if self.vehicleType == "ZEPPELIN" then
             burnerSignal = math.floor(clamp(8 + altCmd, 0, 15))
             self.lastBurnerSignal = burnerSignal
             tel.burnerCmd = burnerSignal
             emitRedstoneBurner(burnerSignal)
             for _, thr in ipairs(self.throttles) do
-                table.insert(tasks, function() driveSignal(thr, burnerSignal) end)
+                table.insert(tasks, function() driveSignal(thr, burnerSignal, false) end)
             end
         end
 
