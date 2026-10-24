@@ -422,11 +422,22 @@ function Avionics:step(dt)
         end
     end
 
-    -- 1. Landing Gear Brakes & Steering
+    -- Heading PID computation (used for differential thrust, vectoring gyros, and rudder steering)
+    local yawDiff = 0
+    if self.ap.hdgHold then
+        local hdgErr = normalizeAngleRad(self.ap.targetHdg - tel.heading)
+        yawDiff = self.hdgPID:compute(0, -hdgErr, dt)
+    end
+
+    -- 1. Landing Gear Brakes & Steering / Rudder Deflection
     local brakeVal = self.ap.parkingBrake and 1.0 or 0.0
     local steerVal = 0.0
     if self.steerWheel and self.steerWheel.getSteering then
         steerVal = self.steerWheel.getSteering() or 0.0
+    end
+    -- Autopilot rudder steering when using steering mounts with single engine or Zeppelin
+    if self.ap.enabled and self.ap.hdgHold and steerVal == 0.0 and #self.gearboxes < 2 then
+        steerVal = clamp(-yawDiff * 0.15, -1.0, 1.0)
     end
     for _, wheel in ipairs(self.wheels) do
         if wheel.setBrake then
@@ -463,13 +474,7 @@ function Avionics:step(dt)
         return tel
     end
 
-    -- 2. Heading PID -> Differential Thrust on Analog Transmissions
-    local yawDiff = 0
-    if self.ap.hdgHold then
-        local hdgErr = normalizeAngleRad(self.ap.targetHdg - tel.heading)
-        yawDiff = self.hdgPID:compute(0, -hdgErr, dt)
-    end
-
+    -- 2. Differential Thrust on Analog Transmissions
     if #self.gearboxes >= 2 then
         local portSignal = math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
         local stbdSignal = math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
@@ -502,7 +507,14 @@ function Avionics:step(dt)
             local pitchVec = self.pitchPID:compute(desiredPitch, tel.pitch, dt)
             local rollVec  = self.rollPID:compute(0, tel.roll, dt)
 
-            local vx = math.sin(clamp(rollVec, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD))
+            -- In Zeppelins, horizontal gyro deflection steers Yaw; in Aircraft, it stabilizes Roll
+            local vx
+            if self.vehicleType == "ZEPPELIN" then
+                local yawSteer = clamp(yawDiff * 0.035, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
+                vx = math.sin(yawSteer)
+            else
+                vx = math.sin(clamp(rollVec, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD))
+            end
             local vy = math.sin(clamp(pitchVec, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD))
             local vz = math.sqrt(math.max(0, 1 - vx * vx - vy * vy))
 
