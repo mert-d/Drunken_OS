@@ -60,7 +60,7 @@ function Avionics.new(config)
     -- Autopilot State & Setpoints
     self.ap = {
         enabled      = false,
-        mode         = "MANUAL", -- MANUAL, CRUISE, HOVER, LNAV, AUTOLAND
+        mode         = "MANUAL", -- MANUAL, CRUISE, HOVER, LNAV, AUTOLAND, RTB
         altHold      = false,
         hdgHold      = false,
         spdHold      = false,
@@ -71,13 +71,14 @@ function Avionics.new(config)
         baseThrottle = 8,        -- 0..15 Redstone/Transmission scale
         parkingBrake = false,
         waypoint     = nil,      -- { x = 0, y = 120, z = 0, name = "HOME" }
-        homeBase     = nil,      -- ILS Beacon paketi veya manuel us tablosu
+        homeBase     = nil,      -- ILS Beacon packet or manual base table
         rtbPhase     = "NONE",   -- NONE, RTB_IAF, RTB_ILS, RTB_MAST
-        ilsDev       = { loc = 0.0, gs = 0.0, dist = 0.0 } -- PFD elmas gostergesi icin sapmalar
+        ilsDev       = { loc = 0.0, gs = 0.0, dist = 0.0 }
     }
 
-    -- Dead-Reckoning Position Estimate (if GPS is unavailable)
+    -- Dead-Reckoning Position Estimate & GPS Tick Throttle
     self.pos = { x = 0, y = 0, z = 0 }
+    self.gpsTick = 0
 
     -- PID Controllers
     self.altPID   = createPID(1.6, 0.35, 2.0, -7.0, 7.0)
@@ -98,10 +99,16 @@ function Avionics:scanPeripherals()
     self.steerWheel  = peripheral and peripheral.find and peripheral.find("steering_wheel")
     self.typewriter  = peripheral and peripheral.find and peripheral.find("linked_typewriter")
 
-    -- Actuators & Engines (Multiple instances supported)
+    -- Actuators & Engines (Multiple instances supported, sorted deterministically by peripheral name)
     if peripheral and peripheral.find then
         self.burners     = { peripheral.find("gas_provider") }
         self.gearboxes   = { peripheral.find("analog_transmission") }
+        table.sort(self.gearboxes, function(a, b)
+            local na = (peripheral.getName and pcall(peripheral.getName, a) and peripheral.getName(a)) or ""
+            local nb = (peripheral.getName and pcall(peripheral.getName, b) and peripheral.getName(b)) or ""
+            return tostring(na) < tostring(nb)
+        end)
+
         self.throttles   = { peripheral.find("throttle_lever") }
         self.gyros       = { peripheral.find("gyroscopic_propeller_bearing") }
         self.wheels      = { peripheral.find("wheel_mount") }
@@ -168,20 +175,17 @@ function Avionics:readTelemetry(dt)
         end
     end
 
-    -- Update GPS or Dead-Reckoning Position
-    if gps and gps.locate then
-        local gx, gy, gz = gps.locate(0.01)
+    -- Update Position (Dead-Reckoning every tick, GPS sync once every 20 ticks to avoid os.pullEvent conflicts)
+    self.pos.x = self.pos.x + vel.x * dt
+    self.pos.y = alt
+    self.pos.z = self.pos.z + vel.z * dt
+
+    self.gpsTick = (self.gpsTick or 0) + 1
+    if self.config.useGPS and gps and gps.locate and (self.gpsTick % 20 == 0) then
+        local gx, gy, gz = gps.locate(0.02)
         if gx then
             self.pos.x, self.pos.y, self.pos.z = gx, gy, gz
-        else
-            self.pos.x = self.pos.x + vel.x * dt
-            self.pos.y = alt
-            self.pos.z = self.pos.z + vel.z * dt
         end
-    else
-        self.pos.x = self.pos.x + vel.x * dt
-        self.pos.y = alt
-        self.pos.z = self.pos.z + vel.z * dt
     end
 
     -- 5. Laser Radar Altimeter (AGL)
@@ -246,6 +250,27 @@ function Avionics:readTelemetry(dt)
     }
 end
 
+function Avionics:setHomeBase(ilsBeacon)
+    self.ap.homeBase = ilsBeacon
+end
+
+function Avionics:engageRTB(currentTel)
+    if not self.ap.homeBase then return false end
+    self.ap.enabled  = true
+    self.ap.altHold  = true
+    self.ap.hdgHold  = true
+    self.ap.mode     = "RTB"
+
+    if self.vehicleType == "ZEPPELIN" and self.ap.homeBase.zeppelinMast then
+        self.ap.rtbPhase = "RTB_MAST"
+    else
+        self.ap.rtbPhase = "RTB_IAF"
+    end
+    self.altPID:reset()
+    self.hdgPID:reset()
+    return true
+end
+
 function Avionics:setMode(modeName, currentTel)
     self.ap.mode = modeName
     self.altPID:reset()
@@ -257,6 +282,7 @@ function Avionics:setMode(modeName, currentTel)
         self.ap.enabled = false
         self.ap.altHold = false
         self.ap.hdgHold = false
+        self.ap.rtbPhase = "NONE"
     elseif modeName == "CRUISE" then
         self.ap.enabled = true
         self.ap.altHold = true
@@ -283,36 +309,8 @@ function Avionics:setMode(modeName, currentTel)
         self.ap.altHold = true
         self.ap.hdgHold = true
     elseif modeName == "RTB" then
-        self.ap.enabled = true
-        self.ap.altHold = true
-        self.ap.hdgHold = true
-        if self.vehicleType == "ZEPPELIN" and self.ap.homeBase and self.ap.homeBase.zeppelinMast then
-            self.ap.rtbPhase = "RTB_MAST"
-        else
-            self.ap.rtbPhase = "RTB_IAF"
-        end
+        self:engageRTB(currentTel)
     end
-end
-
-function Avionics:setHomeBase(ilsBeacon)
-    self.ap.homeBase = ilsBeacon
-end
-
-function Avionics:engageRTB(currentTel)
-    if not self.ap.homeBase then return false end
-    self.ap.enabled  = true
-    self.ap.altHold  = true
-    self.ap.hdgHold  = true
-    self.ap.mode     = "RTB"
-
-    if self.vehicleType == "ZEPPELIN" and self.ap.homeBase.zeppelinMast then
-        self.ap.rtbPhase = "RTB_MAST"
-    else
-        self.ap.rtbPhase = "RTB_IAF"
-    end
-    self.altPID:reset()
-    self.hdgPID:reset()
-    return true
 end
 
 -- Executes 1 control step (dt = 0.05s for 20Hz)
@@ -333,17 +331,15 @@ function Avionics:step(dt)
                 self.ap.targetAlt = self.ap.waypoint.y
             end
         elseif self.vehicleType == "ZEPPELIN" then
-            -- Switch to station-keeping hover upon arrival
             self:setMode("HOVER", tel)
         end
     end
 
-    -- Handle RTB & ILS Localizer / Glide Slope Controller
+    -- Handle RTB & ILS Approach State Machine
     if self.ap.enabled and self.ap.mode == "RTB" and self.ap.homeBase then
         local base = self.ap.homeBase
 
         if self.ap.rtbPhase == "RTB_MAST" then
-            -- Zeplin dogrudan demirleme kulesine (Mooring Mast) gider
             local mast = base.zeppelinMast or base.threshold
             local dx = mast.x - tel.pos.x
             local dz = mast.z - tel.pos.z
@@ -355,7 +351,6 @@ function Avionics:step(dt)
                 self.ap.targetAlt = mast.y + 15.0
                 self.ap.baseThrottle = math.min(10, math.max(3, math.floor(dist * 0.25)))
             else
-                -- Kulenin tam ustune ulasildi: ruzgar/pist yonune don ve kule irtifasina in
                 self.ap.targetHdg = base.rwyHeadingRad or 0.0
                 self.ap.targetAlt = mast.y
                 self.ap.baseThrottle = 0
@@ -364,26 +359,21 @@ function Avionics:step(dt)
                 end
             end
         else
-            -- Sabit Kanat / VTOL Ucak icin 2 Asamali Pist ILS Yaklasmasi
             local thr = base.threshold
             local psi = base.rwyHeadingRad or 0.0
             local gs  = base.glideSlopeRad or math.rad(8.0)
             local dApp = base.approachDist or 80.0
 
-            -- Pist esigine gore bagil konum
             local relX = tel.pos.x - thr.x
             local relZ = tel.pos.z - thr.z
 
-            -- d_along: Pist esigine kalan boylamsal mesafe (+ ise pistin gerisinde/yaklasmada)
             local dAlong = relX * math.sin(psi) - relZ * math.cos(psi)
-            -- e_ct: Pist merkez hattindan yatay sapma (Cross-Track Error)
             local crossTrackErr = relX * math.cos(psi) + relZ * math.sin(psi)
 
             self.ap.ilsDev.loc  = crossTrackErr
             self.ap.ilsDev.dist = math.max(0, dAlong)
 
             if self.ap.rtbPhase == "RTB_IAF" then
-                -- Asama 1: Pistin dApp blok gerisindeki FAF noktasina uc
                 local fafX = thr.x + dApp * math.sin(psi)
                 local fafZ = thr.z - dApp * math.cos(psi)
                 local fafY = thr.y + dApp * math.tan(gs)
@@ -399,7 +389,6 @@ function Avionics:step(dt)
                     self.ap.rtbPhase = "RTB_ILS"
                 end
             elseif self.ap.rtbPhase == "RTB_ILS" then
-                -- Asama 2: Localizer merkezleme ve Glide Slope alcalma koridoru
                 local interceptAngle = math.atan(0.18 * crossTrackErr)
                 interceptAngle = clamp(interceptAngle, -math.rad(30), math.rad(30))
                 self.ap.targetHdg = normalizeAngleRad(psi - interceptAngle)
@@ -408,10 +397,8 @@ function Avionics:step(dt)
                 self.ap.ilsDev.gs = tel.altitude - gsTargetAlt
                 self.ap.targetAlt = gsTargetAlt
 
-                -- Yaklasma hizini kademeli dusur
                 self.ap.baseThrottle = math.max(4, math.min(8, self.ap.baseThrottle))
 
-                -- Esik noktasina 8 blok kaldiginda AUTOLAND palye (flare) moduna devret
                 if dAlong <= 8.0 or (tel.agl and tel.agl <= 5.0) then
                     self.ap.targetHdg = psi
                     self:setMode("AUTOLAND", tel)
@@ -428,11 +415,9 @@ function Avionics:step(dt)
             self.ap.parkingBrake = true
             self:setMode("MANUAL", tel)
         elseif currentAGL < 8.0 then
-            -- Flare phase
             self.ap.targetAlt = tel.altitude - 0.5
             self.ap.baseThrottle = math.max(0, self.ap.baseThrottle - 1)
         else
-            -- Glide slope descent
             self.ap.targetAlt = tel.altitude - 2.0
         end
     end
@@ -452,8 +437,21 @@ function Avionics:step(dt)
         end
     end
 
-    -- If Autopilot is disabled, clear manual gyro locks and run brake/steering tasks only
+    -- If Autopilot is disabled, apply baseThrottle to gearboxes, reset burner to neutral, and clear manual gyro locks
     if not self.ap.enabled then
+        local manualSig = math.floor(clamp(self.ap.baseThrottle, 0, 15))
+        for _, gb in ipairs(self.gearboxes) do
+            if gb.setSignal then
+                table.insert(tasks, function() gb.setSignal(manualSig) end)
+            end
+        end
+        if self.vehicleType == "ZEPPELIN" and manualSig == 0 then
+            for _, thr in ipairs(self.throttles) do
+                if thr.setSignal then
+                    table.insert(tasks, function() thr.setSignal(0) end)
+                end
+            end
+        end
         for _, gyro in ipairs(self.gyros) do
             if gyro.clearManualTarget then
                 table.insert(tasks, function() gyro.clearManualTarget() end)
@@ -469,7 +467,6 @@ function Avionics:step(dt)
     local yawDiff = 0
     if self.ap.hdgHold then
         local hdgErr = normalizeAngleRad(self.ap.targetHdg - tel.heading)
-        -- Compute target heading output (pass -hdgErr as PV with 0 setpoint)
         yawDiff = self.hdgPID:compute(0, -hdgErr, dt)
     end
 
@@ -492,7 +489,6 @@ function Avionics:step(dt)
         local altCmd = self.altPID:compute(self.ap.targetAlt, tel.altitude, dt)
 
         if self.vehicleType == "ZEPPELIN" then
-            -- Drive Burner / Buoyancy Throttle Levers (0..15)
             local burnerSignal = math.floor(clamp(8 + altCmd, 0, 15))
             for _, thr in ipairs(self.throttles) do
                 if thr.setSignal then
@@ -501,7 +497,6 @@ function Avionics:step(dt)
             end
         end
 
-        -- Drive Gyroscopic Propeller Bearings (12-deg Thrust Vectoring Cone)
         if #self.gyros > 0 then
             local desiredPitch = clamp(altCmd * 0.025, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
             local pitchVec = self.pitchPID:compute(desiredPitch, tel.pitch, dt)

@@ -25,11 +25,9 @@ local function run(context)
     local running = true
     local lastTel = fc:readTelemetry(0.05)
     local tickCount = 0
-    local showWaypointModal = false
-    local wpInput = { x = "0", y = "120", z = "0" }
 
-    -- Open wireless modem for ADS-B Radar Telemetry if available
-    local modem = peripheral and peripheral.find and peripheral.find("modem", function(_, m) return m.isWireless and m.isWireless() end)
+    -- Open wireless modem for ADS-B Radar Telemetry & ILS Beacon Reception
+    local modem = peripheral.find("modem", function(_, m) return m.isWireless and m.isWireless() end)
     if modem and rednet and not rednet.isOpen(peripheral.getName(modem)) then
         pcall(rednet.open, peripheral.getName(modem))
     end
@@ -154,6 +152,28 @@ local function run(context)
             parentTerm.write("AGL: ---.- m")
         end
 
+        -- ILS / RTB Deviation Row (Row 10)
+        parentTerm.setCursorPos(2, 10)
+        parentTerm.setBackgroundColor(theme.bg)
+        if fc.ap.mode == "RTB" and fc.ap.homeBase then
+            parentTerm.setTextColor(colors.cyan)
+            parentTerm.write(string.format(
+                "ILS [%s/%s] LOC:%+5.1fm GS:%+5.1fm DST:%4.0fm",
+                tostring(fc.ap.homeBase.runwayId or "RWY"),
+                tostring(fc.ap.rtbPhase),
+                fc.ap.ilsDev.loc or 0,
+                fc.ap.ilsDev.gs or 0,
+                fc.ap.ilsDev.dist or 0
+            ))
+        elseif fc.ap.homeBase then
+            parentTerm.setTextColor(colors.lightGray)
+            parentTerm.write(string.format(
+                "ILS BEACON LOCKED: %s (%s) - Press [R] for RTB",
+                tostring(fc.ap.homeBase.baseName or "BASE"),
+                tostring(fc.ap.homeBase.runwayId or "RWY")
+            ))
+        end
+
         -- Warnings Banner (GPWS / Stall / Gear)
         parentTerm.setCursorPos(2, 11)
         if lastTel.gpwsWarning then
@@ -177,28 +197,12 @@ local function run(context)
             ))
         end
 
-        -- RTB & ILS Localizer Status Line
-        if fc.ap.mode == "RTB" or fc.ap.homeBase then
-            parentTerm.setBackgroundColor(theme.bg)
-            parentTerm.setCursorPos(2, 9)
-            local rwy = (fc.ap.homeBase and fc.ap.homeBase.runwayId) or "ILS"
-            local phase = fc.ap.rtbPhase or "IDLE"
-            local locErr = (fc.ap.ilsDev and fc.ap.ilsDev.loc) or 0
-            local gsErr = (fc.ap.ilsDev and fc.ap.ilsDev.gs) or 0
-            local dist = (fc.ap.ilsDev and fc.ap.ilsDev.dist) or 0
-            parentTerm.setTextColor(colors.magenta or colors.purple)
-            parentTerm.write(string.format(
-                "ILS:%s [%s] LOC:%+5.1fm GS:%+5.1fm DST:%4.0fm",
-                rwy, phase, locErr, gsErr, dist
-            ))
-        end
-
         -- Mode Annunciator Row
         parentTerm.setBackgroundColor(theme.bg)
         parentTerm.setCursorPos(2, h - 3)
         parentTerm.setTextColor(fc.ap.enabled and colors.lime or colors.orange)
         parentTerm.write(string.format(
-            "[A]AP:%s [H]HOVER [C]CRUISE [L]LAND [R]RTB [B]BRK:%s",
+            "[A]AP:%s [H]HVR [C]CRS [R]RTB [L]LND [B]BRK:%s",
             fc.ap.enabled and "ON " or "OFF",
             fc.ap.parkingBrake and "ON" or "OFF"
         ))
@@ -239,16 +243,23 @@ local function run(context)
         end
     end
 
-    -- Pilot Input & Network Radio Loop (Keyboard, Linked Typewriter, and ILS Beacon Reception)
+    -- Pilot Input & Network Event Loop (Keyboard & Rednet ILS Beacon)
     local function pilotInputLoop()
         while running do
             local ev, p1, p2, p3 = os.pullEvent()
-            if ev == "key" then
+            if ev == "rednet_message" then
+                local msg, protocol = p2, p3
+                if protocol == "DRUNKEN_ILS" and type(msg) == "table" and msg.type == "AVIONICS_ILS_BEACON" then
+                    fc:setHomeBase(msg)
+                end
+            elseif ev == "key" then
                 local key = p1
                 playAlert("CLICK")
                 if key == keys.q then
-                    -- Safe disarm on exit
+                    -- Safe disarm & flush manual state to actuators on exit
+                    fc.ap.baseThrottle = 0
                     fc:setMode("MANUAL", lastTel)
+                    fc:step(0.05)
                     running = false
                 elseif key == keys.a then
                     if fc.ap.enabled then
@@ -260,12 +271,10 @@ local function run(context)
                     fc:setMode("CRUISE", lastTel)
                 elseif key == keys.h then
                     fc:setMode("HOVER", lastTel)
+                elseif key == keys.r then
+                    fc:engageRTB(lastTel)
                 elseif key == keys.l then
                     fc:setMode("AUTOLAND", lastTel)
-                elseif key == keys.r then
-                    if fc.ap.homeBase then
-                        fc:engageRTB(lastTel)
-                    end
                 elseif key == keys.b then
                     fc.ap.parkingBrake = not fc.ap.parkingBrake
                 elseif key == keys.up then
@@ -280,11 +289,6 @@ local function run(context)
                     fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
                 elseif key == keys.s then
                     fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
-                end
-            elseif ev == "rednet_message" then
-                local sender, msg, protocol = p1, p2, p3
-                if protocol == "DRUNKEN_ILS" and type(msg) == "table" and msg.type == "AVIONICS_ILS_BEACON" then
-                    fc:setHomeBase(msg)
                 end
             end
         end

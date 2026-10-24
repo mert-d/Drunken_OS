@@ -197,6 +197,15 @@ local function runTests()
     assert(zepRTB.ap.mode == "HOVER", "Expected Zeppelin to switch to HOVER at mooring mast")
     print("  PASS: Test 4: RTB & ILS Localizer Convergence (FAF -> ILS -> Flare/Mast)")
 
+    -- Test 5: Manual Mode Throttle Transmission (Phase 3)
+    airFC:setMode("MANUAL", airFC:readTelemetry(0.05))
+    assert(airFC.ap.enabled == false, "Expected AP to be disabled in MANUAL")
+    airFC.ap.baseThrottle = 11
+    airFC:step(0.05)
+    assert(mockState.portSignal == 11, "Expected manual throttle to reach port transmission")
+    assert(mockState.stbdSignal == 11, "Expected manual throttle to reach stbd transmission")
+    print("  PASS: Test 5: Manual Mode Throttle Transmission ([W]/[S] Passthrough)")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

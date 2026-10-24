@@ -239,6 +239,20 @@ function radarApp.run(context)
         term.setTextColor(theme.accent or colors.cyan)
         term.write(statusText:sub(1, w - 3))
 
+        -- Stale Target Pruning: purge aircraft targets not seen for > 10 seconds
+        local nowClock = os.clock and os.clock() or 0
+        for cs, ac in pairs(trackedAircraft) do
+            if nowClock - (ac.lastSeen or 0) > 10 then
+                trackedAircraft[cs] = nil
+            end
+        end
+        for i = #detectedDevices, 1, -1 do
+            local dev = detectedDevices[i]
+            if (dev.device == "Aircraft" or dev.device == "Zeppelin") and not trackedAircraft[dev.label] then
+                table.remove(detectedDevices, i)
+            end
+        end
+
         local maxRows = math.max(1, h - 8)
 
         if currentTab == 1 then

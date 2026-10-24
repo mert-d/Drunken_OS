@@ -17,17 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 20 Hz tick-safe batching of actuator setters (`setSignal`, `setManualTarget`, `setBrake`, `setSteering`) via `parallel.waitForAll`.
   - Autonomous flight modes: `MANUAL`, `CRUISE`, `HOVER`, `LNAV` (Waypoint navigation), and `AUTOLAND` (Ground flare with laser altimeter and auto-braking).
   - Phase 2 Return to Base (`RTB`) & Instrument Landing System (`ILS`): Localizer cross-track error correction with arctan intercept steering and Glide Slope vertical descent corridor.
+  - Phase 3 manual throttle transmission: Ensures `[W]`/`[S]` manual throttles reach `analog_transmission` gearboxes even when autopilot is disarmed.
+  - Deterministic gearbox ordering: Automatically sorts dual transmissions alphabetically by peripheral name to ensure reliable port/starboard differential yaw.
+  - GPS tick throttle: Limits `gps.locate` polling to 1 Hz (`gpsTick % 20 == 0`) and opt-in (`useGPS`), preventing event conflicts and frame drops.
 - **Primary Flight Display (PFD) Glass Cockpit (`apps/flight_control.lua`)**:
   - Dynamic Artificial Horizon reticle, live speed tape, altitude & target tapes, vertical speed indicator (VSI), compass heading & course bug, laser radar AGL, engine stress & RPM meter.
   - Acoustic GPWS (`PULL UP / TERRAIN`) and aerodynamic stall warnings.
   - 1 Hz `AVIONICS_ADSB` telemetry beacon broadcasting via Rednet (`DRUNKEN_RADAR`).
   - Hotkeys: `[A]` Autopilot toggle, `[H]` Hover, `[C]` Cruise, `[L]` Autoland, `[R]` Return to Base (RTB), `[B]` Parking Brakes, and manual trims.
+  - Safe disarm & actuator zeroing on exit (`[Q]` sets `baseThrottle = 0`, calls `setMode("MANUAL")`, and executes flush step).
 - **Runway ILS & RTB Beacon Tower (`clients/ILS_Beacon_Tower.lua`)**:
   - Standalone runway threshold beacon transmitting threshold coordinates, runway heading, glide slope angle, approach distance, and zeppelin mooring mast positions on `DRUNKEN_ILS` protocol.
 - **ADS-B Telemetry Tracking in NetRadar (`apps/radar.lua`)**:
   - Ingestion of `AVIONICS_ADSB` broadcasts displaying nearby aircraft (`[A]`) and zeppelins (`[Z]`) with callsign, speed, altitude, and range.
+  - Automatic stale target pruning: purging aircraft not seen for > 10 seconds.
 - **Automated Avionics Test Suite (`tests/test_avionics.lua`)**:
-  - Comprehensive unit and hardware simulation test suite integrated into `tests/test_all.lua` (Suite #26), validating Zeppelin climb/yaw, Aircraft 3D gyro vectoring cone, Autoland flare/braking, and ILS Localizer convergence.
+  - Comprehensive unit and hardware simulation test suite integrated into `tests/test_all.lua` (Suite #26), validating Zeppelin climb/yaw, Aircraft 3D gyro vectoring cone, Autoland flare/braking, ILS Localizer convergence, and manual mode throttle passthrough.
 
 ---
 
