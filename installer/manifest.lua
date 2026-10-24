@@ -162,6 +162,30 @@ return {
             include_shared = false
         },
 
+        -- Create: Avionics FCS (Flight Control System & Cockpit Computer)
+        avionics_fcs = {
+            name = "Create Avionics FCS (Flight Control)",
+            type = "client",
+            main = "apps/flight_control.lua",
+            files = {
+                "apps/flight_control.lua",
+                "lib/avionics.lua",
+                "lib/sound.lua"
+            },
+            include_shared = false
+        },
+
+        -- Create: Avionics Runway ILS & RTB Beacon Tower
+        ils_beacon = {
+            name = "Runway ILS & RTB Beacon Tower",
+            type = "server",
+            main = "clients/ILS_Beacon_Tower.lua",
+            files = {
+                "clients/ILS_Beacon_Tower.lua"
+            },
+            include_shared = false
+        },
+
         -- Bank Server
         bank_server = {
             name = "Drunken OS Bank Server",

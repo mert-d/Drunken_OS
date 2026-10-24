@@ -297,4 +297,10 @@ local function run(context)
     parallel.waitForAny(flightControlLoop, pilotInputLoop)
 end
 
+-- Allow direct execution when invoked from shell, CLI, or startup
+if shell and shell.getRunningProgram and shell.getRunningProgram():match("flight_control") then
+    run()
+end
+
 return { run = run }
+

@@ -678,4 +678,184 @@ end
 print(string.format("  INFO: Arcade server raw file size: %d bytes (%.2f KB)", arcadePkgBytes, arcadePkgBytes / 1024))
 assert_true(arcadePkgBytes <= 125000, "Arcade server package fits comfortably within 125,000 bytes limit")
 
+-- 10. Verify Avionics Category & Packages (avionics_fcs, ils_beacon)
+local fcsPkg = manifest.packages.avionics_fcs
+assert_true(fcsPkg ~= nil, "Avionics FCS package defined in manifest")
+assert_eq(fcsPkg.type, "client", "Avionics FCS package type is client")
+assert_eq(fcsPkg.main, "apps/flight_control.lua", "Avionics FCS main program path")
+
+local fcsPkgBytes = 0
+for _, relPath in ipairs(fcsPkg.files) do
+    local f = io.open(relPath, "rb")
+    assert_true(f ~= nil, "Avionics FCS package file exists: " .. relPath)
+    local content = f:read("*a")
+    f:close()
+    fcsPkgBytes = fcsPkgBytes + #content
+end
+print(string.format("  INFO: Avionics FCS raw file size: %d bytes (%.2f KB)", fcsPkgBytes, fcsPkgBytes / 1024))
+assert_true(fcsPkgBytes <= 125000, "Avionics FCS package fits within 125,000 bytes floppy limit")
+
+local ilsPkg = manifest.packages.ils_beacon
+assert_true(ilsPkg ~= nil, "ILS Beacon package defined in manifest")
+assert_eq(ilsPkg.type, "server", "ILS Beacon package type is server")
+assert_eq(ilsPkg.main, "clients/ILS_Beacon_Tower.lua", "ILS Beacon main program path")
+
+local ilsPkgBytes = 0
+for _, relPath in ipairs(ilsPkg.files) do
+    local f = io.open(relPath, "rb")
+    assert_true(f ~= nil, "ILS Beacon package file exists: " .. relPath)
+    local content = f:read("*a")
+    f:close()
+    ilsPkgBytes = ilsPkgBytes + #content
+end
+print(string.format("  INFO: ILS Beacon raw file size: %d bytes (%.2f KB)", ilsPkgBytes, ilsPkgBytes / 1024))
+assert_true(ilsPkgBytes <= 125000, "ILS Beacon package fits within 125,000 bytes floppy limit")
+
+-- Simulate Avionics FCS floppy installation
+local fcsMockDisk = {}
+local fcsTargetRoot = {}
+fcsMockDisk["startup.lua"] = installTemplateCode
+fcsMockDisk["startup"] = 'shell.run("startup.lua")\n'
+local fcsConfigData = {
+    name = fcsPkg.name,
+    type = fcsPkg.type,
+    main_program = fcsPkg.main,
+    files = fcsPkg.files
+}
+fcsMockDisk["install_config.lua"] = mockTextutils.serialize(fcsConfigData)
+for _, fpath in ipairs(fcsPkg.files) do
+    local f = io.open(fpath, "rb")
+    fcsMockDisk[fpath] = f:read("*a")
+    f:close()
+end
+
+local fcsMockFs = {
+    combine = function(a, b)
+        if a == "" or a == "/" then return b end
+        if b == "" then return a end
+        return a:gsub("/+$", "") .. "/" .. b:gsub("^/+", "")
+    end,
+    getDir = function(p)
+        local d = p:match("^(.-)/[^/]+$")
+        return d or ""
+    end,
+    getName = function(p) return p:match("[^/]+$") or p end,
+    exists = function(p)
+        local np = p:gsub("^/+", "")
+        if np:sub(1, 5) == "disk/" then
+            local rel = np:sub(6)
+            return fcsMockDisk[rel] ~= nil
+        end
+        return fcsTargetRoot[np] ~= nil
+    end,
+    open = function(p, mode)
+        local np = p:gsub("^/+", "")
+        if mode == "r" then
+            local data = nil
+            if np:sub(1, 5) == "disk/" then
+                data = fcsMockDisk[np:sub(6)]
+            else
+                data = fcsTargetRoot[np]
+            end
+            if not data then return nil end
+            return {
+                readAll = function() return data end,
+                close = function() end
+            }
+        elseif mode == "w" then
+            return {
+                write = function(content)
+                    fcsTargetRoot[np] = content
+                end,
+                close = function() end
+            }
+        end
+    end,
+    copy = function(src, dest)
+        local nsrc = src:gsub("^/+", "")
+        local ndest = dest:gsub("^/+", "")
+        local data = nil
+        if nsrc:sub(1, 5) == "disk/" then
+            data = fcsMockDisk[nsrc:sub(6)]
+        else
+            data = fcsTargetRoot[nsrc]
+        end
+        if data then
+            fcsTargetRoot[ndest] = data
+            return true
+        end
+        return false, "file not found"
+    end,
+    delete = function(p)
+        local np = p:gsub("^/+", "")
+        fcsTargetRoot[np] = nil
+    end,
+    makeDir = function() end,
+    getSize = function(p)
+        local np = p:gsub("^/+", "")
+        local d = fcsTargetRoot[np] or (np:sub(1, 5) == "disk/" and fcsMockDisk[np:sub(6)])
+        return d and #d or 0
+    end
+}
+
+local fcsEnv = {
+    fs = fcsMockFs,
+    term = mockTerm,
+    colors = mockColors,
+    peripheral = mockPeripheral,
+    disk = mockDisk,
+    shell = mockShell,
+    os = mockOs,
+    textutils = mockTextutils,
+    sleep = function() end,
+    print = function() end,
+    io = { write = function() end },
+    pcall = pcall,
+    type = type,
+    tostring = tostring,
+    tonumber = tonumber,
+    string = string,
+    table = table,
+    ipairs = ipairs,
+    pairs = pairs
+}
+
+local fcsInstallChunk = load(installTemplateCode, "disk/startup.lua", "t", fcsEnv)
+local ok_fcs_inst = pcall(fcsInstallChunk)
+assert_true(ok_fcs_inst, "Avionics FCS installation executed cleanly from disk")
+assert_true(fcsTargetRoot["startup.lua"] ~= nil, "Avionics FCS startup written to /startup.lua")
+assert_true(fcsTargetRoot[".program_path"] == "apps/flight_control.lua", "Avionics FCS /.program_path set correctly")
+assert_true(fcsTargetRoot["apps/flight_control.lua"] ~= nil, "Flight control app installed")
+assert_true(fcsTargetRoot["lib/avionics.lua"] ~= nil, "Avionics library installed")
+assert_true(fcsTargetRoot["lib/sound.lua"] ~= nil, "Sound library installed")
+
+-- Simulate Avionics Cockpit Computer boot
+local fcsLaunched = nil
+local fcsHdEnv = {
+    fs = fcsMockFs,
+    shell = { run = function(cmd) fcsLaunched = cmd end },
+    print = function() end,
+    printError = function() end,
+    read = function() end,
+    pcall = pcall,
+    tostring = tostring
+}
+local fcsBootChunk = load(fcsTargetRoot["startup.lua"], "/startup.lua", "t", fcsHdEnv)
+local ok_fcs_boot = pcall(fcsBootChunk)
+assert_true(ok_fcs_boot, "Cockpit Computer booted Avionics startup.lua")
+assert_eq(fcsLaunched, "apps/flight_control.lua", "Cockpit Computer launched apps/flight_control.lua")
+
+-- Verify Master Installer defines Avionics category and packages
+local masterInstallerCode = nil
+do
+    local f = io.open("installer/Master_Installer.lua", "r")
+    assert_true(f ~= nil, "Master_Installer.lua exists")
+    masterInstallerCode = f:read("*a")
+    f:close()
+end
+assert_true(masterInstallerCode:find('id = "avionics"') ~= nil, "Master Installer CATEGORY_DEFS has avionics category")
+assert_true(masterInstallerCode:find("avionics_fcs = {") ~= nil, "Master Installer PACKAGE_METADATA has avionics_fcs")
+assert_true(masterInstallerCode:find("ils_beacon = {") ~= nil, "Master Installer PACKAGE_METADATA has ils_beacon")
+
 print(">>> All Installer & Boot Simulation tests passed successfully!")
+

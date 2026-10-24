@@ -36,6 +36,20 @@ local PACKAGE_METADATA = {
         desc = "Headless redstone node for base doors, sirens & machines",
         prompt = "DISK: Insert blank floppy disk and press ENTER."
     },
+    avionics_fcs = {
+        category = "avionics",
+        badge = "[AVIONICS]",
+        hardware = "Advanced Computer (Cockpit) + Modem + Peripherals",
+        desc = "Flight Control Computer (FCS) with PFD HUD, Autopilot & Autoland",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
+    ils_beacon = {
+        category = "avionics",
+        badge = "[ILS]",
+        hardware = "Advanced Computer + Wireless Modem",
+        desc = "Runway ILS & RTB Beacon Tower transmitter broadcasting approach vectors",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
     server = {
         category = "servers",
         badge = "[SERVER]",
@@ -176,6 +190,11 @@ local CATEGORY_DEFS = {
         id = "clients",
         name = "Clients & Handhelds",
         desc = "Handheld Pocket OS, remote base switches, and desktop terminals"
+    },
+    {
+        id = "avionics",
+        name = "Create: Avionics & Flight Control",
+        desc = "Aircraft FCS cockpit computer, PFD & runway ILS beacon tower"
     },
     {
         id = "servers",
@@ -954,7 +973,7 @@ local function mainMenu()
             isExit = true
         })
 
-        local choice = drawMenu("Drunken Master Installer (v16.8)", catOptions, true)
+        local choice = drawMenu("Drunken Master Installer (v18.0)", catOptions, true)
         if not choice or catOptions[choice].isExit then break end
 
         local selectedCat = catOptions[choice]
