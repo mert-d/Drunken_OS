@@ -5,6 +5,30 @@ All notable changes to the **Drunken OS** ecosystem will be documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [18.0.0] - 2026-10-24 - Drunken Avionics (Create: Aeronautics & Create: Avionics FCS, PFD & ILS/RTB)
+
+### ✈️ Phase 11 & Phase 12: Autonomous Flight Control, Glass Cockpit PFD & Runway ILS / RTB
+
+#### Added
+- **Create: Avionics Flight Control Core (`lib/avionics.lua`)**:
+  - Full Hardware Abstraction Layer (HAL) auto-detecting `gimbal_sensor`, `altitude_sensor`, `navigation_table`, `velocity_sensor`, `laser_sensor`, `gas_provider`, `analog_transmission`, `throttle_lever`, `gyroscopic_propeller_bearing`, `wheel_mount`, and `portable_engine`.
+  - Automatic vehicle type discrimination: `ZEPPELIN` (airship with gas providers / hot air burners) vs `AIRCRAFT` (fixed-wing / VTOL).
+  - 4-Channel Cascade Anti-Windup & Derivative-on-Measurement PID controllers for Altitude, Heading, Pitch, and Roll.
+  - 20 Hz tick-safe batching of actuator setters (`setSignal`, `setManualTarget`, `setBrake`, `setSteering`) via `parallel.waitForAll`.
+  - Autonomous flight modes: `MANUAL`, `CRUISE`, `HOVER`, `LNAV` (Waypoint navigation), and `AUTOLAND` (Ground flare with laser altimeter and auto-braking).
+  - Phase 2 Return to Base (`RTB`) & Instrument Landing System (`ILS`): Localizer cross-track error correction with arctan intercept steering and Glide Slope vertical descent corridor.
+- **Primary Flight Display (PFD) Glass Cockpit (`apps/flight_control.lua`)**:
+  - Dynamic Artificial Horizon reticle, live speed tape, altitude & target tapes, vertical speed indicator (VSI), compass heading & course bug, laser radar AGL, engine stress & RPM meter.
+  - Acoustic GPWS (`PULL UP / TERRAIN`) and aerodynamic stall warnings.
+  - 1 Hz `AVIONICS_ADSB` telemetry beacon broadcasting via Rednet (`DRUNKEN_RADAR`).
+  - Hotkeys: `[A]` Autopilot toggle, `[H]` Hover, `[C]` Cruise, `[L]` Autoland, `[R]` Return to Base (RTB), `[B]` Parking Brakes, and manual trims.
+- **Runway ILS & RTB Beacon Tower (`clients/ILS_Beacon_Tower.lua`)**:
+  - Standalone runway threshold beacon transmitting threshold coordinates, runway heading, glide slope angle, approach distance, and zeppelin mooring mast positions on `DRUNKEN_ILS` protocol.
+- **ADS-B Telemetry Tracking in NetRadar (`apps/radar.lua`)**:
+  - Ingestion of `AVIONICS_ADSB` broadcasts displaying nearby aircraft (`[A]`) and zeppelins (`[Z]`) with callsign, speed, altitude, and range.
+- **Automated Avionics Test Suite (`tests/test_avionics.lua`)**:
+  - Comprehensive unit and hardware simulation test suite integrated into `tests/test_all.lua` (Suite #26), validating Zeppelin climb/yaw, Aircraft 3D gyro vectoring cone, Autoland flare/braking, and ILS Localizer convergence.
+
 ---
 
 ## [17.1.0] - 2026-09-09 - Hardware Sound Engine, In-Game Doctor & Pocket UX Edition

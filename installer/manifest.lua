@@ -32,6 +32,7 @@ return {
         "lib/db.lua",
         "lib/sound.lua",
         "lib/ap_chatbox.lua",
+        "lib/avionics.lua",
         "manifest.lua"
     },
 
@@ -128,7 +129,9 @@ return {
                 "apps/notes.lua",
                 "apps/remote.lua",
                 "apps/radar.lua",
+                "apps/flight_control.lua",
                 "clients/remote_switch.lua",
+                "clients/ILS_Beacon_Tower.lua",
                 -- Games
                 "games/Drunken_Doom.lua",
                 "games/Drunken_Duels.lua",
@@ -402,7 +405,8 @@ return {
         "apps/calc.lua",
         "apps/notes.lua",
         "apps/remote.lua",
-        "apps/radar.lua"
+        "apps/radar.lua",
+        "apps/flight_control.lua"
     },
     
     -- Optional Apps (On-Demand Store)
@@ -410,6 +414,7 @@ return {
         ["Developer Portal"] = "apps/developer.lua",
         ["Drunken Remote"]   = "apps/remote.lua",
         ["NetRadar"]         = "apps/radar.lua",
+        ["Avionics FCS"]     = "apps/flight_control.lua",
         ["System Doctor"]    = "apps/doctor.lua",
         ["Calculator"]       = "apps/calc.lua",
         ["Notes Scratchpad"] = "apps/notes.lua",

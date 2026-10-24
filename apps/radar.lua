@@ -51,6 +51,7 @@ function radarApp.run(context)
 
     local currentTab = 1 -- 1 = Devices, 2 = Server Health
     local detectedDevices = {}
+    local trackedAircraft = {}
     local serverStats = {
         { name = "Bank Server", proto = "DB_Bank", host = "bank.server", online = false, ping = 0 },
         { name = "Arcade Server", proto = "ArcadeGames", host = "arcade.server", online = false, ping = 0 },
@@ -78,27 +79,41 @@ function radarApp.run(context)
         local timer = os.startTimer(1.0)
         while true do
             local event, p1, p2, p3 = os.pullEvent()
-            if event == "rednet_message" and p3 == RADAR_PROTO then
+            if event == "rednet_message" then
                 local sender = p1
-                local msg = p2
-                if type(msg) == "table" and msg.type == "radar_pong" and sender ~= os.getComputerID() then
-                    local distStr = "In Range"
+                local message = p2
+                local protocol = p3
+
+                if protocol == "DRUNKEN_RADAR" and type(message) == "table" and message.type == "AVIONICS_ADSB" then
+                    trackedAircraft[message.callsign] = {
+                        callsign    = message.callsign,
+                        vehicleType = message.vehicleType,
+                        x           = message.pos and message.pos.x or 0,
+                        y           = message.altitude or 0,
+                        z           = message.pos and message.pos.z or 0,
+                        speed       = message.speed or 0,
+                        heading     = message.heading or 0,
+                        mode        = message.mode or "MANUAL",
+                        lastSeen    = os.clock and os.clock() or 0
+                    }
+
+                    local distStr = "In Flight"
                     local distNum = 9999
-                    if myGps and msg.gps and msg.gps.x and msg.gps.y and msg.gps.z then
-                        local dx = msg.gps.x - myGps.x
-                        local dy = msg.gps.y - myGps.y
-                        local dz = msg.gps.z - myGps.z
+                    if myGps and message.pos and message.pos.x and message.pos.z then
+                        local dx = message.pos.x - myGps.x
+                        local dy = (message.altitude or 64) - myGps.y
+                        local dz = message.pos.z - myGps.z
                         distNum = math.floor(math.sqrt(dx*dx + dy*dy + dz*dz))
                         distStr = tostring(distNum) .. "m"
                     end
 
-                    -- Check duplicates
                     local found = false
                     for _, dev in ipairs(detectedDevices) do
-                        if dev.id == sender then
+                        if dev.id == sender or dev.label == message.callsign then
                             dev.distNum = distNum
                             dev.distStr = distStr
-                            dev.user = msg.user
+                            dev.user = message.callsign
+                            dev.device = (message.vehicleType == "ZEPPELIN") and "Zeppelin" or "Aircraft"
                             found = true
                             break
                         end
@@ -107,13 +122,50 @@ function radarApp.run(context)
                     if not found then
                         table.insert(detectedDevices, {
                             id = sender,
-                            user = msg.user or "Unknown",
-                            device = msg.device or "Device",
-                            label = msg.label or ("#" .. sender),
+                            user = message.callsign,
+                            device = (message.vehicleType == "ZEPPELIN") and "Zeppelin" or "Aircraft",
+                            label = message.callsign,
                             distNum = distNum,
                             distStr = distStr
                         })
                         if ok_sound and Sound and Sound.playRadarPing then pcall(Sound.playRadarPing, distNum) end
+                    end
+                elseif protocol == RADAR_PROTO then
+                    local msg = message
+                    if type(msg) == "table" and msg.type == "radar_pong" and sender ~= os.getComputerID() then
+                        local distStr = "In Range"
+                        local distNum = 9999
+                        if myGps and msg.gps and msg.gps.x and msg.gps.y and msg.gps.z then
+                            local dx = msg.gps.x - myGps.x
+                            local dy = msg.gps.y - myGps.y
+                            local dz = msg.gps.z - myGps.z
+                            distNum = math.floor(math.sqrt(dx*dx + dy*dy + dz*dz))
+                            distStr = tostring(distNum) .. "m"
+                        end
+
+                        -- Check duplicates
+                        local found = false
+                        for _, dev in ipairs(detectedDevices) do
+                            if dev.id == sender then
+                                dev.distNum = distNum
+                                dev.distStr = distStr
+                                dev.user = msg.user
+                                found = true
+                                break
+                            end
+                        end
+
+                        if not found then
+                            table.insert(detectedDevices, {
+                                id = sender,
+                                user = msg.user or "Unknown",
+                                device = msg.device or "Device",
+                                label = msg.label or ("#" .. sender),
+                                distNum = distNum,
+                                distStr = distStr
+                            })
+                            if ok_sound and Sound and Sound.playRadarPing then pcall(Sound.playRadarPing, distNum) end
+                        end
                     end
                 end
             elseif event == "timer" and p1 == timer then
@@ -209,7 +261,9 @@ function radarApp.run(context)
                     if dev.device == "Pocket" then icon = "[P]"
                     elseif dev.device == "Turtle" then icon = "[T]"
                     elseif dev.device == "Server" then icon = "[S]"
-                    elseif dev.device == "Desktop" then icon = "[D]" end
+                    elseif dev.device == "Desktop" then icon = "[D]"
+                    elseif dev.device == "Aircraft" then icon = "[A]"
+                    elseif dev.device == "Zeppelin" then icon = "[Z]" end
 
                     term.setCursorPos(2, rowY)
                     term.setTextColor(colors.yellow)

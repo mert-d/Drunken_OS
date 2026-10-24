@@ -424,6 +424,7 @@ local APP_ICONS = {
     notes = "[=]",
     remote = "[^]",
     radar = "[o]",
+    flight_control = "[A]",
     drunken_bites = "[*]",
     store = "[S]",
     system = "[*]"

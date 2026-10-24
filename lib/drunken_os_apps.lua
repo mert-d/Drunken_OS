@@ -158,7 +158,9 @@ setmetatable(apps, {
             remoteApp       = {"remote", "run"},
             remote          = {"remote", "run"},
             netRadar        = {"radar", "run"},
-            radar           = {"radar", "run"}
+            radar           = {"radar", "run"},
+            flightControl   = {"flight_control", "run"},
+            flight_control  = {"flight_control", "run"}
         }
 
         local map = legacyMapping[key]
@@ -181,4 +183,16 @@ setmetatable(apps, {
     end
 })
 
+apps.registered = {
+    {
+        id = "flight_control",
+        name = "Avionics FCS",
+        path = "apps/flight_control.lua",
+        icon = "A",
+        category = "utility",
+        description = "Create: Avionics Ucak ve Zeplin Ucus Bilgisayari"
+    }
+}
+
 return apps
+
