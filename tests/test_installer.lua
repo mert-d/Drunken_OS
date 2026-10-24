@@ -661,4 +661,21 @@ local ok_auth_boot = pcall(authBootChunk)
 assert_true(ok_auth_boot, "Advanced Computer booted Auth Server startup.lua")
 assert_eq(authLaunched, "servers/Drunken_OS_AuthServer.lua", "Advanced Computer launched Drunken_OS_AuthServer.lua")
 
+-- 9. Verify Arcade Server (arcade_server) Package & Floppy Disk Limit
+local arcadePkg = manifest.packages.arcade_server
+assert_true(arcadePkg ~= nil, "Arcade server package defined in manifest")
+assert_eq(arcadePkg.type, "server", "Arcade server package type is server")
+assert_eq(arcadePkg.main, "servers/Drunken_Arcade_Server.lua", "Arcade server main program path")
+
+local arcadePkgBytes = 0
+for _, relPath in ipairs(arcadePkg.files) do
+    local f = io.open(relPath, "rb")
+    assert_true(f ~= nil, "Arcade package file exists: " .. relPath)
+    local content = f:read("*a")
+    f:close()
+    arcadePkgBytes = arcadePkgBytes + #content
+end
+print(string.format("  INFO: Arcade server raw file size: %d bytes (%.2f KB)", arcadePkgBytes, arcadePkgBytes / 1024))
+assert_true(arcadePkgBytes <= 125000, "Arcade server package fits comfortably within 125,000 bytes limit")
+
 print(">>> All Installer & Boot Simulation tests passed successfully!")

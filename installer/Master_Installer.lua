@@ -75,7 +75,7 @@ local PACKAGE_METADATA = {
         category = "servers",
         badge = "[ARCADE]",
         hardware = "Advanced PC + Wireless/Wired Modem",
-        desc = "Arcade distributor & leaderboards (bundles all 14 arcade games!)",
+        desc = "Dedicated arcade leaderboards, matchmaking & P2P lobbies",
         prompt = "DISK: Insert blank floppy disk and press ENTER."
     },
     proxy_mainframe = {

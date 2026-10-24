@@ -306,20 +306,22 @@ end
 -- New: Game Distribution handlers
 function gameHandlers.get_gamelist(senderId, message)
     local gameList = {}
-    local files = fs.list("games/")
-    for _, file in ipairs(files) do
-        local path = fs.combine("games", file)
-        if not fs.isDir(path) and file:match("%.lua$") then
-            local version = 1.0
-            local f = fs.open(path, "r")
-            if f then
-                version = parseGameVersion(f.readAll())
-                f.close()
-            end
+    if fs.exists("games") and fs.isDir("games") then
+        local files = fs.list("games/")
+        for _, file in ipairs(files) do
+            local path = fs.combine("games", file)
+            if not fs.isDir(path) and file:match("%.lua$") then
+                local version = 1.0
+                local f = fs.open(path, "r")
+                if f then
+                    version = parseGameVersion(f.readAll())
+                    f.close()
+                end
 
-            local name = file:gsub("%.lua$", ""):gsub("_", " ")
-            name = name:gsub("^%l", string.upper)
-            table.insert(gameList, {name = name, file = "games/" .. file, version = version})
+                local name = file:gsub("%.lua$", ""):gsub("_", " ")
+                name = name:gsub("^%l", string.upper)
+                table.insert(gameList, {name = name, file = "games/" .. file, version = version})
+            end
         end
     end
     rednet.send(senderId, { games = gameList }, "ArcadeGames")
@@ -345,14 +347,16 @@ end
 
 function gameHandlers.get_all_game_versions(senderId, message)
     local versions = {}
-    local files = fs.list("games/")
-    for _, file in ipairs(files) do
-        local path = fs.combine("games", file)
-        if not fs.isDir(path) and file:match("%.lua$") then
-            local f = fs.open(path, "r")
-            if f then
-                versions["games/" .. file] = parseGameVersion(f.readAll())
-                f.close()
+    if fs.exists("games") and fs.isDir("games") then
+        local files = fs.list("games/")
+        for _, file in ipairs(files) do
+            local path = fs.combine("games", file)
+            if not fs.isDir(path) and file:match("%.lua$") then
+                local f = fs.open(path, "r")
+                if f then
+                    versions["games/" .. file] = parseGameVersion(f.readAll())
+                    f.close()
+                end
             end
         end
     end
