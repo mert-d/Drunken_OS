@@ -266,6 +266,60 @@ local function runTests()
     assert(scRPMs[5] ~= scRPMs[7], "Expected Rear-Left and Rear-Right Thrusters to produce differential yaw RPM")
     print("  PASS: Test 7: Mothership 4x Quad-Lift Gimbal Stabilization & 3x Rear Thruster Differential Yaw")
 
+    -- Test 8: Zeppelin HOVER Anti-Sink Bumpless Transfer, Safe Park & Clutch Auto-Polarity
+    local hoverBurnerSig = 0
+    local clutchPoweredState = nil
+    local clutchSigState = nil
+    local mockClutchRpm = 128 -- Simulate clutch still spinning when powered=false
+    _G.peripheral.find = function(pType)
+        if pType == "gas_provider" then
+            return {
+                getGasType = function() return "HOT_AIR" end,
+                getBalloonVolumeChange = function() return -0.5 end
+            }
+        elseif pType == "altitude_sensor" then
+            return {
+                getHeight = function() return 147.0 end,
+                getVerticalSpeed = function() return -0.35 end,
+                getAirPressure = function() return 0.71 end
+            }
+        elseif pType == "throttle_lever" then
+            return {
+                setSignal = function(s) hoverBurnerSig = s end
+            }
+        elseif pType == "create_connected_inverted_clutch" then
+            return {
+                getOutputSpeed = function() return mockClutchRpm end,
+                setPowered = function(p)
+                    clutchPoweredState = p
+                    if p == true then mockClutchRpm = 0 end -- Requires true/15 to cut in this mock
+                end,
+                setSignal = function(s) clutchSigState = s end
+            }
+        end
+        return nil
+    end
+
+    local hvrFC = Avionics.new({ callsign = "ZEP-HVR", startParked = true })
+    assert(hvrFC.ap.baseThrottle == 0 and hvrFC.ap.parkingBrake == true, "Expected startParked=true to initialize with 0 throttle and parkingBrake=true")
+
+    -- Step 8a: While parked in MANUAL, burner and throttle must both be 0
+    hvrFC:step(0.05)
+    assert(hoverBurnerSig == 0, "Expected parked Zeppelin in MANUAL mode to keep burner signal at 0")
+
+    -- Step 8b: Switch to HOVER while sinking -> burner must immediately boost to 15 (no drop to 8!) and lock forward throttle to 0
+    hvrFC:setMode("HOVER", hvrFC:readTelemetry(0.05))
+    local hvrTel = hvrFC:step(0.05)
+    assert(hoverBurnerSig >= 14, "Expected HOVER mode with negative VSI/volume change to boost burner >= 14, got " .. tostring(hoverBurnerSig))
+    assert(hvrFC.ap.baseThrottle == 0 and hvrFC.ap.parkingBrake == true, "Expected HOVER mode to lock baseThrottle=0 and parkingBrake=true")
+    assert(hvrTel.burnerCmd >= 14, "Expected telemetry burnerCmd >= 14 in HOVER anti-sink")
+
+    -- Step 8c: Closed-loop clutch polarity auto-correction when output shaft keeps spinning during clutchCut
+    for _ = 1, 4 do hvrFC:step(0.05) end
+    assert(hvrFC.clutchPolarInvert == true, "Expected closed-loop clutch monitor to auto-invert polarity when shaft keeps spinning")
+    assert(mockClutchRpm == 0, "Expected auto-inverted clutch signal to stop the propeller shaft")
+    print("  PASS: Test 8: Zeppelin HOVER Anti-Sink, Safe Park & Closed-Loop Clutch Polarity")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

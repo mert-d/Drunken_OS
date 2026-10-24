@@ -34,6 +34,12 @@ local function createPID(kp, ki, kd, minOut, maxOut)
             if out < minOut then out = minOut end
             return out
         end,
+        setIntegral = function(self, val)
+            integral = math.max(minOut, math.min(maxOut, tonumber(val) or 0))
+        end,
+        getIntegral = function(self)
+            return integral
+        end,
         reset = function(self)
             integral = 0
             prevPV = nil
@@ -58,7 +64,7 @@ local function safeCall(fn, ...)
     return nil
 end
 
--- Calls a peripheral method directly first; if it requires a Create control/entity ID string as arg #1, resolves it automatically
+-- Calls a peripheral method directly first; if it requires a Create control/entity/direction ID string as arg #1, resolves it automatically
 local function callKinetic(dev, fn, ...)
     if type(fn) ~= "function" then return nil end
     local ok, res = pcall(fn, ...)
@@ -67,18 +73,43 @@ local function callKinetic(dev, fn, ...)
         if type(dev.listControls) == "function" then
             local okC, ctrls = pcall(dev.listControls)
             if okC and type(ctrls) == "table" then
-                for _, ctrl in ipairs(ctrls) do
-                    local ok2, res2 = pcall(fn, ctrl, ...)
-                    if ok2 then return res2 end
+                for k, v in pairs(ctrls) do
+                    if type(v) == "string" then
+                        local okV, resV = pcall(fn, v, ...)
+                        if okV then return resV end
+                    elseif type(v) == "table" then
+                        local cid = v.id or v.name or v.control
+                        if type(cid) == "string" then
+                            local okT, resT = pcall(fn, cid, ...)
+                            if okT then return resT end
+                        end
+                    end
+                    if type(k) == "string" then
+                        local okK, resK = pcall(fn, k, ...)
+                        if okK then return resK end
+                    end
                 end
             end
         end
-        if type(dev.getBlockEntityId) == "function" then
-            local okId, id = pcall(dev.getBlockEntityId)
-            if okId and id ~= nil then
-                local ok3, res3 = pcall(fn, id, ...)
-                if ok3 then return res3 end
+        for _, idGetter in ipairs({ "getBlockEntityId", "getBlockId", "getNetworkId" }) do
+            if type(dev[idGetter]) == "function" then
+                local okId, id = pcall(dev[idGetter])
+                if okId and id ~= nil then
+                    local ok3, res3 = pcall(fn, tostring(id), ...)
+                    if ok3 then return res3 end
+                end
             end
+        end
+        if peripheral and peripheral.getName then
+            local okN, pName = pcall(peripheral.getName, dev)
+            if okN and type(pName) == "string" then
+                local okP, resP = pcall(fn, pName, ...)
+                if okP then return resP end
+            end
+        end
+        for _, face in ipairs({ "north", "south", "east", "west", "up", "down", "main", "default" }) do
+            local okF, resF = pcall(fn, face, ...)
+            if okF then return resF end
         end
     end
     return nil
@@ -124,9 +155,14 @@ function Avionics.new(config)
     self.hasSavedProfile = false
     self.ioMap = {}
     self.ioDevices = {}
+    self.clutchPolarInvert = false -- Auto or manual [K] polarity inversion for clutches
+    self.clutchSpinTicks = 0
+    self.prevAlt = nil
 
     self:loadIOMap()
     self:scanPeripherals()
+
+    local startParked = (self.config.startParked == true)
 
     -- Autopilot State & Setpoints
     self.ap = {
@@ -139,9 +175,9 @@ function Avionics.new(config)
         targetAlt    = 120.0,
         targetHdg    = 0.0,      -- Radians
         targetSpd    = 10.0,     -- m/s
-        baseThrottle = 8,        -- 0..15 Redstone/Transmission scale (or 0..256 RPM scale)
+        baseThrottle = startParked and 0 or 8, -- 0..15 Redstone/Transmission scale (or 0..256 RPM scale)
         manualYaw    = 0,        -- -5..+5 manual rudder/thruster turn trim
-        parkingBrake = false,
+        parkingBrake = startParked,
         reverseGear  = false,    -- Gearshift / Reverse Thrust toggle ([G])
         waypoint     = nil,      -- { x = 0, y = 120, z = 0, name = "HOME" }
         homeBase     = nil,      -- ILS Beacon packet or manual base table
@@ -153,8 +189,8 @@ function Avionics.new(config)
     self.pos = { x = 0, y = 0, z = 0 }
     self.gpsTick = 0
 
-    -- PID Controllers
-    self.altPID   = createPID(1.6, 0.35, 2.0, -7.0, 7.0)
+    -- PID Controllers (High-authority altitude PID to overcome hot-air balloon thermal lag)
+    self.altPID   = createPID(3.5, 0.90, 4.0, -12.0, 12.0)
     self.hdgPID   = createPID(3.8, 0.10, 1.2, -6.0, 6.0)
     self.pitchPID = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
@@ -268,8 +304,22 @@ function Avionics:setVehicleProfile(profileName, forceAutoAssign)
     self.vehicleType = profileName
     if profileName == "MOTHERSHIP" then
         self:autoAssignMothershipRoles(forceAutoAssign)
+    else
+        -- Clear Mothership-specific roles when switching back to ZEPPELIN or AIRCRAFT
+        local msRoleSet = {}
+        for _, r in ipairs(Avionics.MOTHERSHIP_ROLES) do msRoleSet[r] = true end
+        for _, cfg in pairs(self.ioMap or {}) do
+            if type(cfg) == "table" and msRoleSet[cfg.role] then
+                cfg.role = "AUTO"
+            end
+        end
     end
     self:saveIOMap()
+end
+
+function Avionics:toggleClutchPolarity()
+    self.clutchPolarInvert = not self.clutchPolarInvert
+    return self.clutchPolarInvert
 end
 
 function Avionics:scanPeripherals()
@@ -414,6 +464,13 @@ function Avionics:readTelemetry(dt)
         vsi = tonumber(safeCall(self.altSensor.getVerticalSpeed)) or 0
         pressure = tonumber(safeCall(self.altSensor.getAirPressure)) or 1.0
     end
+    if self.prevAlt ~= nil and dt > 0 then
+        local computedVsi = (alt - self.prevAlt) / dt
+        if math.abs(vsi) < 0.02 and math.abs(computedVsi) > 0.05 then
+            vsi = computedVsi
+        end
+    end
+    self.prevAlt = alt
 
     -- 2. Attitude (Pitch, Roll, Linear Acceleration)
     local pitch, roll = 0, 0
@@ -484,12 +541,14 @@ function Avionics:readTelemetry(dt)
         end
     end
 
-    -- 7. Engine, Clutch & Burner SCADA (RPM, Overstress, Burner Signal)
+    -- 7. Engine, Clutch & Burner SCADA (RPM, Overstress, Burner Signal, Balloon Volume Change)
     local maxRpm = 0
+    local clutchOutRpm = nil
     local overstressed = false
     local gasType = "NONE"
     local burnerActual = 0
     local burnerActive = false
+    local balloonVolChange = 0
 
     for _, eng in ipairs(self.engines) do
         local engRpm = tonumber(safeCall(eng.getRpm)) or tonumber(safeCall(eng.getSpeed)) or 0
@@ -500,8 +559,12 @@ function Avionics:readTelemetry(dt)
     end
 
     for _, cl in ipairs(self.clutches or {}) do
-        local clRpm = tonumber(callKinetic(cl, cl.getSpeed))
-                   or tonumber(callKinetic(cl, cl.getOutputSpeed))
+        local outSpd = tonumber(callKinetic(cl, cl.getOutputSpeed))
+        if outSpd ~= nil then
+            clutchOutRpm = math.max(clutchOutRpm or 0, math.abs(outSpd))
+        end
+        local clRpm = outSpd
+                   or tonumber(callKinetic(cl, cl.getSpeed))
                    or tonumber(callKinetic(cl, cl.getGeneratedSpeed))
                    or 0
         maxRpm = math.max(maxRpm, math.abs(clRpm))
@@ -531,6 +594,10 @@ function Avionics:readTelemetry(dt)
         if safeCall(b.isActive) == true then
             burnerActive = true
         end
+        local vc = tonumber(safeCall(b.getBalloonVolumeChange))
+        if vc ~= nil then
+            balloonVolChange = balloonVolChange + vc
+        end
     end
 
     -- 8. Warnings (GPWS & Stall)
@@ -538,29 +605,31 @@ function Avionics:readTelemetry(dt)
     local stallWarning = (self.vehicleType == "AIRCRAFT" and not weightOnWheels and speed < 3.0 and pitch > math.rad(15))
 
     return {
-        callsign       = self.callsign,
-        vehicleType    = self.vehicleType,
-        altitude       = alt,
-        agl            = agl,
-        vSpeed         = vsi,
-        pressure       = pressure,
-        pitch          = pitch,
-        roll           = roll,
-        heading        = heading,
-        speed          = speed,
-        velocity       = vel,
-        linAcc         = linAcc,
-        pos            = { x = self.pos.x, y = self.pos.y, z = self.pos.z },
-        weightOnWheels = weightOnWheels,
-        rpm            = maxRpm,
-        overstressed   = overstressed,
-        gasType        = gasType,
-        burnerCmd      = self.lastBurnerSignal or 0,
-        burnerActual   = burnerActual,
-        burnerActive   = burnerActive,
-        mothership     = self.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
-        gpwsWarning    = gpwsWarning,
-        stallWarning   = stallWarning
+        callsign         = self.callsign,
+        vehicleType      = self.vehicleType,
+        altitude         = alt,
+        agl              = agl,
+        vSpeed           = vsi,
+        pressure         = pressure,
+        pitch            = pitch,
+        roll             = roll,
+        heading          = heading,
+        speed            = speed,
+        velocity         = vel,
+        linAcc           = linAcc,
+        pos              = { x = self.pos.x, y = self.pos.y, z = self.pos.z },
+        weightOnWheels   = weightOnWheels,
+        rpm              = maxRpm,
+        clutchOutRpm     = clutchOutRpm,
+        overstressed     = overstressed,
+        gasType          = gasType,
+        burnerCmd        = self.lastBurnerSignal or 0,
+        burnerActual     = burnerActual,
+        burnerActive     = burnerActive,
+        balloonVolChange = balloonVolChange,
+        mothership       = self.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
+        gpwsWarning      = gpwsWarning,
+        stallWarning     = stallWarning
     }
 end
 
@@ -577,6 +646,7 @@ function Avionics:engageRTB(currentTel)
     self.ap.enabled  = true
     self.ap.altHold  = true
     self.ap.hdgHold  = true
+    self.ap.parkingBrake = false
     self.ap.mode     = "RTB"
 
     if (self.vehicleType == "ZEPPELIN" or self.vehicleType == "MOTHERSHIP") and self.ap.homeBase.zeppelinMast then
@@ -585,6 +655,7 @@ function Avionics:engageRTB(currentTel)
         self.ap.rtbPhase = "RTB_IAF"
     end
     self.altPID:reset()
+    self.altPID:setIntegral(2.0)
     self.hdgPID:reset()
     return true
 end
@@ -607,24 +678,44 @@ function Avionics:setMode(modeName, currentTel)
         self.ap.enabled = true
         self.ap.altHold = true
         self.ap.hdgHold = true
+        self.ap.parkingBrake = false
+        if self.ap.baseThrottle <= 0 then
+            self.ap.baseThrottle = 8
+        end
         if currentTel then
             self.ap.targetAlt = math.floor(currentTel.altitude + 0.5)
             self.ap.targetHdg = currentTel.heading
         end
+        -- Bumpless transfer: pre-load altitude PID integral so Zeppelin burners never drop heat on transition
+        local preload = math.max(2.0, (self.lastBurnerSignal or 12) - 11.0)
+        self.altPID:setIntegral(preload)
     elseif modeName == "HOVER" then
         self.ap.enabled = true
         self.ap.altHold = true
         self.ap.hdgHold = true
         self.ap.baseThrottle = 0
+        self.ap.parkingBrake = true -- Strictly cut forward propeller/clutch while hovering
         self.ap.manualYaw = 0
         if currentTel then
-            self.ap.targetAlt = math.floor(currentTel.altitude + 0.5)
+            if currentTel.vSpeed and currentTel.vSpeed < -0.15 then
+                self.ap.targetAlt = math.ceil(currentTel.altitude + 0.5)
+            else
+                self.ap.targetAlt = math.floor(currentTel.altitude + 0.5)
+            end
             self.ap.targetHdg = currentTel.heading
         end
+        -- Bumpless transfer: pre-load integral so burners stay at 13..15 instead of dropping to 8
+        local preload = math.max(2.5, (self.lastBurnerSignal or 13) - 11.0)
+        if currentTel and currentTel.vSpeed and currentTel.vSpeed < -0.15 then
+            preload = 4.5
+        end
+        self.altPID:setIntegral(preload)
     elseif modeName == "LNAV" then
         self.ap.enabled = true
         self.ap.altHold = true
         self.ap.hdgHold = true
+        self.ap.parkingBrake = false
+        self.altPID:setIntegral(2.0)
     elseif modeName == "AUTOLAND" then
         self.ap.enabled = true
         self.ap.altHold = true
@@ -644,6 +735,14 @@ function Avionics:step(dt)
     if self.spinTest and self.spinTest.ticks > 0 then
         self.spinTest.ticks = self.spinTest.ticks - 1
         if self.spinTest.ticks <= 0 then self.spinTest = nil end
+    end
+
+    -- Enforce zero forward throttle in HOVER mode; in other modes, advancing throttle > 0 releases parking brake
+    if self.ap.mode == "HOVER" then
+        self.ap.baseThrottle = 0
+        self.ap.parkingBrake = true
+    elseif self.ap.parkingBrake and self.ap.baseThrottle > 0 then
+        self.ap.parkingBrake = false
     end
 
     -- Handle Waypoint LNAV Bearing Calculation
@@ -756,6 +855,7 @@ function Avionics:step(dt)
     end
 
     -- Supports both Create Rotation Speed Controllers (setTargetSpeed in -256..+256 RPM) and 0..15 Signal peripherals
+    -- Uses independent 'if' calls so peripherals exposing multiple methods (setSignal + setControl + setThrottle) receive all applicable updates
     local function driveSignal(dev, sig, inv)
         if dev.setTargetSpeed then
             local rpm = math.floor((sig / 15.0) * 256 + 0.5)
@@ -765,32 +865,51 @@ function Avionics:step(dt)
         end
         local clampedSig = math.floor(clamp(math.abs(sig), 0, 15))
         local outSig = inv and (15 - clampedSig) or clampedSig
-        if dev.setSignal then callKinetic(dev, dev.setSignal, outSig)
-        elseif dev.setThrottle then callKinetic(dev, dev.setThrottle, outSig)
-        elseif dev.setTarget then callKinetic(dev, dev.setTarget, outSig)
-        elseif dev.setLevel then callKinetic(dev, dev.setLevel, outSig)
-        elseif dev.setOutput then callKinetic(dev, dev.setOutput, outSig)
-        elseif dev.setSignalStrength then callKinetic(dev, dev.setSignalStrength, outSig)
-        elseif dev.setControl then callKinetic(dev, dev.setControl, outSig)
-        elseif dev.setSpeed then callKinetic(dev, dev.setSpeed, outSig)
-        end
+        local called = false
+        if dev.setSignal then callKinetic(dev, dev.setSignal, outSig); called = true end
+        if dev.setThrottle then callKinetic(dev, dev.setThrottle, outSig); called = true end
+        if dev.setControl then callKinetic(dev, dev.setControl, outSig); called = true end
+        if dev.setTarget then callKinetic(dev, dev.setTarget, outSig); called = true end
+        if dev.setLevel then callKinetic(dev, dev.setLevel, outSig); called = true end
+        if dev.setOutput then callKinetic(dev, dev.setOutput, outSig); called = true end
+        if dev.setSignalStrength then callKinetic(dev, dev.setSignalStrength, outSig); called = true end
+        if not called and dev.setSpeed then callKinetic(dev, dev.setSpeed, outSig) end
     end
 
     local function driveBooleanOrSignal(dev, active, sigVal, inv)
         local finalActive = inv and (not active) or active
         local finalSig = inv and (15 - sigVal) or sigVal
         if dev.setPowered then callKinetic(dev, dev.setPowered, finalActive) end
+        if dev.setControl then callKinetic(dev, dev.setControl, finalSig) end
         if dev.setSignal then callKinetic(dev, dev.setSignal, finalSig)
         else driveSignal(dev, sigVal, inv) end
     end
 
+    -- Emits analog redstone for Zeppelin Hot Air Burners, skipping sides occupied by non-burner peripherals (like bottom steering_wheel)
     local function emitRedstoneBurner(sig)
         if redstone and redstone.setAnalogOutput then
             for _, side in ipairs({ "left", "right", "front", "back", "top", "bottom" }) do
                 local cfg = self:getDeviceConfig("RS:" .. side)
-                if cfg.role == "AUTO" or cfg.role == "LIFT_BURNER" then
+                if cfg.role == "LIFT_BURNER" then
                     local outSig = cfg.invert and (15 - sig) or sig
                     pcall(redstone.setAnalogOutput, side, outSig)
+                elseif cfg.role == "AUTO" then
+                    local hasNonBurnerPeriph = false
+                    if peripheral and peripheral.getType then
+                        local okT, pType = pcall(peripheral.getType, side)
+                        if okT and pType ~= nil then
+                            local pStr = tostring(pType):lower()
+                            if not (pStr:find("burner") or pStr:find("gas_provider")) then
+                                hasNonBurnerPeriph = true
+                            end
+                        end
+                    end
+                    if hasNonBurnerPeriph then
+                        pcall(redstone.setAnalogOutput, side, 0)
+                    else
+                        local outSig = cfg.invert and (15 - sig) or sig
+                        pcall(redstone.setAnalogOutput, side, outSig)
+                    end
                 end
             end
         end
@@ -816,12 +935,29 @@ function Avionics:step(dt)
     end
 
     -- Drive Create: Connected Inverted Clutches (Propeller power cut / brake signal)
-    local clutchCut = self.ap.parkingBrake or (self.ap.baseThrottle <= 0)
+    -- Includes closed-loop output RPM verification: if clutch output continues spinning while cut, auto-inverts polarity
+    local clutchCut = (self.ap.mode == "HOVER") or self.ap.parkingBrake or (self.ap.baseThrottle <= 0)
+    if clutchCut and tel.clutchOutRpm and tel.clutchOutRpm > 1.0 then
+        self.clutchSpinTicks = (self.clutchSpinTicks or 0) + 1
+        if self.clutchSpinTicks >= 4 then
+            self.clutchPolarInvert = not self.clutchPolarInvert
+            self.clutchSpinTicks = 0
+        end
+    else
+        self.clutchSpinTicks = 0
+    end
+
     for _, cl in ipairs(self.clutches or {}) do
+        local clName = (peripheral and peripheral.getName and pcall(peripheral.getName, cl) and peripheral.getName(cl)) or nil
+        local devInv = clName and self:getDeviceConfig(clName).invert or false
+        local totalInv = (self.clutchPolarInvert ~= devInv)
+        local activeState = totalInv and clutchCut or (not clutchCut)
+        local rawSig = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle, 1, 15))
+        local sigState = totalInv and (15 - rawSig) or rawSig
         table.insert(tasks, function()
-            -- When parkingBrake is ON or throttle is 0, cut power; otherwise engage
-            if cl.setPowered then callKinetic(cl, cl.setPowered, not clutchCut) end
-            if cl.setSignal then callKinetic(cl, cl.setSignal, clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle, 1, 15))) end
+            if cl.setPowered then callKinetic(cl, cl.setPowered, activeState) end
+            if cl.setSignal then callKinetic(cl, cl.setSignal, sigState) end
+            if cl.setControl then callKinetic(cl, cl.setControl, sigState) end
         end)
     end
 
@@ -833,10 +969,10 @@ function Avionics:step(dt)
         end)
     end
 
-    local mainThrottleSig = math.floor(clamp(self.ap.baseThrottle, 0, 15))
-    local portSignal = math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
-    local stbdSignal = math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
-    local boostSignal = (self.ap.baseThrottle >= 12) and 15 or 0
+    local mainThrottleSig = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle, 0, 15))
+    local portSignal = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
+    local stbdSignal = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
+    local boostSignal = (not clutchCut and self.ap.baseThrottle >= 12) and 15 or 0
     local burnerSignal = mainThrottleSig
 
     -- Compute Mothership 4-Lift + 3-Rear Thruster Mixing Matrix (Gimbal Pitch/Roll + Altitude + Yaw)
@@ -853,15 +989,18 @@ function Avionics:step(dt)
 
     local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
     if not (not self.ap.enabled and self.ap.parkingBrake) then
-        local hoverBase = self.ap.altHold and 8.0 or mainThrottleSig
-        liftFL = math.floor(clamp(hoverBase + altCmd + pitchTrim + rollTrim, 0, 15) + 0.5)
-        liftFR = math.floor(clamp(hoverBase + altCmd + pitchTrim - rollTrim, 0, 15) + 0.5)
-        liftRL = math.floor(clamp(hoverBase + altCmd - pitchTrim + rollTrim, 0, 15) + 0.5)
-        liftRR = math.floor(clamp(hoverBase + altCmd - pitchTrim - rollTrim, 0, 15) + 0.5)
+        local collectiveLift = self.ap.altHold and clamp(8.0 + altCmd, 3.0, 11.0) or mainThrottleSig
+        liftFL = math.floor(clamp(collectiveLift + pitchTrim + rollTrim, 0, 15) + 0.5)
+        liftFR = math.floor(clamp(collectiveLift + pitchTrim - rollTrim, 0, 15) + 0.5)
+        liftRL = math.floor(clamp(collectiveLift - pitchTrim + rollTrim, 0, 15) + 0.5)
+        liftRR = math.floor(clamp(collectiveLift - pitchTrim - rollTrim, 0, 15) + 0.5)
     end
 
-    local fwdSig = self.ap.parkingBrake and 0 or (revActive and -mainThrottleSig or mainThrottleSig)
-    local turnYaw = self.ap.hdgHold and yawDiff or ((steerVal ~= 0 and (steerVal * 6.0)) or (self.ap.manualYaw or 0))
+    local fwdSig = clutchCut and 0 or (revActive and -mainThrottleSig or mainThrottleSig)
+    local turnYaw = 0
+    if not (not self.ap.enabled and self.ap.parkingBrake) then
+        turnYaw = self.ap.hdgHold and yawDiff or ((steerVal ~= 0 and (steerVal * 6.0)) or (self.ap.manualYaw or 0))
+    end
     local rearL = math.floor(clamp(fwdSig - turnYaw, -15, 15) + 0.5)
     local rearC = math.floor(clamp(fwdSig, -15, 15) + 0.5)
     local rearR = math.floor(clamp(fwdSig + turnYaw, -15, 15) + 0.5)
@@ -949,19 +1088,20 @@ function Avionics:step(dt)
         end
     end
 
-    -- If Autopilot is disabled, apply baseThrottle to gearboxes/throttles and clear manual gyro locks
+    -- If Autopilot is disabled, apply manual throttle (or 0 if parked) and clear manual gyro locks
     if not self.ap.enabled then
-        self.lastBurnerSignal = mainThrottleSig
-        tel.burnerCmd = mainThrottleSig
+        local manualBurnerSig = self.ap.parkingBrake and 0 or mainThrottleSig
+        self.lastBurnerSignal = manualBurnerSig
+        tel.burnerCmd = manualBurnerSig
         if self.vehicleType ~= "MOTHERSHIP" then
             for _, gb in ipairs(self.gearboxes) do
                 table.insert(tasks, function() driveSignal(gb, mainThrottleSig, false) end)
             end
         end
         if self.vehicleType == "ZEPPELIN" then
-            emitRedstoneBurner(mainThrottleSig)
+            emitRedstoneBurner(manualBurnerSig)
             for _, thr in ipairs(self.throttles) do
-                table.insert(tasks, function() driveSignal(thr, mainThrottleSig, false) end)
+                table.insert(tasks, function() driveSignal(thr, manualBurnerSig, false) end)
             end
         end
         for _, gyro in ipairs(self.gyros) do
@@ -969,7 +1109,7 @@ function Avionics:step(dt)
                 table.insert(tasks, function() safeCall(gyro.clearManualTarget) end)
             end
         end
-        routeCustomRoleDevices(mainThrottleSig)
+        routeCustomRoleDevices(manualBurnerSig)
         if #tasks > 0 and parallel and parallel.waitForAll then
             parallel.waitForAll(table.unpack(tasks))
         end
@@ -979,8 +1119,10 @@ function Avionics:step(dt)
     -- 2. Differential Thrust on Analog Transmissions (for non-Mothership or unassigned gearboxes)
     if self.vehicleType ~= "MOTHERSHIP" then
         if #self.gearboxes >= 2 then
-            table.insert(tasks, function() driveSignal(self.gearboxes[1], portSignal, false) end)
-            table.insert(tasks, function() driveSignal(self.gearboxes[2], stbdSignal, false) end)
+            local pSig = (self.ap.mode == "HOVER") and 0 or math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
+            local sSig = (self.ap.mode == "HOVER") and 0 or math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
+            table.insert(tasks, function() driveSignal(self.gearboxes[1], pSig, false) end)
+            table.insert(tasks, function() driveSignal(self.gearboxes[2], sSig, false) end)
         elseif #self.gearboxes == 1 then
             table.insert(tasks, function() driveSignal(self.gearboxes[1], mainThrottleSig, false) end)
         end
@@ -989,7 +1131,27 @@ function Avionics:step(dt)
     -- 3. Altitude PID & Attitude Stabilization
     if self.ap.altHold then
         if self.vehicleType == "ZEPPELIN" then
-            burnerSignal = math.floor(clamp(8 + altCmd, 0, 15))
+            -- Pressure-compensated hover baseline + VSI cascade damping + Balloon volume change feedback
+            local hoverBase = clamp(11.0 + (1.0 - (tel.pressure or 1.0)) * 5.0, 11.0, 13.5)
+            local altErr = self.ap.targetAlt - tel.altitude
+            local vsiTerm = -clamp((tel.vSpeed or 0) * 4.5, -6.0, 6.0)
+            local volTerm = (tel.balloonVolChange and tel.balloonVolChange < 0) and 2.5 or 0
+
+            burnerSignal = math.floor(clamp(hoverBase + altCmd + vsiTerm + volTerm, 0, 15) + 0.5)
+
+            -- Anti-sink envelope protection: immediately apply full heat if sinking below target altitude
+            if altErr > 0.25 and (tel.vSpeed or 0) < -0.05 then
+                burnerSignal = math.max(14, burnerSignal)
+            end
+            if altErr > 0.8 or (tel.vSpeed or 0) < -0.25 then
+                burnerSignal = 15
+            elseif altErr < -0.8 and (tel.vSpeed or 0) > 0.15 then
+                burnerSignal = math.min(2, burnerSignal)
+            end
+            if altErr < -1.5 then
+                burnerSignal = 0
+            end
+
             self.lastBurnerSignal = burnerSignal
             tel.burnerCmd = burnerSignal
             emitRedstoneBurner(burnerSignal)
@@ -999,26 +1161,35 @@ function Avionics:step(dt)
         end
 
         if #self.gyros > 0 then
-            local desiredPitch = clamp(altCmd * 0.025, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
-            local pitchVec = self.pitchPID:compute(desiredPitch, tel.pitch, dt)
-            local rollVec  = self.rollPID:compute(0, tel.roll, dt)
-
-            -- In Zeppelins, horizontal gyro deflection steers Yaw; in Aircraft, it stabilizes Roll
-            local vx
-            if self.vehicleType == "ZEPPELIN" then
-                local yawSteer = clamp(yawDiff * 0.035, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
-                vx = math.sin(yawSteer)
+            if self.ap.mode == "HOVER" and clutchCut then
+                -- Do not tilt rear propeller bearing while hovering with propeller cut
+                for _, gyro in ipairs(self.gyros) do
+                    if gyro.clearManualTarget then
+                        table.insert(tasks, function() safeCall(gyro.clearManualTarget) end)
+                    end
+                end
             else
-                vx = math.sin(clamp(rollVec, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD))
-            end
-            local vy = math.sin(clamp(pitchVec, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD))
-            local vz = math.sqrt(math.max(0, 1 - vx * vx - vy * vy))
+                local desiredPitch = clamp(altCmd * 0.025, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
+                local pitchVec = self.pitchPID:compute(desiredPitch, tel.pitch, dt)
+                local rollVec  = self.rollPID:compute(0, tel.roll, dt)
 
-            for _, gyro in ipairs(self.gyros) do
-                if gyro.setManualTarget then
-                    table.insert(tasks, function()
-                        safeCall(gyro.setManualTarget, { x = vx, y = vy, z = vz })
-                    end)
+                -- In Zeppelins, horizontal gyro deflection steers Yaw; in Aircraft, it stabilizes Roll
+                local vx
+                if self.vehicleType == "ZEPPELIN" then
+                    local yawSteer = clamp(yawDiff * 0.035, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
+                    vx = math.sin(yawSteer)
+                else
+                    vx = math.sin(clamp(rollVec, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD))
+                end
+                local vy = math.sin(clamp(pitchVec, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD))
+                local vz = math.sqrt(math.max(0, 1 - vx * vx - vy * vy))
+
+                for _, gyro in ipairs(self.gyros) do
+                    if gyro.setManualTarget then
+                        table.insert(tasks, function()
+                            safeCall(gyro.setManualTarget, { x = vx, y = vy, z = vz })
+                        end)
+                    end
                 end
             end
         end

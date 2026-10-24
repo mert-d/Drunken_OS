@@ -58,7 +58,8 @@ local function run(context)
     }
 
     local fc = Avionics.new({
-        callsign = context.username and ("DOS-" .. string.upper(string.sub(context.username, 1, 4))) or nil
+        callsign    = context.username and ("DOS-" .. string.upper(string.sub(context.username, 1, 4))) or nil,
+        startParked = true
     })
 
     local running = true
@@ -467,7 +468,7 @@ local function run(context)
         if hotplugNotice and hotplugTimer > 0 then
             parentTerm.setBackgroundColor(isColor and colors.cyan or colors.white)
             parentTerm.setTextColor(colors.black)
-            local msg = " " .. hotplugNotice .. " ([P] Ayarla) "
+            local msg = " " .. hotplugNotice .. " "
             parentTerm.write(msg:sub(1, w - 2))
         elseif fc.ap.mode == "RTB" and fc.ap.homeBase then
             parentTerm.setBackgroundColor(theme.bg)
@@ -510,14 +511,14 @@ local function run(context)
             parentTerm.setTextColor(colors.black)
             parentTerm.write(" !! STALL WARNING - LOWER NOSE !! ")
         else
-            local clutchCut = fc.ap.parkingBrake or (fc.ap.baseThrottle <= 0)
+            local clutchCut = (fc.ap.mode == "HOVER") or fc.ap.parkingBrake or (fc.ap.baseThrottle <= 0)
             parentTerm.setBackgroundColor(theme.bg)
             parentTerm.setTextColor(lastTel.weightOnWheels and (theme.ok or colors.lime) or colors.lightGray)
             parentTerm.write(string.format(
-                "CLUTCH:%s | BRK:%s | RPM:%.0f | POS:(%d,%d,%d)",
+                "CLUTCH:%s(%s) | BRK:%s | POS:(%d,%d,%d)",
                 clutchCut and "KESIK" or "AKTIF",
-                fc.ap.parkingBrake and "ON " or "OFF",
-                lastTel.rpm,
+                fc.clutchPolarInvert and "TERS" or "DUZ",
+                fc.ap.parkingBrake and "PARK" or "OFF ",
                 math.floor(lastTel.pos.x),
                 math.floor(lastTel.pos.y),
                 math.floor(lastTel.pos.z)
@@ -533,9 +534,8 @@ local function run(context)
         parentTerm.setCursorPos(2, h - 2)
         parentTerm.setTextColor(fc.ap.enabled and (theme.ok or colors.lime) or (theme.warn or colors.orange))
         parentTerm.write(string.format(
-            "[A]AP:%s [H]HVR [C]CRS [G]VTS:%s [B]BRK:%s [R]RTB",
+            "[A]AP:%s [H]HVR [C]CRS [B]PARK:%s [K]CLUTCH [G]VTS",
             fc.ap.enabled and "ON " or "OFF",
-            fc.ap.reverseGear and "REV" or "FWD",
             fc.ap.parkingBrake and "ON " or "OFF"
         ):sub(1, w - 2))
 
@@ -604,8 +604,9 @@ local function run(context)
                 local key = p1
                 playAlert("CLICK")
                 if key == keys.q then
-                    -- Safe disarm & flush manual state to actuators on exit
+                    -- Safe disarm, engage full parking brake, and flush zero state to all actuators & burners on exit
                     fc.ap.baseThrottle = 0
+                    fc.ap.parkingBrake = true
                     fc:setMode("MANUAL", lastTel)
                     fc:step(0.05)
                     running = false
@@ -693,12 +694,36 @@ local function run(context)
                         fc:setMode("CRUISE", lastTel)
                     elseif key == keys.h then
                         fc:setMode("HOVER", lastTel)
+                        hotplugNotice = "HOVER AKTIF: Irtifa Kilitli, Arka Pervane Kesildi"
+                        hotplugTimer = 60
                     elseif key == keys.r then
                         fc:engageRTB(lastTel)
                     elseif key == keys.l then
                         fc:setMode("AUTOLAND", lastTel)
                     elseif key == keys.b then
-                        fc.ap.parkingBrake = not fc.ap.parkingBrake
+                        if fc.ap.enabled then
+                            -- Engaging [B] while in HOVER/CRUISE switches to Full Park (cuts both propeller and burners)
+                            fc:setMode("MANUAL", lastTel)
+                            fc.ap.parkingBrake = true
+                            fc.ap.baseThrottle = 0
+                            fc.ap.manualYaw = 0
+                            hotplugNotice = "TAM PARK AKTIF: Pervane ve Kazanlar Kapatildi!"
+                            hotplugTimer = 70
+                        else
+                            fc.ap.parkingBrake = not fc.ap.parkingBrake
+                            if fc.ap.parkingBrake then
+                                fc.ap.baseThrottle = 0
+                                fc.ap.manualYaw = 0
+                                hotplugNotice = "PARK FRENI AKTIF: Pervane ve Kazanlar Kapatildi!"
+                            else
+                                hotplugNotice = "PARK FRENI COZULDU: [W] ile gaz verebilirsiniz"
+                            end
+                            hotplugTimer = 60
+                        end
+                    elseif key == keys.k then
+                        local inv = fc:toggleClutchPolarity()
+                        hotplugNotice = "DEBRIYAJ YONU: " .. (inv and "TERS (INVERTED)" or "DUZ (NORMAL)")
+                        hotplugTimer = 70
                     elseif key == keys.g then
                         fc.ap.reverseGear = not fc.ap.reverseGear
                     elseif key == keys.up then
@@ -724,7 +749,17 @@ local function run(context)
                             fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(5)) % (2 * math.pi)
                         end
                     elseif key == keys.w then
-                        fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
+                        if fc.ap.mode == "HOVER" then
+                            -- Transition smoothly from stationary HOVER to forward CRUISE when pilot presses [W]
+                            fc:setMode("CRUISE", lastTel)
+                            fc.ap.parkingBrake = false
+                            fc.ap.baseThrottle = 1
+                            hotplugNotice = "CRUISE MODU: Ileri itki devreye alindi"
+                            hotplugTimer = 50
+                        else
+                            fc.ap.parkingBrake = false
+                            fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
+                        end
                     elseif key == keys.s then
                         fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
                     end
