@@ -113,6 +113,7 @@ function Avionics:scanPeripherals()
         self.gyros       = { peripheral.find("gyroscopic_propeller_bearing") }
         self.wheels      = { peripheral.find("wheel_mount") }
         self.engines     = { peripheral.find("portable_engine") }
+        self.clutches    = { peripheral.find("create_connected_inverted_clutch") }
     else
         self.burners     = {}
         self.gearboxes   = {}
@@ -120,6 +121,7 @@ function Avionics:scanPeripherals()
         self.gyros       = {}
         self.wheels      = {}
         self.engines     = {}
+        self.clutches    = {}
     end
 
     -- Determine Vehicle Type
@@ -133,12 +135,16 @@ end
 function Avionics:readTelemetry(dt)
     dt = dt or 0.05
 
-    -- 1. Altitude & Vertical Speed
+    -- 1. Altitude & Vertical Speed (Supports Create Simulated getHeight and legacy getAltitude)
     local alt = 0
     local vsi = 0
     local pressure = 1.0
     if self.altSensor then
-        if self.altSensor.getAltitude then alt = self.altSensor.getAltitude() or 0 end
+        if self.altSensor.getHeight then
+            alt = self.altSensor.getHeight() or 0
+        elseif self.altSensor.getAltitude then
+            alt = self.altSensor.getAltitude() or 0
+        end
         if self.altSensor.getVerticalSpeed then vsi = self.altSensor.getVerticalSpeed() or 0 end
         if self.altSensor.getAirPressure then pressure = self.altSensor.getAirPressure() or 1.0 end
     end
@@ -156,8 +162,12 @@ function Avionics:readTelemetry(dt)
 
     -- 3. Heading (Navigation Table)
     local heading = 0
-    if self.nav and self.nav.getHeadingRad then
-        heading = self.nav.getHeadingRad() or 0
+    if self.nav then
+        if self.nav.getHeadingRad then
+            heading = self.nav.getHeadingRad() or 0
+        elseif self.nav.getHeading then
+            heading = math.rad(self.nav.getHeading() or 0)
+        end
     end
 
     -- 4. Velocity & Airspeed
@@ -207,10 +217,13 @@ function Avionics:readTelemetry(dt)
         end
     end
 
-    -- 7. Engine SCADA (RPM & Overstress)
+    -- 7. Engine, Clutch & Burner SCADA (RPM, Overstress, Burner Signal)
     local maxRpm = 0
     local overstressed = false
     local gasType = "NONE"
+    local burnerActual = 0
+    local burnerActive = false
+
     for _, eng in ipairs(self.engines) do
         if eng.getRpm then
             maxRpm = math.max(maxRpm, math.abs(eng.getRpm() or 0))
@@ -219,8 +232,28 @@ function Avionics:readTelemetry(dt)
             overstressed = true
         end
     end
-    if self.burners[1] and self.burners[1].getGasType then
-        gasType = tostring(self.burners[1].getGasType() or "HOT_AIR")
+
+    for _, cl in ipairs(self.clutches or {}) do
+        if cl.getOutputSpeed then
+            maxRpm = math.max(maxRpm, math.abs(cl.getOutputSpeed() or 0))
+        elseif cl.getSpeed then
+            maxRpm = math.max(maxRpm, math.abs(cl.getSpeed() or 0))
+        end
+        if cl.isOverstressed and cl.isOverstressed() then
+            overstressed = true
+        end
+    end
+
+    for _, b in ipairs(self.burners) do
+        if b.getGasType and gasType == "NONE" then
+            gasType = tostring(b.getGasType() or "HOT_AIR")
+        end
+        if b.getSignalStrength then
+            burnerActual = math.max(burnerActual, tonumber(b.getSignalStrength()) or 0)
+        end
+        if b.isActive and b.isActive() then
+            burnerActive = true
+        end
     end
 
     -- 8. Warnings (GPWS & Stall)
@@ -245,6 +278,9 @@ function Avionics:readTelemetry(dt)
         rpm            = maxRpm,
         overstressed   = overstressed,
         gasType        = gasType,
+        burnerCmd      = self.lastBurnerSignal or 0,
+        burnerActual   = burnerActual,
+        burnerActive   = burnerActive,
         gpwsWarning    = gpwsWarning,
         stallWarning   = stallWarning
     }
@@ -429,7 +465,25 @@ function Avionics:step(dt)
         yawDiff = self.hdgPID:compute(0, -hdgErr, dt)
     end
 
-    -- 1. Landing Gear Brakes & Steering / Rudder Deflection
+    local function driveSignal(dev, sig)
+        if dev.setSignal then dev.setSignal(sig)
+        elseif dev.setThrottle then dev.setThrottle(sig)
+        elseif dev.setTarget then dev.setTarget(sig)
+        elseif dev.setLevel then dev.setLevel(sig)
+        elseif dev.setOutput then dev.setOutput(sig)
+        elseif dev.setSignalStrength then dev.setSignalStrength(sig)
+        end
+    end
+
+    local function emitRedstoneBurner(sig)
+        if redstone and redstone.setAnalogOutput then
+            for _, side in ipairs({ "left", "right", "front", "back", "top", "bottom" }) do
+                pcall(redstone.setAnalogOutput, side, sig)
+            end
+        end
+    end
+
+    -- 1. Landing Gear Brakes, Inverted Clutches & Steering / Rudder Deflection
     local brakeVal = self.ap.parkingBrake and 1.0 or 0.0
     local steerVal = 0.0
     if self.steerWheel and self.steerWheel.getSteering then
@@ -448,19 +502,28 @@ function Avionics:step(dt)
         end
     end
 
-    -- If Autopilot is disabled, apply baseThrottle to gearboxes, reset burner to neutral, and clear manual gyro locks
+    -- Drive Create: Connected Inverted Clutches (Propeller power cut / brake signal)
+    local clutchCut = self.ap.parkingBrake or (self.ap.baseThrottle <= 0)
+    for _, cl in ipairs(self.clutches or {}) do
+        table.insert(tasks, function()
+            -- When parkingBrake is ON or throttle is 0, cut power; otherwise engage
+            if cl.setPowered then pcall(cl.setPowered, not clutchCut) end
+            if cl.setSignal then pcall(cl.setSignal, clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle, 1, 15))) end
+        end)
+    end
+
+    -- If Autopilot is disabled, apply baseThrottle to gearboxes/throttles and clear manual gyro locks
     if not self.ap.enabled then
         local manualSig = math.floor(clamp(self.ap.baseThrottle, 0, 15))
+        self.lastBurnerSignal = manualSig
+        tel.burnerCmd = manualSig
         for _, gb in ipairs(self.gearboxes) do
-            if gb.setSignal then
-                table.insert(tasks, function() gb.setSignal(manualSig) end)
-            end
+            table.insert(tasks, function() driveSignal(gb, manualSig) end)
         end
-        if self.vehicleType == "ZEPPELIN" and manualSig == 0 then
+        if self.vehicleType == "ZEPPELIN" then
+            emitRedstoneBurner(manualSig)
             for _, thr in ipairs(self.throttles) do
-                if thr.setSignal then
-                    table.insert(tasks, function() thr.setSignal(0) end)
-                end
+                table.insert(tasks, function() driveSignal(thr, manualSig) end)
             end
         end
         for _, gyro in ipairs(self.gyros) do
@@ -478,15 +541,11 @@ function Avionics:step(dt)
     if #self.gearboxes >= 2 then
         local portSignal = math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
         local stbdSignal = math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
-        if self.gearboxes[1].setSignal then
-            table.insert(tasks, function() self.gearboxes[1].setSignal(portSignal) end)
-        end
-        if self.gearboxes[2].setSignal then
-            table.insert(tasks, function() self.gearboxes[2].setSignal(stbdSignal) end)
-        end
-    elseif #self.gearboxes == 1 and self.gearboxes[1].setSignal then
+        table.insert(tasks, function() driveSignal(self.gearboxes[1], portSignal) end)
+        table.insert(tasks, function() driveSignal(self.gearboxes[2], stbdSignal) end)
+    elseif #self.gearboxes == 1 then
         local mainSignal = math.floor(clamp(self.ap.baseThrottle, 0, 15))
-        table.insert(tasks, function() self.gearboxes[1].setSignal(mainSignal) end)
+        table.insert(tasks, function() driveSignal(self.gearboxes[1], mainSignal) end)
     end
 
     -- 3. Altitude PID & Attitude Stabilization
@@ -495,10 +554,11 @@ function Avionics:step(dt)
 
         if self.vehicleType == "ZEPPELIN" then
             local burnerSignal = math.floor(clamp(8 + altCmd, 0, 15))
+            self.lastBurnerSignal = burnerSignal
+            tel.burnerCmd = burnerSignal
+            emitRedstoneBurner(burnerSignal)
             for _, thr in ipairs(self.throttles) do
-                if thr.setSignal then
-                    table.insert(tasks, function() thr.setSignal(burnerSignal) end)
-                end
+                table.insert(tasks, function() driveSignal(thr, burnerSignal) end)
             end
         end
 

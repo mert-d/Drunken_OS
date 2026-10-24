@@ -63,6 +63,9 @@ local function run(context)
 
     local running = true
     local lastTel = fc:readTelemetry(0.05)
+    if lastTel.altitude and lastTel.altitude ~= 0 then
+        fc.ap.targetAlt = math.floor(lastTel.altitude + 0.5)
+    end
     local tickCount = 0
 
     -- Open wireless modem for ADS-B Radar Telemetry & ILS Beacon Reception
@@ -160,6 +163,12 @@ local function run(context)
         else
             parentTerm.setTextColor(theme.ok or colors.lime)
             parentTerm.write("STRS: NOMINAL")
+        end
+
+        if lastTel.vehicleType == "ZEPPELIN" then
+            parentTerm.setCursorPos(2, 9)
+            parentTerm.setTextColor((lastTel.burnerActual and lastTel.burnerActual > 0) and (theme.warn or colors.orange) or theme.muted)
+            parentTerm.write(string.format("BRNR: %2d/15 (IN:%2d)", lastTel.burnerCmd or 0, lastTel.burnerActual or 0))
         end
 
         -- Right Tape: Altitude, VSI, Heading, Radar AGL
@@ -304,7 +313,7 @@ local function run(context)
                     if fc.ap.enabled then
                         fc:setMode("MANUAL", lastTel)
                     else
-                        fc:setMode("CRUISE", lastTel)
+                        fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
                     end
                 elseif key == keys.c then
                     fc:setMode("CRUISE", lastTel)
@@ -317,8 +326,14 @@ local function run(context)
                 elseif key == keys.b then
                     fc.ap.parkingBrake = not fc.ap.parkingBrake
                 elseif key == keys.up then
+                    if not fc.ap.enabled then
+                        fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                    end
                     fc.ap.targetAlt = fc.ap.targetAlt + 5
                 elseif key == keys.down then
+                    if not fc.ap.enabled then
+                        fc:setMode(lastTel.vehicleType == "ZEPPELIN" and "HOVER" or "CRUISE", lastTel)
+                    end
                     fc.ap.targetAlt = math.max(0, fc.ap.targetAlt - 5)
                 elseif key == keys.left then
                     fc.ap.targetHdg = (fc.ap.targetHdg - math.rad(5)) % (2 * math.pi)
