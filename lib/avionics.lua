@@ -50,6 +50,40 @@ local function clamp(val, minVal, maxVal)
     return math.max(minVal, math.min(maxVal, val))
 end
 
+-- Safe peripheral method caller: prevents modded peripheral signature mismatches or disconnects from crashing PFD
+local function safeCall(fn, ...)
+    if type(fn) ~= "function" then return nil end
+    local ok, res = pcall(fn, ...)
+    if ok then return res end
+    return nil
+end
+
+-- Calls a peripheral method directly first; if it requires a Create control/entity ID string as arg #1, resolves it automatically
+local function callKinetic(dev, fn, ...)
+    if type(fn) ~= "function" then return nil end
+    local ok, res = pcall(fn, ...)
+    if ok then return res end
+    if type(dev) == "table" then
+        if type(dev.listControls) == "function" then
+            local okC, ctrls = pcall(dev.listControls)
+            if okC and type(ctrls) == "table" then
+                for _, ctrl in ipairs(ctrls) do
+                    local ok2, res2 = pcall(fn, ctrl, ...)
+                    if ok2 then return res2 end
+                end
+            end
+        end
+        if type(dev.getBlockEntityId) == "function" then
+            local okId, id = pcall(dev.getBlockEntityId)
+            if okId and id ~= nil then
+                local ok3, res3 = pcall(fn, id, ...)
+                if ok3 then return res3 end
+            end
+        end
+    end
+    return nil
+end
+
 function Avionics.new(config)
     local self = setmetatable({}, Avionics)
     self.config = config or {}
@@ -135,50 +169,54 @@ end
 function Avionics:readTelemetry(dt)
     dt = dt or 0.05
 
+    self.gpsTick = (self.gpsTick or 0) + 1
+    if (self.gpsTick % 20 == 0) or (not self.altSensor and not self.velSensor) then
+        self:scanPeripherals()
+    end
+
     -- 1. Altitude & Vertical Speed (Supports Create Simulated getHeight and legacy getAltitude)
     local alt = 0
     local vsi = 0
     local pressure = 1.0
     if self.altSensor then
-        if self.altSensor.getHeight then
-            alt = self.altSensor.getHeight() or 0
-        elseif self.altSensor.getAltitude then
-            alt = self.altSensor.getAltitude() or 0
-        end
-        if self.altSensor.getVerticalSpeed then vsi = self.altSensor.getVerticalSpeed() or 0 end
-        if self.altSensor.getAirPressure then pressure = self.altSensor.getAirPressure() or 1.0 end
+        alt = tonumber(safeCall(self.altSensor.getHeight))
+           or tonumber(safeCall(self.altSensor.getAltitude))
+           or 0
+        vsi = tonumber(safeCall(self.altSensor.getVerticalSpeed)) or 0
+        pressure = tonumber(safeCall(self.altSensor.getAirPressure)) or 1.0
     end
 
     -- 2. Attitude (Pitch, Roll, Linear Acceleration)
     local pitch, roll = 0, 0
     local linAcc = { x = 0, y = 0, z = 0 }
     if self.gimbal then
-        if self.gimbal.getPitch then pitch = self.gimbal.getPitch() or 0 end
-        if self.gimbal.getRoll then roll = self.gimbal.getRoll() or 0 end
-        if self.gimbal.getLinearAcceleration then
-            linAcc = self.gimbal.getLinearAcceleration() or linAcc
-        end
+        pitch = tonumber(safeCall(self.gimbal.getPitch)) or 0
+        roll  = tonumber(safeCall(self.gimbal.getRoll)) or 0
+        local acc = safeCall(self.gimbal.getLinearAcceleration)
+        if type(acc) == "table" then linAcc = acc end
     end
 
     -- 3. Heading (Navigation Table)
     local heading = 0
     if self.nav then
-        if self.nav.getHeadingRad then
-            heading = self.nav.getHeadingRad() or 0
-        elseif self.nav.getHeading then
-            heading = math.rad(self.nav.getHeading() or 0)
+        local hRad = tonumber(safeCall(self.nav.getHeadingRad))
+        if hRad then
+            heading = hRad
+        else
+            local hDeg = tonumber(safeCall(self.nav.getHeading))
+            if hDeg then heading = math.rad(hDeg) end
         end
     end
 
     -- 4. Velocity & Airspeed
     local vel = { x = 0, y = vsi, z = 0 }
     local speed = 0
-    if self.velSensor and self.velSensor.getVelocity then
-        local v = self.velSensor.getVelocity()
+    if self.velSensor then
+        local v = safeCall(self.velSensor.getVelocity)
         if type(v) == "table" then
-            vel.x = v.x or 0
-            vel.y = v.y or vsi
-            vel.z = v.z or 0
+            vel.x = tonumber(v.x) or 0
+            vel.y = tonumber(v.y) or vsi
+            vel.z = tonumber(v.z) or 0
             speed = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
         elseif type(v) == "number" then
             speed = v
@@ -190,10 +228,9 @@ function Avionics:readTelemetry(dt)
     self.pos.y = alt
     self.pos.z = self.pos.z + vel.z * dt
 
-    self.gpsTick = (self.gpsTick or 0) + 1
     if self.config.useGPS and gps and gps.locate and (self.gpsTick % 20 == 0) then
-        local gx, gy, gz = gps.locate(0.02)
-        if gx then
+        local okGps, gx, gy, gz = pcall(gps.locate, 0.02)
+        if okGps and gx then
             self.pos.x, self.pos.y, self.pos.z = gx, gy, gz
         end
     end
@@ -201,17 +238,15 @@ function Avionics:readTelemetry(dt)
     -- 5. Laser Radar Altimeter (AGL)
     local agl = nil
     if self.laserSensor then
-        if self.laserSensor.getDistance then
-            agl = self.laserSensor.getDistance()
-        elseif self.laserSensor.getHitDistance then
-            agl = self.laserSensor.getHitDistance()
-        end
+        agl = tonumber(safeCall(self.laserSensor.getDistance))
+           or tonumber(safeCall(self.laserSensor.getHitDistance))
     end
 
     -- 6. Weight-on-Wheels (Ground Contact)
     local weightOnWheels = false
     for _, w in ipairs(self.wheels) do
-        if w.getTouchingFriction and (w.getTouchingFriction() or 0) > 0 then
+        local fric = tonumber(safeCall(w.getTouchingFriction)) or 0
+        if fric > 0 then
             weightOnWheels = true
             break
         end
@@ -225,33 +260,32 @@ function Avionics:readTelemetry(dt)
     local burnerActive = false
 
     for _, eng in ipairs(self.engines) do
-        if eng.getRpm then
-            maxRpm = math.max(maxRpm, math.abs(eng.getRpm() or 0))
-        end
-        if eng.isOverstressed and eng.isOverstressed() then
+        local engRpm = tonumber(safeCall(eng.getRpm)) or tonumber(safeCall(eng.getSpeed)) or 0
+        maxRpm = math.max(maxRpm, math.abs(engRpm))
+        if safeCall(eng.isOverstressed) == true then
             overstressed = true
         end
     end
 
     for _, cl in ipairs(self.clutches or {}) do
-        if cl.getOutputSpeed then
-            maxRpm = math.max(maxRpm, math.abs(cl.getOutputSpeed() or 0))
-        elseif cl.getSpeed then
-            maxRpm = math.max(maxRpm, math.abs(cl.getSpeed() or 0))
-        end
-        if cl.isOverstressed and cl.isOverstressed() then
+        local clRpm = tonumber(callKinetic(cl, cl.getSpeed))
+                   or tonumber(callKinetic(cl, cl.getOutputSpeed))
+                   or tonumber(callKinetic(cl, cl.getGeneratedSpeed))
+                   or 0
+        maxRpm = math.max(maxRpm, math.abs(clRpm))
+        if callKinetic(cl, cl.isOverstressed) == true then
             overstressed = true
         end
     end
 
     for _, b in ipairs(self.burners) do
-        if b.getGasType and gasType == "NONE" then
-            gasType = tostring(b.getGasType() or "HOT_AIR")
+        if gasType == "NONE" then
+            local gt = safeCall(b.getGasType)
+            if gt then gasType = tostring(gt) end
         end
-        if b.getSignalStrength then
-            burnerActual = math.max(burnerActual, tonumber(b.getSignalStrength()) or 0)
-        end
-        if b.isActive and b.isActive() then
+        local bSig = tonumber(safeCall(b.getSignalStrength)) or 0
+        burnerActual = math.max(burnerActual, bSig)
+        if safeCall(b.isActive) == true then
             burnerActive = true
         end
     end
@@ -466,12 +500,13 @@ function Avionics:step(dt)
     end
 
     local function driveSignal(dev, sig)
-        if dev.setSignal then dev.setSignal(sig)
-        elseif dev.setThrottle then dev.setThrottle(sig)
-        elseif dev.setTarget then dev.setTarget(sig)
-        elseif dev.setLevel then dev.setLevel(sig)
-        elseif dev.setOutput then dev.setOutput(sig)
-        elseif dev.setSignalStrength then dev.setSignalStrength(sig)
+        if dev.setSignal then callKinetic(dev, dev.setSignal, sig)
+        elseif dev.setThrottle then callKinetic(dev, dev.setThrottle, sig)
+        elseif dev.setTarget then callKinetic(dev, dev.setTarget, sig)
+        elseif dev.setLevel then callKinetic(dev, dev.setLevel, sig)
+        elseif dev.setOutput then callKinetic(dev, dev.setOutput, sig)
+        elseif dev.setSignalStrength then callKinetic(dev, dev.setSignalStrength, sig)
+        elseif dev.setControl then callKinetic(dev, dev.setControl, sig)
         end
     end
 
@@ -487,7 +522,7 @@ function Avionics:step(dt)
     local brakeVal = self.ap.parkingBrake and 1.0 or 0.0
     local steerVal = 0.0
     if self.steerWheel and self.steerWheel.getSteering then
-        steerVal = self.steerWheel.getSteering() or 0.0
+        steerVal = tonumber(safeCall(self.steerWheel.getSteering)) or 0.0
     end
     -- Autopilot rudder steering when using steering mounts with single engine or Zeppelin
     if self.ap.enabled and self.ap.hdgHold and steerVal == 0.0 and #self.gearboxes < 2 then
@@ -495,10 +530,10 @@ function Avionics:step(dt)
     end
     for _, wheel in ipairs(self.wheels) do
         if wheel.setBrake then
-            table.insert(tasks, function() wheel.setBrake(brakeVal) end)
+            table.insert(tasks, function() safeCall(wheel.setBrake, brakeVal) end)
         end
         if wheel.setSteering then
-            table.insert(tasks, function() wheel.setSteering(steerVal) end)
+            table.insert(tasks, function() safeCall(wheel.setSteering, steerVal) end)
         end
     end
 
@@ -507,8 +542,8 @@ function Avionics:step(dt)
     for _, cl in ipairs(self.clutches or {}) do
         table.insert(tasks, function()
             -- When parkingBrake is ON or throttle is 0, cut power; otherwise engage
-            if cl.setPowered then pcall(cl.setPowered, not clutchCut) end
-            if cl.setSignal then pcall(cl.setSignal, clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle, 1, 15))) end
+            if cl.setPowered then callKinetic(cl, cl.setPowered, not clutchCut) end
+            if cl.setSignal then callKinetic(cl, cl.setSignal, clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle, 1, 15))) end
         end)
     end
 
@@ -528,7 +563,7 @@ function Avionics:step(dt)
         end
         for _, gyro in ipairs(self.gyros) do
             if gyro.clearManualTarget then
-                table.insert(tasks, function() gyro.clearManualTarget() end)
+                table.insert(tasks, function() safeCall(gyro.clearManualTarget) end)
             end
         end
         if #tasks > 0 and parallel and parallel.waitForAll then
@@ -581,7 +616,7 @@ function Avionics:step(dt)
             for _, gyro in ipairs(self.gyros) do
                 if gyro.setManualTarget then
                     table.insert(tasks, function()
-                        gyro.setManualTarget({ x = vx, y = vy, z = vz })
+                        safeCall(gyro.setManualTarget, { x = vx, y = vy, z = vz })
                     end)
                 end
             end
