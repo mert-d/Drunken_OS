@@ -3,7 +3,7 @@
 -- Supports Standard (Monochrome) & Advanced (Color) Terminals + Adaptive External Wall Monitors (1x1 to 4x4)
 
 local CONFIG_PATH = "ils_beacon.conf"
-local GITHUB_RAW_BASE = "https://raw.githubusercontent.com/MuhendizBey/Drunken_OS/main/"
+local GITHUB_RAW_BASE = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
 
 local defaultConfig = {
     baseName      = "DRUNKEN-BASE-ALPHA",

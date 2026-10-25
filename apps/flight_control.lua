@@ -626,24 +626,37 @@ local function run(context)
                         hotplugNotice = "GitHub OTA: Guncel ucus yazilimi indiriliyor..."
                         hotplugTimer = 100
                         renderPFD()
-                        local base = "https://raw.githubusercontent.com/MuhendizBey/Drunken_OS/main/"
+                        local base = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
                         local ts = tostring((os.epoch and os.epoch("utc")) or os.time())
                         local okAll = true
+                        local errReason = ""
                         for _, rel in ipairs({ "lib/avionics.lua", "apps/flight_control.lua" }) do
-                            local okH, resp = pcall(http.get, base .. rel .. "?v=" .. ts)
-                            if okH and resp and resp.getResponseCode and resp.getResponseCode() == 200 then
-                                local content = resp.readAll()
+                            local okH, resp, errStr = pcall(http.get, base .. rel .. "?v=" .. ts)
+                            if okH and resp then
+                                local code = (not resp.getResponseCode) or (resp.getResponseCode() == 200)
+                                local content = code and resp.readAll() or nil
                                 if resp.close then pcall(resp.close) end
                                 if content and #content > 200 then
-                                    local dir = fs.getDir("/" .. rel)
-                                    if dir and dir ~= "" and not fs.exists(dir) then pcall(fs.makeDir, dir) end
-                                    local f = fs.open("/" .. rel, "w")
-                                    if f then f.write(content); f.close() end
+                                    local targets = { "/" .. rel, rel }
+                                    if rel == "lib/avionics.lua" and fs.exists("/avionics.lua") then
+                                        table.insert(targets, "/avionics.lua")
+                                    elseif rel == "apps/flight_control.lua" and shell and shell.getRunningProgram then
+                                        local rp = shell.getRunningProgram()
+                                        if rp and rp ~= "" then table.insert(targets, "/" .. rp) end
+                                    end
+                                    for _, tPath in ipairs(targets) do
+                                        local dir = fs.getDir(tPath)
+                                        if dir and dir ~= "" and not fs.exists(dir) then pcall(fs.makeDir, dir) end
+                                        local f = fs.open(tPath, "w")
+                                        if f then f.write(content); f.close() end
+                                    end
                                 else
                                     okAll = false
+                                    errReason = "Bos icerik"
                                 end
                             else
                                 okAll = false
+                                errReason = tostring(errStr or resp or "Baglanti yok")
                             end
                         end
                         if okAll then
@@ -653,9 +666,12 @@ local function run(context)
                             sleep(0.8)
                             os.reboot()
                         else
-                            hotplugNotice = "OTA HATA: GitHub baglantisi basarisiz!"
-                            hotplugTimer = 80
+                            hotplugNotice = "OTA HATA: " .. errReason
+                            hotplugTimer = 100
                         end
+                    else
+                        hotplugNotice = "OTA HATA: HTTP API kapali!"
+                        hotplugTimer = 80
                     end
                 elseif key == keys.v then
                     if activeTab == "PROFILE" then
