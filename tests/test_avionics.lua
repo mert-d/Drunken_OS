@@ -307,12 +307,12 @@ local function runTests()
     hvrFC:step(0.05)
     assert(hoverBurnerSig == 0, "Expected parked Zeppelin in MANUAL mode to keep burner signal at 0")
 
-    -- Step 8b: Switch to HOVER while sinking -> burner must immediately boost to 15 (no drop to 8!) and lock forward throttle to 0
+    -- Step 8b: Switch to HOVER at current altitude -> burner must stay in smooth proportional equilibrium (9..12, not 0 or 15!) and lock forward throttle to 0
     hvrFC:setMode("HOVER", hvrFC:readTelemetry(0.05))
     local hvrTel = hvrFC:step(0.05)
-    assert(hoverBurnerSig >= 14, "Expected HOVER mode with negative VSI/volume change to boost burner >= 14, got " .. tostring(hoverBurnerSig))
+    assert(hoverBurnerSig >= 9 and hoverBurnerSig <= 12, "Expected HOVER mode at equilibrium to hold smooth proportional burner 9..12, got " .. tostring(hoverBurnerSig))
     assert(hvrFC.ap.baseThrottle == 0 and hvrFC.ap.parkingBrake == true, "Expected HOVER mode to lock baseThrottle=0 and parkingBrake=true")
-    assert(hvrTel.burnerCmd >= 14, "Expected telemetry burnerCmd >= 14 in HOVER anti-sink")
+    assert(hvrTel.burnerCmd >= 9 and hvrTel.burnerCmd <= 12, "Expected telemetry burnerCmd 9..12 in HOVER equilibrium")
 
     -- Step 8c: Closed-loop clutch polarity auto-correction when output shaft keeps spinning during clutchCut
     for _ = 1, 4 do hvrFC:step(0.05) end

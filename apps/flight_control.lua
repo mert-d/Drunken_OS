@@ -541,7 +541,7 @@ local function run(context)
 
         parentTerm.setCursorPos(2, h - 1)
         parentTerm.setTextColor(theme.accent or colors.cyan)
-        parentTerm.write("[V]:Arac Profili (Zep/Air/Mothership) | [P]:I/O Matrix")
+        parentTerm.write("[V]:Profil Sec | [P]:I/O Matrix | [U]:GitHub OTA Guncelle")
 
         parentTerm.setCursorPos(2, h)
         parentTerm.setTextColor(colors.lightGray)
@@ -621,6 +621,42 @@ local function run(context)
                     fc:setMode("MANUAL", lastTel)
                     fc:step(0.05)
                     running = false
+                elseif key == keys.u then
+                    if http and http.get then
+                        hotplugNotice = "GitHub OTA: Guncel ucus yazilimi indiriliyor..."
+                        hotplugTimer = 100
+                        renderPFD()
+                        local base = "https://raw.githubusercontent.com/MuhendizBey/Drunken_OS/main/"
+                        local ts = tostring((os.epoch and os.epoch("utc")) or os.time())
+                        local okAll = true
+                        for _, rel in ipairs({ "lib/avionics.lua", "apps/flight_control.lua" }) do
+                            local okH, resp = pcall(http.get, base .. rel .. "?v=" .. ts)
+                            if okH and resp and resp.getResponseCode and resp.getResponseCode() == 200 then
+                                local content = resp.readAll()
+                                if resp.close then pcall(resp.close) end
+                                if content and #content > 200 then
+                                    local dir = fs.getDir("/" .. rel)
+                                    if dir and dir ~= "" and not fs.exists(dir) then pcall(fs.makeDir, dir) end
+                                    local f = fs.open("/" .. rel, "w")
+                                    if f then f.write(content); f.close() end
+                                else
+                                    okAll = false
+                                end
+                            else
+                                okAll = false
+                            end
+                        end
+                        if okAll then
+                            hotplugNotice = "OTA GUNCELLEME TAMAM! Yeniden baslatiliyor..."
+                            hotplugTimer = 100
+                            renderPFD()
+                            sleep(0.8)
+                            os.reboot()
+                        else
+                            hotplugNotice = "OTA HATA: GitHub baglantisi basarisiz!"
+                            hotplugTimer = 80
+                        end
+                    end
                 elseif key == keys.v then
                     if activeTab == "PROFILE" then
                         activeTab = "PFD"

@@ -189,8 +189,8 @@ function Avionics.new(config)
     self.pos = { x = 0, y = 0, z = 0 }
     self.gpsTick = 0
 
-    -- PID Controllers (High-authority altitude PID to overcome hot-air balloon thermal lag)
-    self.altPID   = createPID(3.5, 0.90, 4.0, -12.0, 12.0)
+    -- PID Controllers (Smooth proportional + derivative damping for equilibrium altitude hold)
+    self.altPID   = createPID(1.6, 0.35, 2.2, -8.0, 7.0)
     self.hdgPID   = createPID(3.8, 0.10, 1.2, -6.0, 6.0)
     self.pitchPID = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
@@ -665,13 +665,16 @@ function Avionics:engageRTB(currentTel)
     else
         self.ap.rtbPhase = "RTB_IAF"
     end
+    local prevInt = self.ap.altHold and self.altPID:getIntegral() or 1.0
     self.altPID:reset()
-    self.altPID:setIntegral(2.0)
+    self.altPID:setIntegral(prevInt)
     self.hdgPID:reset()
     return true
 end
 
 function Avionics:setMode(modeName, currentTel)
+    local wasAltHold = self.ap.altHold
+    local savedIntegral = self.altPID:getIntegral()
     self.ap.mode = modeName
     self.altPID:reset()
     self.hdgPID:reset()
@@ -679,6 +682,9 @@ function Avionics:setMode(modeName, currentTel)
     self.rollPID:reset()
     self.msPitchPID:reset()
     self.msRollPID:reset()
+
+    -- Preserve learned equilibrium integral when switching between autopilot modes; use gentle 1.0 (burner=9) from MANUAL
+    local bumplessInt = wasAltHold and savedIntegral or clamp((self.lastBurnerSignal and self.lastBurnerSignal > 0) and (self.lastBurnerSignal - 8.0) or 1.0, 0.0, 3.0)
 
     if modeName == "MANUAL" then
         self.ap.enabled = false
@@ -697,9 +703,7 @@ function Avionics:setMode(modeName, currentTel)
             self.ap.targetAlt = math.floor(currentTel.altitude + 0.5)
             self.ap.targetHdg = currentTel.heading
         end
-        -- Bumpless transfer: pre-load altitude PID integral so Zeppelin burners never drop heat on transition
-        local preload = math.max(2.0, (self.lastBurnerSignal or 12) - 11.0)
-        self.altPID:setIntegral(preload)
+        self.altPID:setIntegral(bumplessInt)
     elseif modeName == "HOVER" then
         self.ap.enabled = true
         self.ap.altHold = true
@@ -708,19 +712,10 @@ function Avionics:setMode(modeName, currentTel)
         self.ap.parkingBrake = true -- Strictly cut forward propeller/clutch while hovering
         self.ap.manualYaw = 0
         if currentTel then
-            if currentTel.vSpeed and currentTel.vSpeed < -0.15 then
-                self.ap.targetAlt = math.ceil(currentTel.altitude + 0.5)
-            else
-                self.ap.targetAlt = math.floor(currentTel.altitude + 0.5)
-            end
+            self.ap.targetAlt = math.floor(currentTel.altitude + 0.5)
             self.ap.targetHdg = currentTel.heading
         end
-        -- Bumpless transfer: pre-load integral so burners stay at 13..15 instead of dropping to 8
-        local preload = math.max(2.5, (self.lastBurnerSignal or 13) - 11.0)
-        if currentTel and currentTel.vSpeed and currentTel.vSpeed < -0.15 then
-            preload = 4.5
-        end
-        self.altPID:setIntegral(preload)
+        self.altPID:setIntegral(bumplessInt)
     elseif modeName == "LNAV" then
         self.ap.enabled = true
         self.ap.altHold = true
@@ -729,7 +724,7 @@ function Avionics:setMode(modeName, currentTel)
         if self.ap.baseThrottle <= 0 then
             self.ap.baseThrottle = 8
         end
-        self.altPID:setIntegral(2.0)
+        self.altPID:setIntegral(bumplessInt)
     elseif modeName == "AUTOLAND" then
         self.ap.enabled = true
         self.ap.altHold = true
@@ -1209,27 +1204,7 @@ function Avionics:step(dt)
     -- 3. Altitude PID & Attitude Stabilization
     if self.ap.altHold then
         if self.vehicleType == "ZEPPELIN" then
-            -- Pressure-compensated hover baseline + VSI cascade damping + Balloon volume change feedback
-            local hoverBase = clamp(11.0 + (1.0 - (tel.pressure or 1.0)) * 5.0, 11.0, 13.5)
-            local altErr = self.ap.targetAlt - tel.altitude
-            local vsiTerm = -clamp((tel.vSpeed or 0) * 4.5, -6.0, 6.0)
-            local volTerm = (tel.balloonVolChange and tel.balloonVolChange < 0) and 2.5 or 0
-
-            burnerSignal = math.floor(clamp(hoverBase + altCmd + vsiTerm + volTerm, 0, 15) + 0.5)
-
-            -- Anti-sink envelope protection: immediately apply full heat if sinking below target altitude
-            if altErr > 0.25 and (tel.vSpeed or 0) < -0.05 then
-                burnerSignal = math.max(14, burnerSignal)
-            end
-            if altErr > 0.8 or (tel.vSpeed or 0) < -0.25 then
-                burnerSignal = 15
-            elseif altErr < -0.8 and (tel.vSpeed or 0) > 0.15 then
-                burnerSignal = math.min(2, burnerSignal)
-            end
-            if altErr < -1.5 then
-                burnerSignal = 0
-            end
-
+            burnerSignal = math.floor(clamp(8.5 + altCmd, 0, 15) + 0.5)
             self.lastBurnerSignal = burnerSignal
             tel.burnerCmd = burnerSignal
             emitRedstoneBurner(burnerSignal)
