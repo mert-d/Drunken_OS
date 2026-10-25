@@ -1,8 +1,9 @@
 -- clients/ILS_Beacon_Tower.lua
 -- Drunken OS - ATC Radar Scope, Runway ILS / Mooring Mast Beacon & Remote Command Tower Console
--- Supports Standard (Monochrome) & Advanced (Color) Terminals + External Wall Monitors
+-- Supports Standard (Monochrome) & Advanced (Color) Terminals + Adaptive External Wall Monitors (1x1 to 4x4)
 
 local CONFIG_PATH = "ils_beacon.conf"
+local GITHUB_RAW_BASE = "https://raw.githubusercontent.com/MuhendizBey/Drunken_OS/main/"
 
 local defaultConfig = {
     baseName      = "DRUNKEN-BASE-ALPHA",
@@ -103,9 +104,12 @@ local function findExternalMonitors()
             local m = peripheral.wrap(name)
             if m then
                 pcall(function()
-                    local w, _ = m.getSize()
-                    if w < 36 and m.setTextScale then
-                        m.setTextScale(0.5)
+                    if m.setTextScale then
+                        m.setTextScale(1.0)
+                        local w, _ = m.getSize()
+                        if w < 50 then
+                            m.setTextScale(0.5)
+                        end
                     end
                 end)
                 table.insert(list, m)
@@ -144,6 +148,52 @@ local function detectTowerPos(cfg)
     return cfg.mastX or cfg.thrX or 0, cfg.mastY or cfg.thrY or 80, cfg.mastZ or cfg.thrZ or 0, nil
 end
 
+local function performOtaUpdate(setToastFn)
+    if not (http and http.get) then
+        setToastFn("HATA: HTTP API kapali veya internet yok!")
+        return false
+    end
+    setToastFn("GitHub'dan guncel Kule yazilimi indiriliyor...")
+    local url = GITHUB_RAW_BASE .. "clients/ILS_Beacon_Tower.lua?v=" .. tostring((os.epoch and os.epoch("utc")) or os.time())
+    local ok, resp = pcall(http.get, url)
+    if not (ok and resp and resp.getResponseCode and resp.getResponseCode() == 200) then
+        setToastFn("HATA: GitHub baglantisi basarisiz oldu!")
+        return false
+    end
+    local code = resp.readAll()
+    if resp.close then pcall(resp.close) end
+    if not code or #code < 200 then
+        setToastFn("HATA: Indirilen dosya gecersiz!")
+        return false
+    end
+    local targets = { "/clients/ILS_Beacon_Tower.lua", "clients/ILS_Beacon_Tower.lua" }
+    local runningProg = shell and shell.getRunningProgram and shell.getRunningProgram()
+    if runningProg and runningProg ~= "" then
+        table.insert(targets, "/" .. runningProg)
+    end
+    local wrote = false
+    for _, p in ipairs(targets) do
+        local dir = fs.getDir(p)
+        if dir and dir ~= "" and not fs.exists(dir) then
+            pcall(fs.makeDir, dir)
+        end
+        local f = fs.open(p, "w")
+        if f then
+            f.write(code)
+            f.close()
+            wrote = true
+        end
+    end
+    if wrote then
+        setToastFn("GUNCELLEME TAMAM! 1 sn icinde yeniden baslatiliyor...")
+        sleep(1.0)
+        os.reboot()
+        return true
+    end
+    setToastFn("HATA: Dosya diske yazilamadi!")
+    return false
+end
+
 local CONFIG_FIELDS = {
     { key = "baseName",      label = "Us Adi (Base Name)",      type = "string" },
     { key = "runwayId",      label = "Pist Kodu (Runway ID)",   type = "string" },
@@ -158,6 +208,7 @@ local CONFIG_FIELDS = {
 }
 
 local ZOOM_RANGES = { 50, 150, 300, 600, 1200 }
+local SWEEP_CHARS = { "|", "/", "-", "\\" }
 
 local function runTowerConsole(context)
     local parentTerm = (context and context.term) or term.current()
@@ -169,19 +220,29 @@ local function runTowerConsole(context)
     end
     local monitors = findExternalMonitors()
 
-    local activeTab = "RADAR" -- "RADAR" or "CONFIG"
+    local activeTab = "RADAR" -- "RADAR", "TRAFFIC", "CONFIG"
     local zoomIdx = 2 -- 150m default
-    local contacts = {} -- callsign -> telemetry table + lastSeen
+    local contacts = {} -- callsign -> telemetry table + lastSeenClock
     local sortedCallsigns = {}
     local selectedIdx = 1
     local targetAll = false
     local configCursor = 1
     local editingString = false
     local editBuffer = ""
-    local statusToast = "ILS & ATC KULE AKTIF (1Hz Yayin + Canli Radar)"
-    local toastTicks = 60
+    local statusToast = "ATC & ILS KULE HAZIR ([K]:Gemiden Konum Al | [R]:Eve Cagir)"
+    local toastTicks = 80
     local beaconCount = 0
+    local sweepStep = 1
+    local atcLogs = { "Kule sistemi baslatildi. ILS 1Hz yayinda." }
     local running = true
+
+    local function pushLog(entry)
+        local tStr = string.format("%05.1fs", os.clock())
+        table.insert(atcLogs, 1, "[" .. tStr .. "] " .. tostring(entry))
+        while #atcLogs > 8 do
+            table.remove(atcLogs)
+        end
+    end
 
     local function buildBeaconPacket()
         return {
@@ -207,6 +268,7 @@ local function runTowerConsole(context)
         sortedCallsigns = {}
         for call, c in pairs(contacts) do
             if (now - (c.lastSeenClock or now)) > 15.0 then
+                pushLog(call .. " radar menzilinden cikti.")
                 contacts[call] = nil
             else
                 table.insert(sortedCallsigns, call)
@@ -242,97 +304,198 @@ local function runTowerConsole(context)
             for k, v in pairs(extra) do pkt[k] = v end
         end
         pcall(rednet.broadcast, pkt, "DRUNKEN_ATC")
-        setToast(string.format("ATC EMRI GONDERILDI -> [%s]: %s", tgt, cmd))
+        local logMsg = string.format("KOMUT -> [%s]: %s", tgt, cmd)
+        pushLog(logMsg)
+        setToast("ATC EMRI GONDERILDI -> [" .. tgt .. "]: " .. cmd)
     end
 
-    local function drawSurface(surf, isWallMonitor)
+    -- Adaptive External Wall Monitor Renderer (Supports 1x1 compact 15x10 monitors AND large wall boards)
+    local function drawExternalMonitor(mon)
+        if not mon then return end
+        local w, h = mon.getSize()
+        setColors(mon, colors.white, colors.black)
+        mon.clear()
+        rebuildContactList()
+
+        local sweepCh = SWEEP_CHARS[sweepStep]
+        local towerX = tonumber(cfg.mastX) or tonumber(cfg.thrX) or 0
+        local towerZ = tonumber(cfg.mastZ) or tonumber(cfg.thrZ) or 0
+
+        -- Compact 1x1 or 2x1 Monitor Mode (e.g., 15x10 at 0.5 scale)
+        if w < 36 or h < 14 then
+            clearLineAt(mon, 1, colors.blue)
+            writeAt(mon, 1, 1, string.format("ATC [%s] %s", sweepCh, tostring(cfg.runwayId)):sub(1, w), colors.white, colors.blue)
+            writeAt(mon, 1, 2, tostring(cfg.baseName):sub(1, w), colors.yellow, colors.black)
+            writeAt(mon, 1, 3, string.format("DRK:%d,%d,%d", cfg.mastX, cfg.mastY, cfg.mastZ):sub(1, w), colors.lightGray, colors.black)
+            writeAt(mon, 1, 4, string.rep("-", w), colors.gray, colors.black)
+
+            if #sortedCallsigns == 0 then
+                writeAt(mon, 1, 5, "TRAFIK: YOK", colors.gray, colors.black)
+                writeAt(mon, 1, 6, "ILS YAYINDA", colors.lime, colors.black)
+                writeAt(mon, 1, 7, string.format("PKT:#%d", beaconCount), colors.cyan, colors.black)
+            else
+                local sel = getSelectedContact() or contacts[sortedCallsigns[1]]
+                if sel then
+                    local dx = (tonumber(sel.pos and sel.pos.x) or 0) - towerX
+                    local dz = (tonumber(sel.pos and sel.pos.z) or 0) - towerZ
+                    local dist = math.sqrt(dx * dx + dz * dz)
+                    writeAt(mon, 1, 5, (">" .. tostring(sel.callsign)):sub(1, w), colors.lime, colors.black)
+                    writeAt(mon, 1, 6, string.format("MOD:%s", tostring(sel.mode or "MAN")):sub(1, w), colors.cyan, colors.black)
+                    writeAt(mon, 1, 7, string.format("ALT:%.0fm V:%+.1f", tonumber(sel.altitude) or 0, tonumber(sel.vSpeed) or 0):sub(1, w), colors.white, colors.black)
+                    writeAt(mon, 1, 8, string.format("DST:%.0fm S:%.1f", dist, tonumber(sel.speed) or 0):sub(1, w), colors.yellow, colors.black)
+                end
+            end
+            if h >= 10 then
+                clearLineAt(mon, h, colors.gray)
+                writeAt(mon, 1, h, string.format("ARAC:%d MNZ:%dm", #sortedCallsigns, ZOOM_RANGES[zoomIdx]):sub(1, w), colors.white, colors.gray)
+            end
+            return
+        end
+
+        -- Large Multi-Block Wall Monitor Mode
+        drawTerminalSurface(mon, true)
+    end
+
+    -- Main MFD Surface Renderer (51x19 Terminal or Large Monitor)
+    function drawTerminalSurface(surf, isLargeMonitor)
         if not surf then return end
         local w, h = surf.getSize()
         setColors(surf, colors.white, colors.black)
         surf.clear()
+        rebuildContactList()
 
-        -- Top Title Bar
+        local sweepCh = SWEEP_CHARS[sweepStep]
+        local modemOk = (modemName and rednet and rednet.isOpen and rednet.isOpen())
+        local txBadge = modemOk and ("TX:" .. sweepCh .. " ON") or "TX:KAPALI"
+
+        -- Row 1: Top Header Bar
         clearLineAt(surf, 1, colors.blue)
-        local modemBadge = (modemName and rednet and rednet.isOpen and rednet.isOpen()) and "TX:ON" or "TX:YOK"
-        writeAt(surf, 2, 1, string.format("DRUNKEN ATC & ILS KULE [%s] %s", tostring(cfg.baseName), modemBadge), colors.white, colors.blue)
+        writeAt(surf, 2, 1, string.format("DRUNKEN ATC & ILS KULE [%s]", tostring(cfg.baseName):sub(1, 20)), colors.white, colors.blue)
+        writeAt(surf, math.max(2, w - #txBadge - 1), 1, txBadge, modemOk and colors.lime or colors.red, colors.blue)
 
-        -- Subheader / Tab Selector
+        -- Row 2: MFD Navigation Tabs
         clearLineAt(surf, 2, colors.gray)
-        if isWallMonitor then
+        if isLargeMonitor then
             writeAt(surf, 2, 2, string.format(
-                "PIST:%s (%d,%d,%d) | DIREK:(%d,%d,%d) | MENZIL:%dm",
-                tostring(cfg.runwayId),
-                cfg.thrX, cfg.thrY, cfg.thrZ,
-                cfg.mastX, cfg.mastY, cfg.mastZ,
-                ZOOM_RANGES[zoomIdx]
+                "PIST:%s (%d,%d,%d) | DIREK:(%d,%d,%d) | MENZIL:%dm | AKTIF:%d",
+                tostring(cfg.runwayId), cfg.thrX, cfg.thrY, cfg.thrZ,
+                cfg.mastX, cfg.mastY, cfg.mastZ, ZOOM_RANGES[zoomIdx], #sortedCallsigns
             ), colors.yellow, colors.gray)
         else
-            local t1Fg = (activeTab == "RADAR") and colors.black or colors.lightGray
-            local t1Bg = (activeTab == "RADAR") and colors.cyan or colors.gray
-            local t2Fg = (activeTab == "CONFIG") and colors.black or colors.lightGray
-            local t2Bg = (activeTab == "CONFIG") and colors.cyan or colors.gray
-            writeAt(surf, 2, 2, " [1] RADAR & KOMUTA ", t1Fg, t1Bg)
-            writeAt(surf, 23, 2, " [2] ILS & DIREK AYARI ", t2Fg, t2Bg)
-            writeAt(surf, 47, 2, "[Q]Cik", colors.white, colors.gray)
+            local function tabStyle(id)
+                local active = (activeTab == id)
+                return active and colors.black or colors.lightGray, active and colors.cyan or colors.gray
+            end
+            local f1, b1 = tabStyle("RADAR")
+            local f2, b2 = tabStyle("TRAFFIC")
+            local f3, b3 = tabStyle("CONFIG")
+            writeAt(surf, 2,  2, "[1:RADAR & KOMUTA]", f1, b1)
+            writeAt(surf, 21, 2, "[2:TRAFIK & LOG]",   f2, b2)
+            writeAt(surf, 38, 2, "[3:KULE AYARI]",     f3, b3)
         end
 
-        if activeTab == "CONFIG" and not isWallMonitor then
-            writeAt(surf, 2, 4, "KULE & ILS KONFIGURASYONU ([Up/Dn]:Sec [Lt/Rt]:Degistir [Enter]:Yaz)", colors.yellow, colors.black)
-            local startIdx = math.max(1, math.min(configCursor - 4, math.max(1, #CONFIG_FIELDS - 7)))
-            local row = 5
-            for i = startIdx, math.min(#CONFIG_FIELDS, startIdx + 7) do
+        local towerX = tonumber(cfg.mastX) or tonumber(cfg.thrX) or 0
+        local towerZ = tonumber(cfg.mastZ) or tonumber(cfg.thrZ) or 0
+
+        -- TAB 2: FULL TRAFFIC TABLE & ATC RADIO LOG
+        if activeTab == "TRAFFIC" and not isLargeMonitor then
+            writeAt(surf, 2, 3, "CAGRI KODU  TIP   MOD     IRTIFA   DIKEY   MESAFE", colors.cyan, colors.black)
+            writeAt(surf, 2, 4, string.rep("-", w - 2), colors.gray, colors.black)
+            if #sortedCallsigns == 0 then
+                writeAt(surf, 2, 6, " Su anda radarda aktif hava araci gorunmuyor.", colors.lightGray, colors.black)
+            else
+                for i = 1, math.min(6, #sortedCallsigns) do
+                    local call = sortedCallsigns[i]
+                    local c = contacts[call]
+                    local isSel = (i == selectedIdx)
+                    local dx = (tonumber(c.pos and c.pos.x) or 0) - towerX
+                    local dz = (tonumber(c.pos and c.pos.z) or 0) - towerZ
+                    local dist = math.sqrt(dx * dx + dz * dz)
+                    local line = string.format(
+                        "%s%-10s %-5s %-7s %5.0fm  %+5.1f  %5.0fm",
+                        isSel and ">" or " ",
+                        tostring(call):sub(1, 10),
+                        tostring(c.vehicleType or "ZEP"):sub(1, 5),
+                        tostring(c.mode or "MAN"):sub(1, 7),
+                        tonumber(c.altitude) or 0,
+                        tonumber(c.vSpeed) or 0,
+                        dist
+                    )
+                    writeAt(surf, 2, 4 + i, line:sub(1, w - 2), isSel and colors.black or colors.white, isSel and colors.lime or colors.black)
+                end
+            end
+
+            writeAt(surf, 2, 11, "--- SON KULE TELSIZ & TRANSPONDER KAYITLARI ---", colors.yellow, colors.black)
+            for i = 1, math.min(4, #atcLogs) do
+                writeAt(surf, 2, 11 + i, atcLogs[i]:sub(1, w - 2), colors.lightGray, colors.black)
+            end
+
+            writeAt(surf, 2, h - 2, string.rep("-", w - 2), colors.gray, colors.black)
+            writeAt(surf, 2, h - 1, statusToast:sub(1, w - 2), colors.yellow, colors.black)
+            writeAt(surf, 2, h, "[1]:Radar [3]:Ayar [Up/Dn]:Sec [R]:RTB [H]:Hover [B]:Park", colors.cyan, colors.black)
+            return
+        end
+
+        -- TAB 3: INTERACTIVE ILS & TOWER CONFIGURATOR
+        if activeTab == "CONFIG" and not isLargeMonitor then
+            writeAt(surf, 2, 3, "ILS & DIREK AYARLARI ([Up/Dn]:Sec [Lt/Rt]:+-Deger [Enter]:Yaz)", colors.yellow, colors.black)
+            local startIdx = math.max(1, math.min(configCursor - 4, math.max(1, #CONFIG_FIELDS - 8)))
+            local row = 4
+            for i = startIdx, math.min(#CONFIG_FIELDS, startIdx + 8) do
                 local f = CONFIG_FIELDS[i]
                 local isSel = (i == configCursor)
                 local valStr = tostring(cfg[f.key] or "")
                 if isSel and editingString then
                     valStr = editBuffer .. "_"
                 end
-                local line = string.format("%s %-26s : %s", isSel and ">" or " ", f.label, valStr)
-                writeAt(surf, 2, row, line, isSel and colors.black or colors.white, isSel and colors.cyan or colors.black)
+                local line = string.format("%s %-25s : %-18s", isSel and ">" or " ", f.label, valStr)
+                writeAt(surf, 2, row, line:sub(1, w - 2), isSel and colors.black or colors.white, isSel and colors.cyan or colors.black)
                 row = row + 1
             end
 
-            writeAt(surf, 2, h - 4, string.rep("-", w - 2), colors.gray, colors.black)
-            writeAt(surf, 2, h - 3, "[K] Secili Geminin Konumunu Direk & Pist Olarak Kaydet!", colors.lime, colors.black)
-            writeAt(surf, 2, h - 2, "[P] GPS / Sensorden Kule Konumunu Otomatik Al", colors.cyan, colors.black)
-            writeAt(surf, 2, h - 1, statusToast:sub(1, w - 2), colors.yellow, colors.black)
-            writeAt(surf, 2, h, "[Tab/1]:Radara Don | [Enter]:Deger Gir | [S]:Kaydet", colors.lightGray, colors.black)
+            writeAt(surf, 2, h - 5, string.rep("-", w - 2), colors.gray, colors.black)
+            writeAt(surf, 2, h - 4, "[K] Secili Geminin Konumunu Direk & Pist Yap (Tek Tus)", colors.lime, colors.black)
+            writeAt(surf, 2, h - 3, "[P] GPS/Sensorden Konum Al | [U] GitHub OTA Guncelle", colors.cyan, colors.black)
+            writeAt(surf, 2, h - 2, statusToast:sub(1, w - 2), colors.yellow, colors.black)
+            writeAt(surf, 2, h - 1, string.format("AKTIF DIREK:(%d,%d,%d) PIST:(%d,%d,%d)", cfg.mastX, cfg.mastY, cfg.mastZ, cfg.thrX, cfg.thrY, cfg.thrZ), colors.lightGray, colors.black)
+            writeAt(surf, 2, h, "[1]:Radara Don | [Enter]:Deger Yaz | [S]:Kaydet | [Q]:Cik", colors.white, colors.black)
             return
         end
 
-        -- RADAR & TRAFFIC VIEW (Both Terminal Tab 1 & External Wall Monitors)
-        rebuildContactList()
-        local mapW = math.min(21, math.max(15, math.floor(w * 0.40)))
-        local mapH = math.max(7, h - 7)
+        -- TAB 1: SPLIT-SCREEN PPI RADAR SCOPE & FLIGHT TELEMETRY DECK
+        local mapW = 21
+        local mapH = 11
         local mapLeft = 2
         local mapTop = 3
         local cx = mapLeft + math.floor(mapW / 2)
         local cy = mapTop + math.floor(mapH / 2)
         local range = ZOOM_RANGES[zoomIdx]
 
-        -- Draw Radar Scope Border
-        local borderTop = "+" .. string.format("-%dm-", range) .. string.rep("-", math.max(0, mapW - 7)) .. "+"
-        writeAt(surf, mapLeft, mapTop, borderTop:sub(1, mapW), colors.cyan, colors.black)
+        -- Framed PPI Radar Scope with Compass Rose (N, S, W, E)
+        local topHdr = string.format("+---[ N %4dm ]---+", range)
+        writeAt(surf, mapLeft, mapTop, topHdr, colors.cyan, colors.black)
         for ry = 1, mapH - 2 do
-            writeAt(surf, mapLeft, mapTop + ry, "|" .. string.rep(".", mapW - 2) .. "|", colors.gray, colors.black)
+            local yPos = mapTop + ry
+            if yPos == cy then
+                writeAt(surf, mapLeft, yPos, "W" .. string.rep(".", mapW - 2) .. "E", colors.gray, colors.black)
+            else
+                writeAt(surf, mapLeft, yPos, "|" .. string.rep(" ", mapW - 2) .. "|", colors.cyan, colors.black)
+                writeAt(surf, cx, yPos, ".", colors.gray, colors.black)
+            end
         end
-        writeAt(surf, mapLeft, mapTop + mapH - 1, "+" .. string.rep("-", mapW - 2) .. "+", colors.cyan, colors.black)
+        writeAt(surf, mapLeft, mapTop + mapH - 1, "+------[ S ]------+", colors.cyan, colors.black)
 
-        -- Draw Tower Center (+) & Runway Threshold (T)
-        local towerX = tonumber(cfg.mastX) or tonumber(cfg.thrX) or 0
-        local towerZ = tonumber(cfg.mastZ) or tonumber(cfg.thrZ) or 0
+        -- Plot Tower Center (+)
         writeAt(surf, cx, cy, "+", colors.yellow, colors.black)
 
-        -- Plot Contacts on PPI Scope
+        -- Plot Tracked Aircraft on PPI Radar
         for idx, call in ipairs(sortedCallsigns) do
             local c = contacts[call]
             if c and c.pos then
                 local dx = (tonumber(c.pos.x) or 0) - towerX
                 local dz = (tonumber(c.pos.z) or 0) - towerZ
-                local normX = dx / range
-                local normZ = dz / range
-                local px = cx + math.floor(normX * math.floor((mapW - 3) / 2) + 0.5)
-                local py = cy + math.floor(normZ * math.floor((mapH - 3) / 2) + 0.5)
+                local px = cx + math.floor((dx / range) * math.floor((mapW - 3) / 2) + 0.5)
+                local py = cy + math.floor((dz / range) * math.floor((mapH - 3) / 2) + 0.5)
                 px = math.max(mapLeft + 1, math.min(mapLeft + mapW - 2, px))
                 py = math.max(mapTop + 1, math.min(mapTop + mapH - 2, py))
 
@@ -350,90 +513,87 @@ local function runTowerConsole(context)
             end
         end
 
-        -- Right Pane: Active Traffic Table & Selected Telemetry
-        local rightX = mapLeft + mapW + 2
+        -- Right Pane: Selected Ship Telemetry Card & Mini Strip
+        local rightX = mapLeft + mapW + 1
         local rightW = math.max(10, w - rightX)
-        local targetModeLabel = targetAll and "[HEDEF: TUM FILO]" or "[HEDEF: SECILI]"
-        writeAt(surf, rightX, 3, "HAVA TRAFIGI " .. targetModeLabel, colors.cyan, colors.black)
+        local tgtHdr = targetAll and "HEDEF: [TUM FILO (ALL)]" or string.format("TRAFIK (%d ARAC AKTIF)", #sortedCallsigns)
+        writeAt(surf, rightX, 3, tgtHdr:sub(1, rightW), targetAll and colors.orange or colors.cyan, colors.black)
 
         if #sortedCallsigns == 0 then
-            writeAt(surf, rightX, 5, "Radarda aktif arac yok.", colors.lightGray, colors.black)
+            writeAt(surf, rightX, 5, "Radarda aktif gemi yok.", colors.lightGray, colors.black)
             writeAt(surf, rightX, 6, "Gemide Flight Control", colors.gray, colors.black)
-            writeAt(surf, rightX, 7, "acik oldugundan emin olun.", colors.gray, colors.black)
+            writeAt(surf, rightX, 7, "acikken otomatik gorunur.", colors.gray, colors.black)
+            writeAt(surf, rightX, 9, string.format("DIREK: (%d, %d, %d)", cfg.mastX, cfg.mastY, cfg.mastZ), colors.yellow, colors.black)
+            writeAt(surf, rightX, 10, string.format("PIST : %s (%d,%d,%d)", tostring(cfg.runwayId), cfg.thrX, cfg.thrY, cfg.thrZ), colors.lightGray, colors.black)
+            writeAt(surf, rightX, 11, string.format("ILS YAYIN: #%d (1Hz)", beaconCount), colors.lime, colors.black)
         else
-            local maxRows = math.max(2, math.min(5, mapH - 5))
-            local startRow = math.max(1, math.min(selectedIdx - maxRows + 1, #sortedCallsigns - maxRows + 1))
-            for i = startRow, math.min(#sortedCallsigns, startRow + maxRows - 1) do
-                local call = sortedCallsigns[i]
+            -- Show up to 2 selectable strips + detailed telemetry box for selected craft
+            for i = 1, math.min(2, #sortedCallsigns) do
+                local idx = (selectedIdx > 2) and (selectedIdx - 2 + i) or i
+                local call = sortedCallsigns[idx]
                 local c = contacts[call]
-                local isSel = (i == selectedIdx)
-                local dx = (tonumber(c.pos and c.pos.x) or 0) - towerX
-                local dz = (tonumber(c.pos and c.pos.z) or 0) - towerZ
-                local dist = math.sqrt(dx * dx + dz * dz)
-                local rowY = 4 + (i - startRow)
-                local vTag = (c.vehicleType == "MOTHERSHIP" and "MSH") or (c.vehicleType == "AIRCRAFT" and "AIR") or "ZEP"
-                local line = string.format(
-                    "%s%-8s %s %4.0fm %-6s",
-                    isSel and ">" or " ",
-                    tostring(call):sub(1, 8),
-                    vTag,
-                    dist,
-                    tostring(c.mode or "MAN"):sub(1, 6)
-                )
-                writeAt(
-                    surf,
-                    rightX,
-                    rowY,
-                    line:sub(1, rightW),
-                    isSel and colors.black or colors.white,
-                    isSel and colors.lime or colors.black
-                )
+                if c then
+                    local isSel = (idx == selectedIdx)
+                    local dx = (tonumber(c.pos and c.pos.x) or 0) - towerX
+                    local dz = (tonumber(c.pos and c.pos.z) or 0) - towerZ
+                    local dist = math.sqrt(dx * dx + dz * dz)
+                    local vTag = (c.vehicleType == "MOTHERSHIP" and "MSHP") or (c.vehicleType == "AIRCRAFT" and "AIR ") or "ZEP "
+                    local strip = string.format(
+                        "%s%-9s %s %-6s %3.0fm",
+                        isSel and ">" or " ",
+                        tostring(call):sub(1, 9),
+                        vTag,
+                        tostring(c.mode or "MAN"):sub(1, 6),
+                        dist
+                    )
+                    writeAt(surf, rightX, 3 + i, strip:sub(1, rightW), isSel and colors.black or colors.white, isSel and colors.lime or colors.black)
+                end
             end
 
-            -- Selected Aircraft Detailed Telemetry Box
             local sel = getSelectedContact()
             if sel and sel.pos then
-                local detailY = 4 + maxRows + 1
                 local dx = (tonumber(sel.pos.x) or 0) - towerX
                 local dz = (tonumber(sel.pos.z) or 0) - towerZ
                 local dist = math.sqrt(dx * dx + dz * dz)
-                writeAt(surf, rightX, detailY, string.format(
-                    "KONUM: (%d, %d, %d)",
-                    math.floor(sel.pos.x), math.floor(sel.pos.y), math.floor(sel.pos.z)
-                ), colors.yellow, colors.black)
-                writeAt(surf, rightX, detailY + 1, string.format(
-                    "ALT:%.0fm (TGT:%.0fm) VSI:%+.1f",
-                    tonumber(sel.altitude) or 0,
-                    tonumber(sel.targetAlt or sel.altitude) or 0,
-                    tonumber(sel.vSpeed) or 0
-                ), colors.white, colors.black)
-                writeAt(surf, rightX, detailY + 2, string.format(
-                    "SPD:%.1fm/s HDG:%03.0fd DST:%.0fm",
-                    tonumber(sel.speed) or 0,
-                    tonumber(sel.heading) or 0,
-                    dist
-                ), colors.lightGray, colors.black)
+                local brg = (math.deg(math.atan2(-dx, dz)) % 360)
+                writeAt(surf, rightX, 6, string.rep("-", rightW), colors.gray, colors.black)
+                writeAt(surf, rightX, 7, string.format("SECILI: %s (%s)", tostring(sel.callsign), tostring(sel.mode or "MAN")):sub(1, rightW), colors.yellow, colors.black)
+                writeAt(surf, rightX, 8, string.format("POS : (%d, %d, %d)", math.floor(sel.pos.x), math.floor(sel.pos.y), math.floor(sel.pos.z)):sub(1, rightW), colors.white, colors.black)
+                writeAt(surf, rightX, 9, string.format("ALT : %.1fm (TGT:%.0fm)", tonumber(sel.altitude) or 0, tonumber(sel.targetAlt or sel.altitude) or 0):sub(1, rightW), colors.cyan, colors.black)
+                writeAt(surf, rightX, 10, string.format("VSI : %+5.1fm/s | SPD:%.1f", tonumber(sel.vSpeed) or 0, tonumber(sel.speed) or 0):sub(1, rightW), colors.lime, colors.black)
+                writeAt(surf, rightX, 11, string.format("MESAFE: %.0fm | YON:%03.0fd", dist, brg):sub(1, rightW), colors.lightGray, colors.black)
+                writeAt(surf, rightX, 12, string.format("FREN: %s | DIREK:%dm", sel.parkingBrake and "PARK" or "ACIK", cfg.mastY):sub(1, rightW), colors.lightGray, colors.black)
             end
         end
 
-        -- Bottom Status & ATC Remote Command Dock
-        local dockTop = h - 4
-        writeAt(surf, 2, dockTop, string.format(
-            "DIREK:(%d,%d,%d) | PIST:%s(%d,%d,%d) | YAYIN:#%d",
-            cfg.mastX, cfg.mastY, cfg.mastZ,
-            tostring(cfg.runwayId), cfg.thrX, cfg.thrY, cfg.thrZ,
-            beaconCount
-        ):sub(1, w - 2), colors.lightGray, colors.black)
+        -- Row 14: Divider + Tower Coordinates Summary
+        writeAt(surf, 2, 14, string.format(
+            "--[ DIREK:(%d,%d,%d) | PIST:%s | ILS:#%d ]--",
+            cfg.mastX, cfg.mastY, cfg.mastZ, tostring(cfg.runwayId), beaconCount
+        ):sub(1, w - 2), colors.gray, colors.black)
 
-        writeAt(surf, 2, dockTop + 1, statusToast:sub(1, w - 2), colors.yellow, colors.black)
-        writeAt(surf, 2, dockTop + 2, "[R]RTB Cagir [G]Kuleye Cek [H]Hover [L]Indir [B]Acil Park", colors.lime, colors.black)
-        writeAt(surf, 2, dockTop + 3, "[+/-]Irtifa+-10 [Z]Zoom [A]Hedef(Tek/Tum) [K]KonumKaydet [2]Ayar", colors.cyan, colors.black)
+        -- Row 15: Toast Notification Banner
+        clearLineAt(surf, 15, (toastTicks > 0) and colors.cyan or colors.black)
+        writeAt(
+            surf,
+            2,
+            15,
+            (">> " .. statusToast):sub(1, w - 2),
+            (toastTicks > 0) and colors.black or colors.yellow,
+            (toastTicks > 0) and colors.cyan or colors.black
+        )
+
+        -- Rows 16-19: Bottom Remote Command Keybind Dock
+        writeAt(surf, 2, 16, "[R]Eve Cagir(RTB)  [G]Kuleye Cek(LNAV) [H]Havada Tut", colors.lime, colors.black)
+        writeAt(surf, 2, 17, "[L]Otonom Indir    [B]Acil Park/Fren   [+/-]Irtifa+-10", colors.cyan, colors.black)
+        writeAt(surf, 2, 18, "[K]Gemiden KonumAl [A]Hedef(Tek/Filo)  [Z]Radar Menzil", colors.yellow, colors.black)
+        writeAt(surf, 2, 19, "[1/2/3]Sekme [Up/Dn]Sec [U]GitHub Guncelle(OTA) [Q]Cik", colors.lightGray, colors.black)
     end
 
     local function renderAll()
-        drawSurface(parentTerm, false)
+        drawTerminalSurface(parentTerm, false)
         for _, mon in ipairs(monitors) do
-            pcall(drawSurface, mon, true)
+            pcall(drawExternalMonitor, mon)
         end
     end
 
@@ -453,7 +613,9 @@ local function runTowerConsole(context)
             cfg.rwyHeadingDeg = math.floor((tonumber(sel.heading) or 0) + 0.5) % 360
         end
         saveConfig(cfg)
-        setToast(string.format("KAYDEDILDI: %s konumu (%d,%d,%d) Kule Diregi yapildi!", tostring(sel.callsign), cfg.mastX, cfg.mastY, cfg.mastZ))
+        local msg = string.format("%s konumu (%d,%d,%d) Kule Diregi yapildi!", tostring(sel.callsign), cfg.mastX, cfg.mastY, cfg.mastZ)
+        pushLog(msg)
+        setToast("KAYDEDILDI: " .. msg)
     end
 
     -- 1Hz ILS Beacon Broadcast & 4Hz UI Refresh Loop
@@ -461,6 +623,7 @@ local function runTowerConsole(context)
         local subTick = 0
         while running do
             subTick = subTick + 1
+            sweepStep = (sweepStep % #SWEEP_CHARS) + 1
             if toastTicks > 0 then toastTicks = toastTicks - 1 end
 
             if subTick % 4 == 1 then
@@ -476,7 +639,7 @@ local function runTowerConsole(context)
         end
     end
 
-    -- Rednet Receiver (DRUNKEN_RADAR ADS-B) & Operator Keyboard/Monitor Input Loop
+    -- Rednet Receiver (DRUNKEN_RADAR ADS-B) & Operator Keyboard/Mouse/Monitor Input Loop
     local function eventLoop()
         while running do
             local ev, p1, p2, p3 = os.pullEvent()
@@ -484,10 +647,14 @@ local function runTowerConsole(context)
                 local senderId, msg, protocol = p1, p2, p3
                 if protocol == "DRUNKEN_RADAR" and type(msg) == "table" and msg.type == "AVIONICS_ADSB" then
                     local call = tostring(msg.callsign or ("SHIP-" .. tostring(senderId)))
+                    local isNew = (contacts[call] == nil)
                     msg.callsign = call
                     msg.senderId = senderId
                     msg.lastSeenClock = os.clock()
                     contacts[call] = msg
+                    if isNew then
+                        pushLog(string.format("%s (%s) radara girdi (%.0fm)", call, tostring(msg.vehicleType or "ZEP"), tonumber(msg.altitude) or 0))
+                    end
                 end
             elseif ev == "peripheral" or ev == "peripheral_detach" then
                 modem = findWirelessModem()
@@ -497,9 +664,15 @@ local function runTowerConsole(context)
                 end
                 monitors = findExternalMonitors()
             elseif ev == "monitor_touch" then
-                -- Touching external monitor cycles radar zoom range
                 zoomIdx = (zoomIdx % #ZOOM_RANGES) + 1
                 setToast("RADAR MENZILI: " .. tostring(ZOOM_RANGES[zoomIdx]) .. "m")
+            elseif ev == "mouse_click" and not editingString then
+                local _, mx, my = p1, p2, p3
+                if my == 2 then
+                    if mx <= 20 then activeTab = "RADAR"
+                    elseif mx <= 37 then activeTab = "TRAFFIC"
+                    else activeTab = "CONFIG" end
+                end
             elseif ev == "char" and editingString then
                 editBuffer = editBuffer .. tostring(p1)
             elseif ev == "key" then
@@ -527,11 +700,17 @@ local function runTowerConsole(context)
                     elseif key == keys.one then
                         activeTab = "RADAR"
                     elseif key == keys.two then
+                        activeTab = "TRAFFIC"
+                    elseif key == keys.three then
                         activeTab = "CONFIG"
                     elseif key == keys.tab then
-                        activeTab = (activeTab == "RADAR") and "CONFIG" or "RADAR"
+                        if activeTab == "RADAR" then activeTab = "TRAFFIC"
+                        elseif activeTab == "TRAFFIC" then activeTab = "CONFIG"
+                        else activeTab = "RADAR" end
                     elseif key == keys.k then
                         captureSelectedShipAsTowerPos()
+                    elseif key == keys.u then
+                        performOtaUpdate(setToast)
                     elseif activeTab == "CONFIG" then
                         local f = CONFIG_FIELDS[configCursor]
                         if key == keys.up then
@@ -565,7 +744,7 @@ local function runTowerConsole(context)
                             saveConfig(cfg)
                             setToast("ils_beacon.conf diske kaydedildi!")
                         end
-                    elseif activeTab == "RADAR" then
+                    else
                         if key == keys.up then
                             selectedIdx = math.max(1, selectedIdx - 1)
                         elseif key == keys.down then

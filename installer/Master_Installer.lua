@@ -622,7 +622,22 @@ end
 --==============================================================================
 
 local function getFileContent(path)
-    -- Try local file first (Bundling)
+    -- 1. Try remote GitHub download first so disks always get the latest version when online
+    if http and http.get then
+        local cacheBuster = (os.epoch and os.epoch("utc")) or os.time()
+        local url = GITHUB_REPO_URL .. path .. "?v=" .. tostring(cacheBuster)
+        print("Downloading " .. path .. "...")
+        local ok, response = pcall(http.get, url)
+        if ok and response and response.getResponseCode and response.getResponseCode() == 200 then
+            local content = response.readAll()
+            if response.close then pcall(response.close) end
+            if content and #content > 0 then
+                return content
+            end
+        end
+    end
+
+    -- 2. Fallback to local file (offline / bundled mode)
     if fs.exists(path) then
         print("Reading local file " .. path .. "...")
         local file = fs.open(path, "r")
@@ -631,15 +646,7 @@ local function getFileContent(path)
         return content
     end
 
-    -- Fallback to remote download
-    local url = GITHUB_REPO_URL .. path .. "?v=" .. tostring(os.epoch("utc"))
-    print("Downloading " .. path .. "...")
-    local response = http.get(url)
-    if response and response.getResponseCode() == 200 then
-        return response.readAll()
-    else
-        return nil
-    end
+    return nil
 end
 
 local function installToPocketComputer(program, drive)
