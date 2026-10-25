@@ -372,12 +372,13 @@ local function run(context)
         parentTerm.write(string.format("THR : %s %2d", makeBar(fc.ap.baseThrottle, 15, 5), fc.ap.baseThrottle))
 
         parentTerm.setCursorPos(2, 5)
+        local isClutchCut = (fc.ap.mode == "HOVER") or fc.ap.parkingBrake or (fc.ap.baseThrottle <= 0)
         if fc.ap.reverseGear then
-            parentTerm.setTextColor(theme.warn or colors.orange)
-            parentTerm.write("VTS : GERI (REV)")
+            parentTerm.setTextColor(isClutchCut and theme.muted or (theme.warn or colors.orange))
+            parentTerm.write(isClutchCut and "VTS : GERI [CUT]" or "VTS : GERI  [ON]")
         else
-            parentTerm.setTextColor(theme.fg)
-            parentTerm.write("VTS : ILERI(FWD)")
+            parentTerm.setTextColor(isClutchCut and theme.muted or (theme.ok or colors.lime))
+            parentTerm.write(isClutchCut and "VTS : ILERI[CUT]" or "VTS : ILERI [ON]")
         end
 
         if lastTel.vehicleType == "MOTHERSHIP" then
@@ -789,6 +790,8 @@ local function run(context)
                         hotplugTimer = 70
                     elseif key == keys.g then
                         fc.ap.reverseGear = not fc.ap.reverseGear
+                        hotplugNotice = "VITES (GEARSHIFT): " .. (fc.ap.reverseGear and "GERI (REVERSE AKTIF)" or "ILERI (FORWARD AKTIF)")
+                        hotplugTimer = 60
                     elseif key == keys.up then
                         if not fc.ap.enabled then
                             fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel)
@@ -812,19 +815,57 @@ local function run(context)
                             fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(5)) % (2 * math.pi)
                         end
                     elseif key == keys.w then
-                        if fc.ap.mode == "HOVER" then
-                            -- Transition smoothly from stationary HOVER to forward CRUISE when pilot presses [W]
-                            fc:setMode("CRUISE", lastTel)
-                            fc.ap.parkingBrake = false
-                            fc.ap.baseThrottle = 1
-                            hotplugNotice = "CRUISE MODU: Ileri itki devreye alindi"
-                            hotplugTimer = 50
+                        if fc.ap.reverseGear and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
+                            -- Slow down from reverse movement toward 0
+                            fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
+                            if fc.ap.baseThrottle == 0 then
+                                fc.ap.reverseGear = false
+                                hotplugNotice = "DURDU: Pervane kesildi ([W]:Ileri [S]:Geri)"
+                                hotplugTimer = 50
+                            end
                         else
-                            fc.ap.parkingBrake = false
-                            fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
+                            fc.ap.reverseGear = false
+                            if fc.ap.mode == "HOVER" then
+                                fc:setMode("CRUISE", lastTel)
+                                fc.ap.parkingBrake = false
+                                fc.ap.baseThrottle = 1
+                                hotplugNotice = "ILERI ITKI: Debriyaj Acik, Gearshift=ILERI"
+                                hotplugTimer = 50
+                            else
+                                fc.ap.parkingBrake = false
+                                fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
+                                if fc.ap.baseThrottle == 1 then
+                                    hotplugNotice = "ILERI ITKI: Debriyaj Acik, Gearshift=ILERI"
+                                    hotplugTimer = 50
+                                end
+                            end
                         end
                     elseif key == keys.s then
-                        fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
+                        if not fc.ap.reverseGear and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
+                            -- Slow down from forward movement toward 0
+                            fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
+                            if fc.ap.baseThrottle == 0 then
+                                hotplugNotice = "DURDU: Geri gitmek icin tekrar [S]'ye basin"
+                                hotplugTimer = 50
+                            end
+                        else
+                            -- Engage Reverse Gearshift and clutch for backward movement!
+                            fc.ap.reverseGear = true
+                            if fc.ap.mode == "HOVER" then
+                                fc:setMode("CRUISE", lastTel)
+                                fc.ap.parkingBrake = false
+                                fc.ap.baseThrottle = 1
+                                hotplugNotice = "GERI ITKI (REVERSE): Debriyaj Acik, Gearshift=GERI"
+                                hotplugTimer = 50
+                            else
+                                fc.ap.parkingBrake = false
+                                fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
+                                if fc.ap.baseThrottle == 1 then
+                                    hotplugNotice = "GERI ITKI (REVERSE): Debriyaj Acik, Gearshift=GERI"
+                                    hotplugTimer = 50
+                                end
+                            end
+                        end
                     end
                 end
             end

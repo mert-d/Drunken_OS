@@ -266,11 +266,11 @@ local function runTests()
     assert(scRPMs[5] ~= scRPMs[7], "Expected Rear-Left and Rear-Right Thrusters to produce differential yaw RPM")
     print("  PASS: Test 7: Mothership 4x Quad-Lift Gimbal Stabilization & 3x Rear Thruster Differential Yaw")
 
-    -- Test 8: Zeppelin HOVER Anti-Sink Bumpless Transfer, Safe Park & Clutch Auto-Polarity
+    -- Test 8: Zeppelin HOVER Equilibrium, Steady-State Inverted Clutch (No Oscillation) & Shared Network Gearshift
     local hoverBurnerSig = 0
-    local clutchPoweredState = nil
-    local clutchSigState = nil
-    local mockClutchRpm = 128 -- Simulate clutch still spinning when powered=false
+    local netPowered = {}
+    local netSignal = {}
+    local sharedControls = { "create_connected_inverted_clutch_0", "create_gearshift_0" }
     _G.peripheral.find = function(pType)
         if pType == "gas_provider" then
             return {
@@ -289,12 +289,33 @@ local function runTests()
             }
         elseif pType == "create_connected_inverted_clutch" then
             return {
-                getOutputSpeed = function() return mockClutchRpm end,
-                setPowered = function(p)
-                    clutchPoweredState = p
-                    if p == true then mockClutchRpm = 0 end -- Requires true/15 to cut in this mock
+                getBlockEntityId = function() return "create_connected_inverted_clutch_0" end,
+                listControls = function() return sharedControls end,
+                getOutputSpeed = function(id)
+                    if type(id) ~= "string" then error("string expected") end
+                    return 128
                 end,
-                setSignal = function(s) clutchSigState = s end
+                setPowered = function(id, p)
+                    if type(id) ~= "string" then error("string expected") end
+                    netPowered[id] = p
+                end,
+                setSignal = function(id, s)
+                    if type(id) ~= "string" then error("string expected") end
+                    netSignal[id] = s
+                end
+            }
+        elseif pType == "create_gearshift" then
+            return {
+                getBlockEntityId = function() return "create_gearshift_0" end,
+                listControls = function() return sharedControls end,
+                setPowered = function(id, p)
+                    if type(id) ~= "string" then error("string expected") end
+                    netPowered[id] = p
+                end,
+                setSignal = function(id, s)
+                    if type(id) ~= "string" then error("string expected") end
+                    netSignal[id] = s
+                end
             }
         end
         return nil
@@ -314,11 +335,26 @@ local function runTests()
     assert(hvrFC.ap.baseThrottle == 0 and hvrFC.ap.parkingBrake == true, "Expected HOVER mode to lock baseThrottle=0 and parkingBrake=true")
     assert(hvrTel.burnerCmd >= 9 and hvrTel.burnerCmd <= 12, "Expected telemetry burnerCmd 9..12 in HOVER equilibrium")
 
-    -- Step 8c: Closed-loop clutch polarity auto-correction when output shaft keeps spinning during clutchCut
-    for _ = 1, 4 do hvrFC:step(0.05) end
-    assert(hvrFC.clutchPolarInvert == true, "Expected closed-loop clutch monitor to auto-invert polarity when shaft keeps spinning")
-    assert(mockClutchRpm == 0, "Expected auto-inverted clutch signal to stop the propeller shaft")
-    print("  PASS: Test 8: Zeppelin HOVER Anti-Sink, Safe Park & Closed-Loop Clutch Polarity")
+    -- Step 8c: Verify inverted clutch stays strictly disengaged (false / 0) across 10 ticks without periodic oscillation
+    for _ = 1, 10 do
+        hvrFC:step(0.05)
+        assert(netPowered["create_connected_inverted_clutch_0"] == false, "Expected inverted clutch to stay unpowered in HOVER without oscillating")
+        assert(netSignal["create_connected_inverted_clutch_0"] == 0, "Expected inverted clutch signal to stay 0 in HOVER")
+    end
+
+    -- Step 8d: Engage CRUISE forward vs reverse and verify clutch and gearshift do not cross-talk on shared kinetic network
+    hvrFC:setMode("CRUISE", hvrTel)
+    hvrFC.ap.baseThrottle = 5
+    hvrFC.ap.reverseGear = false
+    hvrFC:step(0.05)
+    assert(netPowered["create_connected_inverted_clutch_0"] == true and netSignal["create_connected_inverted_clutch_0"] == 15, "Expected inverted clutch to engage (true/15) in forward CRUISE")
+    assert(netPowered["create_gearshift_0"] == false and netSignal["create_gearshift_0"] == 0, "Expected gearshift to stay OFF (false/0) in forward movement")
+
+    hvrFC.ap.reverseGear = true
+    hvrFC:step(0.05)
+    assert(netPowered["create_connected_inverted_clutch_0"] == true and netSignal["create_connected_inverted_clutch_0"] == 15, "Expected inverted clutch to remain engaged (true/15) in reverse movement")
+    assert(netPowered["create_gearshift_0"] == true and netSignal["create_gearshift_0"] == 15, "Expected gearshift to engage (true/15) in reverse movement")
+    print("  PASS: Test 8: Zeppelin HOVER Equilibrium, Steady-State Inverted Clutch & Shared Network Gearshift")
 
     -- Test 9: Remote ATC Command Uplink (DRUNKEN_ATC)
     local okAtc, msgAtc = hvrFC:executeAtcCommand({

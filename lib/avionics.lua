@@ -64,33 +64,112 @@ local function safeCall(fn, ...)
     return nil
 end
 
--- Calls a peripheral method directly first; if it requires a Create control/entity/direction ID string as arg #1, resolves it automatically
-local function callKinetic(dev, fn, ...)
+-- Resolves the specific control ID belonging to `dev` (or matching `roleHint` such as "clutch" / "gearshift")
+-- Prevents cross-talk when multiple kinetic blocks (e.g. Inverted Clutch + Gearshift) share the same Create shaft network
+local function callKineticRole(dev, roleHint, fn, ...)
     if type(fn) ~= "function" then return nil end
-    local ok, res = pcall(fn, ...)
-    if ok then return res end
-    if type(dev) == "table" then
-        if type(dev.listControls) == "function" then
-            local okC, ctrls = pcall(dev.listControls)
-            if okC and type(ctrls) == "table" then
-                for k, v in pairs(ctrls) do
-                    if type(v) == "string" then
-                        local okV, resV = pcall(fn, v, ...)
-                        if okV then return resV end
-                    elseif type(v) == "table" then
-                        local cid = v.id or v.name or v.control
-                        if type(cid) == "string" then
-                            local okT, resT = pcall(fn, cid, ...)
-                            if okT then return resT end
+    local isForeign = (roleHint == "foreign_gearshift")
+    if not isForeign then
+        local ok, res = pcall(fn, ...)
+        if ok then return res end
+    end
+    if type(dev) ~= "table" then return nil end
+
+    local beId = (type(dev.getBlockEntityId) == "function") and safeCall(dev.getBlockEntityId) or nil
+    local blkId = (type(dev.getBlockId) == "function") and safeCall(dev.getBlockId) or nil
+    local pName = (peripheral and peripheral.getName and pcall(peripheral.getName, dev) and peripheral.getName(dev)) or nil
+    local pType = (peripheral and peripheral.getType and pcall(peripheral.getType, dev) and peripheral.getType(dev)) or nil
+
+    local kw = isForeign and "gearshift" or (roleHint and roleHint:lower() or nil)
+    if not kw then
+        local combined = (tostring(blkId or "") .. " " .. tostring(pType or "") .. " " .. tostring(pName or "")):lower()
+        if combined:find("gearshift") then kw = "gearshift"
+        elseif combined:find("clutch") then kw = "clutch" end
+    end
+    local otherKw = (kw == "gearshift" and "clutch") or (kw == "clutch" and "gearshift") or nil
+
+    -- 1. If targeting `dev` itself, try its own BlockEntityId first!
+    if not isForeign and beId ~= nil and type(beId) ~= "table" then
+        local okBe, resBe = pcall(fn, tostring(beId), ...)
+        if okBe then return resBe end
+    end
+
+    -- 2. Inspect listControls() and match by exact BlockEntityId, peripheral name, or role keyword ("gearshift" vs "clutch")
+    if type(dev.listControls) == "function" then
+        local okC, ctrls = pcall(dev.listControls)
+        if okC and type(ctrls) == "table" then
+            local entries = {}
+            for k, v in pairs(ctrls) do
+                local cid = nil
+                local metaParts = { tostring(k) }
+                if type(v) == "string" then
+                    cid = (type(k) == "string" and not k:match("^%d+$")) and k or v
+                    table.insert(metaParts, v)
+                elseif type(v) == "table" then
+                    cid = v.id or v.blockEntityId or v.control or v.name or (type(k) == "string" and k or nil)
+                    for tk, tv in pairs(v) do
+                        if type(tv) == "string" or type(tv) == "number" then
+                            table.insert(metaParts, tostring(tk) .. ":" .. tostring(tv))
                         end
                     end
-                    if type(k) == "string" then
-                        local okK, resK = pcall(fn, k, ...)
-                        if okK then return resK end
+                elseif type(k) == "string" then
+                    cid = k
+                end
+                if type(cid) == "string" or type(cid) == "number" then
+                    table.insert(entries, {
+                        id   = tostring(cid),
+                        alt  = (type(v) == "string") and v or nil,
+                        meta = table.concat(metaParts, " "):lower()
+                    })
+                end
+            end
+
+            -- Pass A: Exact BlockEntityId or peripheral name match (when controlling `dev` itself)
+            if not isForeign then
+                for _, e in ipairs(entries) do
+                    if (beId and (e.id == tostring(beId) or e.meta:find(tostring(beId):lower(), 1, true)))
+                        or (pName and (e.id == tostring(pName) or e.meta:find(tostring(pName):lower(), 1, true))) then
+                        local okE, resE = pcall(fn, e.id, ...)
+                        if okE then return resE end
+                        if e.alt and e.alt ~= e.id then
+                            local okA, resA = pcall(fn, e.alt, ...)
+                            if okA then return resA end
+                        end
+                    end
+                end
+            end
+
+            -- Pass B: Role keyword match ("gearshift" vs "clutch") without matching the opposite role
+            if kw then
+                for _, e in ipairs(entries) do
+                    if e.meta:find(kw, 1, true) and (not otherKw or not e.meta:find(otherKw, 1, true)) then
+                        local okE, resE = pcall(fn, e.id, ...)
+                        if okE then return resE end
+                        if e.alt and e.alt ~= e.id then
+                            local okA, resA = pcall(fn, e.alt, ...)
+                            if okA then return resA end
+                        end
+                    end
+                end
+            end
+
+            -- Pass C: Fallback to non-conflicting entries only when not searching for a foreign roleHint
+            if not isForeign then
+                for _, e in ipairs(entries) do
+                    if not otherKw or not e.meta:find(otherKw, 1, true) then
+                        local okE, resE = pcall(fn, e.id, ...)
+                        if okE then return resE end
+                        if e.alt and e.alt ~= e.id then
+                            local okA, resA = pcall(fn, e.alt, ...)
+                            if okA then return resA end
+                        end
                     end
                 end
             end
         end
+    end
+
+    if not isForeign then
         for _, idGetter in ipairs({ "getBlockEntityId", "getBlockId", "getNetworkId" }) do
             if type(dev[idGetter]) == "function" then
                 local okId, id = pcall(dev[idGetter])
@@ -100,12 +179,9 @@ local function callKinetic(dev, fn, ...)
                 end
             end
         end
-        if peripheral and peripheral.getName then
-            local okN, pName = pcall(peripheral.getName, dev)
-            if okN and type(pName) == "string" then
-                local okP, resP = pcall(fn, pName, ...)
-                if okP then return resP end
-            end
+        if pName then
+            local okP, resP = pcall(fn, pName, ...)
+            if okP then return resP end
         end
         for _, face in ipairs({ "north", "south", "east", "west", "up", "down", "main", "default" }) do
             local okF, resF = pcall(fn, face, ...)
@@ -113,6 +189,10 @@ local function callKinetic(dev, fn, ...)
         end
     end
     return nil
+end
+
+local function callKinetic(dev, fn, ...)
+    return callKineticRole(dev, nil, fn, ...)
 end
 
 Avionics.ROLES = {
@@ -346,9 +426,22 @@ function Avionics:scanPeripherals()
         self.gyros       = { peripheral.find("gyroscopic_propeller_bearing") }
         self.wheels      = { peripheral.find("wheel_mount") }
         self.engines     = { peripheral.find("portable_engine") }
-        self.clutches    = { peripheral.find("create_connected_inverted_clutch") }
+        self.clutches    = {}
+        for _, cType in ipairs({ "create_connected_inverted_clutch", "inverted_clutch", "create_clutch", "clutch" }) do
+            local found = { peripheral.find(cType) }
+            for _, c in ipairs(found) do table.insert(self.clutches, c) end
+        end
         self.gearshifts  = {}
-        for _, gType in ipairs({ "gearshift", "create_sequenced_gearshift", "create_connected_gearshift", "redstone_relay" }) do
+        for _, gType in ipairs({
+            "create_gearshift",
+            "gearshift",
+            "create:gearshift",
+            "create_sequenced_gearshift",
+            "sequenced_gearshift",
+            "create_connected_gearshift",
+            "create_connected_sequenced_gearshift",
+            "redstone_relay"
+        }) do
             local found = { peripheral.find(gType) }
             for _, g in ipairs(found) do table.insert(self.gearshifts, g) end
         end
@@ -374,6 +467,19 @@ function Avionics:scanPeripherals()
         self.speedControllers = {}
     end
 
+    local function addUniqueHandle(list, h)
+        if not h then return end
+        local hName = (peripheral and peripheral.getName and pcall(peripheral.getName, h) and peripheral.getName(h)) or nil
+        for _, existing in ipairs(list) do
+            if existing == h then return end
+            if hName and peripheral and peripheral.getName then
+                local okE, eName = pcall(peripheral.getName, existing)
+                if okE and eName == hName then return end
+            end
+        end
+        table.insert(list, h)
+    end
+
     -- Build unified I/O device list for Hot-Plug & Role Configurator UI
     self.ioDevices = {}
     if peripheral and peripheral.getNames then
@@ -385,11 +491,21 @@ function Avionics:scanPeripherals()
                 local pStr = tostring(okT and pType or "peripheral")
                 if pStr ~= "modem" and pStr ~= "monitor" and pStr ~= "speaker" and pStr ~= "drive" then
                     local okW, handle = pcall(peripheral.wrap, name)
+                    local h = okW and handle or nil
+                    local bId = (h and type(h.getBlockId) == "function" and tostring(safeCall(h.getBlockId) or "")) or ""
+                    local combined = (pStr .. " " .. name .. " " .. bId):lower()
+                    if h then
+                        if combined:find("gearshift") or combined:find("redstone_relay") then
+                            addUniqueHandle(self.gearshifts, h)
+                        elseif combined:find("clutch") then
+                            addUniqueHandle(self.clutches, h)
+                        end
+                    end
                     self:getDeviceConfig(name)
                     table.insert(self.ioDevices, {
                         name       = name,
                         kind       = pStr,
-                        handle     = okW and handle or nil,
+                        handle     = h,
                         isRedstone = false
                     })
                 end
@@ -950,16 +1066,41 @@ function Avionics:step(dt)
         if not called and dev.setSpeed then callKinetic(dev, dev.setSpeed, outSig) end
     end
 
-    local function driveBooleanOrSignal(dev, active, sigVal, inv)
+    local function driveBooleanOrSignal(dev, active, sigVal, inv, roleHint)
         local finalActive = inv and (not active) or active
         local finalSig = inv and (15 - sigVal) or sigVal
-        if dev.setPowered then callKinetic(dev, dev.setPowered, finalActive) end
-        if dev.setControl then callKinetic(dev, dev.setControl, finalSig) end
-        if dev.setSignal then callKinetic(dev, dev.setSignal, finalSig)
-        else driveSignal(dev, sigVal, inv) end
+        local called = false
+        if dev.setPowered then
+            callKineticRole(dev, roleHint, dev.setPowered, finalActive)
+            called = true
+        end
+        if dev.setSignal then
+            callKineticRole(dev, roleHint, dev.setSignal, finalSig)
+            called = true
+        end
+        if not called and dev.setControl then
+            callKineticRole(dev, roleHint, dev.setControl, finalSig)
+            called = true
+        end
+        if dev.setAnalogOutput then
+            for _, s in ipairs({ "front", "back", "left", "right", "top", "bottom" }) do
+                pcall(dev.setAnalogOutput, s, finalSig)
+            end
+            called = true
+        elseif dev.setOutput then
+            for _, s in ipairs({ "front", "back", "left", "right", "top", "bottom" }) do
+                pcall(dev.setOutput, s, finalActive)
+            end
+            called = true
+        end
+        if not called then
+            driveSignal(dev, sigVal, inv)
+        end
     end
 
-    -- Emits analog redstone for Zeppelin Hot Air Burners, skipping sides occupied by non-burner peripherals (like bottom steering_wheel)
+    -- Emits analog redstone for Zeppelin Hot Air Burners.
+    -- When a `throttle_lever` peripheral is present, `AUTO` redstone sides stay at 0 unless directly touching a burner,
+    -- preventing stray burner redstone from triggering adjacent clutches or gearshifts!
     local function emitRedstoneBurner(sig)
         if redstone and redstone.setAnalogOutput then
             for _, side in ipairs({ "left", "right", "front", "back", "top", "bottom" }) do
@@ -968,21 +1109,24 @@ function Avionics:step(dt)
                     local outSig = cfg.invert and (15 - sig) or sig
                     pcall(redstone.setAnalogOutput, side, outSig)
                 elseif cfg.role == "AUTO" then
+                    local isDirectBurner = false
                     local hasNonBurnerPeriph = false
                     if peripheral and peripheral.getType then
                         local okT, pType = pcall(peripheral.getType, side)
                         if okT and pType ~= nil then
                             local pStr = tostring(pType):lower()
-                            if not (pStr:find("burner") or pStr:find("gas_provider")) then
+                            if pStr:find("burner") or pStr:find("gas_provider") then
+                                isDirectBurner = true
+                            else
                                 hasNonBurnerPeriph = true
                             end
                         end
                     end
-                    if hasNonBurnerPeriph then
-                        pcall(redstone.setAnalogOutput, side, 0)
-                    else
+                    if isDirectBurner or (#self.throttles == 0 and not hasNonBurnerPeriph) then
                         local outSig = cfg.invert and (15 - sig) or sig
                         pcall(redstone.setAnalogOutput, side, outSig)
+                    else
+                        pcall(redstone.setAnalogOutput, side, 0)
                     end
                 end
             end
@@ -1008,39 +1152,44 @@ function Avionics:step(dt)
         end
     end
 
-    -- Drive Create: Connected Inverted Clutches (Propeller power cut / brake signal)
-    -- Includes closed-loop output RPM verification: if clutch output continues spinning while cut, auto-inverts polarity
+    -- Drive Create Clutches & Inverted Clutches (Propeller power cut / engagement)
+    -- Steady-state deterministic polarity (no auto-flipping oscillation loop!)
     local clutchCut = (self.ap.mode == "HOVER") or self.ap.parkingBrake or (self.ap.baseThrottle <= 0)
-    if clutchCut and tel.clutchOutRpm and tel.clutchOutRpm > 1.0 then
-        self.clutchSpinTicks = (self.clutchSpinTicks or 0) + 1
-        if self.clutchSpinTicks >= 4 then
-            self.clutchPolarInvert = not self.clutchPolarInvert
-            self.clutchSpinTicks = 0
-        end
-    else
-        self.clutchSpinTicks = 0
-    end
-
     for _, cl in ipairs(self.clutches or {}) do
         local clName = (peripheral and peripheral.getName and pcall(peripheral.getName, cl) and peripheral.getName(cl)) or nil
+        local clType = (clName and peripheral and peripheral.getType and pcall(peripheral.getType, clName) and peripheral.getType(clName)) or ""
+        local clBlk  = (type(cl.getBlockId) == "function" and tostring(safeCall(cl.getBlockId) or "")) or ""
+        local isNormalClutch = (not (tostring(clName or "") .. " " .. tostring(clType) .. " " .. clBlk):lower():find("inverted"))
+            and ((tostring(clName or "") .. " " .. tostring(clType) .. " " .. clBlk):lower():find("clutch") ~= nil)
         local devInv = clName and self:getDeviceConfig(clName).invert or false
         local totalInv = (self.clutchPolarInvert ~= devInv)
-        local activeState = totalInv and clutchCut or (not clutchCut)
-        local rawSig = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle, 1, 15))
-        local sigState = totalInv and (15 - rawSig) or rawSig
+        if isNormalClutch then totalInv = not totalInv end
+
+        local engageActive = not clutchCut
+        local engageSig = clutchCut and 0 or 15
         table.insert(tasks, function()
-            if cl.setPowered then callKinetic(cl, cl.setPowered, activeState) end
-            if cl.setSignal then callKinetic(cl, cl.setSignal, sigState) end
-            if cl.setControl then callKinetic(cl, cl.setControl, sigState) end
+            driveBooleanOrSignal(cl, engageActive, engageSig, totalInv, "clutch")
         end)
     end
 
-    -- Drive Gearshifts (Reverse Thrust / Reverse Gear [G])
+    -- Drive Gearshifts (Forward / Backward Movement via [G] or [W]/[S])
     local revActive = self.ap.reverseGear == true
     for _, gs in ipairs(self.gearshifts or {}) do
+        local gsName = (peripheral and peripheral.getName and pcall(peripheral.getName, gs) and peripheral.getName(gs)) or nil
+        local devInv = gsName and self:getDeviceConfig(gsName).invert or false
         table.insert(tasks, function()
-            driveBooleanOrSignal(gs, revActive, revActive and 15 or 0, false)
+            driveBooleanOrSignal(gs, revActive, revActive and 15 or 0, devInv, "gearshift")
         end)
+    end
+    -- Also support a Gearshift that shares the kinetic network (`listControls`) with a Clutch without a separate modem
+    if #(self.gearshifts or {}) == 0 and #(self.clutches or {}) > 0 then
+        local clHost = self.clutches[1]
+        if type(clHost.listControls) == "function" then
+            table.insert(tasks, function()
+                if clHost.setPowered then callKineticRole(clHost, "foreign_gearshift", clHost.setPowered, revActive) end
+                if clHost.setSignal then callKineticRole(clHost, "foreign_gearshift", clHost.setSignal, revActive and 15 or 0) end
+            end)
+        end
     end
 
     local mainThrottleSig = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle, 0, 15))
