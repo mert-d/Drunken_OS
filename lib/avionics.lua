@@ -455,19 +455,27 @@ function Avionics:readTelemetry(dt)
 
     -- 1. Altitude & Vertical Speed (Supports Create Simulated getHeight and legacy getAltitude)
     local alt = 0
-    local vsi = 0
+    local sensorVsi = 0
     local pressure = 1.0
     if self.altSensor then
         alt = tonumber(safeCall(self.altSensor.getHeight))
            or tonumber(safeCall(self.altSensor.getAltitude))
            or 0
-        vsi = tonumber(safeCall(self.altSensor.getVerticalSpeed)) or 0
+        sensorVsi = tonumber(safeCall(self.altSensor.getVerticalSpeed)) or 0
         pressure = tonumber(safeCall(self.altSensor.getAirPressure)) or 1.0
     end
+    local vsi = sensorVsi
     if self.prevAlt ~= nil and dt > 0 then
-        local computedVsi = (alt - self.prevAlt) / dt
-        if math.abs(vsi) < 0.02 and math.abs(computedVsi) > 0.05 then
-            vsi = computedVsi
+        local rawDeltaVsi = clamp((alt - self.prevAlt) / dt, -25.0, 25.0)
+        self.smoothVsi = (self.smoothVsi or 0) * 0.65 + rawDeltaVsi * 0.35
+        -- If getVerticalSpeed() reports in blocks/tick (~1/20th of m/s), scale it to m/s and blend with smoothed delta
+        if math.abs(self.smoothVsi) > 0.20 and math.abs(sensorVsi) > 0.002 and math.abs(self.smoothVsi) > math.abs(sensorVsi) * 8.0 then
+            sensorVsi = sensorVsi * 20.0
+        end
+        if math.abs(sensorVsi) >= math.abs(self.smoothVsi) * 0.5 then
+            vsi = sensorVsi * 0.6 + self.smoothVsi * 0.4
+        else
+            vsi = self.smoothVsi
         end
     end
     self.prevAlt = alt
@@ -927,8 +935,28 @@ function Avionics:step(dt)
         yawDiff = self.hdgPID:compute(0, -hdgErr, dt)
     end
 
-    -- Supports both Create Rotation Speed Controllers (setTargetSpeed in -256..+256 RPM) and 0..15 Signal peripherals
-    -- Uses independent 'if' calls so peripherals exposing multiple methods (setSignal + setControl + setThrottle) receive all applicable updates
+    -- Closed-loop throttle_lever scale verification:
+    -- If we commanded an intermediate burner signal (3..12), yet the burner reports 15 (100% saturation),
+    -- then setThrottle/setTarget/setControl expects a normalized 0.0..1.0 float instead of 0..15!
+    if #self.burners > 0 and self.lastBurnerSignal and self.lastBurnerSignal >= 3 and self.lastBurnerSignal <= 12 then
+        if not self.throttleFloatScale and (tel.burnerActual or 0) >= 15 then
+            self.throttleSatTicks = (self.throttleSatTicks or 0) + 1
+            if self.throttleSatTicks >= 3 then
+                self.throttleFloatScale = true
+                self.throttleSatTicks = 0
+            end
+        elseif self.throttleFloatScale and (tel.burnerActual or 0) == 0 then
+            self.throttleSatTicks = (self.throttleSatTicks or 0) + 1
+            if self.throttleSatTicks >= 3 then
+                self.throttleFloatScale = false
+                self.throttleSatTicks = 0
+            end
+        else
+            self.throttleSatTicks = 0
+        end
+    end
+
+    -- Supports Create Rotation Speed Controllers (-256..+256 RPM), 0..15 Signal peripherals, and 0.0..1.0 float Throttle Levers
     local function driveSignal(dev, sig, inv)
         if dev.setTargetSpeed then
             local rpm = math.floor((sig / 15.0) * 256 + 0.5)
@@ -938,11 +966,13 @@ function Avionics:step(dt)
         end
         local clampedSig = math.floor(clamp(math.abs(sig), 0, 15))
         local outSig = inv and (15 - clampedSig) or clampedSig
+        local normFloat = clamp(outSig / 15.0, 0.0, 1.0)
+        local thrArg = self.throttleFloatScale and normFloat or outSig
         local called = false
         if dev.setSignal then callKinetic(dev, dev.setSignal, outSig); called = true end
-        if dev.setThrottle then callKinetic(dev, dev.setThrottle, outSig); called = true end
-        if dev.setControl then callKinetic(dev, dev.setControl, outSig); called = true end
-        if dev.setTarget then callKinetic(dev, dev.setTarget, outSig); called = true end
+        if dev.setThrottle then callKinetic(dev, dev.setThrottle, thrArg); called = true end
+        if dev.setControl then callKinetic(dev, dev.setControl, thrArg); called = true end
+        if dev.setTarget then callKinetic(dev, dev.setTarget, thrArg); called = true end
         if dev.setLevel then callKinetic(dev, dev.setLevel, outSig); called = true end
         if dev.setOutput then callKinetic(dev, dev.setOutput, outSig); called = true end
         if dev.setSignalStrength then callKinetic(dev, dev.setSignalStrength, outSig); called = true end
@@ -1204,7 +1234,30 @@ function Avionics:step(dt)
     -- 3. Altitude PID & Attitude Stabilization
     if self.ap.altHold then
         if self.vehicleType == "ZEPPELIN" then
-            burnerSignal = math.floor(clamp(8.5 + altCmd, 0, 15) + 0.5)
+            -- Cascade Vertical Speed (VSI) & Thermal Buoyancy Controller:
+            -- 1) Compute target vertical speed (m/s) from altitude error, capped at +-0.80 m/s
+            local altErr    = self.ap.targetAlt - tel.altitude
+            local targetVsi = clamp(altErr * 0.20, -0.80, 0.80)
+            local actualVsi = tel.vSpeed or 0
+            local vsiErr    = targetVsi - actualVsi
+
+            -- 2) Slowly adapt neutral hover trim within strict [6.5 .. 9.5] bounds (prevents integral windup to 0 or 15!)
+            self.hoverTrim = self.hoverTrim or 8.0
+            if math.abs(altErr) < 3.0 and math.abs(actualVsi) < 0.8 then
+                local trimDelta = (altErr * 0.08) + (vsiErr * 0.30)
+                self.hoverTrim = clamp(self.hoverTrim + trimDelta * dt, 6.5, 9.5)
+            end
+
+            -- 3) Modulate throttle lever smoothly around hoverTrim using VSI error + small position term + balloon volume rate
+            local posTerm = clamp(altErr * 0.35, -2.0, 2.0)
+            local vsiTerm = clamp(vsiErr * 4.5, -4.5, 4.5)
+            local volTerm = -clamp((tel.balloonVolChange or 0) * 0.45, -1.5, 1.5)
+
+            -- Keep throttle lever strictly inside proportional band [3 .. 13] so it never slams to 0 or 15
+            local desiredBurner = clamp(self.hoverTrim + posTerm + vsiTerm + volTerm, 3.0, 13.0)
+            self.smoothBurner = (self.smoothBurner or self.hoverTrim) * 0.50 + desiredBurner * 0.50
+            burnerSignal = math.floor(clamp(self.smoothBurner, 3, 13) + 0.5)
+
             self.lastBurnerSignal = burnerSignal
             tel.burnerCmd = burnerSignal
             emitRedstoneBurner(burnerSignal)
