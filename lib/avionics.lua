@@ -715,6 +715,9 @@ function Avionics:setMode(modeName, currentTel)
         self.ap.altHold = true
         self.ap.hdgHold = true
         self.ap.parkingBrake = false
+        if self.ap.baseThrottle <= 0 then
+            self.ap.baseThrottle = 8
+        end
         self.altPID:setIntegral(2.0)
     elseif modeName == "AUTOLAND" then
         self.ap.enabled = true
@@ -723,6 +726,64 @@ function Avionics:setMode(modeName, currentTel)
     elseif modeName == "RTB" then
         self:engageRTB(currentTel)
     end
+end
+
+function Avionics:executeAtcCommand(msg, currentTel)
+    if type(msg) ~= "table" or msg.type ~= "AVIONICS_ATC_CMD" then
+        return false, nil
+    end
+    local myCall = (currentTel and currentTel.callsign) or self.callsign
+    if msg.target and msg.target ~= "ALL" and msg.target ~= myCall then
+        return false, nil
+    end
+
+    if type(msg.beacon) == "table" and msg.beacon.type == "AVIONICS_ILS_BEACON" then
+        self:setHomeBase(msg.beacon)
+    end
+
+    local cmd = tostring(msg.cmd or ""):upper()
+    if cmd == "RTB" then
+        if self:engageRTB(currentTel) then
+            local bName = (self.ap.homeBase and self.ap.homeBase.baseName) or "KULE"
+            return true, "ATC KULE EMRI: RTB -> " .. tostring(bName)
+        end
+        return false, "ATC KULE EMRI: RTB BASARISIZ (BEACON YOK)"
+    elseif cmd == "HOVER" then
+        self:setMode("HOVER", currentTel)
+        if tonumber(msg.targetAlt) then
+            self.ap.targetAlt = tonumber(msg.targetAlt)
+        end
+        return true, string.format("ATC KULE EMRI: HOVER (%.0fm)", self.ap.targetAlt)
+    elseif cmd == "AUTOLAND" then
+        self:setMode("AUTOLAND", currentTel)
+        return true, "ATC KULE EMRI: OTONOM INIS (AUTOLAND)"
+    elseif cmd == "PARK" then
+        self.ap.baseThrottle = 0
+        self.ap.parkingBrake = true
+        self:setMode("MANUAL", currentTel)
+        return true, "ATC KULE EMRI: ACIL PARK & MOTOR KESME"
+    elseif cmd == "ALT_DELTA" then
+        local delta = tonumber(msg.delta) or 0
+        local baseAlt = self.ap.enabled and self.ap.targetAlt or ((currentTel and currentTel.altitude) or self.ap.targetAlt)
+        local newAlt = clamp(baseAlt + delta, 10, 320)
+        if not self.ap.enabled then
+            self:setMode("HOVER", currentTel)
+        end
+        self.ap.targetAlt = newAlt
+        return true, string.format("ATC IRTIFA EMRI: %.0fm (%+dm)", self.ap.targetAlt, delta)
+    elseif cmd == "WAYPOINT" or cmd == "LNAV" then
+        if type(msg.waypoint) == "table" and msg.waypoint.x and msg.waypoint.z then
+            self.ap.waypoint = {
+                x = tonumber(msg.waypoint.x) or 0,
+                y = tonumber(msg.waypoint.y) or self.ap.targetAlt,
+                z = tonumber(msg.waypoint.z) or 0
+            }
+            self.ap.targetAlt = self.ap.waypoint.y
+            self:setMode("LNAV", currentTel)
+            return true, string.format("ATC ROTA EMRI: (%d, %d, %d)", self.ap.waypoint.x, self.ap.waypoint.y, self.ap.waypoint.z)
+        end
+    end
+    return false, nil
 end
 
 -- Executes 1 control step (dt = 0.05s for 20Hz)

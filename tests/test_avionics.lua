@@ -320,6 +320,38 @@ local function runTests()
     assert(mockClutchRpm == 0, "Expected auto-inverted clutch signal to stop the propeller shaft")
     print("  PASS: Test 8: Zeppelin HOVER Anti-Sink, Safe Park & Closed-Loop Clutch Polarity")
 
+    -- Test 9: Remote ATC Command Uplink (DRUNKEN_ATC)
+    local okAtc, msgAtc = hvrFC:executeAtcCommand({
+        type   = "AVIONICS_ATC_CMD",
+        target = "ZEP-HVR",
+        cmd    = "RTB",
+        beacon = {
+            type         = "AVIONICS_ILS_BEACON",
+            baseName     = "TOWER-ALPHA",
+            runwayId     = "RWY-09",
+            threshold    = { x = 100, y = 70, z = 200 },
+            zeppelinMast = { x = 120, y = 95, z = 210 }
+        }
+    }, hvrTel)
+    assert(okAtc == true and hvrFC.ap.mode == "RTB" and hvrFC.ap.rtbPhase == "RTB_MAST", "Expected ATC RTB command to lock beacon and engage RTB_MAST")
+    assert(msgAtc:find("TOWER%-ALPHA") ~= nil, "Expected ATC toast message to include tower baseName")
+
+    local okWp, _ = hvrFC:executeAtcCommand({
+        type     = "AVIONICS_ATC_CMD",
+        target   = "ALL",
+        cmd      = "WAYPOINT",
+        waypoint = { x = -350, y = 120, z = 480 }
+    }, hvrTel)
+    assert(okWp == true and hvrFC.ap.mode == "LNAV" and hvrFC.ap.targetAlt == 120 and hvrFC.ap.baseThrottle > 0, "Expected ATC WAYPOINT command to engage LNAV with forward throttle")
+
+    local okPark, _ = hvrFC:executeAtcCommand({
+        type   = "AVIONICS_ATC_CMD",
+        target = "ZEP-HVR",
+        cmd    = "PARK"
+    }, hvrTel)
+    assert(okPark == true and hvrFC.ap.mode == "MANUAL" and hvrFC.ap.parkingBrake == true and hvrFC.ap.baseThrottle == 0, "Expected ATC PARK command to cut throttle and engage parkingBrake")
+    print("  PASS: Test 9: Remote ATC Command Uplink (RTB, WAYPOINT, PARK)")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

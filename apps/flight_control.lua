@@ -564,16 +564,20 @@ local function run(context)
             -- Broadcast ADS-B Telemetry once per second (every 20 ticks)
             if modem and rednet and (tickCount % 20 == 0) then
                 pcall(rednet.broadcast, {
-                    type        = "AVIONICS_ADSB",
-                    callsign    = lastTel.callsign,
-                    vehicleType = lastTel.vehicleType,
-                    pos         = lastTel.pos,
-                    altitude    = lastTel.altitude,
-                    speed       = lastTel.speed,
-                    heading     = math.deg(lastTel.heading) % 360,
-                    vSpeed      = lastTel.vSpeed,
-                    mode        = fc.ap.mode,
-                    timestamp   = os.epoch and os.epoch("utc") or os.time()
+                    type         = "AVIONICS_ADSB",
+                    callsign     = lastTel.callsign,
+                    vehicleType  = lastTel.vehicleType,
+                    pos          = lastTel.pos,
+                    altitude     = lastTel.altitude,
+                    targetAlt    = fc.ap.targetAlt,
+                    speed        = lastTel.speed,
+                    heading      = math.deg(lastTel.heading) % 360,
+                    vSpeed       = lastTel.vSpeed,
+                    agl          = lastTel.agl,
+                    fuelPct      = lastTel.fuelPct,
+                    mode         = fc.ap.mode,
+                    parkingBrake = fc.ap.parkingBrake,
+                    timestamp    = os.epoch and os.epoch("utc") or os.time()
                 }, "DRUNKEN_RADAR")
             end
 
@@ -582,7 +586,7 @@ local function run(context)
         end
     end
 
-    -- Pilot Input, Hot-Plug & Network Event Loop (Keyboard, Peripherals & Rednet ILS Beacon)
+    -- Pilot Input, Hot-Plug & Network Event Loop (Keyboard, Peripherals & Rednet ILS/ATC Tower)
     local function pilotInputLoop()
         while running do
             local ev, p1, p2, p3 = os.pullEvent()
@@ -590,6 +594,13 @@ local function run(context)
                 local msg, protocol = p2, p3
                 if protocol == "DRUNKEN_ILS" and type(msg) == "table" and msg.type == "AVIONICS_ILS_BEACON" then
                     fc:setHomeBase(msg)
+                elseif protocol == "DRUNKEN_ATC" and type(msg) == "table" and msg.type == "AVIONICS_ATC_CMD" then
+                    local okCmd, notice = fc:executeAtcCommand(msg, lastTel)
+                    if okCmd and notice then
+                        hotplugNotice = notice
+                        hotplugTimer = 100
+                        playAlert("CLICK")
+                    end
                 end
             elseif ev == "peripheral" then
                 fc:scanPeripherals()
