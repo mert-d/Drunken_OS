@@ -509,18 +509,29 @@ function Avionics:readTelemetry(dt)
         elseif type(v) == "number" then
             rawVel = v
             speed = math.abs(v)
+            -- Decompose scalar speed along compass heading for INS Dead-Reckoning when no 3D vector is provided
+            local horizSpeed = math.sqrt(math.max(0, speed * speed - vsi * vsi))
+            local dirSign = (self.ap and self.ap.reverseGear) and -1 or 1
+            vel.x = -horizSpeed * math.sin(heading) * dirSign
+            vel.z =  horizSpeed * math.cos(heading) * dirSign
         end
     end
 
-    -- Update Position (Dead-Reckoning every tick, GPS sync once every 20 ticks to avoid os.pullEvent conflicts)
+    -- Update Position (INS Dead-Reckoning every tick + GPS sync when available)
     self.pos.x = self.pos.x + vel.x * dt
     self.pos.y = alt
     self.pos.z = self.pos.z + vel.z * dt
 
-    if self.config.useGPS and gps and gps.locate and (self.gpsTick % 20 == 0) then
-        local okGps, gx, gy, gz = pcall(gps.locate, 0.02)
-        if okGps and gx then
-            self.pos.x, self.pos.y, self.pos.z = gx, gy, gz
+    if self.config.useGPS and gps and gps.locate and (self.gpsTick % 40 == 1) then
+        local okGps, gx, gy, gz = pcall(gps.locate, 0.05)
+        if okGps and gx and gz then
+            self.pos.x, self.pos.z = gx, gz
+            if not self.altSensor and gy then
+                self.pos.y = gy
+            end
+            self.gpsLocked = true
+        else
+            self.gpsLocked = false
         end
     end
 
@@ -781,6 +792,12 @@ function Avionics:executeAtcCommand(msg, currentTel)
             self.ap.targetAlt = self.ap.waypoint.y
             self:setMode("LNAV", currentTel)
             return true, string.format("ATC ROTA EMRI: (%d, %d, %d)", self.ap.waypoint.x, self.ap.waypoint.y, self.ap.waypoint.z)
+        end
+    elseif cmd == "INS_SYNC" then
+        if type(msg.pos) == "table" and msg.pos.x and msg.pos.z then
+            self.pos.x = tonumber(msg.pos.x) or 0
+            self.pos.z = tonumber(msg.pos.z) or 0
+            return true, string.format("ATC INS KALIBRASYON: (%d, %d, %d)", self.pos.x, math.floor(self.pos.y), self.pos.z)
         end
     end
     return false, nil

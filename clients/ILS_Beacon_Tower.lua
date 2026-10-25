@@ -550,11 +550,13 @@ local function runTowerConsole(context)
                 end
             end
 
+            -- Selected Aircraft Detailed Telemetry Box
             local sel = getSelectedContact()
             if sel and sel.pos then
                 local dx = (tonumber(sel.pos.x) or 0) - towerX
                 local dz = (tonumber(sel.pos.z) or 0) - towerZ
-                local dist = math.sqrt(dx * dx + dz * dz)
+                local calcDist = math.sqrt(dx * dx + dz * dz)
+                local dist = (calcDist > 0.5) and calcDist or (tonumber(sel.modemDist) or calcDist)
                 local brg = (math.deg(math.atan2(-dx, dz)) % 360)
                 writeAt(surf, rightX, 6, string.rep("-", rightW), colors.gray, colors.black)
                 writeAt(surf, rightX, 7, string.format("SECILI: %s (%s)", tostring(sel.callsign), tostring(sel.mode or "MAN")):sub(1, rightW), colors.yellow, colors.black)
@@ -586,8 +588,8 @@ local function runTowerConsole(context)
         -- Rows 16-19: Bottom Remote Command Keybind Dock
         writeAt(surf, 2, 16, "[R]Eve Cagir(RTB)  [G]Kuleye Cek(LNAV) [H]Havada Tut", colors.lime, colors.black)
         writeAt(surf, 2, 17, "[L]Otonom Indir    [B]Acil Park/Fren   [+/-]Irtifa+-10", colors.cyan, colors.black)
-        writeAt(surf, 2, 18, "[K]Gemiden KonumAl [A]Hedef(Tek/Filo)  [Z]Radar Menzil", colors.yellow, colors.black)
-        writeAt(surf, 2, 19, "[1/2/3]Sekme [Up/Dn]Sec [U]GitHub Guncelle(OTA) [Q]Cik", colors.lightGray, colors.black)
+        writeAt(surf, 2, 18, "[K]Gemiden KonumAl [0]INS Kalibre Et   [Z]Radar Menzil", colors.yellow, colors.black)
+        writeAt(surf, 2, 19, "[1/2/3]Sekme [Up/Dn]Sec [A]Filo [U]OTA Guncelle [Q]Cik", colors.lightGray, colors.black)
     end
 
     local function renderAll()
@@ -639,17 +641,24 @@ local function runTowerConsole(context)
         end
     end
 
-    -- Rednet Receiver (DRUNKEN_RADAR ADS-B) & Operator Keyboard/Mouse/Monitor Input Loop
+    -- Rednet Receiver (DRUNKEN_RADAR ADS-B), Modem Distance Tracker & Operator Input Loop
+    local lastModemDist = {}
     local function eventLoop()
         while running do
-            local ev, p1, p2, p3 = os.pullEvent()
-            if ev == "rednet_message" then
+            local ev, p1, p2, p3, p4, p5 = os.pullEvent()
+            if ev == "modem_message" then
+                local replyCh, dist = p3, p5
+                if type(replyCh) == "number" and type(dist) == "number" then
+                    lastModemDist[replyCh] = dist
+                end
+            elseif ev == "rednet_message" then
                 local senderId, msg, protocol = p1, p2, p3
                 if protocol == "DRUNKEN_RADAR" and type(msg) == "table" and msg.type == "AVIONICS_ADSB" then
                     local call = tostring(msg.callsign or ("SHIP-" .. tostring(senderId)))
                     local isNew = (contacts[call] == nil)
                     msg.callsign = call
                     msg.senderId = senderId
+                    msg.modemDist = lastModemDist[senderId]
                     msg.lastSeenClock = os.clock()
                     contacts[call] = msg
                     if isNew then
@@ -709,6 +718,14 @@ local function runTowerConsole(context)
                         else activeTab = "RADAR" end
                     elseif key == keys.k then
                         captureSelectedShipAsTowerPos()
+                    elseif key == keys.zero then
+                        sendAtcCommand("INS_SYNC", {
+                            pos = {
+                                x = tonumber(cfg.mastX) or 0,
+                                y = tonumber(cfg.mastY) or 85,
+                                z = tonumber(cfg.mastZ) or 0
+                            }
+                        })
                     elseif key == keys.u then
                         performOtaUpdate(setToast)
                     elseif activeTab == "CONFIG" then

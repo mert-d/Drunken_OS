@@ -779,7 +779,27 @@ local function run(context)
         end
     end
 
-    parallel.waitForAny(flightControlLoop, pilotInputLoop)
+    -- Non-blocking background GPS Constellation Sync (runs in parallel so 20Hz flight loop never stalls)
+    local function gpsSyncLoop()
+        while running do
+            if modem and gps and gps.locate then
+                local okGps, gx, gy, gz = pcall(gps.locate, 1.5)
+                if okGps and gx and gz then
+                    fc.pos.x = gx
+                    fc.pos.z = gz
+                    if not fc.altSensor and gy then
+                        fc.pos.y = gy
+                    end
+                    fc.gpsLocked = true
+                else
+                    fc.gpsLocked = false
+                end
+            end
+            sleep(2.5)
+        end
+    end
+
+    parallel.waitForAny(flightControlLoop, pilotInputLoop, gpsSyncLoop)
 end
 
 -- Allow direct execution when invoked from shell, CLI, or startup
