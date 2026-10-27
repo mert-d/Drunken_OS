@@ -7,6 +7,13 @@ local function runTests()
     -- Backup globals
     local origPeripheral = _G.peripheral
     local origParallel   = _G.parallel
+    local origColors     = _G.colors
+
+    _G.colors = _G.colors or {
+        white = 1, orange = 2, magenta = 4, lightBlue = 8, yellow = 16, lime = 32,
+        pink = 64, gray = 128, lightGray = 256, cyan = 512, purple = 1024,
+        blue = 2048, brown = 4096, green = 8192, red = 16384, black = 32768
+    }
 
     -- Mock actuator state
     local mockState = {
@@ -388,9 +395,144 @@ local function runTests()
     assert(okPark == true and hvrFC.ap.mode == "MANUAL" and hvrFC.ap.parkingBrake == true and hvrFC.ap.baseThrottle == 0, "Expected ATC PARK command to cut throttle and engage parkingBrake")
     print("  PASS: Test 9: Remote ATC Command Uplink (RTB, WAYPOINT, PARK)")
 
+    -- Test 10: Dual-Computer Architecture (Avionics Core Daemon FCC + Multi-Monitor Cockpit Remote Command Bus & Telemetry)
+    -- Step 10a: Initialize FCC Core Daemon simulation
+    local fccFC = Avionics.new({ callsign = "DOS-FLAGSHIP", startParked = true })
+    fccFC:setVehicleProfile("GUNSHIP", true)
+    assert(fccFC.vehicleType == "GUNSHIP", "Expected FCC Core to support GUNSHIP vehicle profile")
+
+    local fccTel = fccFC:readTelemetry(0.05)
+    fccTel.altitude = 75.0
+    fccTel.pos = { x = 250, y = 75, z = -400 }
+    fccTel.speed = 12.5
+    fccTel.vSpeed = 0.5
+    fccTel.heading = math.rad(90)
+    fccTel.rpm = 256
+    fccTel.mothership = { fl = 10, fr = 10, rl = 10, rr = 10, rearL = 4, rearC = 8, rearR = 4 }
+
+    -- Step 10b: Simulate command processor of Avionics_Core_Daemon handling AVIONICS_CMD packets
+    local function simulateFCCCommand(fcc, msg, tel)
+        if msg.cmd == "SET_MODE" then
+            fcc:setMode(msg.mode or "MANUAL", tel)
+            if tonumber(msg.targetAlt) then fcc.ap.targetAlt = tonumber(msg.targetAlt) end
+        elseif msg.cmd == "TOGGLE_AP" then
+            if fcc.ap.enabled then
+                fcc:setMode("MANUAL", tel)
+            else
+                local isHvr = (fcc.vehicleType == "ZEPPELIN" or fcc.vehicleType == "MOTHERSHIP" or fcc.vehicleType == "GUNSHIP")
+                fcc:setMode(isHvr and "HOVER" or "CRUISE", tel)
+            end
+        elseif msg.cmd == "ALT_DELTA" then
+            fcc.ap.targetAlt = math.max(0, fcc.ap.targetAlt + (tonumber(msg.delta) or 0))
+        elseif msg.cmd == "HDG_DELTA" then
+            fcc.ap.targetHdg = (fcc.ap.targetHdg + math.rad(tonumber(msg.deltaDeg) or 0)) % (2 * math.pi)
+        elseif msg.cmd == "THR_DELTA" then
+            fcc.ap.baseThrottle = math.max(0, math.min(15, fcc.ap.baseThrottle + (tonumber(msg.delta) or 0)))
+        elseif msg.cmd == "TOGGLE_BRAKE" then
+            fcc.ap.parkingBrake = not fcc.ap.parkingBrake
+        elseif msg.cmd == "TOGGLE_GEAR" then
+            fcc.ap.reverseGear = not fcc.ap.reverseGear
+        elseif msg.cmd == "TOGGLE_CLUTCH" then
+            fcc:toggleClutchPolarity()
+        elseif msg.cmd == "MANUAL_YAW_DELTA" then
+            fcc.ap.manualYaw = math.max(-6, math.min(6, (fcc.ap.manualYaw or 0) + (tonumber(msg.delta) or 0)))
+        elseif msg.cmd == "SAFE_DISARM" or msg.cmd == "DISARM" then
+            fcc.ap.baseThrottle = 0
+            fcc.ap.parkingBrake = true
+            fcc:setMode("MANUAL", tel)
+        end
+    end
+
+    -- Send remote cockpit commands
+    simulateFCCCommand(fccFC, { type = "AVIONICS_CMD", cmd = "SET_MODE", mode = "HOVER", targetAlt = 80 }, fccTel)
+    assert(fccFC.ap.mode == "HOVER" and fccFC.ap.targetAlt == 80, "Expected SET_MODE HOVER with targetAlt=80 on FCC Core")
+
+    simulateFCCCommand(fccFC, { type = "AVIONICS_CMD", cmd = "ALT_DELTA", delta = 15 }, fccTel)
+    assert(fccFC.ap.targetAlt == 95, "Expected ALT_DELTA +15 to reach targetAlt=95")
+
+    simulateFCCCommand(fccFC, { type = "AVIONICS_CMD", cmd = "THR_DELTA", delta = 7 }, fccTel)
+    assert(fccFC.ap.baseThrottle == 7, "Expected THR_DELTA +7 to set baseThrottle=7")
+
+    simulateFCCCommand(fccFC, { type = "AVIONICS_CMD", cmd = "TOGGLE_GEAR" }, fccTel)
+    assert(fccFC.ap.reverseGear == true, "Expected TOGGLE_GEAR to engage reverse gear")
+
+    simulateFCCCommand(fccFC, { type = "AVIONICS_CMD", cmd = "MANUAL_YAW_DELTA", delta = 4 }, fccTel)
+    assert(fccFC.ap.manualYaw == 4, "Expected MANUAL_YAW_DELTA +4 to set manualYaw=4")
+
+    -- Step 10c: Verify telemetry state packet serialization for DRUNKEN_AVIONICS_BUS
+    local busPacket = {
+        type   = "AVIONICS_STATE",
+        sender = 5,
+        tel    = fccTel,
+        ap     = {
+            enabled      = fccFC.ap.enabled,
+            mode         = fccFC.ap.mode,
+            targetAlt    = fccFC.ap.targetAlt,
+            baseThrottle = fccFC.ap.baseThrottle,
+            parkingBrake = fccFC.ap.parkingBrake,
+            reverseGear  = fccFC.ap.reverseGear,
+            vehicleType  = fccFC.vehicleType
+        }
+    }
+    assert(busPacket.type == "AVIONICS_STATE", "Expected AVIONICS_STATE packet type")
+    assert(busPacket.ap.mode == "HOVER" and busPacket.ap.targetAlt == 95, "Expected telemetry AP state match")
+    assert(busPacket.ap.vehicleType == "GUNSHIP", "Expected telemetry vehicleType GUNSHIP")
+
+    -- Step 10d: Multi-Monitor Rendering Test
+    local FlightApp = require("apps.flight_control")
+    assert(type(FlightApp.renderTacticalDisplay) == "function", "Expected FlightApp.renderTacticalDisplay function")
+    assert(type(FlightApp.renderScadaDisplay) == "function", "Expected FlightApp.renderScadaDisplay function")
+
+    local function createMockMonitor(w, h, isCol)
+        local lines = {}
+        local curX, curY = 1, 1
+        return {
+            getSize = function() return w, h end,
+            isColor = function() return isCol end,
+            clear = function() lines = {} end,
+            setCursorPos = function(x, y) curX, curY = x, y end,
+            setBackgroundColor = function() end,
+            setTextColor = function() end,
+            write = function(str)
+                lines[curY] = (lines[curY] or "") .. tostring(str)
+            end,
+            getOutput = function()
+                local out = {}
+                for i = 1, h do table.insert(out, lines[i] or "") end
+                return table.concat(out, "\n")
+            end
+        }
+    end
+
+    -- Monitor 2 (Admiral Cabin Tactical & Navigation Display)
+    local monTactical = createMockMonitor(45, 12, true)
+    FlightApp.renderTacticalDisplay(monTactical, fccTel, fccFC.ap)
+    local tacText = monTactical.getOutput()
+    assert(tacText:find("TAKTIK & NAVIGASYON") ~= nil, "Expected Tactical display to contain header")
+    assert(tacText:find("DOS%-FLAGSHIP") ~= nil, "Expected Tactical display to contain vessel callsign")
+    assert(tacText:find("GUNSHIP") ~= nil, "Expected Tactical display to contain GUNSHIP profile")
+    assert(tacText:find("HOVER") ~= nil, "Expected Tactical display to contain AP HOVER mode")
+    assert(tacText:find("POS : X:250 Y:75 Z:%-400") ~= nil, "Expected Tactical display to contain position coordinates")
+
+    -- Monitor 3 (Engine Room SCADA Display)
+    local monScada = createMockMonitor(45, 12, true)
+    FlightApp.renderScadaDisplay(monScada, fccTel, fccFC.ap)
+    local scadaText = monScada.getOutput()
+    assert(scadaText:find("MAKINE DAIRESI") ~= nil, "Expected SCADA display to contain header")
+    assert(scadaText:find("DEVIR %(RPM%):   256") ~= nil, "Expected SCADA display to contain RPM")
+    assert(scadaText:find("GERI") ~= nil, "Expected SCADA display to show reverse gear status")
+    assert(scadaText:find("LIFT ON  : FL:10 FR:10") ~= nil, "Expected SCADA display to show front lift motors")
+    assert(scadaText:find("LIFT ARKA: RL:10 RR:10") ~= nil, "Expected SCADA display to show rear lift motors")
+
+    -- Disarm test
+    simulateFCCCommand(fccFC, { type = "AVIONICS_CMD", cmd = "SAFE_DISARM" }, fccTel)
+    assert(fccFC.ap.baseThrottle == 0 and fccFC.ap.parkingBrake == true and fccFC.ap.mode == "MANUAL", "Expected SAFE_DISARM to cut throttle and park")
+    print("  PASS: Test 10: Dual-Computer Architecture (Avionics Core Daemon FCC + Multi-Monitor Cockpit Remote Command Bus & Telemetry)")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel
+    _G.colors     = origColors
     print(">>> All Avionics Tests Passed Successfully!\n")
     return true
 end

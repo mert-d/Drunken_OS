@@ -231,7 +231,7 @@ function Avionics.new(config)
     local self = setmetatable({}, Avionics)
     self.config = config or {}
     self.callsign = self.config.callsign or ("DOS-" .. tostring(os.getComputerID and os.getComputerID() or 0))
-    self.profile = self.config.profile or nil -- "ZEPPELIN", "AIRCRAFT", "MOTHERSHIP", or nil (auto)
+    self.profile = self.config.profile or nil -- "ZEPPELIN", "AIRCRAFT", "MOTHERSHIP", "GUNSHIP", or nil (auto)
     self.hasSavedProfile = false
     self.ioMap = {}
     self.ioDevices = {}
@@ -382,7 +382,7 @@ function Avionics:setVehicleProfile(profileName, forceAutoAssign)
     self.profile = profileName
     self.hasSavedProfile = true
     self.vehicleType = profileName
-    if profileName == "MOTHERSHIP" then
+    if profileName == "MOTHERSHIP" or profileName == "GUNSHIP" then
         self:autoAssignMothershipRoles(forceAutoAssign)
     else
         -- Clear Mothership-specific roles when switching back to ZEPPELIN or AIRCRAFT
@@ -546,9 +546,9 @@ function Avionics:scanPeripherals()
     end
 
     -- Determine Vehicle Type (Respect explicit saved profile first; otherwise auto-detect)
-    if self.profile == "MOTHERSHIP" or self.profile == "ZEPPELIN" or self.profile == "AIRCRAFT" then
+    if self.profile == "MOTHERSHIP" or self.profile == "GUNSHIP" or self.profile == "ZEPPELIN" or self.profile == "AIRCRAFT" then
         self.vehicleType = self.profile
-        if self.profile == "MOTHERSHIP" then
+        if self.profile == "MOTHERSHIP" or self.profile == "GUNSHIP" then
             self:autoAssignMothershipRoles(false)
         end
     elseif #self.speedControllers >= 4 or #self.gearboxes >= 4 then
@@ -778,7 +778,7 @@ function Avionics:engageRTB(currentTel)
     self.ap.parkingBrake = false
     self.ap.mode     = "RTB"
 
-    if (self.vehicleType == "ZEPPELIN" or self.vehicleType == "MOTHERSHIP") and self.ap.homeBase.zeppelinMast then
+    if (self.vehicleType == "ZEPPELIN" or self.vehicleType == "MOTHERSHIP" or self.vehicleType == "GUNSHIP") and self.ap.homeBase.zeppelinMast then
         self.ap.rtbPhase = "RTB_MAST"
     else
         self.ap.rtbPhase = "RTB_IAF"
@@ -946,7 +946,7 @@ function Avionics:step(dt)
             if self.ap.waypoint.y then
                 self.ap.targetAlt = self.ap.waypoint.y
             end
-        elseif self.vehicleType == "ZEPPELIN" or self.vehicleType == "MOTHERSHIP" then
+        elseif self.vehicleType == "ZEPPELIN" or self.vehicleType == "MOTHERSHIP" or self.vehicleType == "GUNSHIP" then
             self:setMode("HOVER", tel)
         end
     end
@@ -1316,7 +1316,7 @@ function Avionics:step(dt)
         local manualBurnerSig = self.ap.parkingBrake and 0 or mainThrottleSig
         self.lastBurnerSignal = manualBurnerSig
         tel.burnerCmd = manualBurnerSig
-        if self.vehicleType ~= "MOTHERSHIP" then
+        if self.vehicleType ~= "MOTHERSHIP" and self.vehicleType ~= "GUNSHIP" then
             for _, gb in ipairs(self.gearboxes) do
                 table.insert(tasks, function() driveSignal(gb, mainThrottleSig, false) end)
             end
@@ -1340,7 +1340,7 @@ function Avionics:step(dt)
     end
 
     -- 2. Differential Thrust on Analog Transmissions (for non-Mothership or unassigned gearboxes)
-    if self.vehicleType ~= "MOTHERSHIP" then
+    if self.vehicleType ~= "MOTHERSHIP" and self.vehicleType ~= "GUNSHIP" then
         if #self.gearboxes >= 2 then
             local pSig = (self.ap.mode == "HOVER") and 0 or math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
             local sSig = (self.ap.mode == "HOVER") and 0 or math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))

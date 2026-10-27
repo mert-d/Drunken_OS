@@ -175,6 +175,18 @@ return {
             include_shared = false
         },
 
+        -- Create: Avionics Core Daemon (FCC Sensor Fusion & Actuator Bus)
+        avionics_core = {
+            name = "Create Avionics Core Daemon (FCC)",
+            type = "server",
+            main = "clients/Avionics_Core_Daemon.lua",
+            files = {
+                "clients/Avionics_Core_Daemon.lua",
+                "lib/avionics.lua"
+            },
+            include_shared = false
+        },
+
         -- Create: Avionics Runway ILS & RTB Beacon Tower
         ils_beacon = {
             name = "Runway ILS & RTB Beacon Tower",

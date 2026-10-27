@@ -43,6 +43,13 @@ local PACKAGE_METADATA = {
         desc = "Flight Control Computer (FCS) with PFD HUD, Autopilot & Autoland",
         prompt = "DISK: Insert blank floppy disk and press ENTER."
     },
+    avionics_core = {
+        category = "avionics",
+        badge = "[FCC-CORE]",
+        hardware = "Computer (Center of Mass) + Wired/Wireless Modem",
+        desc = "Dedicated Flight Control Core (FCC) daemon with 20Hz PID loop & bus server",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
     ils_beacon = {
         category = "avionics",
         badge = "[ILS]",
