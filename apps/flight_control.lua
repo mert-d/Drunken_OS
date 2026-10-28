@@ -893,55 +893,37 @@ local function run(context)
                     running = false
                 elseif key == keys.u then
                     if http and http.get then
-                        hotplugNotice = "GitHub OTA: Guncel ucus yazilimi indiriliyor..."
-                        hotplugTimer = 100
+                        hotplugNotice = "GitHub OTA: Guncelleniyor..."
+                        hotplugTimer = 80
                         renderPFD()
                         local base = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
                         local ts = tostring((os.epoch and os.epoch("utc")) or os.time())
                         local okAll = true
-                        local errReason = ""
                         for _, rel in ipairs({ "lib/avionics.lua", "apps/flight_control.lua" }) do
-                            local okH, resp, errStr = pcall(http.get, base .. rel .. "?v=" .. ts)
+                            local okH, resp = pcall(http.get, base .. rel .. "?v=" .. ts)
                             if okH and resp then
-                                local code = (not resp.getResponseCode) or (resp.getResponseCode() == 200)
-                                local content = code and resp.readAll() or nil
+                                local c = (not resp.getResponseCode or resp.getResponseCode() == 200) and resp.readAll()
                                 if resp.close then pcall(resp.close) end
-                                if content and #content > 200 then
-                                    local targets = { "/" .. rel, rel }
-                                    if rel == "lib/avionics.lua" and fs.exists("/avionics.lua") then
-                                        table.insert(targets, "/avionics.lua")
-                                    elseif rel == "apps/flight_control.lua" and shell and shell.getRunningProgram then
-                                        local rp = shell.getRunningProgram()
-                                        if rp and rp ~= "" then table.insert(targets, "/" .. rp) end
+                                if c and #c > 200 then
+                                    for _, p in ipairs({ "/" .. rel, rel }) do
+                                        local d = fs.getDir(p)
+                                        if d and d ~= "" and not fs.exists(d) then pcall(fs.makeDir, d) end
+                                        local f = fs.open(p, "w")
+                                        if f then f.write(c); f.close() end
                                     end
-                                    for _, tPath in ipairs(targets) do
-                                        local dir = fs.getDir(tPath)
-                                        if dir and dir ~= "" and not fs.exists(dir) then pcall(fs.makeDir, dir) end
-                                        local f = fs.open(tPath, "w")
-                                        if f then f.write(content); f.close() end
-                                    end
-                                else
-                                    okAll = false
-                                    errReason = "Bos icerik"
-                                end
-                            else
-                                okAll = false
-                                errReason = tostring(errStr or resp or "Baglanti yok")
-                            end
+                                else okAll = false end
+                            else okAll = false end
                         end
                         if okAll then
-                            hotplugNotice = "OTA GUNCELLEME TAMAM! Yeniden baslatiliyor..."
-                            hotplugTimer = 100
-                            renderPFD()
-                            sleep(0.8)
-                            os.reboot()
+                            hotplugNotice = "OTA TAMAM! Yeniden baslatiliyor..."
+                            renderPFD(); sleep(0.8); os.reboot()
                         else
-                            hotplugNotice = "OTA HATA: " .. errReason
-                            hotplugTimer = 100
+                            hotplugNotice = "OTA HATA: Indirilemedi!"
+                            hotplugTimer = 80
                         end
                     else
-                        hotplugNotice = "OTA HATA: HTTP API kapali!"
-                        hotplugTimer = 80
+                        hotplugNotice = "OTA HATA: HTTP kapali!"
+                        hotplugTimer = 60
                     end
                 elseif key == keys.v then
                     if activeTab == "PROFILE" then
@@ -1016,190 +998,106 @@ local function run(context)
                     end
                 else
                     -- PFD Flight Controls
-                    if isRemoteFCC then
-                        if key == keys.q then
-                            sendAvionicsCmd("SAFE_DISARM")
-                            running = false
-                        elseif key == keys.a then
-                            sendAvionicsCmd("TOGGLE_AP")
-                        elseif key == keys.c then
-                            sendAvionicsCmd("SET_MODE", { mode = "CRUISE" })
-                            hotplugNotice = "CRUISE MODU (FCC)"
-                            hotplugTimer = 40
-                        elseif key == keys.h then
-                            sendAvionicsCmd("SET_MODE", { mode = "HOVER" })
-                            hotplugNotice = "HOVER MODU (FCC): Irtifa Kilitli"
-                            hotplugTimer = 50
-                        elseif key == keys.r then
-                            sendAvionicsCmd("ENGAGE_RTB")
-                            hotplugNotice = "RTB (FCC): Eve Donus Baslatildi"
-                            hotplugTimer = 50
-                        elseif key == keys.l then
-                            sendAvionicsCmd("SET_MODE", { mode = "AUTOLAND" })
-                            hotplugNotice = "AUTOLAND (FCC): Inis Baslatildi"
-                            hotplugTimer = 50
-                        elseif key == keys.b then
-                            sendAvionicsCmd("TOGGLE_BRAKE")
-                            hotplugNotice = "PARK FRENI (FCC)"
-                            hotplugTimer = 40
-                        elseif key == keys.k then
-                            sendAvionicsCmd("TOGGLE_CLUTCH")
-                            hotplugNotice = "DEBRIYAJ YONU (FCC)"
-                            hotplugTimer = 40
-                        elseif key == keys.g then
-                            sendAvionicsCmd("TOGGLE_GEAR")
-                            hotplugNotice = "VITES (FCC)"
-                            hotplugTimer = 40
-                        elseif key == keys.up then
-                            sendAvionicsCmd("ALT_DELTA", { delta = 5 })
-                            hotplugNotice = "IRTIFA +5m (FCC)"
-                            hotplugTimer = 30
-                        elseif key == keys.down then
-                            sendAvionicsCmd("ALT_DELTA", { delta = -5 })
-                            hotplugNotice = "IRTIFA -5m (FCC)"
-                            hotplugTimer = 30
-                        elseif key == keys.left then
-                            if not fc.ap.enabled and (lastTel.vehicleType == "MOTHERSHIP" or lastTel.vehicleType == "GUNSHIP") then
-                                sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = -2 })
-                            else
-                                sendAvionicsCmd("HDG_DELTA", { deltaDeg = -5 })
-                            end
-                        elseif key == keys.right then
-                            if not fc.ap.enabled and (lastTel.vehicleType == "MOTHERSHIP" or lastTel.vehicleType == "GUNSHIP") then
-                                sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = 2 })
-                            else
-                                sendAvionicsCmd("HDG_DELTA", { deltaDeg = 5 })
-                            end
-                        elseif key == keys.w then
-                            sendAvionicsCmd("THR_DELTA", { delta = 1 })
-                            hotplugNotice = "GAZ +1 (FCC)"
-                            hotplugTimer = 30
-                        elseif key == keys.s then
-                            sendAvionicsCmd("THR_DELTA", { delta = -1 })
-                            hotplugNotice = "GAZ -1 (FCC)"
-                            hotplugTimer = 30
-                        end
-                    else
-                        local isAirshipOrMothership = (lastTel.vehicleType == "ZEPPELIN" or lastTel.vehicleType == "MOTHERSHIP" or lastTel.vehicleType == "GUNSHIP")
-                        if key == keys.a then
-                        if fc.ap.enabled then
-                            fc:setMode("MANUAL", lastTel)
-                        else
-                            fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel)
-                        end
+                    local isAirshipOrMothership = (lastTel.vehicleType == "ZEPPELIN" or lastTel.vehicleType == "MOTHERSHIP" or lastTel.vehicleType == "GUNSHIP")
+                    if key == keys.q then
+                        if isRemoteFCC then sendAvionicsCmd("SAFE_DISARM")
+                        else fc.ap.baseThrottle = 0; fc.ap.parkingBrake = true; fc:setMode("MANUAL", lastTel); fc:step(0.05) end
+                        running = false
+                    elseif key == keys.a then
+                        if isRemoteFCC then sendAvionicsCmd("TOGGLE_AP")
+                        elseif fc.ap.enabled then fc:setMode("MANUAL", lastTel)
+                        else fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel) end
                     elseif key == keys.c then
-                        fc:setMode("CRUISE", lastTel)
+                        if isRemoteFCC then sendAvionicsCmd("SET_MODE", { mode = "CRUISE" }) else fc:setMode("CRUISE", lastTel) end
+                        hotplugNotice = "CRUISE MODU"; hotplugTimer = 40
                     elseif key == keys.h then
-                        fc:setMode("HOVER", lastTel)
-                        hotplugNotice = "HOVER AKTIF: Irtifa Kilitli, Arka Pervane Kesildi"
-                        hotplugTimer = 60
+                        if isRemoteFCC then sendAvionicsCmd("SET_MODE", { mode = "HOVER" }) else fc:setMode("HOVER", lastTel) end
+                        hotplugNotice = "HOVER AKTIF: Irtifa Kilitli"; hotplugTimer = 50
                     elseif key == keys.r then
-                        fc:engageRTB(lastTel)
+                        if isRemoteFCC then sendAvionicsCmd("ENGAGE_RTB") else fc:engageRTB(lastTel) end
+                        hotplugNotice = "RTB: Eve Donus"; hotplugTimer = 50
                     elseif key == keys.l then
-                        fc:setMode("AUTOLAND", lastTel)
+                        if isRemoteFCC then sendAvionicsCmd("SET_MODE", { mode = "AUTOLAND" }) else fc:setMode("AUTOLAND", lastTel) end
+                        hotplugNotice = "AUTOLAND: Inis"; hotplugTimer = 50
                     elseif key == keys.b then
-                        if fc.ap.enabled then
-                            -- Engaging [B] while in HOVER/CRUISE switches to Full Park (cuts both propeller and burners)
-                            fc:setMode("MANUAL", lastTel)
-                            fc.ap.parkingBrake = true
-                            fc.ap.baseThrottle = 0
-                            fc.ap.manualYaw = 0
-                            hotplugNotice = "TAM PARK AKTIF: Pervane ve Kazanlar Kapatildi!"
-                            hotplugTimer = 70
+                        if isRemoteFCC then sendAvionicsCmd("TOGGLE_BRAKE")
+                        elseif fc.ap.enabled then
+                            fc:setMode("MANUAL", lastTel); fc.ap.parkingBrake = true; fc.ap.baseThrottle = 0; fc.ap.manualYaw = 0
+                            hotplugNotice = "TAM PARK AKTIF!"; hotplugTimer = 70
                         else
                             fc.ap.parkingBrake = not fc.ap.parkingBrake
-                            if fc.ap.parkingBrake then
-                                fc.ap.baseThrottle = 0
-                                fc.ap.manualYaw = 0
-                                hotplugNotice = "PARK FRENI AKTIF: Pervane ve Kazanlar Kapatildi!"
-                            else
-                                hotplugNotice = "PARK FRENI COZULDU: [W] ile gaz verebilirsiniz"
-                            end
+                            if fc.ap.parkingBrake then fc.ap.baseThrottle = 0; fc.ap.manualYaw = 0; hotplugNotice = "PARK FRENI AKTIF"
+                            else hotplugNotice = "PARK FRENI COZULDU" end
                             hotplugTimer = 60
                         end
                     elseif key == keys.k then
-                        local inv = fc:toggleClutchPolarity()
-                        hotplugNotice = "DEBRIYAJ YONU: " .. (inv and "TERS (INVERTED)" or "DUZ (NORMAL)")
-                        hotplugTimer = 70
-                    elseif key == keys.g then
-                        fc.ap.reverseGear = not fc.ap.reverseGear
-                        hotplugNotice = "VITES (GEARSHIFT): " .. (fc.ap.reverseGear and "GERI (REVERSE AKTIF)" or "ILERI (FORWARD AKTIF)")
-                        hotplugTimer = 60
-                    elseif key == keys.up then
-                        if not fc.ap.enabled then
-                            fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel)
-                        end
-                        fc.ap.targetAlt = fc.ap.targetAlt + 5
-                    elseif key == keys.down then
-                        if not fc.ap.enabled then
-                            fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel)
-                        end
-                        fc.ap.targetAlt = math.max(0, fc.ap.targetAlt - 5)
-                    elseif key == keys.left then
-                        if not fc.ap.enabled and lastTel.vehicleType == "MOTHERSHIP" then
-                            fc.ap.manualYaw = math.max(-6, (fc.ap.manualYaw or 0) - 2)
+                        if isRemoteFCC then sendAvionicsCmd("TOGGLE_CLUTCH")
                         else
-                            fc.ap.targetHdg = (fc.ap.targetHdg - math.rad(5)) % (2 * math.pi)
+                            local inv = fc:toggleClutchPolarity()
+                            hotplugNotice = "DEBRIYAJ YONU: " .. (inv and "TERS" or "DUZ")
+                            hotplugTimer = 60
+                        end
+                    elseif key == keys.g then
+                        if isRemoteFCC then sendAvionicsCmd("TOGGLE_GEAR")
+                        else
+                            fc.ap.reverseGear = not fc.ap.reverseGear
+                            hotplugNotice = "VITES: " .. (fc.ap.reverseGear and "GERI" or "ILERI")
+                            hotplugTimer = 60
+                        end
+                    elseif key == keys.up then
+                        if isRemoteFCC then sendAvionicsCmd("ALT_DELTA", { delta = 5 })
+                        else
+                            if not fc.ap.enabled then fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel) end
+                            fc.ap.targetAlt = fc.ap.targetAlt + 5
+                        end
+                        hotplugNotice = "IRTIFA +5m"; hotplugTimer = 30
+                    elseif key == keys.down then
+                        if isRemoteFCC then sendAvionicsCmd("ALT_DELTA", { delta = -5 })
+                        else
+                            if not fc.ap.enabled then fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel) end
+                            fc.ap.targetAlt = math.max(0, fc.ap.targetAlt - 5)
+                        end
+                        hotplugNotice = "IRTIFA -5m"; hotplugTimer = 30
+                    elseif key == keys.left then
+                        if not fc.ap.enabled and (lastTel.vehicleType == "MOTHERSHIP" or lastTel.vehicleType == "GUNSHIP") then
+                            if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = -2 }) else fc.ap.manualYaw = math.max(-6, (fc.ap.manualYaw or 0) - 2) end
+                        else
+                            if isRemoteFCC then sendAvionicsCmd("HDG_DELTA", { deltaDeg = -5 }) else fc.ap.targetHdg = (fc.ap.targetHdg - math.rad(5)) % (2 * math.pi) end
                         end
                     elseif key == keys.right then
-                        if not fc.ap.enabled and lastTel.vehicleType == "MOTHERSHIP" then
-                            fc.ap.manualYaw = math.min(6, (fc.ap.manualYaw or 0) + 2)
+                        if not fc.ap.enabled and (lastTel.vehicleType == "MOTHERSHIP" or lastTel.vehicleType == "GUNSHIP") then
+                            if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = 2 }) else fc.ap.manualYaw = math.min(6, (fc.ap.manualYaw or 0) + 2) end
                         else
-                            fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(5)) % (2 * math.pi)
+                            if isRemoteFCC then sendAvionicsCmd("HDG_DELTA", { deltaDeg = 5 }) else fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(5)) % (2 * math.pi) end
                         end
                     elseif key == keys.w then
-                        if fc.ap.reverseGear and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
-                            -- Slow down from reverse movement toward 0
-                            fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
-                            if fc.ap.baseThrottle == 0 then
-                                fc.ap.reverseGear = false
-                                hotplugNotice = "DURDU: Pervane kesildi ([W]:Ileri [S]:Geri)"
-                                hotplugTimer = 50
-                            end
+                        if isRemoteFCC then sendAvionicsCmd("THR_DELTA", { delta = 1 })
                         else
-                            fc.ap.reverseGear = false
-                            if fc.ap.mode == "HOVER" then
-                                fc:setMode("CRUISE", lastTel)
-                                fc.ap.parkingBrake = false
-                                fc.ap.baseThrottle = 1
-                                hotplugNotice = "ILERI ITKI: Debriyaj Acik, Gearshift=ILERI"
-                                hotplugTimer = 50
+                            if fc.ap.reverseGear and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
+                                fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
+                                if fc.ap.baseThrottle == 0 then fc.ap.reverseGear = false; hotplugNotice = "DURDU"; hotplugTimer = 40 end
                             else
+                                fc.ap.reverseGear = false
+                                if fc.ap.mode == "HOVER" then fc:setMode("CRUISE", lastTel) end
                                 fc.ap.parkingBrake = false
                                 fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
-                                if fc.ap.baseThrottle == 1 then
-                                    hotplugNotice = "ILERI ITKI: Debriyaj Acik, Gearshift=ILERI"
-                                    hotplugTimer = 50
-                                end
+                                hotplugNotice = "ILERI ITKI"; hotplugTimer = 40
                             end
                         end
                     elseif key == keys.s then
-                        if not fc.ap.reverseGear and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
-                            -- Slow down from forward movement toward 0
-                            fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
-                            if fc.ap.baseThrottle == 0 then
-                                hotplugNotice = "DURDU: Geri gitmek icin tekrar [S]'ye basin"
-                                hotplugTimer = 50
-                            end
+                        if isRemoteFCC then sendAvionicsCmd("THR_DELTA", { delta = -1 })
                         else
-                            -- Engage Reverse Gearshift and clutch for backward movement!
-                            fc.ap.reverseGear = true
-                            if fc.ap.mode == "HOVER" then
-                                fc:setMode("CRUISE", lastTel)
-                                fc.ap.parkingBrake = false
-                                fc.ap.baseThrottle = 1
-                                hotplugNotice = "GERI ITKI (REVERSE): Debriyaj Acik, Gearshift=GERI"
-                                hotplugTimer = 50
+                            if not fc.ap.reverseGear and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
+                                fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
+                                if fc.ap.baseThrottle == 0 then hotplugNotice = "DURDU ([S]:Geri)"; hotplugTimer = 40 end
                             else
+                                fc.ap.reverseGear = true
+                                if fc.ap.mode == "HOVER" then fc:setMode("CRUISE", lastTel) end
                                 fc.ap.parkingBrake = false
                                 fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
-                                if fc.ap.baseThrottle == 1 then
-                                    hotplugNotice = "GERI ITKI (REVERSE): Debriyaj Acik, Gearshift=GERI"
-                                    hotplugTimer = 50
-                                end
+                                hotplugNotice = "GERI ITKI (REV)"; hotplugTimer = 40
                             end
                         end
-                    end
                     end
                 end
             end

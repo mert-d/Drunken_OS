@@ -49,22 +49,27 @@ local function runTests()
         find = function(pType)
             if pType == "altitude_sensor" then
                 return {
+                    getHeight = function() return mockState.altitude end,
                     getAltitude = function() return mockState.altitude end,
                     getVerticalSpeed = function() return -1.5 end,
                     getAirPressure = function() return 0.92 end
                 }
             elseif pType == "gimbal_sensor" then
                 return {
+                    getAnglesRad = function() return { mockState.pitch, mockState.roll } end,
+                    getAngles = function() return { math.deg(mockState.pitch), math.deg(mockState.roll) } end,
                     getPitch = function() return mockState.pitch end,
                     getRoll = function() return mockState.roll end,
-                    getLinearAcceleration = function() return { x = 0, y = 0, z = 0.2 } end
+                    getLinearAcceleration = function() return { 0, 0, 0.2, x = 0, y = 0, z = 0.2 } end
                 }
             elseif pType == "navigation_table" then
                 return {
-                    getHeadingRad = function() return mockState.heading end
+                    getHeadingRad = function() return mockState.heading end,
+                    hasTarget = function() return false end
                 }
             elseif pType == "laser_sensor" then
                 return {
+                    getClosestHitDistance = function() return mockState.agl end,
                     getDistance = function() return mockState.agl end
                 }
             elseif pType == "gas_provider" then

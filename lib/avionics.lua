@@ -360,7 +360,8 @@ function Avionics:autoAssignMothershipRoles(forceOverwrite)
             local k = item.kind:lower()
             if k:find("speed_controller") or k:find("rotationspeedcontroller")
                 or k:find("analog_transmission") or k:find("gearbox")
-                or k:find("sequenced_gearshift") or k:find("throttle_lever") then
+                or k:find("sequenced_gearshift") or k:find("throttle_lever")
+                or k:find("bearing") or k:find("propeller") then
                 table.insert(candidates, item.name)
             end
         end
@@ -369,9 +370,27 @@ function Avionics:autoAssignMothershipRoles(forceOverwrite)
     for _, devName in ipairs(candidates) do
         local cfg = self:getDeviceConfig(devName)
         if forceOverwrite or cfg.role == "AUTO" then
-            assignedCount = assignedCount + 1
-            if assignedCount <= #Avionics.MOTHERSHIP_ROLES then
-                cfg.role = Avionics.MOTHERSHIP_ROLES[assignedCount]
+            local n = devName:lower()
+            local posRole = nil
+            if n:find("fore") and n:find("port") then
+                posRole = "LIFT_FL"
+            elseif n:find("fore") and (n:find("starboard") or n:find("stbd")) then
+                posRole = "LIFT_FR"
+            elseif n:find("aft") and n:find("port") then
+                if n:find("rear") or n:find("thruster") then posRole = "REAR_LEFT" else posRole = "LIFT_RL" end
+            elseif n:find("aft") and (n:find("starboard") or n:find("stbd")) then
+                if n:find("rear") or n:find("thruster") then posRole = "REAR_RIGHT" else posRole = "LIFT_RR" end
+            elseif n:find("aft") and (n:find("center") or n:find("mid")) then
+                posRole = "REAR_CENTER"
+            end
+
+            if posRole then
+                cfg.role = posRole
+            else
+                assignedCount = assignedCount + 1
+                if assignedCount <= #Avionics.MOTHERSHIP_ROLES then
+                    cfg.role = Avionics.MOTHERSHIP_ROLES[assignedCount]
+                end
             end
         end
     end
@@ -408,9 +427,12 @@ function Avionics:scanPeripherals()
     self.gimbal      = peripheral and peripheral.find and peripheral.find("gimbal_sensor")
     self.nav         = peripheral and peripheral.find and peripheral.find("navigation_table")
     self.velSensor   = peripheral and peripheral.find and peripheral.find("velocity_sensor")
+    self.velSensors  = (peripheral and peripheral.find and { peripheral.find("velocity_sensor") }) or {}
     self.laserSensor = peripheral and peripheral.find and peripheral.find("laser_sensor")
     self.steerWheel  = peripheral and peripheral.find and peripheral.find("steering_wheel")
     self.typewriter  = peripheral and peripheral.find and peripheral.find("linked_typewriter")
+    self.radar       = peripheral and peripheral.find and peripheral.find("radar")
+    self.controller  = peripheral and peripheral.find and peripheral.find("avionics_controller")
 
     -- Actuators & Engines (Multiple instances supported, sorted deterministically by peripheral name)
     if peripheral and peripheral.find then
@@ -590,18 +612,36 @@ function Avionics:readTelemetry(dt)
     end
     self.prevAlt = alt
 
-    -- 2. Attitude (Pitch, Roll, Linear Acceleration)
+    -- 2. Attitude (Pitch, Roll, Linear Acceleration from Create: Avionics Gimbal Sensor)
     local pitch, roll = 0, 0
-    local linAcc = { x = 0, y = 0, z = 0 }
+    local linAcc = { x = 0, y = 0, z = 0, 0, 0, 0 }
     if self.gimbal then
-        pitch = tonumber(safeCall(self.gimbal.getPitch)) or 0
-        roll  = tonumber(safeCall(self.gimbal.getRoll)) or 0
+        local rads = safeCall(self.gimbal.getAnglesRad)
+        if type(rads) == "table" and rads[1] and rads[2] then
+            pitch = tonumber(rads[1]) or 0
+            roll  = tonumber(rads[2]) or 0
+        else
+            local degs = safeCall(self.gimbal.getAngles)
+            if type(degs) == "table" and degs[1] and degs[2] then
+                pitch = math.rad(tonumber(degs[1]) or 0)
+                roll  = math.rad(tonumber(degs[2]) or 0)
+            else
+                pitch = tonumber(safeCall(self.gimbal.getPitch)) or 0
+                roll  = tonumber(safeCall(self.gimbal.getRoll)) or 0
+            end
+        end
         local acc = safeCall(self.gimbal.getLinearAcceleration)
-        if type(acc) == "table" then linAcc = acc end
+        if type(acc) == "table" then
+            local ax = tonumber(acc[1] or acc.x) or 0
+            local ay = tonumber(acc[2] or acc.y) or 0
+            local az = tonumber(acc[3] or acc.z) or 0
+            linAcc = { x = ax, y = ay, z = az, ax, ay, az }
+        end
     end
 
-    -- 3. Heading (Navigation Table)
+    -- 3. Heading & Navigation Target (Create: Avionics Navigation Table)
     local heading = 0
+    local navTarget = nil
     if self.nav then
         local hRad = tonumber(safeCall(self.nav.getHeadingRad))
         if hRad then
@@ -610,28 +650,69 @@ function Avionics:readTelemetry(dt)
             local hDeg = tonumber(safeCall(self.nav.getHeading))
             if hDeg then heading = math.rad(hDeg) end
         end
+
+        local hasTgt = safeCall(self.nav.hasTarget)
+        if hasTgt == true then
+            local tName = safeCall(self.nav.getTargetName) or safeCall(self.nav.getTargetDisplayName) or "WAYPOINT"
+            local brgRad = tonumber(safeCall(self.nav.getBearingRad))
+            if brgRad == nil and self.nav.getBearing then
+                local bDeg = tonumber(safeCall(self.nav.getBearing))
+                if bDeg then brgRad = math.rad(bDeg) end
+            end
+            local dist = tonumber(safeCall(self.nav.getDistanceToTarget))
+            local vOff = tonumber(safeCall(self.nav.getVerticalOffsetToTarget))
+            local closure = tonumber(safeCall(self.nav.getClosureRate))
+            navTarget = {
+                active   = true,
+                name     = tostring(tName),
+                bearing  = brgRad or 0,
+                distance = dist or 0,
+                vOffset  = vOff or 0,
+                closure  = closure or 0
+            }
+        end
     end
 
-    -- 4. Velocity & Airspeed (Always positive magnitude for SPD display regardless of sensor block axis orientation)
+    -- 4. Velocity & Airspeed (Multi-sensor body reconstruction or single-axis sensor)
     local vel = { x = 0, y = vsi, z = 0 }
     local speed = 0
     local rawVel = 0
-    if self.velSensor then
-        local v = safeCall(self.velSensor.getVelocity)
-        if type(v) == "table" then
-            vel.x = tonumber(v.x) or 0
-            vel.y = tonumber(v.y) or vsi
-            vel.z = tonumber(v.z) or 0
-            speed = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
-            rawVel = speed
-        elseif type(v) == "number" then
-            rawVel = v
-            speed = math.abs(v)
-            -- Decompose scalar speed along compass heading for INS Dead-Reckoning when no 3D vector is provided
-            local horizSpeed = math.sqrt(math.max(0, speed * speed - vsi * vsi))
-            local dirSign = (self.ap and self.ap.reverseGear) and -1 or 1
-            vel.x = -horizSpeed * math.sin(heading) * dirSign
-            vel.z =  horizSpeed * math.cos(heading) * dirSign
+    local velSensList = (self.velSensors and #self.velSensors > 0) and self.velSensors or (self.velSensor and { self.velSensor } or {})
+    if #velSensList > 0 then
+        local reconstructed = false
+        if #velSensList >= 2 then
+            local hasX, hasZ = false, false
+            for _, vs in ipairs(velSensList) do
+                local axis = tostring(safeCall(vs.getAxis) or ""):lower()
+                local val = tonumber(safeCall(vs.getVelocity)) or 0
+                if axis == "x" then vel.x = val; hasX = true
+                elseif axis == "z" then vel.z = val; hasZ = true
+                elseif axis == "y" then vel.y = val
+                end
+            end
+            if hasX or hasZ then
+                reconstructed = true
+                speed = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
+                rawVel = speed
+            end
+        end
+        if not reconstructed then
+            local vs = velSensList[1]
+            local v = safeCall(vs.getVelocity)
+            if type(v) == "table" then
+                vel.x = tonumber(v[1] or v.x) or 0
+                vel.y = tonumber(v[2] or v.y) or vsi
+                vel.z = tonumber(v[3] or v.z) or 0
+                speed = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
+                rawVel = speed
+            elseif type(v) == "number" then
+                rawVel = v
+                speed = math.abs(v)
+                local horizSpeed = math.sqrt(math.max(0, speed * speed - vsi * vsi))
+                local dirSign = (self.ap and self.ap.reverseGear) and -1 or 1
+                vel.x = -horizSpeed * math.sin(heading) * dirSign
+                vel.z =  horizSpeed * math.cos(heading) * dirSign
+            end
         end
     end
 
@@ -653,20 +734,42 @@ function Avionics:readTelemetry(dt)
         end
     end
 
-    -- 5. Laser Radar Altimeter (AGL)
+    -- 5. Laser Radar Altimeter (AGL - Create: Avionics Laser Sensor)
     local agl = nil
     if self.laserSensor then
-        agl = tonumber(safeCall(self.laserSensor.getDistance))
+        agl = tonumber(safeCall(self.laserSensor.getClosestHitDistance))
+           or tonumber(safeCall(self.laserSensor.getDistance))
            or tonumber(safeCall(self.laserSensor.getHitDistance))
     end
 
-    -- 6. Weight-on-Wheels (Ground Contact)
+    -- 5b. Radar Mk.1 Beam & Contact Processing
+    local radarContact = nil
+    local radarGpws = false
+    if self.radar then
+        local contact = safeCall(self.radar.getContact)
+        if type(contact) == "table" then
+            radarContact = {
+                kind         = contact.kind,
+                distance     = tonumber(contact.distance) or 0,
+                closingSpeed = tonumber(contact.closingSpeed) or 0,
+                name         = contact.name
+            }
+            if contact.kind == "terrain" and (tonumber(contact.distance) or 999) < 40 and (tonumber(contact.closingSpeed) or 0) > 2 then
+                radarGpws = true
+            end
+        end
+    end
+
+    -- 6. Weight-on-Wheels & Landing Gear Retraction (Create: Avionics Wheel Mount)
     local weightOnWheels = false
+    local gearRetracted = false
     for _, w in ipairs(self.wheels) do
         local fric = tonumber(safeCall(w.getTouchingFriction)) or 0
         if fric > 0 then
             weightOnWheels = true
-            break
+        end
+        if safeCall(w.isLiftedUp) == true then
+            gearRetracted = true
         end
     end
 
@@ -679,11 +782,19 @@ function Avionics:readTelemetry(dt)
     local burnerActive = false
     local balloonVolChange = 0
 
+    local totalFuel = 0
+    local maxFuel = 0
     for _, eng in ipairs(self.engines) do
         local engRpm = tonumber(safeCall(eng.getRpm)) or tonumber(safeCall(eng.getSpeed)) or 0
         maxRpm = math.max(maxRpm, math.abs(engRpm))
         if safeCall(eng.isOverstressed) == true then
             overstressed = true
+        end
+        local bTime = tonumber(safeCall(eng.getBurnTime))
+        local tTime = tonumber(safeCall(eng.getTotalBurnTime))
+        if bTime and tTime and tTime > 0 then
+            totalFuel = totalFuel + bTime
+            maxFuel = maxFuel + tTime
         end
     end
 
@@ -730,7 +841,7 @@ function Avionics:readTelemetry(dt)
     end
 
     -- 8. Warnings (GPWS & Stall)
-    local gpwsWarning = (agl ~= nil and agl < 12 and vsi < -3.5 and not weightOnWheels)
+    local gpwsWarning = ((agl ~= nil and agl < 12 and vsi < -3.5 and not weightOnWheels) or radarGpws)
     local stallWarning = (self.vehicleType == "AIRCRAFT" and not weightOnWheels and speed < 3.0 and pitch > math.rad(15))
 
     return {
@@ -758,7 +869,12 @@ function Avionics:readTelemetry(dt)
         balloonVolChange = balloonVolChange,
         mothership       = self.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
         gpwsWarning      = gpwsWarning,
-        stallWarning     = stallWarning
+        stallWarning     = stallWarning,
+        fuelPct          = (maxFuel > 0 and (totalFuel / maxFuel)) or 1.0,
+        navTarget        = navTarget,
+        radarContact     = radarContact,
+        gearRetracted    = gearRetracted,
+        transponder      = (self.controller and safeCall(self.controller.isTransponderOn) == true)
     }
 end
 
@@ -1136,8 +1252,11 @@ function Avionics:step(dt)
     -- 1. Landing Gear Brakes, Inverted Clutches, Gearshifts & Steering / Rudder Deflection
     local brakeVal = self.ap.parkingBrake and 1.0 or 0.0
     local steerVal = 0.0
-    if self.steerWheel and self.steerWheel.getSteering then
-        steerVal = tonumber(safeCall(self.steerWheel.getSteering)) or 0.0
+    if self.steerWheel then
+        steerVal = tonumber(safeCall(self.steerWheel.getNormalizedAngle))
+           or (self.steerWheel.getAngle and (tonumber(safeCall(self.steerWheel.getAngle)) or 0) / 90.0)
+           or tonumber(safeCall(self.steerWheel.getSteering))
+           or 0.0
     end
     -- Autopilot rudder steering when using steering mounts with single engine or Zeppelin
     if self.ap.enabled and self.ap.hdgHold and steerVal == 0.0 and #self.gearboxes < 2 then
@@ -1421,7 +1540,7 @@ function Avionics:step(dt)
                 for _, gyro in ipairs(self.gyros) do
                     if gyro.setManualTarget then
                         table.insert(tasks, function()
-                            safeCall(gyro.setManualTarget, { x = vx, y = vy, z = vz })
+                            safeCall(gyro.setManualTarget, { vx, vy, vz, x = vx, y = vy, z = vz })
                         end)
                     end
                 end
