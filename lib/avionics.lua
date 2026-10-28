@@ -372,7 +372,9 @@ function Avionics:autoAssignMothershipRoles(forceOverwrite)
         if forceOverwrite or cfg.role == "AUTO" then
             local n = devName:lower()
             local posRole = nil
-            if n:find("fore") and n:find("port") then
+            if n:find("rudder") or n:find("yaw") or (n:find("steer") and not n:find("wheel_mount")) then
+                posRole = "RUDDER_YAW"
+            elseif n:find("fore") and n:find("port") then
                 posRole = "LIFT_FL"
             elseif n:find("fore") and (n:find("starboard") or n:find("stbd")) then
                 posRole = "LIFT_FR"
@@ -436,47 +438,30 @@ function Avionics:scanPeripherals()
 
     -- Actuators & Engines (Multiple instances supported, sorted deterministically by peripheral name)
     if peripheral and peripheral.find then
-        self.burners     = { peripheral.find("gas_provider") }
-        self.gearboxes   = { peripheral.find("analog_transmission") }
-        table.sort(self.gearboxes, function(a, b)
-            local na = (peripheral.getName and pcall(peripheral.getName, a) and peripheral.getName(a)) or ""
-            local nb = (peripheral.getName and pcall(peripheral.getName, b) and peripheral.getName(b)) or ""
-            return tostring(na) < tostring(nb)
-        end)
-
-        self.throttles   = { peripheral.find("throttle_lever") }
-        self.gyros       = { peripheral.find("gyroscopic_propeller_bearing") }
-        self.wheels      = { peripheral.find("wheel_mount") }
-        self.engines     = { peripheral.find("portable_engine") }
-        self.clutches    = {}
-        for _, cType in ipairs({ "create_connected_inverted_clutch", "inverted_clutch", "create_clutch", "clutch" }) do
-            local found = { peripheral.find(cType) }
-            for _, c in ipairs(found) do table.insert(self.clutches, c) end
+        local function findAny(types, doSort)
+            local res = {}
+            for _, t in ipairs(types) do
+                local found = { peripheral.find(t) }
+                for _, p in ipairs(found) do table.insert(res, p) end
+            end
+            if doSort then
+                table.sort(res, function(a, b)
+                    local na = (peripheral.getName and pcall(peripheral.getName, a) and peripheral.getName(a)) or ""
+                    local nb = (peripheral.getName and pcall(peripheral.getName, b) and peripheral.getName(b)) or ""
+                    return tostring(na) < tostring(nb)
+                end)
+            end
+            return res
         end
-        self.gearshifts  = {}
-        for _, gType in ipairs({
-            "create_gearshift",
-            "gearshift",
-            "create:gearshift",
-            "create_sequenced_gearshift",
-            "sequenced_gearshift",
-            "create_connected_gearshift",
-            "create_connected_sequenced_gearshift",
-            "redstone_relay"
-        }) do
-            local found = { peripheral.find(gType) }
-            for _, g in ipairs(found) do table.insert(self.gearshifts, g) end
-        end
-        self.speedControllers = {}
-        for _, scType in ipairs({ "Create_RotationSpeedController", "rotation_speed_controller", "create:rotation_speed_controller", "speed_controller" }) do
-            local found = { peripheral.find(scType) }
-            for _, sc in ipairs(found) do table.insert(self.speedControllers, sc) end
-        end
-        table.sort(self.speedControllers, function(a, b)
-            local na = (peripheral.getName and pcall(peripheral.getName, a) and peripheral.getName(a)) or ""
-            local nb = (peripheral.getName and pcall(peripheral.getName, b) and peripheral.getName(b)) or ""
-            return tostring(na) < tostring(nb)
-        end)
+        self.burners          = findAny({ "gas_provider" })
+        self.gearboxes        = findAny({ "analog_transmission" }, true)
+        self.throttles        = findAny({ "throttle_lever" })
+        self.gyros            = findAny({ "gyroscopic_propeller_bearing" })
+        self.wheels           = findAny({ "wheel_mount" })
+        self.engines          = findAny({ "portable_engine" })
+        self.clutches         = findAny({ "create_connected_inverted_clutch", "inverted_clutch", "create_clutch", "clutch" })
+        self.gearshifts       = findAny({ "create_gearshift", "gearshift", "create:gearshift", "create_sequenced_gearshift", "sequenced_gearshift", "create_connected_gearshift", "create_connected_sequenced_gearshift", "redstone_relay" })
+        self.speedControllers = findAny({ "Create_RotationSpeedController", "rotation_speed_controller", "create:rotation_speed_controller", "speed_controller" }, true)
     else
         self.burners          = {}
         self.gearboxes        = {}
@@ -523,7 +508,16 @@ function Avionics:scanPeripherals()
                             addUniqueHandle(self.clutches, h)
                         end
                     end
-                    self:getDeviceConfig(name)
+                    local cfg = self:getDeviceConfig(name)
+                    if cfg.role == "AUTO" then
+                        if combined:find("rudder") or combined:find("swivel") or (combined:find("steer") and not combined:find("steering_wheel") and not combined:find("wheel_mount")) then
+                            cfg.role = "RUDDER_YAW"
+                        elseif combined:find("clutch") and (combined:find("brake") or combined:find("prop")) then
+                            cfg.role = "CLUTCH_BRAKE"
+                        elseif combined:find("reverse") or combined:find("gearshift") then
+                            cfg.role = "GEAR_REVERSE"
+                        end
+                    end
                     table.insert(self.ioDevices, {
                         name       = name,
                         kind       = pStr,
@@ -534,25 +528,12 @@ function Avionics:scanPeripherals()
             end
         end
     else
-        for idx, sc in ipairs(self.speedControllers or {}) do
-            local name = "rotation_speed_controller_" .. tostring(idx - 1)
-            self:getDeviceConfig(name)
-            table.insert(self.ioDevices, {
-                name       = name,
-                kind       = "rotation_speed_controller",
-                handle     = sc,
-                isRedstone = false
-            })
-        end
-        for idx, gb in ipairs(self.gearboxes or {}) do
-            local name = "analog_transmission_" .. tostring(idx - 1)
-            self:getDeviceConfig(name)
-            table.insert(self.ioDevices, {
-                name       = name,
-                kind       = "analog_transmission",
-                handle     = gb,
-                isRedstone = false
-            })
+        for _, pair in ipairs({ { self.speedControllers, "rotation_speed_controller" }, { self.gearboxes, "analog_transmission" } }) do
+            for idx, dev in ipairs(pair[1] or {}) do
+                local name = pair[2] .. "_" .. tostring(idx - 1)
+                self:getDeviceConfig(name)
+                table.insert(self.ioDevices, { name = name, kind = pair[2], handle = dev, isRedstone = false })
+            end
         end
     end
     for _, side in ipairs({ "back", "front", "left", "right", "top", "bottom" }) do
@@ -1252,16 +1233,30 @@ function Avionics:step(dt)
     -- 1. Landing Gear Brakes, Inverted Clutches, Gearshifts & Steering / Rudder Deflection
     local brakeVal = self.ap.parkingBrake and 1.0 or 0.0
     local steerVal = 0.0
+    local steerHeld = false
     if self.steerWheel then
-        steerVal = tonumber(safeCall(self.steerWheel.getNormalizedAngle))
+        if self.steerWheel.isHeld and safeCall(self.steerWheel.isHeld) == true then
+            steerHeld = true
+        end
+        local rawWheel = tonumber(safeCall(self.steerWheel.getNormalizedAngle))
            or (self.steerWheel.getAngle and (tonumber(safeCall(self.steerWheel.getAngle)) or 0) / 90.0)
            or tonumber(safeCall(self.steerWheel.getSteering))
-           or 0.0
+        if rawWheel and (steerHeld or math.abs(rawWheel) > 0.02) then
+            steerVal = clamp(rawWheel, -1.0, 1.0)
+        end
     end
-    -- Autopilot rudder steering when using steering mounts with single engine or Zeppelin
-    if self.ap.enabled and self.ap.hdgHold and steerVal == 0.0 and #self.gearboxes < 2 then
-        steerVal = clamp(-yawDiff * 0.15, -1.0, 1.0)
+
+    -- System 3 & System 4: Ground Wheel Steering & Physical Rudder Yaw Control
+    if self.ap.enabled and self.ap.hdgHold and not steerHeld and math.abs(steerVal) < 0.02 then
+        steerVal = clamp(yawDiff * 0.1667, -1.0, 1.0)
+    elseif not self.ap.enabled and math.abs(steerVal) < 0.02 and self.ap.manualYaw and self.ap.manualYaw ~= 0 then
+        steerVal = clamp((self.ap.manualYaw or 0) / 6.0, -1.0, 1.0)
     end
+
+    tel.steerCmd = steerVal
+    tel.rudderDeflectionDeg = math.floor(steerVal * 45.0 + 0.5)
+
+    -- Drive System 3: Wheel Mounts (Ground Taxi Steering & Braking)
     for _, wheel in ipairs(self.wheels) do
         if wheel.setBrake then
             table.insert(tasks, function() safeCall(wheel.setBrake, brakeVal) end)
@@ -1374,40 +1369,25 @@ function Avionics:step(dt)
             elseif role ~= "AUTO" or (inv and item.isRedstone) then
                 local sig = nil
                 local boolState = nil
-                if role == "IGNORE" then
-                    sig = nil
-                elseif role == "LIFT_FL" then
-                    sig = liftFL
-                elseif role == "LIFT_FR" then
-                    sig = liftFR
-                elseif role == "LIFT_RL" then
-                    sig = liftRL
-                elseif role == "LIFT_RR" then
-                    sig = liftRR
-                elseif role == "REAR_LEFT" then
-                    sig = rearL
-                elseif role == "REAR_CENTER" then
-                    sig = rearC
-                elseif role == "REAR_RIGHT" then
-                    sig = rearR
-                elseif role == "LIFT_BURNER" or (role == "AUTO" and item.isRedstone) then
-                    sig = bSig
-                elseif role == "THRUST_MAIN" then
-                    sig = mainThrottleSig
-                elseif role == "THRUST_PORT" then
-                    sig = portSignal
-                elseif role == "THRUST_STBD" then
-                    sig = stbdSignal
-                elseif role == "AUX_BOOST" then
-                    sig = boostSignal
-                elseif role == "CLUTCH_BRAKE" then
-                    boolState = not clutchCut
-                    sig = clutchCut and 0 or math.max(1, mainThrottleSig)
-                elseif role == "GEAR_REVERSE" then
-                    boolState = revActive
-                    sig = revActive and 15 or 0
-                elseif role == "RUDDER_YAW" then
-                    sig = math.floor(clamp(8 + steerVal * 7, 0, 15))
+                local roleSigs = {
+                    LIFT_FL = liftFL, LIFT_FR = liftFR, LIFT_RL = liftRL, LIFT_RR = liftRR,
+                    REAR_LEFT = rearL, REAR_CENTER = rearC, REAR_RIGHT = rearR,
+                    THRUST_MAIN = mainThrottleSig, THRUST_PORT = portSignal, THRUST_STBD = stbdSignal,
+                    AUX_BOOST = boostSignal
+                }
+                sig = roleSigs[role]
+                if sig == nil then
+                    if role == "LIFT_BURNER" or (role == "AUTO" and item.isRedstone) then
+                        sig = bSig
+                    elseif role == "CLUTCH_BRAKE" then
+                        boolState = not clutchCut
+                        sig = clutchCut and 0 or math.max(1, mainThrottleSig)
+                    elseif role == "GEAR_REVERSE" then
+                        boolState = revActive
+                        sig = revActive and 15 or 0
+                    elseif role == "RUDDER_YAW" then
+                        sig = math.floor(clamp(8 + steerVal * 7, 0, 15) + 0.5)
+                    end
                 end
 
                 if item.isRedstone and sig ~= nil and redstone and redstone.setAnalogOutput then
@@ -1417,10 +1397,23 @@ function Avionics:step(dt)
                 elseif not item.isRedstone and item.handle and role ~= "IGNORE" then
                     local dev = item.handle
                     table.insert(tasks, function()
-                        if role == "RUDDER_YAW" and dev.setSteering then
-                            safeCall(dev.setSteering, inv and -steerVal or steerVal)
+                        if role == "RUDDER_YAW" then
+                            local effSteer = inv and -steerVal or steerVal
+                            if dev.setSteering then
+                                safeCall(dev.setSteering, effSteer)
+                            elseif dev.setTargetAngle then
+                                safeCall(dev.setTargetAngle, effSteer * 45.0)
+                            elseif dev.setTargetAngleRad then
+                                safeCall(dev.setTargetAngleRad, effSteer * math.rad(45.0))
+                            elseif dev.setAngle then
+                                safeCall(dev.setAngle, effSteer * 45.0)
+                            elseif dev.setAngleRad then
+                                safeCall(dev.setAngleRad, effSteer * math.rad(45.0))
+                            elseif sig ~= nil then
+                                driveSignal(dev, sig, inv)
+                            end
                         elseif boolState ~= nil then
-                            driveBooleanOrSignal(dev, boolState, sig or 0, inv)
+                            driveBooleanOrSignal(dev, boolState, sig or 0, inv, role)
                         elseif sig ~= nil then
                             driveSignal(dev, sig, inv)
                         end

@@ -730,12 +730,12 @@ local function run(context)
             drawTerm.setBackgroundColor(theme.bg)
             drawTerm.setTextColor(lastTel.weightOnWheels and (theme.ok or colors.lime) or colors.lightGray)
             drawTerm.write(string.format(
-                "CLUTCH:%s(%s) | BRK:%s | POS:(%d,%d,%d)",
-                clutchCut and "KESIK" or "AKTIF",
-                fc.clutchPolarInvert and "TERS" or "DUZ",
+                "DMN:%+3.0fdg STR:%+4.2f | BRK:%s | WOW:%s | POS:(%d,%d)",
+                lastTel.rudderDeflectionDeg or 0,
+                lastTel.steerCmd or 0,
                 fc.ap.parkingBrake and "PARK" or "OFF ",
+                lastTel.weightOnWheels and "EVET" or "HAYIR",
                 math.floor(lastTel.pos.x),
-                math.floor(lastTel.pos.y),
                 math.floor(lastTel.pos.z)
             ):sub(1, w - 2))
         end
@@ -943,18 +943,10 @@ local function run(context)
                         selectedProfileIdx = math.max(1, selectedProfileIdx - 1)
                     elseif key == keys.down then
                         selectedProfileIdx = math.min(#PROFILE_LIST, selectedProfileIdx + 1)
-                    elseif key == keys.one or key == keys.numPad1 then
-                        selectedProfileIdx = 1
-                        fc:setVehicleProfile("ZEPPELIN", false)
-                        activeTab = "PFD"
-                    elseif key == keys.two or key == keys.numPad2 then
-                        selectedProfileIdx = 2
-                        fc:setVehicleProfile("AIRCRAFT", false)
-                        activeTab = "PFD"
-                    elseif key == keys.three or key == keys.numPad3 then
-                        selectedProfileIdx = 3
-                        fc:setVehicleProfile("MOTHERSHIP", true)
-                        activeTab = "PFD"
+                    elseif (key >= keys.one and key <= keys.three) or (keys.numPad1 and key >= keys.numPad1 and key <= keys.numPad3) then
+                        selectedProfileIdx = (key >= keys.one and key <= keys.three) and (key - keys.one + 1) or (key - keys.numPad1 + 1)
+                        local chosen = PROFILE_LIST[selectedProfileIdx]
+                        if chosen then fc:setVehicleProfile(chosen.id, chosen.id == "MOTHERSHIP"); activeTab = "PFD" end
                     elseif key == keys.enter then
                         local chosen = PROFILE_LIST[selectedProfileIdx]
                         if chosen then
@@ -972,7 +964,10 @@ local function run(context)
                         [keys.four]  = "LIFT_RR",
                         [keys.five]  = "REAR_LEFT",
                         [keys.six]   = "REAR_CENTER",
-                        [keys.seven] = "REAR_RIGHT"
+                        [keys.seven] = "REAR_RIGHT",
+                        [keys.eight] = "RUDDER_YAW",
+                        [keys.nine]  = "CLUTCH_BRAKE",
+                        [keys.zero]  = "GEAR_REVERSE"
                     }
                     if key == keys.up then
                         selectedIOIdx = math.max(1, selectedIOIdx - 1)
@@ -1044,31 +1039,27 @@ local function run(context)
                             hotplugNotice = "VITES: " .. (fc.ap.reverseGear and "GERI" or "ILERI")
                             hotplugTimer = 60
                         end
-                    elseif key == keys.up then
-                        if isRemoteFCC then sendAvionicsCmd("ALT_DELTA", { delta = 5 })
+                    elseif key == keys.up or key == keys.down then
+                        local d = (key == keys.up) and 5 or -5
+                        if isRemoteFCC then sendAvionicsCmd("ALT_DELTA", { delta = d })
                         else
                             if not fc.ap.enabled then fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel) end
-                            fc.ap.targetAlt = fc.ap.targetAlt + 5
+                            fc.ap.targetAlt = math.max(0, fc.ap.targetAlt + d)
                         end
-                        hotplugNotice = "IRTIFA +5m"; hotplugTimer = 30
-                    elseif key == keys.down then
-                        if isRemoteFCC then sendAvionicsCmd("ALT_DELTA", { delta = -5 })
+                        hotplugNotice = "IRTIFA " .. (d > 0 and "+5m" or "-5m"); hotplugTimer = 30
+                    elseif key == keys.left or key == keys.right then
+                        local d = (key == keys.right) and 2 or -2
+                        if not fc.ap.enabled then
+                            if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = d }) else fc.ap.manualYaw = math.max(-6, math.min(6, (fc.ap.manualYaw or 0) + d)) end
+                            hotplugNotice = "DUMEN: " .. (d > 0 and "SAG " or "SOL ") .. tostring(fc.ap.manualYaw); hotplugTimer = 30
                         else
-                            if not fc.ap.enabled then fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel) end
-                            fc.ap.targetAlt = math.max(0, fc.ap.targetAlt - 5)
+                            local hdgDelta = (key == keys.right) and 5 or -5
+                            if isRemoteFCC then sendAvionicsCmd("HDG_DELTA", { deltaDeg = hdgDelta }) else fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(hdgDelta)) % (2 * math.pi) end
                         end
-                        hotplugNotice = "IRTIFA -5m"; hotplugTimer = 30
-                    elseif key == keys.left then
-                        if not fc.ap.enabled and (lastTel.vehicleType == "MOTHERSHIP" or lastTel.vehicleType == "GUNSHIP") then
-                            if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = -2 }) else fc.ap.manualYaw = math.max(-6, (fc.ap.manualYaw or 0) - 2) end
-                        else
-                            if isRemoteFCC then sendAvionicsCmd("HDG_DELTA", { deltaDeg = -5 }) else fc.ap.targetHdg = (fc.ap.targetHdg - math.rad(5)) % (2 * math.pi) end
-                        end
-                    elseif key == keys.right then
-                        if not fc.ap.enabled and (lastTel.vehicleType == "MOTHERSHIP" or lastTel.vehicleType == "GUNSHIP") then
-                            if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = 2 }) else fc.ap.manualYaw = math.min(6, (fc.ap.manualYaw or 0) + 2) end
-                        else
-                            if isRemoteFCC then sendAvionicsCmd("HDG_DELTA", { deltaDeg = 5 }) else fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(5)) % (2 * math.pi) end
+                    elseif key == keys.x then
+                        if not fc.ap.enabled then
+                            if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = -(fc.ap.manualYaw or 0) }) else fc.ap.manualYaw = 0 end
+                            hotplugNotice = "DUMEN SIFIRLANDI"; hotplugTimer = 30
                         end
                     elseif key == keys.w then
                         if isRemoteFCC then sendAvionicsCmd("THR_DELTA", { delta = 1 })

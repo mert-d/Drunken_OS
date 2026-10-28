@@ -534,6 +534,71 @@ local function runTests()
     assert(fccFC.ap.baseThrottle == 0 and fccFC.ap.parkingBrake == true and fccFC.ap.mode == "MANUAL", "Expected SAFE_DISARM to cut throttle and park")
     print("  PASS: Test 10: Dual-Computer Architecture (Avionics Core Daemon FCC + Multi-Monitor Cockpit Remote Command Bus & Telemetry)")
 
+    -- Test 11: System 3 (Wheel Mount Steering) & System 4 (Physical Rudder Bearing & Pilot Override)
+    local wheelSteer = 0
+    local wheelBrake = 0
+    local mockWheel = {
+        setSteering = function(v) wheelSteer = v end,
+        setBrake = function(b) wheelBrake = b end,
+        getTouchingFriction = function() return 0.5 end
+    }
+    local rudderTargetAngle = 0
+    local mockRudderBearing = {
+        setTargetAngle = function(deg) rudderTargetAngle = deg end
+    }
+    local isPilotHoldingWheel = true
+    local mockCockpitWheel = {
+        isHeld = function() return isPilotHoldingWheel end,
+        getNormalizedAngle = function() return 0.75 end
+    }
+
+    _G.peripheral.find = function(pType)
+        if pType == "wheel_mount" then return mockWheel
+        elseif pType == "steering_wheel" then return mockCockpitWheel
+        elseif pType == "altitude_sensor" then return { getHeight = function() return 80 end, getVerticalSpeed = function() return 0 end }
+        elseif pType == "navigation_table" then return { getHeadingRad = function() return 0 end }
+        end
+        return nil
+    end
+    _G.peripheral.getNames = function() return { "wheel_mount_0", "rudder_bearing" } end
+    _G.peripheral.getType = function(n)
+        if n == "wheel_mount_0" then return "wheel_mount"
+        elseif n == "rudder_bearing" then return "create_mechanical_bearing" end
+        return "peripheral"
+    end
+    _G.peripheral.wrap = function(n)
+        if n == "wheel_mount_0" then return mockWheel
+        elseif n == "rudder_bearing" then return mockRudderBearing end
+        return nil
+    end
+
+    local sysFC = Avionics.new({ callsign = "SYS34-TEST" })
+    local rudderCfg = sysFC:getDeviceConfig("rudder_bearing")
+    assert(rudderCfg.role == "RUDDER_YAW", "Expected device named rudder_bearing to auto-assign role RUDDER_YAW")
+
+    -- 1. Pilot physically holds steering wheel at 0.75:
+    sysFC:step(0.05)
+    assert(wheelSteer == 0.75, "Expected wheel_mount to receive pilot steering command (0.75)")
+    assert(rudderTargetAngle == 0.75 * 45.0, "Expected rudder mechanical bearing to deflect to 0.75 * 45 deg")
+
+    -- 2. Pilot releases wheel (isHeld = false); Autopilot Heading Hold active with 30 deg error:
+    isPilotHoldingWheel = false
+    mockCockpitWheel.getNormalizedAngle = function() return 0 end
+    sysFC.ap.enabled = true
+    sysFC.ap.hdgHold = true
+    sysFC.ap.targetHdg = math.rad(30)
+    sysFC:step(0.05)
+    assert(wheelSteer > 0, "Expected Autopilot heading hold to command positive steering to correct heading error")
+    assert(rudderTargetAngle > 0, "Expected Autopilot heading hold to deflect rudder bearing towards target heading")
+
+    -- 3. Manual Mode with manualYaw:
+    sysFC.ap.enabled = false
+    sysFC.ap.manualYaw = -3
+    sysFC:step(0.05)
+    assert(wheelSteer == -0.5, "Expected manualYaw=-3 to command -0.5 steering")
+    assert(rudderTargetAngle == -0.5 * 45.0, "Expected rudder bearing to deflect to -22.5 deg")
+    print("  PASS: Test 11: System 3 (Wheel Mount Steering) & System 4 (Physical Rudder Bearing & Pilot Override)")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel
