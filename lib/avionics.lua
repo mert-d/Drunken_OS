@@ -81,6 +81,8 @@ local function callKineticRole(dev, roleHint, fn, ...)
     local pType = (peripheral and peripheral.getType and pcall(peripheral.getType, dev) and peripheral.getType(dev)) or nil
 
     local kw = isForeign and "gearshift" or (roleHint and roleHint:lower() or nil)
+    if kw == "gear_reverse" then kw = "gearshift"
+    elseif kw == "clutch_brake" then kw = "clutch" end
     if not kw then
         local combined = (tostring(blkId or "") .. " " .. tostring(pType or "") .. " " .. tostring(pName or "")):lower()
         if combined:find("gearshift") then kw = "gearshift"
@@ -536,9 +538,11 @@ function Avionics:scanPeripherals()
             end
         end
     end
+    local hasGearRole = (#self.gearshifts > 0)
     for _, side in ipairs({ "back", "front", "left", "right", "top", "bottom" }) do
         local rsName = "RS:" .. side
-        self:getDeviceConfig(rsName)
+        local cfg = self:getDeviceConfig(rsName)
+        if cfg.role == "GEAR_REVERSE" then hasGearRole = true end
         table.insert(self.ioDevices, {
             name       = rsName,
             side       = side,
@@ -546,6 +550,10 @@ function Avionics:scanPeripherals()
             handle     = nil,
             isRedstone = true
         })
+    end
+    if not hasGearRole then
+        local bCfg = self:getDeviceConfig("RS:back")
+        if bCfg.role == "AUTO" then bCfg.role = "GEAR_REVERSE" end
     end
 
     -- Determine Vehicle Type (Respect explicit saved profile first; otherwise auto-detect)
@@ -1184,7 +1192,8 @@ function Avionics:step(dt)
                 pcall(dev.setAnalogOutput, s, finalSig)
             end
             called = true
-        elseif dev.setOutput then
+        end
+        if dev.setOutput then
             for _, s in ipairs({ "front", "back", "left", "right", "top", "bottom" }) do
                 pcall(dev.setOutput, s, finalActive)
             end
@@ -1195,9 +1204,7 @@ function Avionics:step(dt)
         end
     end
 
-    -- Emits analog redstone for Zeppelin Hot Air Burners.
-    -- When a `throttle_lever` peripheral is present, `AUTO` redstone sides stay at 0 unless directly touching a burner,
-    -- preventing stray burner redstone from triggering adjacent clutches or gearshifts!
+    -- Emits analog & digital redstone for Zeppelin Hot Air Burners (only to direct or assigned burner sides)
     local function emitRedstoneBurner(sig)
         if redstone and redstone.setAnalogOutput then
             for _, side in ipairs({ "left", "right", "front", "back", "top", "bottom" }) do
@@ -1205,25 +1212,22 @@ function Avionics:step(dt)
                 if cfg.role == "LIFT_BURNER" then
                     local outSig = cfg.invert and (15 - sig) or sig
                     pcall(redstone.setAnalogOutput, side, outSig)
+                    if redstone.setOutput then pcall(redstone.setOutput, side, outSig > 0) end
                 elseif cfg.role == "AUTO" then
                     local isDirectBurner = false
-                    local hasNonBurnerPeriph = false
                     if peripheral and peripheral.getType then
                         local okT, pType = pcall(peripheral.getType, side)
                         if okT and pType ~= nil then
                             local pStr = tostring(pType):lower()
                             if pStr:find("burner") or pStr:find("gas_provider") then
                                 isDirectBurner = true
-                            else
-                                hasNonBurnerPeriph = true
                             end
                         end
                     end
-                    if isDirectBurner or (#self.throttles == 0 and not hasNonBurnerPeriph) then
+                    if isDirectBurner then
                         local outSig = cfg.invert and (15 - sig) or sig
                         pcall(redstone.setAnalogOutput, side, outSig)
-                    else
-                        pcall(redstone.setAnalogOutput, side, 0)
+                        if redstone.setOutput then pcall(redstone.setOutput, side, outSig > 0) end
                     end
                 end
             end
@@ -1390,10 +1394,11 @@ function Avionics:step(dt)
                     end
                 end
 
-                if item.isRedstone and sig ~= nil and redstone and redstone.setAnalogOutput then
+                if item.isRedstone and sig ~= nil and redstone then
                     local clamped = math.floor(clamp(math.abs(sig), 0, 15))
                     local outSig = inv and (15 - clamped) or clamped
-                    pcall(redstone.setAnalogOutput, item.side, outSig)
+                    if redstone.setAnalogOutput then pcall(redstone.setAnalogOutput, item.side, outSig) end
+                    if redstone.setOutput then pcall(redstone.setOutput, item.side, outSig > 0) end
                 elseif not item.isRedstone and item.handle and role ~= "IGNORE" then
                     local dev = item.handle
                     table.insert(tasks, function()

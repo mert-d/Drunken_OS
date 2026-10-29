@@ -597,6 +597,26 @@ local function runTests()
     sysFC:step(0.05)
     assert(wheelSteer == -0.5, "Expected manualYaw=-3 to command -0.5 steering")
     assert(rudderTargetAngle == -0.5 * 45.0, "Expected rudder bearing to deflect to -22.5 deg")
+
+    -- 4. Redstone Gearshift Driving (Digital & Analog Redstone)
+    local rsAnalog = {}
+    local rsDigital = {}
+    local origRs = _G.redstone
+    _G.redstone = {
+        setAnalogOutput = function(s, v) rsAnalog[s] = v end,
+        setOutput = function(s, b) rsDigital[s] = b end
+    }
+    assert(sysFC:getDeviceConfig("RS:back").role == "GEAR_REVERSE", "Expected RS:back to auto-assign GEAR_REVERSE when no gearshift peripheral present")
+    sysFC.ap.reverseGear = true
+    sysFC:step(0.05)
+    assert(rsAnalog["back"] == 15, "Expected RS:back analog redstone to be 15 in reverse")
+    assert(rsDigital["back"] == true, "Expected RS:back digital redstone to be true in reverse")
+    sysFC.ap.reverseGear = false
+    sysFC:step(0.05)
+    assert(rsAnalog["back"] == 0, "Expected RS:back analog redstone to be 0 in forward")
+    assert(rsDigital["back"] == false, "Expected RS:back digital redstone to be false in forward")
+    _G.redstone = origRs
+
     print("  PASS: Test 11: System 3 (Wheel Mount Steering) & System 4 (Physical Rudder Bearing & Pilot Override)")
 
     -- Restore globals

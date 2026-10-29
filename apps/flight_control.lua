@@ -1036,7 +1036,7 @@ local function run(context)
                         if isRemoteFCC then sendAvionicsCmd("TOGGLE_GEAR")
                         else
                             fc.ap.reverseGear = not fc.ap.reverseGear
-                            hotplugNotice = "VITES: " .. (fc.ap.reverseGear and "GERI" or "ILERI")
+                            hotplugNotice = "VITES: " .. (fc.ap.reverseGear and "GERI [REDSTONE 15]" or "ILERI [REDSTONE 0]")
                             hotplugTimer = 60
                         end
                     elseif key == keys.up or key == keys.down then
@@ -1061,32 +1061,19 @@ local function run(context)
                             if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = -(fc.ap.manualYaw or 0) }) else fc.ap.manualYaw = 0 end
                             hotplugNotice = "DUMEN SIFIRLANDI"; hotplugTimer = 30
                         end
-                    elseif key == keys.w then
-                        if isRemoteFCC then sendAvionicsCmd("THR_DELTA", { delta = 1 })
+                    elseif key == keys.w or key == keys.s then
+                        local wantRev = (key == keys.s)
+                        if isRemoteFCC then sendAvionicsCmd("THR_DELTA", { delta = wantRev and -1 or 1 })
                         else
-                            if fc.ap.reverseGear and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
+                            if fc.ap.reverseGear ~= wantRev and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
                                 fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
-                                if fc.ap.baseThrottle == 0 then fc.ap.reverseGear = false; hotplugNotice = "DURDU"; hotplugTimer = 40 end
+                                if fc.ap.baseThrottle == 0 then fc.ap.reverseGear = wantRev; hotplugNotice = "DURDU"; hotplugTimer = 40 end
                             else
-                                fc.ap.reverseGear = false
+                                fc.ap.reverseGear = wantRev
                                 if fc.ap.mode == "HOVER" then fc:setMode("CRUISE", lastTel) end
                                 fc.ap.parkingBrake = false
                                 fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
-                                hotplugNotice = "ILERI ITKI"; hotplugTimer = 40
-                            end
-                        end
-                    elseif key == keys.s then
-                        if isRemoteFCC then sendAvionicsCmd("THR_DELTA", { delta = -1 })
-                        else
-                            if not fc.ap.reverseGear and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
-                                fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
-                                if fc.ap.baseThrottle == 0 then hotplugNotice = "DURDU ([S]:Geri)"; hotplugTimer = 40 end
-                            else
-                                fc.ap.reverseGear = true
-                                if fc.ap.mode == "HOVER" then fc:setMode("CRUISE", lastTel) end
-                                fc.ap.parkingBrake = false
-                                fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
-                                hotplugNotice = "GERI ITKI (REV)"; hotplugTimer = 40
+                                hotplugNotice = wantRev and "GERI ITKI (REV)" or "ILERI ITKI"; hotplugTimer = 40
                             end
                         end
                     end
