@@ -687,6 +687,11 @@ local function run(context)
             drawTerm.setTextColor(colors.black)
             local msg = " " .. hotplugNotice .. " "
             drawTerm.write(msg:sub(1, w - 2))
+        elseif fc.ap.mode == "ANCHOR" and lastTel.anchor and lastTel.anchor.active then
+            drawTerm.setBackgroundColor(isColor and colors.yellow or colors.white)
+            drawTerm.setTextColor(colors.black)
+            local a = lastTel.anchor
+            drawTerm.write(string.format(" CAPA [3D-LOCK] dH:%4.1fm SURGE:%+5.1fm SWAY:%+5.1fm dY:%+4.1fm ", a.dist, a.surge, a.sway, a.dy):sub(1, w - 2))
         elseif fc.ap.mode == "RTB" and fc.ap.homeBase then
             drawTerm.setBackgroundColor(theme.bg)
             drawTerm.setTextColor(theme.accent or colors.cyan)
@@ -751,7 +756,9 @@ local function run(context)
         drawTerm.setCursorPos(2, h - 2)
         drawTerm.setTextColor(fc.ap.enabled and (theme.ok or colors.lime) or (theme.warn or colors.orange))
         drawTerm.write(string.format(
-            "[A]AP:%s [H]HVR [C]CRS [B]PARK:%s [K]CLUTCH [G]VTS",
+            "[A]AP:%s [H]HVR [C]CRS [Z]CAPA:%s [B]PARK:%s [G]VTS",
+            fc.ap.enabled and "ON " or "OFF",
+            (fc.ap.mode == "ANCHOR") and "LOK" or "OFF",
             fc.ap.enabled and "ON " or "OFF",
             fc.ap.parkingBrake and "ON " or "OFF"
         ):sub(1, w - 2))
@@ -762,7 +769,7 @@ local function run(context)
 
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
-        drawTerm.write("[Up/Dn]:Alt+-5 [Lt/Rt]:Hdg+-5 [W/S]:Thr [L]:Lnd [Q]:Cik")
+        drawTerm.write("[Up/Dn]:Alt+-5 [Lt/Rt]:Hdg+-5 [W/S]:Thr [Z]:Capa [Q]:Cik")
         drawTerm = prevTerm
     end
 
@@ -1022,6 +1029,20 @@ local function run(context)
                             fc.ap.reverseGear = not fc.ap.reverseGear
                             hotplugNotice = "VITES: " .. (fc.ap.reverseGear and "GERI [REDSTONE 15]" or "ILERI [REDSTONE 0]")
                             hotplugTimer = 60
+                        end
+                    elseif key == keys.z then
+                        if isRemoteFCC then
+                            local newM = (fc.ap.mode == "ANCHOR") and "MANUAL" or "ANCHOR"
+                            sendAvionicsCmd("SET_MODE", { mode = newM })
+                        else
+                            if fc.ap.mode == "ANCHOR" then
+                                fc:setMode("MANUAL", lastTel)
+                                hotplugNotice = "CAPA SERBEST (MANUEL)"
+                            else
+                                fc:setMode("ANCHOR", lastTel)
+                                hotplugNotice = "GOKYUZU CAPASI KILITLENDI [3D-LOCK]"
+                            end
+                            hotplugTimer = 70
                         end
                     elseif key == keys.up or key == keys.down then
                         local d = (key == keys.up) and 5 or -5

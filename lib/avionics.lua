@@ -308,9 +308,9 @@ function Avionics:loadModules(dir)
         end
     end
     if not found then
-        for _, rel in ipairs({ "lib.avx.wing_level", "avx.wing_level" }) do
+        for _, rel in ipairs({ "lib.avx.wing_level", "avx.wing_level", "lib.avx.sky_anchor", "avx.sky_anchor" }) do
             local ok, m = pcall(require, rel)
-            if ok and type(m) == "table" then self:addModule(m); break end
+            if ok and type(m) == "table" then self:addModule(m) end
         end
     end
 end
@@ -932,6 +932,7 @@ function Avionics:setMode(modeName, currentTel)
     -- Preserve learned equilibrium integral when switching between autopilot modes; use gentle 1.0 (burner=9) from MANUAL
     local bumplessInt = wasAltHold and savedIntegral or clamp((self.lastBurnerSignal and self.lastBurnerSignal > 0) and (self.lastBurnerSignal - 8.0) or 1.0, 0.0, 3.0)
 
+    if modeName ~= "ANCHOR" then self.anchorPos = nil end
     if modeName == "MANUAL" then
         self.ap.enabled = false
         self.ap.altHold = false
@@ -950,16 +951,24 @@ function Avionics:setMode(modeName, currentTel)
             self.ap.targetHdg = currentTel.heading
         end
         self.altPID:setIntegral(bumplessInt)
-    elseif modeName == "HOVER" then
+    elseif modeName == "HOVER" or modeName == "ANCHOR" then
         self.ap.enabled = true
         self.ap.altHold = true
         self.ap.hdgHold = true
         self.ap.baseThrottle = 0
-        self.ap.parkingBrake = true -- Strictly cut forward propeller/clutch while hovering
+        self.ap.parkingBrake = (modeName == "HOVER")
         self.ap.manualYaw = 0
         if currentTel then
             self.ap.targetAlt = math.floor(currentTel.altitude + 0.5)
             self.ap.targetHdg = currentTel.heading
+            if modeName == "ANCHOR" then
+                self.anchorPos = {
+                    x = (currentTel.pos and currentTel.pos.x) or 0,
+                    y = self.ap.targetAlt,
+                    z = (currentTel.pos and currentTel.pos.z) or 0,
+                    heading = currentTel.heading
+                }
+            end
         end
         self.altPID:setIntegral(bumplessInt)
     elseif modeName == "LNAV" then
@@ -1295,7 +1304,8 @@ function Avionics:step(dt)
 
     -- Drive Create Clutches & Inverted Clutches (Propeller power cut / engagement)
     -- Steady-state deterministic polarity (no auto-flipping oscillation loop!)
-    local clutchCut = (self.ap.mode == "HOVER") or self.ap.parkingBrake or (self.ap.baseThrottle <= 0)
+    local isAnchorThrust = (self.ap.mode == "ANCHOR" and tel.anchor and math.abs(tel.anchor.surge or 0) > 0.5)
+    local clutchCut = (self.ap.mode == "HOVER") or self.ap.parkingBrake or (self.ap.baseThrottle <= 0 and not isAnchorThrust)
     for _, cl in ipairs(self.clutches or {}) do
         local clName = (peripheral and peripheral.getName and pcall(peripheral.getName, cl) and peripheral.getName(cl)) or nil
         local clType = (clName and peripheral and peripheral.getType and pcall(peripheral.getType, clName) and peripheral.getType(clName)) or ""
@@ -1313,8 +1323,8 @@ function Avionics:step(dt)
         end)
     end
 
-    -- Drive Gearshifts (Forward / Backward Movement via [G] or [W]/[S])
-    local revActive = self.ap.reverseGear == true
+    -- Drive Gearshifts (Forward / Backward Movement via [G], [W]/[S], or Sky Anchor reverse drift)
+    local revActive = (self.ap.reverseGear == true) or (self.ap.mode == "ANCHOR" and tel.anchor and (tel.anchor.surge or 0) < -0.5)
     for _, gs in ipairs(self.gearshifts or {}) do
         local gsName = (peripheral and peripheral.getName and pcall(peripheral.getName, gs) and peripheral.getName(gs)) or nil
         local devInv = gsName and self:getDeviceConfig(gsName).invert or false
@@ -1346,12 +1356,15 @@ function Avionics:step(dt)
     end
     local pitchTrim = 0
     local rollTrim  = 0
-    if self.ap.sasEnabled then
-        pitchTrim = self.msPitchPID:compute(0, tel.pitch, dt)
-        rollTrim  = self.msRollPID:compute(0, tel.roll, dt)
-        local t = { pitch = pitchTrim, roll = rollTrim }
+    local surgeTrim = 0
+    if self.ap.sasEnabled or self.ap.enabled then
+        if self.ap.sasEnabled then
+            pitchTrim = self.msPitchPID:compute(0, tel.pitch, dt)
+            rollTrim  = self.msRollPID:compute(0, tel.roll, dt)
+        end
+        local t = { pitch = pitchTrim, roll = rollTrim, surge = 0 }
         self:hook("onMix", tel, t, dt)
-        pitchTrim, rollTrim = t.pitch, t.roll
+        pitchTrim, rollTrim, surgeTrim = t.pitch, t.roll, t.surge or 0
     end
 
     local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
@@ -1363,7 +1376,8 @@ function Avionics:step(dt)
         liftRR = math.floor(clamp(collectiveLift - pitchTrim - rollTrim, 0, 15) + 0.5)
     end
 
-    local fwdSig = clutchCut and 0 or (revActive and -mainThrottleSig or mainThrottleSig)
+    local fwdBase = (revActive and -mainThrottleSig or mainThrottleSig) + surgeTrim
+    local fwdSig = clutchCut and 0 or fwdBase
     local turnYaw = 0
     if not (not self.ap.enabled and self.ap.parkingBrake) then
         turnYaw = self.ap.hdgHold and yawDiff or ((steerVal ~= 0 and (steerVal * 6.0)) or (self.ap.manualYaw or 0))

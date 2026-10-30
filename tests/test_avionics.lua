@@ -662,6 +662,26 @@ local function runTests()
     assert(wFC.wingAlt.dP == -2 and ms.fl > ms.rl and ms.fr > ms.rr, "Expected low nose to receive more front lift")
     print("  PASS: Test 12: Quad Wing Altimeter Differential Auto-Leveling (4x RSC)")
 
+    -- Test 13: Sky Anchor (Station Keeping & 3D Position Lock)
+    local ancFC = Avionics.new({ callsign = "SKY-ANCHOR-TEST", profile = "MOTHERSHIP" })
+    ancFC.pos = { x = 100, y = 80, z = 200 }
+    local initTel = { altitude = 80, pos = { x = 100, y = 80, z = 200 }, heading = 0, pitch = 0, roll = 0 }
+    ancFC:setMode("ANCHOR", initTel)
+    assert(ancFC.ap.mode == "ANCHOR", "Expected mode to be ANCHOR")
+    assert(ancFC.anchorPos and ancFC.anchorPos.x == 100 and ancFC.anchorPos.y == 80 and ancFC.anchorPos.z == 200, "Expected anchorPos locked to initial coordinates")
+
+    -- Simulate forward drift: vessel moved to z=205 (5 blocks ahead)
+    ancFC.pos = { x = 100, y = 80, z = 205 }
+    local telStep = ancFC:step(0.05) or ancFC:readTelemetry(0.05)
+    assert(telStep.anchor and telStep.anchor.active == true, "Expected anchor telemetry active")
+    assert(telStep.anchor.surge == -5, "Expected negative surge (-5) when vessel drifts forward")
+    assert(ancFC.lastMothershipState.rearC < 0, "Expected rear propulsion to command reverse thrust to arrest forward drift")
+
+    -- Disengage anchor
+    ancFC:setMode("MANUAL", telStep)
+    assert(ancFC.anchorPos == nil, "Expected anchorPos cleared when disengaging anchor")
+    print("  PASS: Test 13: Sky Anchor 3D Station Keeping & Anti-Drift Counter-Thrust")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

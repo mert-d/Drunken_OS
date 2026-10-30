@@ -1,13 +1,4 @@
---[[
-    Drunken OS - Package Manifest (v1.1)
-    
-    This file defines the files required for each component of the OS.
-    The Installer and Updater use this to know what to download.
-]]
-
----
--- Global configuration structure detailing files bundled with each Drunken OS component.
--- Ensures dependencies are mapped properly during fetching & installation.
+-- Drunken OS - Package Manifest (v1.5)
 return {
     version = 1.5,
 
@@ -175,7 +166,9 @@ return {
             },
             -- GitHub-only extension modules: not written to floppy, downloaded at install/OTA
             remote_files = {
-                "lib/avx/wing_level.lua"
+                "lib/avx/wing_level.lua",
+                "lib/avx/sky_anchor.lua",
+                "apps/engineering_deck.lua"
             },
             include_shared = false
         },
@@ -190,7 +183,9 @@ return {
                 "lib/avionics.lua"
             },
             remote_files = {
-                "lib/avx/wing_level.lua"
+                "lib/avx/wing_level.lua",
+                "lib/avx/sky_anchor.lua",
+                "apps/engineering_deck.lua"
             },
             include_shared = false
         },
