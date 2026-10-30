@@ -281,7 +281,47 @@ function Avionics.new(config)
     self.msPitchPID = createPID(14.0, 1.5, 4.5, -6.0, 6.0)
     self.msRollPID  = createPID(14.0, 1.5, 4.5, -6.0, 6.0)
 
+    self.mods = {}
+    self:loadModules(self.config.modDir or "/lib/avx")
     return self
+end
+
+-- AVX extension modules (lib/avx/*.lua, installed from GitHub). Core runs without them.
+function Avionics:addModule(m)
+    if type(m) == "table" then self.mods = self.mods or {}; table.insert(self.mods, m) end
+end
+
+function Avionics:loadModules(dir)
+    dir = dir or "/lib/avx"
+    local found = false
+    if fs and fs.isDir then
+        for _, d in ipairs({ dir, dir:gsub("^/+", ""), "/" .. dir:gsub("^/+", "") }) do
+            if fs.isDir(d) then
+                for _, n in ipairs(fs.list(d)) do
+                    if n:match("%.lua$") then
+                        local ok, m = pcall(dofile, fs.combine(d, n))
+                        if ok then self:addModule(m); found = true else self.modErr = tostring(m) end
+                    end
+                end
+                break
+            end
+        end
+    end
+    if not found then
+        for _, rel in ipairs({ "lib.avx.wing_level", "avx.wing_level" }) do
+            local ok, m = pcall(require, rel)
+            if ok and type(m) == "table" then self:addModule(m); break end
+        end
+    end
+end
+
+function Avionics:hook(name, ...)
+    for _, m in ipairs(self.mods or {}) do
+        if m[name] then
+            local ok, e = pcall(m[name], self, ...)
+            if not ok then self.modErr = tostring(e) end
+        end
+    end
 end
 
 function Avionics:loadIOMap()
@@ -572,19 +612,6 @@ function Avionics:readTelemetry(dt)
         sensorVsi = tonumber(safeCall(self.altSensor.getVerticalSpeed)) or 0
         pressure = tonumber(safeCall(self.altSensor.getAirPressure)) or 1.0
     end
-    -- Wing altimeters: altitude_sensor assigned LIFT_FL/FR/RL/RR role in I/O config
-    local wA, wN = {}, 0
-    for _, it in ipairs(self.ioDevices or {}) do
-        local r = (self.ioMap[it.name] or {}).role or ""
-        if it.kind == "altitude_sensor" and it.handle and r:find("^LIFT_") then
-            local h = tonumber(safeCall(it.handle.getHeight)) or tonumber(safeCall(it.handle.getAltitude))
-            if h then wA[r:sub(6)] = h; wN = wN + 1 end
-        end
-    end
-    local function av(a, b) a, b = wA[a], wA[b]; return a and b and (a + b) / 2 or a or b end
-    local L, R, F, B = av("FL", "RL"), av("FR", "RR"), av("FL", "FR"), av("RL", "RR")
-    self.wingAlt = wN > 1 and { dR = L and R and L - R or 0, dP = F and B and F - B or 0, n = wN } or nil
-    if wN == 4 then alt = (wA.FL + wA.FR + wA.RL + wA.RR) / 4 end
     local vsi = sensorVsi
     if self.prevAlt ~= nil and dt > 0 then
         local rawDeltaVsi = clamp((alt - self.prevAlt) / dt, -20.0, 20.0)
@@ -827,7 +854,7 @@ function Avionics:readTelemetry(dt)
     local gpwsWarning = ((agl ~= nil and agl < 12 and vsi < -3.5 and not weightOnWheels) or radarGpws)
     local stallWarning = (self.vehicleType == "AIRCRAFT" and not weightOnWheels and speed < 3.0 and pitch > math.rad(15))
 
-    return {
+    local tel = {
         callsign         = self.callsign,
         vehicleType      = self.vehicleType,
         altitude         = alt,
@@ -850,7 +877,6 @@ function Avionics:readTelemetry(dt)
         burnerActual     = burnerActual,
         burnerActive     = burnerActive,
         balloonVolChange = balloonVolChange,
-        wingAlt          = self.wingAlt,
         mothership       = self.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
         gpwsWarning      = gpwsWarning,
         stallWarning     = stallWarning,
@@ -860,6 +886,8 @@ function Avionics:readTelemetry(dt)
         gearRetracted    = gearRetracted,
         transponder      = (self.controller and safeCall(self.controller.isTransponderOn) == true)
     }
+    self:hook("onTelemetry", tel, dt)
+    return tel
 end
 
 function Avionics:triggerSpinTest(devName)
@@ -1321,11 +1349,9 @@ function Avionics:step(dt)
     if self.ap.sasEnabled then
         pitchTrim = self.msPitchPID:compute(0, tel.pitch, dt)
         rollTrim  = self.msRollPID:compute(0, tel.roll, dt)
-        local w, k = self.wingAlt, self.config.wingAltGain or 1.5
-        if w then
-            rollTrim  = clamp(rollTrim - w.dR * k, -6, 6)
-            pitchTrim = clamp(pitchTrim - w.dP * k, -6, 6)
-        end
+        local t = { pitch = pitchTrim, roll = rollTrim }
+        self:hook("onMix", tel, t, dt)
+        pitchTrim, rollTrim = t.pitch, t.roll
     end
 
     local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0

@@ -294,6 +294,7 @@ local function buildProgramList()
             type = pkg.type,
             path = pkg.main,
             files = pkg.files or {},
+            remote_files = pkg.remote_files or {},
             include_shared = pkg.include_shared,
             needs_setup = pkg.needs_setup,
             setup_type = pkg.setup_type,
@@ -817,29 +818,32 @@ local function createInstallDisk(program)
         type = program.type,
         main_program = program.path,
         files = allFiles,
+        remote_files = program.remote_files or {},
+        base_url = GITHUB_REPO_URL,
         needs_setup = program.needs_setup or false,
         setup_type = program.setup_type or nil
     }
     local configSerialized = textutils.serialize(config)
 
-    -- Accurate total size calculation
-    local programFilesSize = 0
-    for _, filePath in ipairs(allFiles) do
-        local content = dependencies[filePath] or programCode
-        programFilesSize = programFilesSize + #content
-    end
-
+    -- Hybrid disk: bootloader + as many package files as fit go on the floppy (offline core);
+    -- files that do not fit (and all remote_files) are downloaded from GitHub on the target PC.
     local installerScriptsSize = #installScript + (serverStartupScript and #serverStartupScript or 0) + #configSerialized
     local safetyMargin = 2048 -- 2 KB safe buffer for filesystem metadata
-    local requiredTotal = programFilesSize + installerScriptsSize + safetyMargin
-
     local freeSpace = fs.getFreeSpace(mountPath)
-    if requiredTotal > freeSpace then
-        local reqKb = math.ceil(requiredTotal / 1024)
-        local freeKb = math.ceil(freeSpace / 1024)
-        local diffKb = reqKb - freeKb
-        showMessage("Disk Full", string.format("Cannot create installer for '%s'.\nRequired: %d KB | Free: %d KB (%d KB short).\nPlease insert a higher-capacity floppy disk.", program.name, reqKb, freeKb, diffKb), true)
+    if installerScriptsSize + safetyMargin > freeSpace then
+        showMessage("Disk Full", string.format("Cannot create installer for '%s'.\nBootloader needs %d KB | Free: %d KB.", program.name, math.ceil((installerScriptsSize + safetyMargin) / 1024), math.floor(freeSpace / 1024)), true)
         return
+    end
+    local used = installerScriptsSize + safetyMargin
+    local diskFiles, netCount = {}, #config.remote_files
+    for _, filePath in ipairs(allFiles) do
+        local size = #(dependencies[filePath] or programCode)
+        if used + size <= freeSpace then
+            used = used + size
+            table.insert(diskFiles, filePath)
+        else
+            netCount = netCount + 1
+        end
     end
 
     -- Verified file writer function
@@ -898,7 +902,7 @@ local function createInstallDisk(program)
 
     -- Write program files and dependencies
     print("Writing program files to disk...")
-    for _, filePath in ipairs(allFiles) do
+    for _, filePath in ipairs(diskFiles) do
         local fileCode = dependencies[filePath] or programCode
         local destPath = mountPath .. "/" .. filePath
 
@@ -935,7 +939,8 @@ local function createInstallDisk(program)
     if program.id == "hyperauth_server" then
         showMessage("HyperAuth Disk Created", "Disk for " .. program.name .. " created!\n\nNOTE FOR COMMAND COMPUTER:\nMinecraft blocks floppy autorun on Command PCs.\nOn your Command PC, type:\n  disk/startup\nand press Enter to run the installer!", false)
     else
-        showMessage("Success", "Installation disk for " .. program.name .. " created successfully.", false)
+        local netNote = (netCount > 0) and string.format("\n\n%d file(s) on disk, %d file(s) will be\ndownloaded from GitHub during install.\n(Target PC needs HTTP enabled.)", #diskFiles, netCount) or ""
+        showMessage("Success", "Installation disk for " .. program.name .. " created successfully." .. netNote, false)
     end
     drive.ejectDisk()
 end

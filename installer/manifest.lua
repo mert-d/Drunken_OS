@@ -170,7 +170,12 @@ return {
             files = {
                 "apps/flight_control.lua",
                 "lib/avionics.lua",
-                "lib/sound.lua"
+                "lib/sound.lua",
+                "lib/netpkg.lua"
+            },
+            -- GitHub-only extension modules: not written to floppy, downloaded at install/OTA
+            remote_files = {
+                "lib/avx/wing_level.lua"
             },
             include_shared = false
         },
@@ -183,6 +188,9 @@ return {
             files = {
                 "clients/Avionics_Core_Daemon.lua",
                 "lib/avionics.lua"
+            },
+            remote_files = {
+                "lib/avx/wing_level.lua"
             },
             include_shared = false
         },

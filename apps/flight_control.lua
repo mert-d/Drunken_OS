@@ -237,8 +237,9 @@ local function run(context)
     local selectedProfileIdx = (fc.vehicleType == "MOTHERSHIP" and 3) or (fc.vehicleType == "AIRCRAFT" and 2) or 1
     local selectedIOIdx = 1
     local ioScrollOffset = 0
-    local hotplugNotice = nil
-    local hotplugTimer = 0
+    -- Show loaded GitHub AVX extension modules (or load error) at boot
+    local hotplugNotice = fc.modErr and ("AVX HATA: " .. fc.modErr) or (#(fc.mods or {}) > 0 and ("AVX MODUL: " .. #fc.mods .. " yuklendi") or nil)
+    local hotplugTimer = hotplugNotice and 100 or 0
 
     local lastTel = fc:readTelemetry(0.05)
     if lastTel.altitude and lastTel.altitude ~= 0 then
@@ -893,38 +894,20 @@ local function run(context)
                     fc:step(0.05)
                     running = false
                 elseif key == keys.u then
-                    if http and http.get then
-                        hotplugNotice = "GitHub OTA: Guncelleniyor..."
-                        hotplugTimer = 80
-                        renderPFD()
-                        local base = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
-                        local ts = tostring((os.epoch and os.epoch("utc")) or os.time())
-                        local okAll = true
-                        for _, rel in ipairs({ "lib/avionics.lua", "apps/flight_control.lua" }) do
-                            local okH, resp = pcall(http.get, base .. rel .. "?v=" .. ts)
-                            if okH and resp then
-                                local c = (not resp.getResponseCode or resp.getResponseCode() == 200) and resp.readAll()
-                                if resp.close then pcall(resp.close) end
-                                if c and #c > 200 then
-                                    for _, p in ipairs({ "/" .. rel, rel }) do
-                                        local d = fs.getDir(p)
-                                        if d and d ~= "" and not fs.exists(d) then pcall(fs.makeDir, d) end
-                                        local f = fs.open(p, "w")
-                                        if f then f.write(c); f.close() end
-                                    end
-                                else okAll = false end
-                            else okAll = false end
-                        end
-                        if okAll then
-                            hotplugNotice = "OTA TAMAM! Yeniden baslatiliyor..."
-                            renderPFD(); sleep(0.8); os.reboot()
-                        else
-                            hotplugNotice = "OTA HATA: Indirilemedi!"
-                            hotplugTimer = 80
-                        end
+                    -- GitHub OTA via lib/netpkg: all package files + AVX modules, all-or-nothing
+                    hotplugNotice = "GitHub OTA: Guncelleniyor..."
+                    hotplugTimer = 80
+                    renderPFD()
+                    local okN, Net = pcall(require, "lib.netpkg")
+                    if not okN then okN, Net = pcall(require, "netpkg") end
+                    local okU, info = false, "netpkg yok"
+                    if okN then okU, info = Net.update("avionics_fcs") end
+                    if okU then
+                        hotplugNotice = "OTA TAMAM! Yeniden baslatiliyor..."
+                        renderPFD(); sleep(0.8); os.reboot()
                     else
-                        hotplugNotice = "OTA HATA: HTTP kapali!"
-                        hotplugTimer = 60
+                        hotplugNotice = "OTA HATA: " .. tostring(info)
+                        hotplugTimer = 80
                     end
                 elseif key == keys.v then
                     if activeTab == "PROFILE" then

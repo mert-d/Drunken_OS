@@ -109,28 +109,55 @@ local function doInstallation()
     if isColor then term.setTextColor(colors.white) end
     print("Source: /" .. tostring(diskPath) .. " -> Target: /\n")
 
-    for idx, filePath in ipairs(config.files) do
+    -- Files not on disk (did not fit / remote_files) are fetched from GitHub
+    local allFiles, seen = {}, {}
+    for _, key in ipairs({ "files", "remote_files" }) do
+        for _, f in ipairs(config[key] or {}) do
+            if not seen[f] then seen[f] = true; table.insert(allFiles, f) end
+        end
+    end
+    local baseUrl = config.base_url or "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
+    local installed = {}
+
+    for idx, filePath in ipairs(allFiles) do
         local sourcePath = fs.combine(diskPath, filePath)
         local destPath = "/" .. filePath
 
         if isColor then term.setTextColor(colors.lightGray) end
-        io.write(string.format("[%2d/%2d] %-30s ... ", idx, #config.files, fs.getName(filePath)))
+        io.write(string.format("[%2d/%2d] %-30s ... ", idx, #allFiles, fs.getName(filePath)))
 
         if fs.exists(sourcePath) then
             ensureDir(destPath)
             if fs.exists(destPath) then fs.delete(destPath) end
             local ok_copy, err_copy = pcall(fs.copy, sourcePath, destPath)
             if ok_copy then
+                installed[filePath] = true
                 if isColor then term.setTextColor(colors.green) end
                 print("OK")
             else
                 if isColor then term.setTextColor(colors.red) end
                 print("FAIL (" .. tostring(err_copy) .. ")")
             end
+        elseif http and http.get then
+            local ok, r = pcall(http.get, baseUrl .. filePath .. "?v=" .. tostring(os.epoch and os.epoch("utc") or 0))
+            local c = ok and r and (not r.getResponseCode or r.getResponseCode() == 200) and r.readAll()
+            if ok and r and r.close then pcall(r.close) end
+            if c and #c > 0 and (not load or not filePath:match("%.lua$") or load(c, filePath)) then
+                ensureDir(destPath)
+                local out = fs.open(destPath, "w")
+                if out then out.write(c); out.close(); installed[filePath] = true end
+            end
+            if isColor then term.setTextColor(installed[filePath] and colors.cyan or colors.red) end
+            print(installed[filePath] and "GITHUB" or "NET FAIL")
         else
             if isColor then term.setTextColor(colors.orange or colors.yellow) end
             print("MISSING")
         end
+    end
+
+    if not installed[config.main_program] then
+        fatalError("Main program not installed!", tostring(config.main_program) .. "\nCheck HTTP (GitHub download failed).")
+        return
     end
 
     if config.needs_setup and runSetupWizard then

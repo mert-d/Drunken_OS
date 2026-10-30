@@ -693,7 +693,16 @@ for _, relPath in ipairs(fcsPkg.files) do
     fcsPkgBytes = fcsPkgBytes + #content
 end
 print(string.format("  INFO: Avionics FCS raw file size: %d bytes (%.2f KB)", fcsPkgBytes, fcsPkgBytes / 1024))
-assert_true(fcsPkgBytes <= 125000, "Avionics FCS package fits within 125,000 bytes floppy limit")
+-- Hybrid install: floppy holds what fits, the rest + remote_files come from GitHub onto the 1 MB HDD
+assert_true(type(fcsPkg.remote_files) == "table" and #fcsPkg.remote_files > 0, "Avionics FCS declares GitHub-only remote_files (AVX modules)")
+local fcsRemoteBytes = 0
+for _, relPath in ipairs(fcsPkg.remote_files) do
+    local f = io.open(relPath, "rb")
+    assert_true(f ~= nil, "Avionics FCS remote file exists in repo: " .. relPath)
+    fcsRemoteBytes = fcsRemoteBytes + #f:read("*a")
+    f:close()
+end
+assert_true(fcsPkgBytes + fcsRemoteBytes <= 1000000, "Avionics FCS full install fits within 1 MB computer HDD quota")
 
 local ilsPkg = manifest.packages.ils_beacon
 assert_true(ilsPkg ~= nil, "ILS Beacon package defined in manifest")
@@ -720,14 +729,44 @@ local fcsConfigData = {
     name = fcsPkg.name,
     type = fcsPkg.type,
     main_program = fcsPkg.main,
-    files = fcsPkg.files
+    files = fcsPkg.files,
+    remote_files = fcsPkg.remote_files,
+    base_url = "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/"
 }
 fcsMockDisk["install_config.lua"] = mockTextutils.serialize(fcsConfigData)
+-- Greedy floppy fill exactly like Master_Installer (2 KB margin); overflow goes to GitHub
+local fcsDiskUsed = #installTemplateCode + #fcsMockDisk["install_config.lua"] + 2048
+local fcsRepo, fcsOnDisk, fcsHttpHits = {}, 0, {}
 for _, fpath in ipairs(fcsPkg.files) do
     local f = io.open(fpath, "rb")
-    fcsMockDisk[fpath] = f:read("*a")
+    local c = f:read("*a")
+    f:close()
+    fcsRepo[fpath] = c
+    if fcsDiskUsed + #c <= FLOPPY_LIMIT then
+        fcsDiskUsed = fcsDiskUsed + #c
+        fcsMockDisk[fpath] = c
+        fcsOnDisk = fcsOnDisk + 1
+    end
+end
+for _, fpath in ipairs(fcsPkg.remote_files) do
+    local f = io.open(fpath, "rb")
+    fcsRepo[fpath] = f:read("*a")
     f:close()
 end
+assert_true(fcsDiskUsed <= FLOPPY_LIMIT, "Hybrid FCS floppy stays within 125,000 bytes")
+print(string.format("  INFO: Hybrid FCS floppy: %d/%d files on disk, %d bytes used", fcsOnDisk, #fcsPkg.files, fcsDiskUsed))
+local fcsMockHttp = {
+    get = function(url)
+        local rel = url:match("/main/([^?]+)")
+        fcsHttpHits[rel] = true
+        local c = fcsRepo[rel]
+        return {
+            getResponseCode = function() return c and 200 or 404 end,
+            readAll = function() return c end,
+            close = function() end
+        }
+    end
+}
 
 local fcsMockFs = {
     combine = function(a, b)
@@ -799,6 +838,8 @@ local fcsMockFs = {
 }
 
 local fcsEnv = {
+    http = fcsMockHttp,
+    load = load,
     fs = fcsMockFs,
     term = mockTerm,
     colors = mockColors,
@@ -828,6 +869,10 @@ assert_true(fcsTargetRoot[".program_path"] == "apps/flight_control.lua", "Avioni
 assert_true(fcsTargetRoot["apps/flight_control.lua"] ~= nil, "Flight control app installed")
 assert_true(fcsTargetRoot["lib/avionics.lua"] ~= nil, "Avionics library installed")
 assert_true(fcsTargetRoot["lib/sound.lua"] ~= nil, "Sound library installed")
+assert_true(fcsTargetRoot["lib/netpkg.lua"] ~= nil, "NetPkg GitHub updater installed")
+assert_true(fcsTargetRoot["lib/avx/wing_level.lua"] ~= nil, "AVX wing_level module downloaded from GitHub")
+assert_true(fcsHttpHits["lib/avx/wing_level.lua"] == true, "remote_files fetched over HTTP, not from floppy")
+assert_true(fcsMockDisk["lib/avx/wing_level.lua"] == nil, "remote_files are never written to the floppy")
 
 -- Simulate Avionics Cockpit Computer boot
 local fcsLaunched = nil
