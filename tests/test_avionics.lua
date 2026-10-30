@@ -619,6 +619,49 @@ local function runTests()
 
     print("  PASS: Test 11: System 3 (Wheel Mount Steering) & System 4 (Physical Rudder Bearing & Pilot Override)")
 
+    -- Test 12: Quad wing altimeters (wired) + 4 central speed controllers -> differential auto-leveling
+    local wingH = { alt_fl = 78, alt_rl = 78, alt_fr = 82, alt_rr = 82 }
+    local rpmOut = {}
+    local wingDevs = {}
+    for n, _ in pairs(wingH) do
+        wingDevs[n] = { getHeight = function() return wingH[n] end }
+    end
+    for i = 0, 3 do
+        local n = "rsc_" .. i
+        wingDevs[n] = { setTargetSpeed = function(v) rpmOut[n] = v end, getTargetSpeed = function() return rpmOut[n] or 0 end }
+    end
+    _G.peripheral.find = function(pType)
+        if pType == "altitude_sensor" then return wingDevs.alt_fl end
+        return nil
+    end
+    _G.peripheral.getNames = function() return { "alt_fl", "alt_fr", "alt_rl", "alt_rr", "rsc_0", "rsc_1", "rsc_2", "rsc_3" } end
+    _G.peripheral.getType = function(n) return n:find("^alt_") and "altitude_sensor" or "rotation_speed_controller" end
+    _G.peripheral.wrap = function(n) return wingDevs[n] end
+    _G.peripheral.getName = function(h) for n, d in pairs(wingDevs) do if d == h then return n end end end
+
+    local wFC = Avionics.new({ callsign = "WING-ALT", profile = "MOTHERSHIP" })
+    local corner = { "FL", "FR", "RL", "RR" }
+    for i, c in ipairs(corner) do
+        wFC:setDeviceRole("alt_" .. c:lower(), "LIFT_" .. c)
+        wFC:setDeviceRole("rsc_" .. (i - 1), "LIFT_" .. c)
+    end
+    wFC.ap.sasEnabled = true
+    wFC.ap.parkingBrake = false
+    wFC.ap.baseThrottle = 8
+    local wTel = wFC:step(0.05) or wFC:readTelemetry(0.05)
+    assert(wFC.wingAlt and wFC.wingAlt.n == 4, "Expected 4 wing altimeters to be detected via LIFT_* roles")
+    assert(wFC.wingAlt.dR == -4, "Expected left-right altitude diff of -4 (left wing low)")
+    assert(wFC.wingAlt.dP == 0, "Expected zero fore-aft altitude diff")
+    local ms = wFC.lastMothershipState
+    assert(ms.fl > ms.fr and ms.rl > ms.rr, "Expected low left wing to receive more lift than right wing")
+    assert(rpmOut.rsc_0 > rpmOut.rsc_1, "Expected FL speed controller RPM > FR speed controller RPM")
+    -- Nose low: front altimeters below rear -> front lift increases
+    wingH.alt_fl, wingH.alt_fr, wingH.alt_rl, wingH.alt_rr = 79, 79, 81, 81
+    wFC:step(0.05)
+    ms = wFC.lastMothershipState
+    assert(wFC.wingAlt.dP == -2 and ms.fl > ms.rl and ms.fr > ms.rr, "Expected low nose to receive more front lift")
+    print("  PASS: Test 12: Quad Wing Altimeter Differential Auto-Leveling (4x RSC)")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

@@ -465,15 +465,7 @@ function Avionics:scanPeripherals()
         self.gearshifts       = findAny({ "create_gearshift", "gearshift", "create:gearshift", "create_sequenced_gearshift", "sequenced_gearshift", "create_connected_gearshift", "create_connected_sequenced_gearshift", "redstone_relay" })
         self.speedControllers = findAny({ "Create_RotationSpeedController", "rotation_speed_controller", "create:rotation_speed_controller", "speed_controller" }, true)
     else
-        self.burners          = {}
-        self.gearboxes        = {}
-        self.throttles        = {}
-        self.gyros            = {}
-        self.wheels           = {}
-        self.engines          = {}
-        self.clutches         = {}
-        self.gearshifts       = {}
-        self.speedControllers = {}
+        for _, k in ipairs({ "burners", "gearboxes", "throttles", "gyros", "wheels", "engines", "clutches", "gearshifts", "speedControllers" }) do self[k] = {} end
     end
 
     local function addUniqueHandle(list, h)
@@ -520,12 +512,7 @@ function Avionics:scanPeripherals()
                             cfg.role = "GEAR_REVERSE"
                         end
                     end
-                    table.insert(self.ioDevices, {
-                        name       = name,
-                        kind       = pStr,
-                        handle     = h,
-                        isRedstone = false
-                    })
+                    table.insert(self.ioDevices, { name = name, kind = pStr, handle = h, isRedstone = false })
                 end
             end
         end
@@ -543,13 +530,7 @@ function Avionics:scanPeripherals()
         local rsName = "RS:" .. side
         local cfg = self:getDeviceConfig(rsName)
         if cfg.role == "GEAR_REVERSE" then hasGearRole = true end
-        table.insert(self.ioDevices, {
-            name       = rsName,
-            side       = side,
-            kind       = "redstone_out",
-            handle     = nil,
-            isRedstone = true
-        })
+        table.insert(self.ioDevices, { name = rsName, side = side, kind = "redstone_out", isRedstone = true })
     end
     if not hasGearRole then
         local bCfg = self:getDeviceConfig("RS:back")
@@ -591,6 +572,19 @@ function Avionics:readTelemetry(dt)
         sensorVsi = tonumber(safeCall(self.altSensor.getVerticalSpeed)) or 0
         pressure = tonumber(safeCall(self.altSensor.getAirPressure)) or 1.0
     end
+    -- Wing altimeters: altitude_sensor assigned LIFT_FL/FR/RL/RR role in I/O config
+    local wA, wN = {}, 0
+    for _, it in ipairs(self.ioDevices or {}) do
+        local r = (self.ioMap[it.name] or {}).role or ""
+        if it.kind == "altitude_sensor" and it.handle and r:find("^LIFT_") then
+            local h = tonumber(safeCall(it.handle.getHeight)) or tonumber(safeCall(it.handle.getAltitude))
+            if h then wA[r:sub(6)] = h; wN = wN + 1 end
+        end
+    end
+    local function av(a, b) a, b = wA[a], wA[b]; return a and b and (a + b) / 2 or a or b end
+    local L, R, F, B = av("FL", "RL"), av("FR", "RR"), av("FL", "FR"), av("RL", "RR")
+    self.wingAlt = wN > 1 and { dR = L and R and L - R or 0, dP = F and B and F - B or 0, n = wN } or nil
+    if wN == 4 then alt = (wA.FL + wA.FR + wA.RL + wA.RR) / 4 end
     local vsi = sensorVsi
     if self.prevAlt ~= nil and dt > 0 then
         local rawDeltaVsi = clamp((alt - self.prevAlt) / dt, -20.0, 20.0)
@@ -856,6 +850,7 @@ function Avionics:readTelemetry(dt)
         burnerActual     = burnerActual,
         burnerActive     = burnerActive,
         balloonVolChange = balloonVolChange,
+        wingAlt          = self.wingAlt,
         mothership       = self.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
         gpwsWarning      = gpwsWarning,
         stallWarning     = stallWarning,
@@ -1326,6 +1321,11 @@ function Avionics:step(dt)
     if self.ap.sasEnabled then
         pitchTrim = self.msPitchPID:compute(0, tel.pitch, dt)
         rollTrim  = self.msRollPID:compute(0, tel.roll, dt)
+        local w, k = self.wingAlt, self.config.wingAltGain or 1.5
+        if w then
+            rollTrim  = clamp(rollTrim - w.dR * k, -6, 6)
+            pitchTrim = clamp(pitchTrim - w.dP * k, -6, 6)
+        end
     end
 
     local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
@@ -1346,15 +1346,7 @@ function Avionics:step(dt)
     local rearC = math.floor(clamp(fwdSig, -15, 15) + 0.5)
     local rearR = math.floor(clamp(fwdSig + turnYaw, -15, 15) + 0.5)
 
-    self.lastMothershipState = {
-        fl    = liftFL,
-        fr    = liftFR,
-        rl    = liftRL,
-        rr    = liftRR,
-        rearL = rearL,
-        rearC = rearC,
-        rearR = rearR
-    }
+    self.lastMothershipState = { fl = liftFL, fr = liftFR, rl = liftRL, rr = liftRR, rearL = rearL, rearC = rearC, rearR = rearR }
     tel.mothership = self.lastMothershipState
 
     -- Route custom I/O role mappings (Hot-plug peripherals, Mothership 7-motor roles & Redstone sides)

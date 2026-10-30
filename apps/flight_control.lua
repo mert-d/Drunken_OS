@@ -174,7 +174,8 @@ local function renderScadaDisplay(mon, tel, ap)
         local ms = tel.mothership or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 }
         mon.setCursorPos(2, 5)
         mon.setTextColor(isCol and colors.cyan or colors.white)
-        mon.write(string.format("LIFT ON  : FL:%2d FR:%2d (BALANS)", ms.fl, ms.fr))
+        local w = tel.wingAlt
+        mon.write(string.format("LIFT ON  : FL:%2d FR:%2d ", ms.fl, ms.fr) .. (w and string.format("KNT dR%+.1f dP%+.1f", w.dR, w.dP) or "(BALANS)"))
 
         if h >= 6 then
             mon.setCursorPos(2, 6)
