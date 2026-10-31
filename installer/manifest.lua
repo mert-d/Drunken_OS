@@ -180,7 +180,8 @@ return {
             main = "clients/Avionics_Core_Daemon.lua",
             files = {
                 "clients/Avionics_Core_Daemon.lua",
-                "lib/avionics.lua"
+                "lib/avionics.lua",
+                "lib/netpkg.lua"
             },
             remote_files = {
                 "lib/avx/wing_level.lua",

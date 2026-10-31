@@ -483,7 +483,7 @@ local function run(context)
 
                 local shortName = item.name
                 if #shortName > 17 then shortName = shortName:sub(1, 15) .. ".." end
-                local shortKind = item.kind:gsub("create_connected_", ""):gsub("create_", ""):gsub("rotation_", "")
+                local shortKind = item.kind:gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", "")
                 if #shortKind > 11 then shortKind = shortKind:sub(1, 11) end
 
                 local invStr = cfg.invert and "TERS" or "NRM "
@@ -508,8 +508,13 @@ local function run(context)
         local selCfg = selItem and fc:getDeviceConfig(selItem.name) or { role = "AUTO" }
         drawTerm.setBackgroundColor(theme.bg)
         drawTerm.setCursorPos(2, h - 2)
-        drawTerm.setTextColor(theme.accent or colors.cyan)
         local desc = ROLE_DESC[selCfg.role] or ""
+        if selItem and selItem.cap == "PASSIVE" then
+            drawTerm.setTextColor(theme.warn or colors.orange)
+            desc = "[PASIF BLOK] Motor donmuyor ise modemi Speed Controller'a takin!"
+        else
+            drawTerm.setTextColor(theme.accent or colors.cyan)
+        end
         drawTerm.write(desc:sub(1, w - 2))
 
         drawTerm.setCursorPos(2, h - 1)
@@ -759,7 +764,6 @@ local function run(context)
             "[A]AP:%s [H]HVR [C]CRS [Z]CAPA:%s [B]PARK:%s [G]VTS",
             fc.ap.enabled and "ON " or "OFF",
             (fc.ap.mode == "ANCHOR") and "LOK" or "OFF",
-            fc.ap.enabled and "ON " or "OFF",
             fc.ap.parkingBrake and "ON " or "OFF"
         ):sub(1, w - 2))
 
@@ -823,6 +827,16 @@ local function run(context)
                     playAlert("GPWS")
                 end
 
+                -- Broadcast Internal Bus State (10 Hz) so Lower Deck Engineering Deck receives live telemetry!
+                if (tickCount % 2 == 0) and rednet and rednet.isOpen and rednet.isOpen() then
+                    pcall(rednet.broadcast, {
+                        type   = "AVIONICS_STATE",
+                        sender = (os.getComputerID and os.getComputerID()) or 0,
+                        tel    = lastTel,
+                        ap     = fc.ap
+                    }, "DRUNKEN_AVIONICS_BUS")
+                end
+
                 -- Broadcast ADS-B Telemetry once per second (every 20 ticks)
                 if modem and rednet and (tickCount % 20 == 0) then
                     pcall(rednet.broadcast, {
@@ -864,6 +878,27 @@ local function run(context)
                             for k, v in pairs(msg.ap) do
                                 fc.ap[k] = v
                             end
+                        end
+                        if msg.ioMap then
+                            fc.ioMap = msg.ioMap
+                        end
+                    elseif msg.type == "AVIONICS_CMD" and not isRemoteFCC then
+                        if msg.cmd == "SAFE_DISARM" then
+                            fc.ap.baseThrottle = 0; fc.ap.parkingBrake = true; fc:setMode("MANUAL", lastTel); fc:step(0.05)
+                        elseif msg.cmd == "SET_MODE" and msg.mode then
+                            fc:setMode(msg.mode, lastTel)
+                        elseif msg.cmd == "SPIN_TEST" then
+                            fc:triggerSpinTest(msg.name)
+                        elseif msg.cmd == "SET_IO_ROLE" and msg.name and msg.role then
+                            fc:setDeviceRole(msg.name, msg.role)
+                        elseif msg.cmd == "TOGGLE_IO_INVERT" and msg.name then
+                            fc:toggleInvert(msg.name)
+                        elseif msg.cmd == "RESET_IO_ROLE" and msg.name then
+                            fc:resetDeviceRole(msg.name)
+                        elseif msg.cmd == "SCAN_PERIPHERALS" then
+                            fc:scanPeripherals()
+                        elseif msg.cmd == "SET_PROFILE" and msg.profile then
+                            fc:setVehicleProfile(msg.profile, msg.autoAssign == true)
                         end
                     end
                 elseif protocol == "DRUNKEN_ILS" and type(msg) == "table" and msg.type == "AVIONICS_ILS_BEACON" then
@@ -937,11 +972,16 @@ local function run(context)
                     elseif (key >= keys.one and key <= keys.three) or (keys.numPad1 and key >= keys.numPad1 and key <= keys.numPad3) then
                         selectedProfileIdx = (key >= keys.one and key <= keys.three) and (key - keys.one + 1) or (key - keys.numPad1 + 1)
                         local chosen = PROFILE_LIST[selectedProfileIdx]
-                        if chosen then fc:setVehicleProfile(chosen.id, chosen.id == "MOTHERSHIP"); activeTab = "PFD" end
+                        if chosen then
+                            fc:setVehicleProfile(chosen.id, chosen.id == "MOTHERSHIP")
+                            if isRemoteFCC then sendAvionicsCmd("SET_PROFILE", { profile = chosen.id, autoAssign = (chosen.id == "MOTHERSHIP") }) end
+                            activeTab = "PFD"
+                        end
                     elseif key == keys.enter then
                         local chosen = PROFILE_LIST[selectedProfileIdx]
                         if chosen then
                             fc:setVehicleProfile(chosen.id, chosen.id == "MOTHERSHIP")
+                            if isRemoteFCC then sendAvionicsCmd("SET_PROFILE", { profile = chosen.id, autoAssign = (chosen.id == "MOTHERSHIP") }) end
                             activeTab = "PFD"
                         end
                     end
@@ -965,22 +1005,29 @@ local function run(context)
                     elseif key == keys.down then
                         selectedIOIdx = math.min(math.max(1, #devs), selectedIOIdx + 1)
                     elseif (key == keys.right or key == keys.enter) and selItem then
-                        fc:cycleRole(selItem.name, 1)
+                        local newR = fc:cycleRole(selItem.name, 1)
+                        if isRemoteFCC then sendAvionicsCmd("SET_IO_ROLE", { name = selItem.name, role = newR }) end
                     elseif key == keys.left and selItem then
-                        fc:cycleRole(selItem.name, -1)
+                        local newR = fc:cycleRole(selItem.name, -1)
+                        if isRemoteFCC then sendAvionicsCmd("SET_IO_ROLE", { name = selItem.name, role = newR }) end
                     elseif quickRoles[key] and selItem then
                         fc:setDeviceRole(selItem.name, quickRoles[key])
+                        if isRemoteFCC then sendAvionicsCmd("SET_IO_ROLE", { name = selItem.name, role = quickRoles[key] }) end
                     elseif key == keys.t and selItem then
                         fc:triggerSpinTest(selItem.name)
+                        if isRemoteFCC then sendAvionicsCmd("SPIN_TEST", { name = selItem.name }) end
                     elseif key == keys.i and selItem then
-                        fc:toggleInvert(selItem.name)
+                        local inv = fc:toggleInvert(selItem.name)
+                        if isRemoteFCC then sendAvionicsCmd("TOGGLE_IO_INVERT", { name = selItem.name }) end
                     elseif key == keys.x and selItem then
                         local cfg = fc:getDeviceConfig(selItem.name)
                         cfg.role = "AUTO"
                         cfg.invert = false
                         fc:saveIOMap()
+                        if isRemoteFCC then sendAvionicsCmd("RESET_IO_ROLE", { name = selItem.name }) end
                     elseif key == keys.r then
                         fc:scanPeripherals()
+                        if isRemoteFCC then sendAvionicsCmd("SCAN_PERIPHERALS") end
                     end
                 else
                     -- PFD Flight Controls

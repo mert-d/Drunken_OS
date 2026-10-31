@@ -682,6 +682,77 @@ local function runTests()
     assert(ancFC.anchorPos == nil, "Expected anchorPos cleared when disengaging anchor")
     print("  PASS: Test 13: Sky Anchor 3D Station Keeping & Anti-Drift Counter-Thrust")
 
+    -- Test 14: Peripheral Scan Filtering, Remote I/O Bus Forwarding, Ground Zero-Throttle Lock
+    local testFC = Avionics.new({ profile = "MOTHERSHIP", useGPS = false, startParked = true })
+    _G.peripheral.getNames = function()
+        return {
+            "computer_7",
+            "turtle_1",
+            "speed_controller_1",
+            "create:encased_chain_drive_0",
+            "create_gearshift_0"
+        }
+    end
+    _G.peripheral.getType = function(name)
+        if name == "computer_7" then return "computer"
+        elseif name == "turtle_1" then return "turtle"
+        elseif name == "speed_controller_1" then return "speed_controller"
+        elseif name == "create:encased_chain_drive_0" then return "create:encased_chain_drive"
+        elseif name == "create_gearshift_0" then return "create_gearshift"
+        end
+        return nil
+    end
+    _G.peripheral.wrap = function(name)
+        return {
+            setTargetSpeed = function() end,
+            setSignal = function() end
+        }
+    end
+
+    testFC:scanPeripherals()
+
+    -- 1. Verify computer and turtle are excluded from controllable I/O devices
+    local foundComputer = false
+    local foundChainDrive = false
+    for _, dev in ipairs(testFC.ioDevices or {}) do
+        if dev.name == "computer_7" or dev.type == "computer" then foundComputer = true end
+        if dev.name == "create:encased_chain_drive_0" then
+            foundChainDrive = true
+            assert(dev.cap == "RPM", "Expected encased chain drive capability to be RPM")
+        end
+    end
+    assert(not foundComputer, "Expected computer_7 to be filtered out of controllable peripherals")
+    assert(foundChainDrive, "Expected create:encased_chain_drive_0 to be discovered")
+
+    -- 2. Verify Remote FCC I/O role methods: setDeviceRole, toggleInvert, resetDeviceRole, triggerSpinTest
+    testFC:setDeviceRole("speed_controller_1", "LIFT_FL")
+    assert(testFC:getDeviceConfig("speed_controller_1").role == "LIFT_FL", "Expected setDeviceRole to update role to LIFT_FL")
+    local invState = testFC:toggleInvert("speed_controller_1")
+    assert(invState == true, "Expected toggleInvert to return true")
+    testFC:resetDeviceRole("speed_controller_1")
+    local resetCfg = testFC:getDeviceConfig("speed_controller_1")
+    assert(resetCfg.role == "AUTO" and resetCfg.invert == false, "Expected resetDeviceRole to restore AUTO and non-inverted")
+
+    testFC:triggerSpinTest("speed_controller_1")
+    assert(testFC.spinTest and testFC.spinTest.name == "speed_controller_1" and testFC.spinTest.ticks == 30, "Expected triggerSpinTest for specific device")
+    testFC:triggerSpinTest()
+    assert(testFC.spinTest and testFC.spinTest.name == "ALL" and testFC.spinTest.ticks == 30, "Expected triggerSpinTest with nil argument to default to ALL")
+
+    -- 3. Ground zero-throttle lift rotor protection: in MANUAL mode with throttle 0, lift rotors stay 0 RPM regardless of tilt
+    testFC.ap.mode = "MANUAL"
+    testFC.ap.baseThrottle = 0
+    testFC.ap.parkingBrake = false
+    testFC.gimbal = {
+        getPitchRad = function() return math.rad(12) end,
+        getRollRad  = function() return math.rad(-15) end
+    }
+    testFC:step(0.05)
+    assert(testFC.lastMothershipState.fl == 0 and testFC.lastMothershipState.fr == 0 and
+           testFC.lastMothershipState.rl == 0 and testFC.lastMothershipState.rr == 0,
+           "Expected zero-throttle manual mode to lock all lift rotors to 0 RPM regardless of tilt")
+
+    print("  PASS: Test 14: Peripheral Scan Filtering, Remote I/O Bus Forwarding & Ground Zero-Throttle Lock")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

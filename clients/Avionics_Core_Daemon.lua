@@ -114,7 +114,7 @@ local function run(context)
         -- Keybind hints
         parentTerm.setCursorPos(2, math.min(h, 12))
         parentTerm.setTextColor(isColor and colors.lightGray or colors.white)
-        parentTerm.write("[H]: Hover  [M]: Manual  [C]: Cruise  [B]: Brake  [Q]: Disarm & Stop")
+        parentTerm.write("[H]: Hover  [M]: Manual  [C]: Cruise  [Z]: Anchor  [B]: Brake  [U]: OTA  [Q]: Stop")
     end
 
     local function broadcastState()
@@ -123,6 +123,7 @@ local function run(context)
             type   = "AVIONICS_STATE",
             sender = (os.getComputerID and os.getComputerID()) or 0,
             tel    = lastTel,
+            ioMap  = fc.ioMap,
             ap     = {
                 enabled      = fc.ap.enabled,
                 mode         = fc.ap.mode,
@@ -247,6 +248,14 @@ local function run(context)
                             fc:setVehicleProfile(msg.profile, msg.autoAssign == true)
                         elseif msg.cmd == "SCAN_PERIPHERALS" then
                             fc:scanPeripherals()
+                        elseif msg.cmd == "SET_IO_ROLE" and msg.name and msg.role then
+                            fc:setDeviceRole(msg.name, msg.role)
+                        elseif msg.cmd == "TOGGLE_IO_INVERT" and msg.name then
+                            fc:toggleInvert(msg.name)
+                        elseif msg.cmd == "RESET_IO_ROLE" and msg.name then
+                            fc:resetDeviceRole(msg.name)
+                        elseif msg.cmd == "SPIN_TEST" then
+                            fc:triggerSpinTest(msg.name)
                         elseif msg.cmd == "SAFE_DISARM" or msg.cmd == "DISARM" then
                             fc.ap.baseThrottle = 0
                             fc.ap.parkingBrake = true
@@ -272,9 +281,23 @@ local function run(context)
                 elseif p1 == keys.c then
                     fc:setMode("CRUISE", lastTel)
                     broadcastState()
+                elseif p1 == keys.z then
+                    local newM = (fc.ap.mode == "ANCHOR") and "MANUAL" or "ANCHOR"
+                    fc:setMode(newM, lastTel)
+                    broadcastState()
                 elseif p1 == keys.b then
                     fc.ap.parkingBrake = not fc.ap.parkingBrake
                     broadcastState()
+                elseif p1 == keys.u then
+                    local okNet, netpkg = pcall(require, "lib.netpkg")
+                    if not okNet then okNet, netpkg = pcall(require, "netpkg") end
+                    if okNet and netpkg and netpkg.update then
+                        lastCmdName = "OTA_UPDATE"
+                        drawCoreStatus()
+                        local okUpd, countOrErr = netpkg.update("avionics_core")
+                        lastCmdName = okUpd and ("OTA_OK (" .. tostring(countOrErr) .. "f)") or ("OTA_ERR:" .. tostring(countOrErr):sub(1, 10))
+                        drawCoreStatus()
+                    end
                 end
             end
         end

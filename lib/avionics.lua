@@ -393,6 +393,14 @@ function Avionics:toggleInvert(devName)
     return cfg.invert
 end
 
+function Avionics:resetDeviceRole(devName)
+    local cfg = self:getDeviceConfig(devName)
+    cfg.role = "AUTO"
+    cfg.invert = false
+    self:saveIOMap()
+    return cfg.role
+end
+
 -- Auto-assigns the first 4 speed controllers/gearboxes to Quad-Lift (FL, FR, RL, RR)
 -- and the next 3 to Rear Thrusters (REAR_LEFT, REAR_CENTER, REAR_RIGHT)
 function Avionics:autoAssignMothershipRoles(forceOverwrite)
@@ -402,6 +410,7 @@ function Avionics:autoAssignMothershipRoles(forceOverwrite)
             local k = item.kind:lower()
             if k:find("speed_controller") or k:find("rotationspeedcontroller")
                 or k:find("analog_transmission") or k:find("gearbox")
+                or k:find("chain_gearshift") or k:find("chain_drive") or k:find("encased")
                 or k:find("sequenced_gearshift") or k:find("throttle_lever")
                 or k:find("bearing") or k:find("propeller") then
                 table.insert(candidates, item.name)
@@ -496,7 +505,7 @@ function Avionics:scanPeripherals()
             return res
         end
         self.burners          = findAny({ "gas_provider" })
-        self.gearboxes        = findAny({ "analog_transmission" }, true)
+        self.gearboxes        = findAny({ "analog_transmission", "adjustable_chain_gearshift", "create:adjustable_chain_gearshift" }, true)
         self.throttles        = findAny({ "throttle_lever" })
         self.gyros            = findAny({ "gyroscopic_propeller_bearing" })
         self.wheels           = findAny({ "wheel_mount" })
@@ -530,7 +539,7 @@ function Avionics:scanPeripherals()
             for _, name in ipairs(names) do
                 local okT, pType = pcall(peripheral.getType, name)
                 local pStr = tostring(okT and pType or "peripheral")
-                if pStr ~= "modem" and pStr ~= "monitor" and pStr ~= "speaker" and pStr ~= "drive" then
+                if pStr ~= "modem" and pStr ~= "monitor" and pStr ~= "speaker" and pStr ~= "drive" and pStr ~= "computer" and pStr ~= "turtle" then
                     local okW, handle = pcall(peripheral.wrap, name)
                     local h = okW and handle or nil
                     local bId = (h and type(h.getBlockId) == "function" and tostring(safeCall(h.getBlockId) or "")) or ""
@@ -552,7 +561,22 @@ function Avionics:scanPeripherals()
                             cfg.role = "GEAR_REVERSE"
                         end
                     end
-                    table.insert(self.ioDevices, { name = name, kind = pStr, handle = h, isRedstone = false })
+                    local cap = "PASSIVE"
+                    if h then
+                        if type(h.setTargetSpeed) == "function" then
+                            cap = "RPM"
+                        elseif type(h.setSignal) == "function" or type(h.setThrottle) == "function"
+                            or type(h.setControl) == "function" or type(h.setPowered) == "function"
+                            or type(h.setTargetAngle) == "function" or type(h.setTargetAngleRad) == "function"
+                            or type(h.setAngle) == "function" or type(h.setSteering) == "function" then
+                            cap = "SIG"
+                        elseif type(h.getHeight) == "function" or type(h.getAltitude) == "function"
+                            or type(h.getAngles) == "function" or type(h.getAnglesRad) == "function"
+                            or type(h.getVelocity) == "function" or type(h.getAirPressure) == "function" then
+                            cap = "SENS"
+                        end
+                    end
+                    table.insert(self.ioDevices, { name = name, kind = pStr, handle = h, cap = cap, isRedstone = false })
                 end
             end
         end
@@ -561,7 +585,7 @@ function Avionics:scanPeripherals()
             for idx, dev in ipairs(pair[1] or {}) do
                 local name = pair[2] .. "_" .. tostring(idx - 1)
                 self:getDeviceConfig(name)
-                table.insert(self.ioDevices, { name = name, kind = pair[2], handle = dev, isRedstone = false })
+                table.insert(self.ioDevices, { name = name, kind = pair[2], handle = dev, cap = (pair[2]:find("speed") and "RPM" or "SIG"), isRedstone = false })
             end
         end
     end
@@ -570,7 +594,7 @@ function Avionics:scanPeripherals()
         local rsName = "RS:" .. side
         local cfg = self:getDeviceConfig(rsName)
         if cfg.role == "GEAR_REVERSE" then hasGearRole = true end
-        table.insert(self.ioDevices, { name = rsName, side = side, kind = "redstone_out", isRedstone = true })
+        table.insert(self.ioDevices, { name = rsName, side = side, kind = "redstone_out", cap = "RS", isRedstone = true })
     end
     if not hasGearRole then
         local bCfg = self:getDeviceConfig("RS:back")
@@ -891,7 +915,7 @@ function Avionics:readTelemetry(dt)
 end
 
 function Avionics:triggerSpinTest(devName)
-    self.spinTest = { name = devName, ticks = 30 } -- 1.5 seconds at 20Hz
+    self.spinTest = { name = devName or "ALL", ticks = 30 } -- 1.5 seconds at 20Hz
 end
 
 function Avionics:setHomeBase(ilsBeacon)
@@ -1370,10 +1394,14 @@ function Avionics:step(dt)
     local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
     if not (not self.ap.enabled and self.ap.parkingBrake) then
         local collectiveLift = self.ap.altHold and clamp(8.0 + altCmd, 3.0, 11.0) or mainThrottleSig
-        liftFL = math.floor(clamp(collectiveLift + pitchTrim + rollTrim, 0, 15) + 0.5)
-        liftFR = math.floor(clamp(collectiveLift + pitchTrim - rollTrim, 0, 15) + 0.5)
-        liftRL = math.floor(clamp(collectiveLift - pitchTrim + rollTrim, 0, 15) + 0.5)
-        liftRR = math.floor(clamp(collectiveLift - pitchTrim - rollTrim, 0, 15) + 0.5)
+        if not self.ap.enabled and collectiveLift <= 0 then
+            liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
+        else
+            liftFL = math.floor(clamp(collectiveLift + pitchTrim + rollTrim, 0, 15) + 0.5)
+            liftFR = math.floor(clamp(collectiveLift + pitchTrim - rollTrim, 0, 15) + 0.5)
+            liftRL = math.floor(clamp(collectiveLift - pitchTrim + rollTrim, 0, 15) + 0.5)
+            liftRR = math.floor(clamp(collectiveLift - pitchTrim - rollTrim, 0, 15) + 0.5)
+        end
     end
 
     local fwdBase = (revActive and -mainThrottleSig or mainThrottleSig) + surgeTrim
@@ -1396,8 +1424,8 @@ function Avionics:step(dt)
             local role = cfg.role
             local inv = cfg.invert == true
 
-            -- Spin Test Override ([T] in I/O Configurator)
-            if self.spinTest and self.spinTest.name == item.name and not item.isRedstone and item.handle then
+            -- Spin Test Override ([T] in I/O Configurator or Engineering Deck)
+            if self.spinTest and (self.spinTest.name == item.name or self.spinTest.name == "ALL") and not item.isRedstone and item.handle then
                 local dev = item.handle
                 table.insert(tasks, function()
                     driveSignal(dev, 8, inv)
