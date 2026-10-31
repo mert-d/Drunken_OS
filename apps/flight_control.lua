@@ -882,6 +882,9 @@ local function run(context)
                         if msg.ioMap then
                             fc.ioMap = msg.ioMap
                         end
+                        if msg.ioDevices then
+                            fc.ioDevices = msg.ioDevices
+                        end
                     elseif msg.type == "AVIONICS_CMD" and not isRemoteFCC then
                         if msg.cmd == "SAFE_DISARM" then
                             fc.ap.baseThrottle = 0; fc.ap.parkingBrake = true; fc:setMode("MANUAL", lastTel); fc:step(0.05)

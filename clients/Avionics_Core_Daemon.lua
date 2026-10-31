@@ -58,8 +58,97 @@ local function run(context)
     local tick = 0
     local lastCmdSender = nil
     local lastCmdName = "NONE"
+    local viewMode = "STATUS" -- "STATUS" or "IO"
+    local selectedIOIdx = 1
+    local ioScrollOffset = 0
+
+    local quickRoles = {
+        [keys.one]   = "LIFT_FL",
+        [keys.two]   = "LIFT_FR",
+        [keys.three] = "LIFT_RL",
+        [keys.four]  = "LIFT_RR",
+        [keys.five]  = "REAR_LEFT",
+        [keys.six]   = "REAR_CENTER",
+        [keys.seven] = "REAR_RIGHT"
+    }
+
+    local function drawIOConfig()
+        local w, h = parentTerm.getSize()
+        parentTerm.setBackgroundColor(colors.black)
+        parentTerm.clear()
+
+        parentTerm.setCursorPos(1, 1)
+        parentTerm.setBackgroundColor(isColor and colors.blue or colors.white)
+        parentTerm.setTextColor(isColor and colors.white or colors.black)
+        local header = string.format(" FCC DOGRUDAN DONANIM & ROL ATAMA [%s] ", fc.vehicleType or "MOTHERSHIP")
+        parentTerm.write(header .. string.rep(" ", math.max(0, w - #header)))
+
+        parentTerm.setBackgroundColor(isColor and colors.gray or colors.black)
+        parentTerm.setTextColor(isColor and colors.yellow or colors.white)
+        parentTerm.setCursorPos(1, 2)
+        local colHdr = string.format(" %-18s %-12s %-12s %-4s", "CIHAZ / KANAL", "TIP", "GOREV (ROLE)", "INV")
+        parentTerm.write(colHdr .. string.rep(" ", math.max(0, w - #colHdr)))
+
+        local devs = fc.ioDevices or {}
+        local maxRows = math.max(3, h - 5)
+        if selectedIOIdx > #devs then selectedIOIdx = math.max(1, #devs) end
+        if selectedIOIdx < ioScrollOffset + 1 then
+            ioScrollOffset = math.max(0, selectedIOIdx - 1)
+        elseif selectedIOIdx > ioScrollOffset + maxRows then
+            ioScrollOffset = selectedIOIdx - maxRows
+        end
+
+        for row = 1, maxRows do
+            local idx = ioScrollOffset + row
+            local y = 2 + row
+            parentTerm.setCursorPos(1, y)
+            if idx <= #devs then
+                local item = devs[idx]
+                local cfg = fc:getDeviceConfig(item.name)
+                local isSel = (idx == selectedIOIdx)
+                local isTesting = (fc.spinTest and (fc.spinTest.name == item.name or fc.spinTest.name == "ALL"))
+                parentTerm.setBackgroundColor(
+                    isTesting and (isColor and colors.orange or colors.white)
+                    or (isSel and (isColor and colors.cyan or colors.white) or colors.black)
+                )
+                parentTerm.setTextColor((isSel or isTesting) and colors.black or colors.white)
+
+                local shortName = item.name
+                if #shortName > 17 then shortName = shortName:sub(1, 15) .. ".." end
+                local shortKind = (item.kind or ""):gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", "")
+                if #shortKind > 11 then shortKind = shortKind:sub(1, 11) end
+
+                local invStr = cfg.invert and "TERS" or "NRM "
+                local lineStr = string.format(
+                    "%s%-17s %-12s %-12s %-4s",
+                    isSel and ">" or " ",
+                    shortName,
+                    shortKind,
+                    cfg.role,
+                    invStr
+                )
+                if #lineStr > w then lineStr = lineStr:sub(1, w) end
+                parentTerm.write(lineStr .. string.rep(" ", math.max(0, w - #lineStr)))
+            else
+                parentTerm.setBackgroundColor(colors.black)
+                parentTerm.write(string.rep(" ", w))
+            end
+        end
+
+        parentTerm.setBackgroundColor(colors.black)
+        parentTerm.setCursorPos(2, h - 1)
+        parentTerm.setTextColor(isColor and colors.lime or colors.white)
+        parentTerm.write("[Sol/Sag]:Rol [1-7]:Mothership [T]:SpinTest [A]:OtoDiz")
+        parentTerm.setCursorPos(2, h)
+        parentTerm.setTextColor(isColor and colors.lightGray or colors.white)
+        parentTerm.write("[I]:Ters [X]:AUTO [R]:Yenile [V]:Profil [P/Tab]:Durum")
+    end
 
     local function drawCoreStatus()
+        if viewMode == "IO" then
+            drawIOConfig()
+            return
+        end
         local w, h = parentTerm.getSize()
         parentTerm.setBackgroundColor(colors.black)
         parentTerm.clear()
@@ -112,19 +201,32 @@ local function run(context)
         ))
 
         -- Keybind hints
+        parentTerm.setCursorPos(2, math.min(h - 1, 11))
+        parentTerm.setTextColor(isColor and colors.lime or colors.white)
+        parentTerm.write("[P / Tab]: FCC Donanim & Motor Rol Atama Ekrani")
         parentTerm.setCursorPos(2, math.min(h, 12))
         parentTerm.setTextColor(isColor and colors.lightGray or colors.white)
-        parentTerm.write("[H]: Hover  [M]: Manual  [C]: Cruise  [Z]: Anchor  [B]: Brake  [U]: OTA  [Q]: Stop")
+        parentTerm.write("[H]:Hover [M]:Manual [C]:Cruise [Z]:Anchor [B]:Brake [U]:OTA [Q]:Stop")
     end
 
     local function broadcastState()
         if not (rednet and rednet.isOpen and rednet.isOpen()) then return end
+        local ioDevs = {}
+        for _, d in ipairs(fc.ioDevices or {}) do
+            ioDevs[#ioDevs + 1] = {
+                name       = d.name,
+                kind       = d.kind,
+                cap        = d.cap,
+                isRedstone = d.isRedstone
+            }
+        end
         pcall(rednet.broadcast, {
-            type   = "AVIONICS_STATE",
-            sender = (os.getComputerID and os.getComputerID()) or 0,
-            tel    = lastTel,
-            ioMap  = fc.ioMap,
-            ap     = {
+            type      = "AVIONICS_STATE",
+            sender    = (os.getComputerID and os.getComputerID()) or 0,
+            tel       = lastTel,
+            ioMap     = fc.ioMap,
+            ioDevices = ioDevs,
+            ap        = {
                 enabled      = fc.ap.enabled,
                 mode         = fc.ap.mode,
                 altHold      = fc.ap.altHold,
@@ -265,6 +367,13 @@ local function run(context)
                         broadcastState()
                     end
                 end
+            elseif ev == "peripheral" or ev == "peripheral_detach" then
+                if ev == "peripheral" and peripheral.getType(p1) == "modem" and rednet and not rednet.isOpen(p1) then
+                    pcall(rednet.open, p1)
+                end
+                fc:scanPeripherals()
+                broadcastState()
+                drawCoreStatus()
             elseif ev == "key" then
                 if p1 == keys.q then
                     fc.ap.baseThrottle = 0
@@ -272,6 +381,46 @@ local function run(context)
                     fc:setMode("MANUAL", lastTel)
                     fc:step(0.05)
                     running = false
+                elseif p1 == keys.p or p1 == keys.tab then
+                    viewMode = (viewMode == "IO") and "STATUS" or "IO"
+                    drawCoreStatus()
+                elseif viewMode == "IO" then
+                    local devs = fc.ioDevices or {}
+                    local selItem = devs[selectedIOIdx]
+                    if p1 == keys.up then
+                        selectedIOIdx = math.max(1, selectedIOIdx - 1)
+                    elseif p1 == keys.down then
+                        selectedIOIdx = math.min(math.max(1, #devs), selectedIOIdx + 1)
+                    elseif p1 == keys.left and selItem then
+                        fc:cycleRole(selItem.name, -1)
+                        broadcastState()
+                    elseif p1 == keys.right and selItem then
+                        fc:cycleRole(selItem.name, 1)
+                        broadcastState()
+                    elseif quickRoles[p1] and selItem then
+                        fc:setDeviceRole(selItem.name, quickRoles[p1])
+                        broadcastState()
+                    elseif p1 == keys.t and selItem then
+                        fc:triggerSpinTest(selItem.name)
+                    elseif p1 == keys.i and selItem then
+                        fc:toggleInvert(selItem.name)
+                        broadcastState()
+                    elseif p1 == keys.x and selItem then
+                        fc:resetDeviceRole(selItem.name)
+                        broadcastState()
+                    elseif p1 == keys.a then
+                        fc:autoAssignMothershipRoles(true)
+                        broadcastState()
+                    elseif p1 == keys.r then
+                        fc:scanPeripherals()
+                        broadcastState()
+                    elseif p1 == keys.v then
+                        local nextProf = (fc.vehicleType == "MOTHERSHIP") and "ZEPPELIN"
+                            or ((fc.vehicleType == "ZEPPELIN") and "AIRCRAFT" or "MOTHERSHIP")
+                        fc:setVehicleProfile(nextProf, nextProf == "MOTHERSHIP")
+                        broadcastState()
+                    end
+                    drawCoreStatus()
                 elseif p1 == keys.h then
                     fc:setMode("HOVER", lastTel)
                     broadcastState()
