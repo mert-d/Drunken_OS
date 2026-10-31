@@ -408,16 +408,31 @@ function Avionics:autoAssignMothershipRoles(forceOverwrite)
     for _, item in ipairs(self.ioDevices or {}) do
         if not item.isRedstone then
             local k = item.kind:lower()
-            if k:find("speed_controller") or k:find("rotationspeedcontroller")
+            if k:find("shaft") and item.cap == "PASSIVE" then
+                -- Reset any accidental motor role previously assigned to a passive shaft
+                local sCfg = self:getDeviceConfig(item.name)
+                if sCfg.role ~= "AUTO" then sCfg.role = "AUTO" end
+            elseif (k:find("speed_controller") or k:find("rotationspeedcontroller")
                 or k:find("analog_transmission") or k:find("gearbox")
-                or k:find("chain_gearshift") or k:find("chain_drive") or k:find("encased")
+                or k:find("chain_gearshift") or k:find("chain_drive")
                 or k:find("sequenced_gearshift") or k:find("throttle_lever")
-                or k:find("bearing") or k:find("propeller") then
+                or k:find("bearing") or k:find("propeller"))
+                and not k:find("shaft") and item.cap ~= "PASSIVE" then
                 table.insert(candidates, item.name)
             end
         end
     end
-    local assignedCount = 0
+
+    local usedRoles = {}
+    if not forceOverwrite then
+        for _, devName in ipairs(candidates) do
+            local cfg = self:getDeviceConfig(devName)
+            if cfg.role and cfg.role ~= "AUTO" then
+                usedRoles[cfg.role] = true
+            end
+        end
+    end
+
     for _, devName in ipairs(candidates) do
         local cfg = self:getDeviceConfig(devName)
         if forceOverwrite or cfg.role == "AUTO" then
@@ -439,11 +454,17 @@ function Avionics:autoAssignMothershipRoles(forceOverwrite)
 
             if posRole then
                 cfg.role = posRole
+                usedRoles[posRole] = true
             else
-                assignedCount = assignedCount + 1
-                if assignedCount <= #Avionics.MOTHERSHIP_ROLES then
-                    cfg.role = Avionics.MOTHERSHIP_ROLES[assignedCount]
+                local picked = nil
+                for _, r in ipairs(Avionics.MOTHERSHIP_ROLES) do
+                    if not usedRoles[r] then
+                        picked = r
+                        usedRoles[r] = true
+                        break
+                    end
                 end
+                cfg.role = picked or "AUTO"
             end
         end
     end
@@ -580,6 +601,13 @@ function Avionics:scanPeripherals()
                 end
             end
         end
+        local capRank = { RPM = 1, SIG = 2, SENS = 3, PASSIVE = 4 }
+        table.sort(self.ioDevices, function(a, b)
+            local ra = capRank[a.cap] or 4
+            local rb = capRank[b.cap] or 4
+            if ra ~= rb then return ra < rb end
+            return tostring(a.name) < tostring(b.name)
+        end)
     else
         for _, pair in ipairs({ { self.speedControllers, "rotation_speed_controller" }, { self.gearboxes, "analog_transmission" } }) do
             for idx, dev in ipairs(pair[1] or {}) do

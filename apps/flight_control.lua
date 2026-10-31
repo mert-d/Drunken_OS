@@ -446,6 +446,23 @@ local function run(context)
         drawTerm.write("[P]: I/O Motor Siralamasi | [V/Tab]: Kokpite Don")
     end
 
+    local function formatShortDevName(rawName, maxLen)
+        maxLen = maxLen or 21
+        local s = tostring(rawName or "")
+            :gsub("^Create_RotationSpeedController", "RotSpeedCtrl")
+            :gsub("^rotation_speed_controller", "rot_speed_ctrl")
+            :gsub("^create_connected_", "cc_")
+            :gsub("^create:", "")
+            :gsub("^create_", "")
+        if #s <= maxLen then return s end
+        local numSuffix = s:match("(_%d+)$")
+        if numSuffix and #numSuffix < maxLen - 3 then
+            local headLen = maxLen - #numSuffix - 2
+            return s:sub(1, headLen) .. ".." .. numSuffix
+        end
+        return s:sub(1, maxLen - 2) .. ".."
+    end
+
     local function renderIOConfigurator(w, h)
         drawTerm.setBackgroundColor(theme.bg)
         drawTerm.clear()
@@ -454,7 +471,7 @@ local function run(context)
         drawTerm.setBackgroundColor(isColor and colors.gray or colors.black)
         drawTerm.setTextColor(isColor and colors.yellow or colors.white)
         drawTerm.setCursorPos(1, 2)
-        local colHdr = string.format(" %-18s %-12s %-12s %-4s", "CIHAZ / KANAL", "TIP", "GOREV (ROLE)", "INV")
+        local colHdr = string.format(" %-21s %-8s %-12s %-4s", "CIHAZ / KANAL (#ID)", "TIP", "GOREV (ROLE)", "INV")
         drawTerm.write(colHdr .. string.rep(" ", math.max(0, w - #colHdr)))
 
         local devs = fc.ioDevices or {}
@@ -479,16 +496,16 @@ local function run(context)
                     isTesting and (isColor and colors.orange or colors.white)
                     or (isSel and (isColor and colors.cyan or colors.white) or theme.bg)
                 )
-                drawTerm.setTextColor((isSel or isTesting) and colors.black or theme.fg)
+                drawTerm.setTextColor((isSel or isTesting) and colors.black or (item.cap == "PASSIVE" and isColor and colors.lightGray or theme.fg))
 
-                local shortName = item.name
-                if #shortName > 17 then shortName = shortName:sub(1, 15) .. ".." end
-                local shortKind = item.kind:gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", "")
-                if #shortKind > 11 then shortKind = shortKind:sub(1, 11) end
+                local shortName = formatShortDevName(item.name, 21)
+                local shortKind = item.cap == "PASSIVE" and "PASIF"
+                    or ((item.kind or ""):gsub("Create_RotationSpeedController", "SpeedCtr"):gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", ""))
+                if #shortKind > 8 then shortKind = shortKind:sub(1, 8) end
 
                 local invStr = cfg.invert and "TERS" or "NRM "
                 local lineStr = string.format(
-                    "%s%-17s %-12s %-12s %-4s",
+                    "%s%-21s %-8s %-12s %-4s",
                     isSel and ">" or " ",
                     shortName,
                     shortKind,
@@ -503,17 +520,20 @@ local function run(context)
             end
         end
 
-        -- Role Description Row
+        -- Full Peripheral Name & Role Description Row
         local selItem = devs[selectedIOIdx]
         local selCfg = selItem and fc:getDeviceConfig(selItem.name) or { role = "AUTO" }
         drawTerm.setBackgroundColor(theme.bg)
         drawTerm.setCursorPos(2, h - 2)
         local desc = ROLE_DESC[selCfg.role] or ""
-        if selItem and selItem.cap == "PASSIVE" then
-            drawTerm.setTextColor(theme.warn or colors.orange)
-            desc = "[PASIF BLOK] Motor donmuyor ise modemi Speed Controller'a takin!"
-        else
-            drawTerm.setTextColor(theme.accent or colors.cyan)
+        if selItem then
+            if selItem.cap == "PASSIVE" then
+                drawTerm.setTextColor(theme.warn or colors.orange)
+                desc = "TAM AD: " .. selItem.name .. " [PASIF SAFT]"
+            else
+                drawTerm.setTextColor(theme.accent or colors.cyan)
+                desc = "TAM AD: " .. selItem.name .. " | " .. desc
+            end
         end
         drawTerm.write(desc:sub(1, w - 2))
 

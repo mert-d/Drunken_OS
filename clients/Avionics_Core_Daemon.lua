@@ -72,6 +72,23 @@ local function run(context)
         [keys.seven] = "REAR_RIGHT"
     }
 
+    local function formatShortDevName(rawName, maxLen)
+        maxLen = maxLen or 21
+        local s = tostring(rawName or "")
+            :gsub("^Create_RotationSpeedController", "RotSpeedCtrl")
+            :gsub("^rotation_speed_controller", "rot_speed_ctrl")
+            :gsub("^create_connected_", "cc_")
+            :gsub("^create:", "")
+            :gsub("^create_", "")
+        if #s <= maxLen then return s end
+        local numSuffix = s:match("(_%d+)$")
+        if numSuffix and #numSuffix < maxLen - 3 then
+            local headLen = maxLen - #numSuffix - 2
+            return s:sub(1, headLen) .. ".." .. numSuffix
+        end
+        return s:sub(1, maxLen - 2) .. ".."
+    end
+
     local function drawIOConfig()
         local w, h = parentTerm.getSize()
         parentTerm.setBackgroundColor(colors.black)
@@ -86,11 +103,11 @@ local function run(context)
         parentTerm.setBackgroundColor(isColor and colors.gray or colors.black)
         parentTerm.setTextColor(isColor and colors.yellow or colors.white)
         parentTerm.setCursorPos(1, 2)
-        local colHdr = string.format(" %-18s %-12s %-12s %-4s", "CIHAZ / KANAL", "TIP", "GOREV (ROLE)", "INV")
+        local colHdr = string.format(" %-21s %-8s %-12s %-4s", "CIHAZ / KANAL (#ID)", "TIP", "GOREV (ROLE)", "INV")
         parentTerm.write(colHdr .. string.rep(" ", math.max(0, w - #colHdr)))
 
         local devs = fc.ioDevices or {}
-        local maxRows = math.max(3, h - 5)
+        local maxRows = math.max(3, h - 6)
         if selectedIOIdx > #devs then selectedIOIdx = math.max(1, #devs) end
         if selectedIOIdx < ioScrollOffset + 1 then
             ioScrollOffset = math.max(0, selectedIOIdx - 1)
@@ -111,16 +128,16 @@ local function run(context)
                     isTesting and (isColor and colors.orange or colors.white)
                     or (isSel and (isColor and colors.cyan or colors.white) or colors.black)
                 )
-                parentTerm.setTextColor((isSel or isTesting) and colors.black or colors.white)
+                parentTerm.setTextColor((isSel or isTesting) and colors.black or (item.cap == "PASSIVE" and isColor and colors.lightGray or colors.white))
 
-                local shortName = item.name
-                if #shortName > 17 then shortName = shortName:sub(1, 15) .. ".." end
-                local shortKind = (item.kind or ""):gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", "")
-                if #shortKind > 11 then shortKind = shortKind:sub(1, 11) end
+                local shortName = formatShortDevName(item.name, 21)
+                local shortKind = item.cap == "PASSIVE" and "PASIF"
+                    or ((item.kind or ""):gsub("Create_RotationSpeedController", "SpeedCtr"):gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", ""))
+                if #shortKind > 8 then shortKind = shortKind:sub(1, 8) end
 
                 local invStr = cfg.invert and "TERS" or "NRM "
                 local lineStr = string.format(
-                    "%s%-17s %-12s %-12s %-4s",
+                    "%s%-21s %-8s %-12s %-4s",
                     isSel and ">" or " ",
                     shortName,
                     shortKind,
@@ -135,7 +152,19 @@ local function run(context)
             end
         end
 
+        local selItem = devs[selectedIOIdx]
         parentTerm.setBackgroundColor(colors.black)
+        parentTerm.setCursorPos(2, h - 2)
+        if selItem then
+            if selItem.cap == "PASSIVE" then
+                parentTerm.setTextColor(isColor and colors.orange or colors.white)
+                parentTerm.write(("TAM AD: " .. selItem.name .. " [PASIF SAFT]"):sub(1, w - 2))
+            else
+                parentTerm.setTextColor(isColor and colors.yellow or colors.white)
+                parentTerm.write(("TAM AD: " .. selItem.name .. " [" .. tostring(selItem.cap or "IO") .. "]"):sub(1, w - 2))
+            end
+        end
+
         parentTerm.setCursorPos(2, h - 1)
         parentTerm.setTextColor(isColor and colors.lime or colors.white)
         parentTerm.write("[Sol/Sag]:Rol [1-7]:Mothership [T]:SpinTest [A]:OtoDiz")
