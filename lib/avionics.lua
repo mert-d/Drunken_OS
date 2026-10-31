@@ -589,6 +589,7 @@ function Avionics:scanPeripherals()
                             cap = "RPM"
                         elseif type(h.setSignal) == "function" or type(h.setThrottle) == "function"
                             or type(h.setControl) == "function" or type(h.setPowered) == "function"
+                            or type(h.setOutput) == "function" or type(h.setAnalogOutput) == "function"
                             or type(h.setTargetAngle) == "function" or type(h.setTargetAngleRad) == "function"
                             or type(h.setAngle) == "function" or type(h.setSteering) == "function" then
                             cap = "SIG"
@@ -1461,8 +1462,12 @@ function Avionics:step(dt)
             local role = cfg.role
             local inv = cfg.invert == true
             local itemCombined = (tostring(item.name or "") .. " " .. tostring(item.kind or "")):lower()
-            local isClutchDev = (not item.isRedstone) and (itemCombined:find("clutch") ~= nil)
-            local isNormalClutchDev = isClutchDev and (not itemCombined:find("inverted"))
+            local isClutchDev = (not item.isRedstone) and (
+                itemCombined:find("clutch") ~= nil
+                or itemCombined:find("redstone_relay") ~= nil
+                or (item.handle and not item.handle.setTargetSpeed and (type(item.handle.setPowered) == "function" or type(item.handle.setOutput) == "function"))
+            )
+            local isNormalClutchDev = isClutchDev and itemCombined:find("clutch") ~= nil and (not itemCombined:find("inverted"))
 
             -- Spin Test Override ([T] in I/O Configurator or Engineering Deck)
             if self.spinTest and (self.spinTest.name == item.name or self.spinTest.name == "ALL") and not item.isRedstone and item.handle then
