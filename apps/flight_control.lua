@@ -960,6 +960,7 @@ local function run(context)
                     running = false
                 elseif key == keys.u then
                     -- GitHub OTA via lib/netpkg: all package files + AVX modules, all-or-nothing
+                    if isRemoteFCC then sendAvionicsCmd("OTA_UPDATE") end
                     hotplugNotice = "GitHub OTA: Guncelleniyor..."
                     hotplugTimer = 80
                     renderPFD()

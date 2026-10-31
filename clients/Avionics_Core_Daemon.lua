@@ -315,6 +315,47 @@ local function run(context)
         end
     end
 
+    local function performOtaUpdate()
+        lastCmdName = "OTA: INDIRILIYOR..."
+        drawCoreStatus()
+        local okNet, netpkg = pcall(require, "lib.netpkg")
+        if not okNet then okNet, netpkg = pcall(require, "netpkg") end
+        if (not okNet or type(netpkg) ~= "table") and http and http.get and fs then
+            local ts = tostring((os.epoch and os.epoch("utc")) or os.time())
+            local okH, r = pcall(http.get, "https://raw.githubusercontent.com/mert-d/Drunken_OS/main/lib/netpkg.lua?v=" .. ts)
+            if okH and r then
+                local code = r.readAll()
+                pcall(r.close)
+                if code and #code > 0 then
+                    if not fs.exists("/lib") then fs.makeDir("/lib") end
+                    local f = fs.open("/lib/netpkg.lua", "w")
+                    if f then f.write(code); f.close() end
+                    local fn = load(code, "netpkg", "t", _G)
+                    if fn then okNet, netpkg = pcall(fn) end
+                end
+            end
+        end
+        if okNet and type(netpkg) == "table" and netpkg.update then
+            local okUpd, countOrErr = netpkg.update("avionics_core")
+            if okUpd then
+                lastCmdName = "OTA TAMAM (" .. tostring(countOrErr) .. "f) REBOOT!"
+                drawCoreStatus()
+                fc.ap.baseThrottle = 0
+                fc.ap.parkingBrake = true
+                fc:setMode("MANUAL", lastTel)
+                fc:step(0.05)
+                sleep(0.8)
+                if os.reboot then os.reboot() end
+            else
+                lastCmdName = "OTA HATA: " .. tostring(countOrErr):sub(1, 18)
+                drawCoreStatus()
+            end
+        else
+            lastCmdName = "OTA HATA: HTTP/netpkg yok"
+            drawCoreStatus()
+        end
+    end
+
     -- 2. Command Receiver (From Cockpit Computer, Cabin Computer, or ILS Tower)
     local function commandLoop()
         while running do
@@ -387,6 +428,8 @@ local function run(context)
                             fc:resetDeviceRole(msg.name)
                         elseif msg.cmd == "SPIN_TEST" then
                             fc:triggerSpinTest(msg.name)
+                        elseif msg.cmd == "OTA_UPDATE" then
+                            performOtaUpdate()
                         elseif msg.cmd == "SAFE_DISARM" or msg.cmd == "DISARM" then
                             fc.ap.baseThrottle = 0
                             fc.ap.parkingBrake = true
@@ -410,6 +453,8 @@ local function run(context)
                     fc:setMode("MANUAL", lastTel)
                     fc:step(0.05)
                     running = false
+                elseif p1 == keys.u then
+                    performOtaUpdate()
                 elseif p1 == keys.p or p1 == keys.tab then
                     viewMode = (viewMode == "IO") and "STATUS" or "IO"
                     drawCoreStatus()
@@ -466,16 +511,6 @@ local function run(context)
                 elseif p1 == keys.b then
                     fc.ap.parkingBrake = not fc.ap.parkingBrake
                     broadcastState()
-                elseif p1 == keys.u then
-                    local okNet, netpkg = pcall(require, "lib.netpkg")
-                    if not okNet then okNet, netpkg = pcall(require, "netpkg") end
-                    if okNet and netpkg and netpkg.update then
-                        lastCmdName = "OTA_UPDATE"
-                        drawCoreStatus()
-                        local okUpd, countOrErr = netpkg.update("avionics_core")
-                        lastCmdName = okUpd and ("OTA_OK (" .. tostring(countOrErr) .. "f)") or ("OTA_ERR:" .. tostring(countOrErr):sub(1, 10))
-                        drawCoreStatus()
-                    end
                 end
             end
         end
