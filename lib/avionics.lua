@@ -1442,11 +1442,16 @@ function Avionics:step(dt)
     local fwdSig = clutchCut and 0 or fwdBase
     local turnYaw = 0
     if not (not self.ap.enabled and self.ap.parkingBrake) then
-        turnYaw = self.ap.hdgHold and yawDiff or ((steerVal ~= 0 and (steerVal * 6.0)) or (self.ap.manualYaw or 0))
+        if clutchCut and math.abs(steerVal) < 0.02 and (self.ap.manualYaw or 0) == 0 then
+            turnYaw = 0
+        else
+            turnYaw = self.ap.hdgHold and yawDiff or ((steerVal ~= 0 and (steerVal * 6.0)) or (self.ap.manualYaw or 0))
+        end
     end
-    local rearL = math.floor(clamp(fwdSig - turnYaw, -15, 15) + 0.5)
-    local rearC = math.floor(clamp(fwdSig, -15, 15) + 0.5)
-    local rearR = math.floor(clamp(fwdSig + turnYaw, -15, 15) + 0.5)
+    local minRear = revActive and -15 or 0
+    local rearL = math.floor(clamp(fwdSig - turnYaw, minRear, 15) + 0.5)
+    local rearC = math.floor(clamp(fwdSig, minRear, 15) + 0.5)
+    local rearR = math.floor(clamp(fwdSig + turnYaw, minRear, 15) + 0.5)
 
     self.lastMothershipState = { fl = liftFL, fr = liftFR, rl = liftRL, rr = liftRR, rearL = rearL, rearC = rearC, rearR = rearR }
     tel.mothership = self.lastMothershipState
