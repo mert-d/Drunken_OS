@@ -211,6 +211,7 @@ Avionics.ROLES = {
     "THRUST_PORT",
     "THRUST_STBD",
     "AUX_BOOST",
+    "CLUTCH_LIFT",
     "CLUTCH_BRAKE",
     "GEAR_REVERSE",
     "RUDDER_YAW",
@@ -1356,23 +1357,27 @@ function Avionics:step(dt)
 
     -- Drive Create Clutches & Inverted Clutches (Propeller power cut / engagement)
     -- Steady-state deterministic polarity (no auto-flipping oscillation loop!)
+    local isSpinTestingAny = (self.spinTest and self.spinTest.ticks and self.spinTest.ticks > 0) or false
     local isAnchorThrust = (self.ap.mode == "ANCHOR" and tel.anchor and math.abs(tel.anchor.surge or 0) > 0.5)
     local clutchCut = (self.ap.mode == "HOVER") or self.ap.parkingBrake or (self.ap.baseThrottle <= 0 and not isAnchorThrust)
     for _, cl in ipairs(self.clutches or {}) do
         local clName = (peripheral and peripheral.getName and pcall(peripheral.getName, cl) and peripheral.getName(cl)) or nil
-        local clType = (clName and peripheral and peripheral.getType and pcall(peripheral.getType, clName) and peripheral.getType(clName)) or ""
-        local clBlk  = (type(cl.getBlockId) == "function" and tostring(safeCall(cl.getBlockId) or "")) or ""
-        local isNormalClutch = (not (tostring(clName or "") .. " " .. tostring(clType) .. " " .. clBlk):lower():find("inverted"))
-            and ((tostring(clName or "") .. " " .. tostring(clType) .. " " .. clBlk):lower():find("clutch") ~= nil)
-        local devInv = clName and self:getDeviceConfig(clName).invert or false
-        local totalInv = (self.clutchPolarInvert ~= devInv)
-        if isNormalClutch then totalInv = not totalInv end
+        local clCfg  = clName and self:getDeviceConfig(clName) or { role = "AUTO", invert = false }
+        if clCfg.role == "AUTO" or clCfg.role == "CLUTCH_BRAKE" then
+            local clType = (clName and peripheral and peripheral.getType and pcall(peripheral.getType, clName) and peripheral.getType(clName)) or ""
+            local clBlk  = (type(cl.getBlockId) == "function" and tostring(safeCall(cl.getBlockId) or "")) or ""
+            local isNormalClutch = (not (tostring(clName or "") .. " " .. tostring(clType) .. " " .. clBlk):lower():find("inverted"))
+                and ((tostring(clName or "") .. " " .. tostring(clType) .. " " .. clBlk):lower():find("clutch") ~= nil)
+            local devInv = clCfg.invert or false
+            local totalInv = (self.clutchPolarInvert ~= devInv)
+            if isNormalClutch then totalInv = not totalInv end
 
-        local engageActive = not clutchCut
-        local engageSig = clutchCut and 0 or 15
-        table.insert(tasks, function()
-            driveBooleanOrSignal(cl, engageActive, engageSig, totalInv, "clutch")
-        end)
+            local engageActive = isSpinTestingAny or (not clutchCut)
+            local engageSig = engageActive and 15 or 0
+            table.insert(tasks, function()
+                driveBooleanOrSignal(cl, engageActive, engageSig, totalInv, "clutch")
+            end)
+        end
     end
 
     -- Drive Gearshifts (Forward / Backward Movement via [G], [W]/[S], or Sky Anchor reverse drift)
@@ -1446,18 +1451,33 @@ function Avionics:step(dt)
     tel.mothership = self.lastMothershipState
 
     -- Route custom I/O role mappings (Hot-plug peripherals, Mothership 7-motor roles & Redstone sides)
+    local anyLiftActive = (liftFL > 0 or liftFR > 0 or liftRL > 0 or liftRR > 0) or isSpinTestingAny
+    local spinRole = (isSpinTestingAny and self.spinTest.name and self.spinTest.name ~= "ALL")
+        and self:getDeviceConfig(self.spinTest.name).role or nil
+
     local function routeCustomRoleDevices(bSig)
         for _, item in ipairs(self.ioDevices or {}) do
             local cfg = self:getDeviceConfig(item.name)
             local role = cfg.role
             local inv = cfg.invert == true
+            local itemCombined = (tostring(item.name or "") .. " " .. tostring(item.kind or "")):lower()
+            local isClutchDev = (not item.isRedstone) and (itemCombined:find("clutch") ~= nil)
+            local isNormalClutchDev = isClutchDev and (not itemCombined:find("inverted"))
 
             -- Spin Test Override ([T] in I/O Configurator or Engineering Deck)
             if self.spinTest and (self.spinTest.name == item.name or self.spinTest.name == "ALL") and not item.isRedstone and item.handle then
                 local dev = item.handle
-                table.insert(tasks, function()
-                    driveSignal(dev, 8, inv)
-                end)
+                if isClutchDev then
+                    local totalInv = (self.clutchPolarInvert ~= inv)
+                    if isNormalClutchDev then totalInv = not totalInv end
+                    table.insert(tasks, function()
+                        driveBooleanOrSignal(dev, true, 15, totalInv, "clutch")
+                    end)
+                else
+                    table.insert(tasks, function()
+                        driveSignal(dev, 8, inv)
+                    end)
+                end
             elseif role ~= "AUTO" or (inv and item.isRedstone) then
                 local sig = nil
                 local boolState = nil
@@ -1468,12 +1488,20 @@ function Avionics:step(dt)
                     AUX_BOOST = boostSignal
                 }
                 sig = roleSigs[role]
-                if sig == nil then
+                if sig ~= nil and isClutchDev then
+                    -- Individual Inverted Clutch in front of a specific motor (LIFT_FL..REAR_RIGHT)
+                    local roleTesting = isSpinTestingAny and (self.spinTest.name == "ALL" or spinRole == role or spinRole == "AUTO")
+                    boolState = (math.abs(sig) > 0) or roleTesting
+                    sig = boolState and 15 or 0
+                elseif sig == nil then
                     if role == "LIFT_BURNER" or (role == "AUTO" and item.isRedstone) then
                         sig = bSig
+                    elseif role == "CLUTCH_LIFT" then
+                        boolState = anyLiftActive
+                        sig = anyLiftActive and 15 or 0
                     elseif role == "CLUTCH_BRAKE" then
-                        boolState = not clutchCut
-                        sig = clutchCut and 0 or math.max(1, mainThrottleSig)
+                        boolState = isSpinTestingAny or (not clutchCut)
+                        sig = boolState and 15 or math.max(0, clutchCut and 0 or math.max(1, mainThrottleSig))
                     elseif role == "GEAR_REVERSE" then
                         boolState = revActive
                         sig = revActive and 15 or 0
@@ -1506,7 +1534,12 @@ function Avionics:step(dt)
                                 driveSignal(dev, sig, inv)
                             end
                         elseif boolState ~= nil then
-                            driveBooleanOrSignal(dev, boolState, sig or 0, inv, role)
+                            local effInv = inv
+                            if isClutchDev then
+                                effInv = (self.clutchPolarInvert ~= inv)
+                                if isNormalClutchDev then effInv = not effInv end
+                            end
+                            driveBooleanOrSignal(dev, boolState, sig or 0, effInv, isClutchDev and "clutch" or role)
                         elseif sig ~= nil then
                             driveSignal(dev, sig, inv)
                         end

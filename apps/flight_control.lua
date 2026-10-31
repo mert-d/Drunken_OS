@@ -282,7 +282,8 @@ local function run(context)
         THRUST_PORT  = "Sol Itki (Port): Diferansiyel sol motor gucu",
         THRUST_STBD  = "Sag Itki (Stbd): Diferansiyel sag motor gucu",
         AUX_BOOST    = "Boost Thruster: Gaz >= 12 oldugunda tam guc",
-        CLUTCH_BRAKE = "Debriyaj / Fren: [B] Fren veya Gaz=0'da keser",
+        CLUTCH_LIFT  = "Lift Debriyaji: 4 Dikey motor donerken kavrar, durunca keser",
+        CLUTCH_BRAKE = "Itki Debriyaji: Arka iticiler donerken kavrar, Hover/Parkta keser",
         GEAR_REVERSE = "Geri Vites (Gearshift): [G] ile yonu tersler",
         RUDDER_YAW   = "Dumen (Rudder): Yonlendirme acisi / sinyali",
         IGNORE       = "Devre Disi: Ucus bilgisayari bu bloga dokunmaz"
