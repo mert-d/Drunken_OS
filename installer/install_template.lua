@@ -1,33 +1,24 @@
 --[[
     Drunken OS - Resilient Disk Installer (v1.3)
-    by MuhendizBey
-
-    Purpose:
-    Placed on every installation disk. Discovers drive mount dynamically,
-    copies files cleanly to hard drive root, configures startup, and reboots.
+    Discovers drive mount, copies files to target, configures startup, reboots.
 ]]
 
 local runSetupWizard
 
 local function fatalError(title, details)
     pcall(function()
-        if term.isColor and term.isColor() then
-            term.setBackgroundColor(colors.black)
-            term.setTextColor(colors.red)
-        end
+        term.setBackgroundColor(colors.black)
+        term.setTextColor(colors.red)
         term.clear()
         term.setCursorPos(1, 2)
-        print("========================================")
-        print("     DRUNKEN OS INSTALLATION FAILED     ")
-        print("========================================")
-        if term.setTextColor then term.setTextColor(colors.white) end
+        print("=== DRUNKEN OS INSTALLATION FAILED ===")
+        term.setTextColor(colors.white)
         print("\n" .. tostring(title) .. "\n")
         if details then
-            if term.setTextColor then term.setTextColor(colors.lightGray or colors.white) end
+            term.setTextColor(colors.lightGray or colors.white)
             print(tostring(details))
         end
-        print("\nPlease take a screenshot or verify disk.")
-        print("Press any key to reboot...")
+        print("\nPress any key to reboot...")
         os.pullEvent("key")
         os.reboot()
     end)
@@ -35,9 +26,7 @@ end
 
 local function ensureDir(path)
     local dir = fs.getDir(path)
-    if dir and dir ~= "" and not fs.exists(dir) then
-        fs.makeDir(dir)
-    end
+    if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
 end
 
 local function findDiskPath()
@@ -46,29 +35,18 @@ local function findDiskPath()
     if dir and dir ~= "" and dir ~= "." and fs.exists(fs.combine(dir, "install_config.lua")) then
         return dir
     end
-    if peripheral and peripheral.getNames then
-        for _, name in ipairs(peripheral.getNames()) do
-            if peripheral.getType(name) == "drive" then
-                local mount = nil
-                if disk and disk.getMountPath then
-                    pcall(function() mount = disk.getMountPath(name) end)
-                end
-                if not mount then
-                    local p = peripheral.wrap(name)
-                    if p and p.getMountPath then
-                        pcall(function() mount = p.getMountPath() end)
-                    end
-                end
-                if mount and fs.exists(fs.combine(mount, "install_config.lua")) then
-                    return mount
-                end
+    for _, name in ipairs(peripheral and peripheral.getNames and peripheral.getNames() or {}) do
+        if peripheral.getType(name) == "drive" then
+            local mount = disk and disk.getMountPath and disk.getMountPath(name)
+            if not mount then
+                local p = peripheral.wrap(name)
+                mount = p and p.getMountPath and p.getMountPath()
             end
+            if mount and fs.exists(fs.combine(mount, "install_config.lua")) then return mount end
         end
     end
-    for _, candidate in ipairs({ "disk", "disk1", "disk2", "disk3", "disk4", "disk5", "/" }) do
-        if fs.exists(fs.combine(candidate, "install_config.lua")) then
-            return candidate
-        end
+    for _, c in ipairs({ "disk", "disk1", "disk2", "disk3", "/" }) do
+        if fs.exists(fs.combine(c, "install_config.lua")) then return c end
     end
     return (dir ~= "" and dir ~= ".") and dir or "disk"
 end
@@ -76,23 +54,19 @@ end
 local function doInstallation()
     local diskPath = findDiskPath()
     local configPath = fs.combine(diskPath, "install_config.lua")
-
     if not fs.exists(configPath) then
-        fatalError("Configuration file not found!", "Looked for install_config.lua in: " .. tostring(configPath))
+        fatalError("Configuration file not found!", "Looked in: " .. tostring(configPath))
         return
     end
 
     local configFile = fs.open(configPath, "r")
-    if not configFile then
-        fatalError("Cannot read configuration file!", configPath)
-        return
-    end
+    if not configFile then fatalError("Cannot read configuration file!", configPath); return end
     local configData = configFile.readAll()
     configFile.close()
 
     local config = textutils.unserialize(configData)
     if not config or not config.main_program or not config.files then
-        fatalError("Configuration file is corrupted!", "Data length: " .. tostring(configData and #configData or 0) .. " bytes")
+        fatalError("Configuration file is corrupted!", "Length: " .. tostring(configData and #configData or 0))
         return
     end
 
@@ -109,7 +83,6 @@ local function doInstallation()
     if isColor then term.setTextColor(colors.white) end
     print("Source: /" .. tostring(diskPath) .. " -> Target: /\n")
 
-    -- Files not on disk (did not fit / remote_files) are fetched from GitHub
     local allFiles, seen = {}, {}
     for _, key in ipairs({ "files", "remote_files" }) do
         for _, f in ipairs(config[key] or {}) do
@@ -156,7 +129,7 @@ local function doInstallation()
     end
 
     if not installed[config.main_program] then
-        fatalError("Main program not installed!", tostring(config.main_program) .. "\nCheck HTTP (GitHub download failed).")
+        fatalError("Main program not installed!", tostring(config.main_program) .. "\nCheck HTTP connection.")
         return
     end
 
@@ -166,10 +139,7 @@ local function doInstallation()
     end
 
     local pathFile = fs.open("/.program_path", "w")
-    if pathFile then
-        pathFile.write(config.main_program)
-        pathFile.close()
-    end
+    if pathFile then pathFile.write(config.main_program); pathFile.close() end
 
     if isColor then term.setTextColor(colors.yellow) end
     print("\nCreating startup file...")
@@ -177,10 +147,9 @@ local function doInstallation()
     if config.type == "server" then
         local srvStartupPath = fs.combine(diskPath, "server_startup.lua")
         if not fs.exists(srvStartupPath) then
-            if fs.exists(fs.combine(diskPath, "server_startup")) then
-                srvStartupPath = fs.combine(diskPath, "server_startup")
-            else
-                fatalError("server_startup.lua is missing on installation disk!", srvStartupPath)
+            srvStartupPath = fs.combine(diskPath, "server_startup")
+            if not fs.exists(srvStartupPath) then
+                fatalError("server_startup.lua is missing on disk!", srvStartupPath)
                 return
             end
         end
@@ -192,10 +161,7 @@ local function doInstallation()
     end
 
     local outStartup = fs.open("/startup.lua", "w")
-    if outStartup then
-        outStartup.write(startupContent)
-        outStartup.close()
-    end
+    if outStartup then outStartup.write(startupContent); outStartup.close() end
     local outStartupLegacy = fs.open("/startup", "w")
     if outStartupLegacy then
         outStartupLegacy.write('if fs.exists("/startup.lua") then shell.run("/startup.lua") else shell.run("startup.lua") end\n')
@@ -205,10 +171,8 @@ local function doInstallation()
     if isColor then term.setTextColor(colors.green) end
     print("Installation complete! Ejecting disk...")
 
-    local drive = peripheral.find("drive")
-    if drive and drive.isDiskPresent and drive.isDiskPresent() then
-        pcall(drive.ejectDisk)
-    end
+    local drive = peripheral.find and peripheral.find("drive")
+    if drive and drive.isDiskPresent and drive.isDiskPresent() then pcall(drive.ejectDisk) end
 
     sleep(2)
     os.reboot()
@@ -218,13 +182,12 @@ runSetupWizard = function(setup_type)
     local ATM_TURTLE_PROTOCOL = "DB_ATM_Turtle"
     if setup_type == "atm" then
         print("Configuring ATM...")
-        local modem = peripheral.find("modem")
+        local modem = peripheral.find and peripheral.find("modem")
         if modem then rednet.open(peripheral.getName(modem)) end
         local turtleId, verified = nil, false
         while not verified do
             print("Enter Bank Clerk Turtle ID:")
-            local input = read()
-            turtleId = tonumber(input)
+            turtleId = tonumber(read())
             if not turtleId then
                 print("Invalid ID. Enter a number.")
             elseif not modem then
@@ -232,10 +195,9 @@ runSetupWizard = function(setup_type)
             else
                 print("Pinging Turtle " .. turtleId .. "...")
                 rednet.send(turtleId, { type = "ping" }, ATM_TURTLE_PROTOCOL)
-                local sender, message = rednet.receive(ATM_TURTLE_PROTOCOL, 4)
-                if sender == turtleId and type(message) == "table" and message.type == "pong" then
-                    print("Handshake OK! Turtle online.")
-                    verified = true
+                local sender, msg = rednet.receive(ATM_TURTLE_PROTOCOL, 4)
+                if sender == turtleId and type(msg) == "table" and msg.type == "pong" then
+                    print("Handshake OK! Turtle online."); verified = true
                 else
                     print("No response. Retry? (y/n)")
                     if read():lower() ~= "y" then verified = true end
@@ -247,9 +209,8 @@ runSetupWizard = function(setup_type)
     elseif setup_type == "bank_server" or setup_type == "auditor" then
         local prompt = (setup_type == "bank_server") and "Auditor" or "Bank Server"
         print("Enter secret key for " .. prompt .. ":")
-        local secret = read()
         local f = fs.open("/auditor_key.conf", "w")
-        if f then f.write(secret); f.close() end
+        if f then f.write(read()); f.close() end
     end
 end
 

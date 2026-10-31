@@ -93,7 +93,8 @@ return {
             files = {
                 "servers/Drunken_OS_MailServer.lua",
                 "lib/db.lua",
-                "lib/utils.lua"
+                "lib/utils.lua",
+                "lib/service_guard.lua"
             },
             include_shared = false 
         },

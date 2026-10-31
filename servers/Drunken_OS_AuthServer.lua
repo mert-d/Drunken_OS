@@ -128,9 +128,19 @@ local AUTH_INTERLINK_PROTOCOL = "Drunken_Auth_Interlink"
 local wirelessModem = nil
 local wiredModem = nil
 
+local serverDashboard = nil
+local logHistory = {}
+
 local function logActivity(msg, isError)
     local pfx = isError and "[ERROR] " or "[INFO] "
-    print(os.date("[%H:%M:%S] ") .. pfx .. msg)
+    local logEntry = os.date("[%H:%M:%S] ") .. pfx .. tostring(msg or "")
+    table.insert(logHistory, logEntry)
+    if #logHistory > 100 then table.remove(logHistory, 1) end
+    if serverDashboard then
+        serverDashboard:log(logEntry, isError)
+    else
+        print(logEntry)
+    end
 end
 
 -- Protocol hosting helper
@@ -218,6 +228,7 @@ local function getHyperAuthConfig()
 end
 
 --- Checks if this Auth Server has completed pairing with HyperAuth
+--- Checks if this Auth Server has completed pairing with HyperAuth
 local function isPaired()
     local cfg = getHyperAuthConfig()
     if cfg and cfg.PAIRED == true and cfg.SHARED_SECRET and #cfg.SHARED_SECRET > 0 and cfg.CLIENT_ID ~= "unpaired" then
@@ -226,63 +237,165 @@ local function isPaired()
     return false
 end
 
---- Performs the interactive auto-pairing handshake with HyperAuth Server
+--- Checks if this Auth Server has explicitly configured Standalone Mode
+local function isStandalone()
+    local cfg = getHyperAuthConfig()
+    if cfg and (cfg.STANDALONE == true or (cfg.PAIRED == false and cfg.CLIENT_ID == "standalone_server")) then
+        return true
+    end
+    return false
+end
+
+--- Checks if this server has a valid pairing or standalone configuration
+local function isConfigured()
+    return isPaired() or isStandalone()
+end
+
+--- Persists standalone configuration so reboot or chunk reload does not trap the server in pairing mode
+local function saveStandaloneConfig()
+    local configPath = "HyperAuthClient/config.lua"
+    local configData = [[return {
+  PROTOCOL_NAME = "auth.secure.v1",
+
+  CLIENT_ID     = "standalone_server",
+  SHARED_SECRET = "standalone_local_secret",
+
+  KNOWN_SERVER_ID         = nil,
+  DEFAULT_TIMEOUT_SECONDS = 6,
+  PAIRED                  = false,
+  STANDALONE              = true,
+}
+]]
+    if not fs.exists("HyperAuthClient") then
+        pcall(fs.makeDir, "HyperAuthClient")
+    end
+    local f = fs.open(configPath, "w")
+    if f then
+        f.write(configData)
+        f.close()
+        logActivity("Standalone configuration saved to " .. configPath)
+    else
+        logActivity("Failed to write standalone configuration to " .. configPath, true)
+    end
+    if package and package.loaded then
+        package.loaded["HyperAuthClient.config"] = nil
+        package.loaded["HyperAuthClient/config"] = nil
+    end
+end
+
+--- Performs the interactive auto-pairing handshake with HyperAuth Server.
+-- Strictly fits within 51x19 terminal dimensions with zero scrolling.
 local function performAutoPairing()
+    local w, h = term.getSize()
     local isColor = term.isColor and term.isColor()
+    term.setBackgroundColor(colors.black)
     term.clear()
+
+    -- 1. Top Title Bar (Row 1)
     term.setCursorPos(1, 1)
+    term.setBackgroundColor(isColor and colors.blue or colors.black)
+    term.clearLine()
+    term.setTextColor(colors.white)
+    local titleLeft = " [*] HYPERAUTH 2FA PAIRING"
+    term.write(titleLeft)
+    local myId = os.getComputerID()
+    local titleRight = "#" .. myId .. " "
+    if w > #titleLeft + #titleRight then
+        term.setCursorPos(w - #titleRight + 1, 1)
+        term.write(titleRight)
+    end
 
-    if isColor then term.setTextColor(colors.cyan) end
-    print("========================================================")
-    print("      DRUNKEN OS AUTH SERVER - HYPERAUTH PAIRING        ")
-    print("========================================================")
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
 
-    math.randomseed(os.epoch("utc") + os.getComputerID())
+    math.randomseed(os.epoch("utc") + myId)
     local pin = string.format("%04d", math.random(1000, 9999))
     local nonce = crypto.hex(os.epoch("utc") .. tostring(math.random()))
-    local myId = os.getComputerID()
 
-    if isColor then term.setTextColor(colors.white) end
-    print(string.format("  Computer ID : #%d", myId))
-    print(string.format("  Device Name : Drunken OS Auth Server #%d", myId))
-    print(string.format("  Protocol    : %s", PAIRING_PROTOCOL))
-    print("")
-    if isColor then term.setTextColor(colors.yellow) end
-    print("  +----------------------------------------------------+")
-    print(string.format("  |        ONE-TIME VERIFICATION PIN: [ %s ]         |", pin))
-    print("  +----------------------------------------------------+")
-    if isColor then term.setTextColor(colors.lightGray or colors.white) end
-    print("\n  Broadcasting pairing request to HyperAuth Server...")
-    print("  Please approve this request on the HyperAuth console.")
-    print("  (Type 'pair accept " .. myId .. "' or 'y' on the Command Computer)")
-    if APChatBox and APChatBox.isAvailable() then
-        if isColor then term.setTextColor(colors.lime) end
-        print("  [+] AP Chat Box detected! Press 'S' to run standalone AP 2FA mode.")
-        if isColor then term.setTextColor(colors.lightGray or colors.white) end
+    -- Metadata Details (Rows 3..5)
+    term.setCursorPos(3, 3)
+    term.setTextColor(isColor and colors.cyan or colors.white)
+    term.write(string.format("%-14s: ", "Host ID"))
+    term.setTextColor(colors.white)
+    term.write("#" .. myId)
+
+    term.setCursorPos(3, 4)
+    term.setTextColor(isColor and colors.cyan or colors.white)
+    term.write(string.format("%-14s: ", "Service"))
+    term.setTextColor(colors.white)
+    term.write("Drunken OS Auth Server")
+
+    term.setCursorPos(3, 5)
+    term.setTextColor(isColor and colors.cyan or colors.white)
+    term.write(string.format("%-14s: ", "Pair Proto"))
+    term.setTextColor(isColor and colors.lightGray or colors.white)
+    term.write(PAIRING_PROTOCOL)
+
+    -- Verification PIN Box (Rows 7..9)
+    term.setCursorPos(4, 7)
+    term.setTextColor(isColor and colors.yellow or colors.white)
+    term.write("+-------------------------------------------+")
+    term.setCursorPos(4, 8)
+    term.write(string.format("|     ONE-TIME VERIFICATION PIN: [ %s ]     |", pin))
+    term.setCursorPos(4, 9)
+    term.write("+-------------------------------------------+")
+
+    -- Instructions (Rows 11..14)
+    term.setCursorPos(3, 11)
+    term.setTextColor(isColor and colors.white or colors.white)
+    term.write("Broadcasting pairing request to HyperAuth...")
+
+    term.setCursorPos(3, 12)
+    term.setTextColor(isColor and colors.lightGray or colors.white)
+    term.write("Approve on Command PC: 'pair accept " .. myId .. "' or 'y'")
+
+    local hasChatBox = APChatBox and APChatBox.isAvailable and APChatBox.isAvailable()
+    term.setCursorPos(3, 14)
+    if hasChatBox then
+        term.setTextColor(isColor and colors.lime or colors.white)
+        term.write("[+] AP Chat Box detected (Standalone 2FA ready)")
+    else
+        term.setTextColor(isColor and colors.lightGray or colors.white)
+        term.write("[!] AP Chat Box not detected (using fallback)")
     end
-    print("\n  [Press 'S' to skip pairing and use local defaults]\n")
+
+    -- Controls (Row 15)
+    term.setCursorPos(3, 15)
+    term.setTextColor(isColor and colors.yellow or colors.white)
+    term.write("Controls: [S] Skip & Use Standalone | [Q] Abort")
+
+    -- Footer (Row h)
+    term.setCursorPos(1, h)
+    term.setBackgroundColor(isColor and colors.gray or colors.black)
+    term.clearLine()
+    term.setTextColor(colors.white)
+    term.setCursorPos(2, h)
+    term.write("[PAIRING] Waiting for authorization... | Press S to skip")
+    term.setBackgroundColor(colors.black)
 
     -- Ensure modems are open
     if ServiceGuard and ServiceGuard.initModems then
         pcall(ServiceGuard.initModems)
     end
-    if not (rednet and rednet.isOpen and rednet.isOpen()) then
-        if isColor then term.setTextColor(colors.red) end
-        print("  [!] WARNING: No modem open! Please attach a Wireless Modem to this PC.")
-        if isColor then term.setTextColor(colors.lightGray or colors.white) end
-    end
 
     local timerId = os.startTimer(0.1)
     local broadcastInterval = 2.5
     local lastBroadcast = 0
+    local attemptCount = 0
+    local spinnerChars = { "/", "-", "\\", "|" }
+    local spinnerIdx = 1
+    local autoTimeoutRemaining = 15 -- seconds for auto-boot when AP Chat Box is present
     local pairingComplete = false
 
     while not pairingComplete do
         local event, p1, p2, p3 = os.pullEvent()
         if event == "timer" and p1 == timerId then
             local now = os.epoch("utc") / 1000
+
+            -- Send pairing request every broadcastInterval
             if (now - lastBroadcast) >= broadcastInterval then
                 lastBroadcast = now
+                attemptCount = attemptCount + 1
                 if not (rednet and rednet.isOpen and rednet.isOpen()) then
                     if ServiceGuard and ServiceGuard.initModems then
                         pcall(ServiceGuard.initModems)
@@ -298,13 +411,45 @@ local function performAutoPairing()
                 }
                 rednet.broadcast(pairPacket, PAIRING_PROTOCOL)
                 rednet.broadcast(textutils.serialize(pairPacket), PAIRING_PROTOCOL)
-                io.write(".")
             end
-            timerId = os.startTimer(0.5)
+
+            -- Update countdown if AP Chat Box is active
+            if hasChatBox then
+                autoTimeoutRemaining = autoTimeoutRemaining - 0.25
+                if autoTimeoutRemaining <= 0 then
+                    saveStandaloneConfig()
+                    term.setCursorPos(3, 17)
+                    term.clearLine()
+                    term.setTextColor(isColor and colors.lime or colors.white)
+                    term.write("[AUTO-BOOT] Standalone AP 2FA activated.")
+                    sleep(1)
+                    term.clear()
+                    return false
+                end
+            end
+
+            -- In-place animated status line at Row 17 (NO SCROLLING!)
+            spinnerIdx = (spinnerIdx % #spinnerChars) + 1
+            local spinChar = spinnerChars[spinnerIdx]
+            term.setCursorPos(3, 17)
+            term.clearLine()
+            term.setTextColor(isColor and colors.cyan or colors.white)
+            if hasChatBox then
+                term.write(string.format("[%s] Waiting for HyperAuth... (Attempt #%d | Auto-boot: %02ds)",
+                    spinChar, attemptCount, math.ceil(math.max(0, autoTimeoutRemaining))))
+            else
+                term.write(string.format("[%s] Waiting for HyperAuth... (Attempt #%d)",
+                    spinChar, attemptCount))
+            end
+
+            timerId = os.startTimer(0.25)
 
         elseif event == "peripheral" or event == "peripheral_detach" then
             if ServiceGuard and ServiceGuard.initModems then
                 pcall(ServiceGuard.initModems)
+            end
+            if APChatBox then
+                hasChatBox = APChatBox.isAvailable and APChatBox.isAvailable()
             end
 
         elseif event == "rednet_message" then
@@ -324,16 +469,14 @@ local function performAutoPairing()
             if protocol == PAIRING_PROTOCOL and type(message) == "table" then
                 if message.type == "pair_accept" and message.nonce == nonce then
                     pairingComplete = true
-                    if isColor then term.setTextColor(colors.green) end
-                    print("\n\n  ========================================================")
-                    print(string.format("  [SUCCESS] PAIRED WITH HYPERAUTH SERVER #%d!", message.server_id or senderId))
-                    print("  ========================================================")
-                    if isColor then term.setTextColor(colors.white) end
-                    print(string.format("  Assigned Vendor ID : %s", message.vendorId))
-                    print(string.format("  Cryptographic Key  : %s...", tostring(message.sharedSecret):sub(1, 8)))
+                    term.setCursorPos(3, 17)
+                    term.clearLine()
+                    term.setTextColor(isColor and colors.lime or colors.white)
+                    term.write(string.format("[SUCCESS] PAIRED WITH HYPERAUTH #%d!", message.server_id or senderId))
 
                     -- Persist configuration to HyperAuthClient/config.lua
                     local configPath = "HyperAuthClient/config.lua"
+                    if not fs.exists("HyperAuthClient") then pcall(fs.makeDir, "HyperAuthClient") end
                     local configData = string.format([[return {
   PROTOCOL_NAME = %q,
 
@@ -343,6 +486,7 @@ local function performAutoPairing()
   KNOWN_SERVER_ID         = %s,
   DEFAULT_TIMEOUT_SECONDS = 6,
   PAIRED                  = true,
+  STANDALONE              = false,
 }
 ]], message.protocol or "auth.secure.v1", message.vendorId, message.sharedSecret, tostring(message.server_id or senderId))
 
@@ -360,30 +504,39 @@ local function performAutoPairing()
                         package.loaded["HyperAuthClient/config"] = nil
                     end
 
-                    sleep(2)
+                    sleep(1.5)
                     term.clear()
-                    term.setCursorPos(1, 1)
                     return true
 
                 elseif message.type == "pair_reject" and message.nonce == nonce then
-                    if isColor then term.setTextColor(colors.red) end
-                    print(string.format("\n\n  [REJECTED] Pairing was declined by HyperAuth Server: %s", message.reason or "Unknown"))
-                    if isColor then term.setTextColor(colors.white) end
-                    print("  Press any key to retry or 'S' to skip...")
+                    term.setCursorPos(3, 17)
+                    term.clearLine()
+                    term.setTextColor(isColor and colors.red or colors.white)
+                    term.write(string.format("[REJECTED] %s. [R] Retry | [S] Skip", tostring(message.reason or "Declined")))
                     local _, key = os.pullEvent("key")
-                    if key == keys.s then return false end
-                    return performAutoPairing()
+                    if key == keys.s then
+                        saveStandaloneConfig()
+                        term.clear()
+                        return false
+                    elseif key == keys.r then
+                        return performAutoPairing()
+                    end
                 end
             end
 
         elseif event == "key" then
             local key = p1
             if key == keys.s then
-                if isColor then term.setTextColor(colors.yellow) end
-                print("\n\n  Pairing skipped by user. Continuing with local config...")
+                saveStandaloneConfig()
+                term.setCursorPos(3, 17)
+                term.clearLine()
+                term.setTextColor(isColor and colors.yellow or colors.white)
+                term.write("[+] Standalone mode saved. Continuing...")
                 sleep(1)
                 term.clear()
-                term.setCursorPos(1, 1)
+                return false
+            elseif key == keys.q then
+                term.clear()
                 return false
             end
         end
@@ -572,6 +725,7 @@ local function handleMessage(senderId, message, protocol)
                     DB.saveTableToFile(USERS_DB, users, logActivity)
                     logActivity("User '" .. user .. "' logged in (2FA: " .. authMethod .. ").")
                 end
+                if serverDashboard then serverDashboard:refreshDetails() end
                 
                 broadcastSession(user, users[user].nickname, token)
                 
@@ -594,6 +748,7 @@ local function handleMessage(senderId, message, protocol)
             
             users[user].nickname = message.new_nickname
             DB.saveTableToFile(USERS_DB, users, logActivity)
+            if serverDashboard then serverDashboard:refreshDetails() end
             
             -- Re-broadcast session so Mainframe updates any local UI
             broadcastSession(user, users[user].nickname, token)
@@ -618,6 +773,15 @@ local function handleMessage(senderId, message, protocol)
                 nick = users[user].nickname
             end
             rednet.send(senderId, { type = "verify_session_response", user = user, valid = valid, nickname = nick }, AUTH_INTERLINK_PROTOCOL)
+        elseif message.type == "get_user_list" or message.type == "get_all_users" then
+            local userList = {}
+            if users then
+                for u in pairs(users) do
+                    table.insert(userList, u)
+                end
+            end
+            table.sort(userList)
+            rednet.send(senderId, { type = "user_list_response", users = userList }, AUTH_INTERLINK_PROTOCOL)
         end
     end
 end
@@ -642,31 +806,48 @@ local function flushAuthState()
 end
 
 local function startServer()
+    local function getDashboardDetails()
+        local haCfg = getHyperAuthConfig()
+        local userCount = 0
+        if users then for _ in pairs(users) do userCount = userCount + 1 end end
+
+        local cbStatus = APChatBox and APChatBox.getStatus and APChatBox.getStatus()
+        local apStatusStr = "NOT DETECTED"
+        local apColor = colors.lightGray
+        if cbStatus and cbStatus.available then
+            apStatusStr = string.format("ONLINE (%s)", cbStatus.name or "chatBox")
+            apColor = colors.lime
+        end
+
+        local haLinkStr = "UNPAIRED (Standalone)"
+        local haColor = colors.yellow
+        if isPaired() then
+            haLinkStr = "PAIRED (" .. (haCfg.CLIENT_ID or "ok") .. ")"
+            haColor = colors.lime
+        end
+
+        return {
+            { label = "Service", value = "Drunken OS Authentication Authority", color = colors.white },
+            { label = "User Database", value = string.format("%d registered user(s)", userCount), color = colors.lime },
+            { label = "HyperAuth Link", value = haLinkStr, color = haColor },
+            { label = "AP ChatBox 2FA", value = apStatusStr, color = apColor },
+            { label = "External Proto", value = AUTH_SERVER_PROTOCOL, color = colors.lightGray },
+            { label = "Interlink Proto", value = AUTH_INTERLINK_PROTOCOL, color = colors.lightGray },
+        }
+    end
+
+    serverDashboard = ServiceGuard.createDashboard({
+        serverName = "AUTH SERVER",
+        details = getDashboardDetails,
+        status = "ONLINE",
+        hintText = "[P] Pair HyperAuth | [C] Clear | [Q] Quit | Zero-Downtime Supervisor",
+        maxLogs = 100
+    })
+
+    serverDashboard:draw()
+
     local haCfg = getHyperAuthConfig()
-    local userCount = 0
-    if users then for _ in pairs(users) do userCount = userCount + 1 end end
-
     local cbStatus = APChatBox and APChatBox.getStatus and APChatBox.getStatus()
-    local apStatusStr = "NOT DETECTED"
-    local apColor = colors.lightGray
-    if cbStatus and cbStatus.available then
-        apStatusStr = string.format("ONLINE (%s)", cbStatus.name or "chatBox")
-        apColor = colors.lime
-    end
-
-    local details = {
-        { label = "Service", value = "Drunken OS Authentication Authority", color = colors.white },
-        { label = "User Database", value = string.format("%d registered user(s)", userCount), color = colors.lime },
-        { label = "HyperAuth Link", value = isPaired() and "PAIRED (" .. (haCfg.CLIENT_ID or "ok") .. ")" or "UNPAIRED", color = isPaired() and colors.lime or colors.yellow },
-        { label = "AP ChatBox 2FA", value = apStatusStr, color = apColor },
-        { label = "External Proto", value = AUTH_SERVER_PROTOCOL, color = colors.lightGray },
-        { label = "Interlink Proto", value = AUTH_INTERLINK_PROTOCOL, color = colors.lightGray },
-    }
-
-    if ServiceGuard and ServiceGuard.drawServerDashboard then
-        ServiceGuard.drawServerDashboard("AUTH SERVER", details, "ONLINE", "Listening for auth & registration | Zero-Downtime Supervisor")
-    end
-
     logActivity("Auth Server starting up...")
     logActivity("Listening for external auth on: " .. AUTH_SERVER_PROTOCOL)
     logActivity("Listening for interlink on: " .. AUTH_INTERLINK_PROTOCOL)
@@ -694,6 +875,17 @@ local function startServer()
                     logActivity("Advanced Peripherals Chat Box detached ('" .. tostring(p1) .. "')", true)
                 end
             end
+            if serverDashboard then serverDashboard:refreshDetails() end
+        elseif event == "key" then
+            local key = p1
+            if key == keys.p then
+                performAutoPairing()
+                if serverDashboard then serverDashboard:draw() end
+            elseif key == keys.c then
+                if serverDashboard then serverDashboard:clearLogs() end
+            elseif key == keys.q then
+                error("Terminated", 0)
+            end
         elseif event == "terminate" then
             error("Terminated", 0)
         end
@@ -701,7 +893,7 @@ local function startServer()
 end
 
 local function runAuthServer()
-    if forcePair or not isPaired() then
+    if forcePair or not isConfigured() then
         performAutoPairing()
     end
     parallel.waitForAny(startServer, garbageCollectPending)
