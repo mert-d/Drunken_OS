@@ -498,8 +498,15 @@ end
 
 function Avionics:scanPeripherals()
     -- Sensors
+    local hadGimbal  = (self.gimbal ~= nil)
     self.altSensor   = peripheral and peripheral.find and peripheral.find("altitude_sensor")
     self.gimbal      = peripheral and peripheral.find and peripheral.find("gimbal_sensor")
+    if not hadGimbal and self.gimbal then
+        if self.msPitchPID then self.msPitchPID:reset() end
+        if self.msRollPID then self.msRollPID:reset() end
+        if self.pitchPID then self.pitchPID:reset() end
+        if self.rollPID then self.rollPID:reset() end
+    end
     self.nav         = peripheral and peripheral.find and peripheral.find("navigation_table")
     self.velSensor   = peripheral and peripheral.find and peripheral.find("velocity_sensor")
     self.velSensors  = (peripheral and peripheral.find and { peripheral.find("velocity_sensor") }) or {}
@@ -693,6 +700,11 @@ function Avionics:readTelemetry(dt)
                 pitch = tonumber(safeCall(self.gimbal.getPitch)) or 0
                 roll  = tonumber(safeCall(self.gimbal.getRoll)) or 0
             end
+        end
+        local gName = (peripheral and peripheral.getName and pcall(peripheral.getName, self.gimbal) and peripheral.getName(self.gimbal)) or nil
+        if gName and self:getDeviceConfig(gName).invert then
+            pitch = -pitch
+            roll  = -roll
         end
         local acc = safeCall(self.gimbal.getLinearAcceleration)
         if type(acc) == "table" then
