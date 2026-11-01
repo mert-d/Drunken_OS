@@ -541,7 +541,7 @@ local function run(context)
 
         drawTerm.setCursorPos(2, h - 1)
         drawTerm.setTextColor(theme.ok or colors.lime)
-        drawTerm.write("[Sol/Sag]:Gorev [1-7]:MothershipMotor [T]:SpinTest")
+        drawTerm.write("[Sol/Sag]:Gorev [1-7]:Motor [Space]:SpinTest")
 
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
@@ -1049,7 +1049,7 @@ local function run(context)
                     elseif quickRoles[key] and selItem then
                         fc:setDeviceRole(selItem.name, quickRoles[key])
                         if isRemoteFCC then sendAvionicsCmd("SET_IO_ROLE", { name = selItem.name, role = quickRoles[key] }) end
-                    elseif key == keys.t and selItem then
+                    elseif (key == keys.space or key == keys.g or key == keys.t) and selItem then
                         fc:triggerSpinTest(selItem.name)
                         if isRemoteFCC then sendAvionicsCmd("SPIN_TEST", { name = selItem.name }) end
                     elseif key == keys.i and selItem then
