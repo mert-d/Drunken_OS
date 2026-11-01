@@ -751,48 +751,26 @@ local function runTests()
            testFC.lastMothershipState.rl == 0 and testFC.lastMothershipState.rr == 0,
            "Expected zero-throttle manual mode to lock all lift rotors to 0 RPM regardless of tilt")
 
-    -- 4. Create: Avionics getAnglesRad() right-handed roll convention, bounded 1-RPM PD trim & Closed-Loop Auto-Polarity Guard
+    -- 4. Create: Avionics getAnglesRad() body-frame roll convention & bounded 1-RPM PD stabilization
     testFC.spinTest = nil
     testFC.gpsTick = 1
     testFC:setMode("HOVER", { altitude = 100.0, heading = 0.0 })
     testFC.gimbal = {
-        getAnglesRad = function() return { 0.0, math.rad(8.0) } end -- zAngle > 0 when rolled left
+        getAnglesRad = function() return { 0.0, math.rad(15.2) } end -- +15.2 deg when rolled right (right wing low)
+    }
+    testFC:step(0.05)
+    assert(testFC.lastMothershipState.frRpm > testFC.lastMothershipState.flRpm,
+           "Expected right lift RPM (FR) > left lift RPM (FL) when rolled right (+15.2 deg)")
+    assert(testFC.lastMothershipState.frRpm <= 248 and testFC.lastMothershipState.flRpm >= 154,
+           "Expected bounded hover lift RPM within 154..248 RPM band (never saturating to 256 RPM)")
+
+    testFC.msRollPID:reset()
+    testFC.gimbal = {
+        getAnglesRad = function() return { 0.0, math.rad(-15.2) } end -- -15.2 deg when rolled left (left wing low)
     }
     testFC:step(0.05)
     assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.frRpm,
-           "Expected left lift RPM (FL) > right lift RPM (FR) when gimbal getAnglesRad reports zAngle > 0 (rolled left)")
-    assert(testFC.lastMothershipState.flRpm <= 250 and testFC.lastMothershipState.frRpm >= 145,
-           "Expected bounded hover lift RPM within 145..250 RPM band (above 147.9k pN gravity threshold)")
-
-    -- Simulate inverted gimbal mounting causing roll divergence -> Auto-Polarity Guard must flip gimbalRollSign
-    local divAngle = 3.0
-    testFC.gimbalRollSign = -1 -- Force wrong polarity
-    testFC.msRollPID:reset()
-    testFC.gimbal = {
-        getAnglesRad = function()
-            divAngle = divAngle + 0.5
-            return { 0.0, math.rad(divAngle) }
-        end
-    }
-    for _ = 1, 7 do testFC:step(0.05) end
-    assert(testFC.gimbalRollSign == 1, "Expected Closed-Loop Auto-Polarity Guard to flip gimbalRollSign back to +1 upon divergence")
-    assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.frRpm,
-           "Expected left lift RPM > right lift RPM after Auto-Polarity Guard recovery")
-
-    -- Simulate ship pinned/stuck at a constant tilt (12 deg, deltaRoll == 0) in wrong polarity -> must ALSO flip after 20 ticks
-    testFC.gimbalRollSign = -1
-    testFC.rollDivergeTicks = 0
-    testFC.msRollPID:reset()
-    testFC.gimbal = {
-        getAnglesRad = function() return { 0.0, math.rad(12.0) } end
-    }
-    for _ = 1, 22 do
-        testFC.gpsTick = 1
-        testFC:step(0.05)
-    end
-    assert(testFC.gimbalRollSign == 1, "Expected Auto-Polarity Guard to recover even when pinned at a constant tilt stop (deltaRoll == 0)")
-    assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.frRpm,
-           "Expected left lift RPM > right lift RPM after pinned-tilt recovery")
+           "Expected left lift RPM (FL) > right lift RPM (FR) when rolled left (-15.2 deg)")
 
     print("  PASS: Test 14: Peripheral Scan Filtering, Remote I/O Bus, Ground Lock & Gimbal Auto-Polarity Guard")
 

@@ -278,13 +278,11 @@ function Avionics.new(config)
     self.pitchPID = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
 
-    -- Mothership Quad-Lift Gimbal Horizon Stabilization PD Controllers (zero integral windup, bounded -2..+2 trim)
-    self.msPitchPID = createPID(6.0, 0.0, 2.8, -2.0, 2.0)
-    self.msRollPID  = createPID(6.0, 0.0, 2.8, -2.0, 2.0)
+    -- Mothership Quad-Lift Gimbal Horizon Stabilization PD Controllers (zero integral windup, bounded -1.5..+1.5 trim)
+    self.msPitchPID = createPID(5.0, 0.0, 2.5, -1.5, 1.5)
+    self.msRollPID  = createPID(5.0, 0.0, 2.5, -1.5, 1.5)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
-    self.pitchDivergeTicks = 0
-    self.rollDivergeTicks  = 0
 
     self.mods = {}
     self:loadModules(self.config.modDir or "/lib/avx")
@@ -726,12 +724,12 @@ function Avionics:readTelemetry(dt)
         local rads = safeCall(self.gimbal.getAnglesRad)
         if type(rads) == "table" and rads[1] and rads[2] then
             pitch = tonumber(rads[1]) or 0
-            roll  = -(tonumber(rads[2]) or 0)
+            roll  = tonumber(rads[2]) or 0
         else
             local degs = safeCall(self.gimbal.getAngles)
             if type(degs) == "table" and degs[1] and degs[2] then
                 pitch = math.rad(tonumber(degs[1]) or 0)
-                roll  = -math.rad(tonumber(degs[2]) or 0)
+                roll  = math.rad(tonumber(degs[2]) or 0)
             else
                 pitch = tonumber(safeCall(self.gimbal.getPitchRad)) or tonumber(safeCall(self.gimbal.getPitch)) or 0
                 roll  = tonumber(safeCall(self.gimbal.getRollRad)) or tonumber(safeCall(self.gimbal.getRoll)) or 0
@@ -1478,7 +1476,7 @@ function Avionics:step(dt)
     local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
     local rawLiftFL, rawLiftFR, rawLiftRL, rawLiftRR = 0, 0, 0, 0
     if not (not self.ap.enabled and self.ap.parkingBrake) then
-        local collectiveLift = self.ap.altHold and clamp(11.0 + altCmd, 9.5, 13.5) or mainThrottleSig
+        local collectiveLift = self.ap.altHold and clamp(11.0 + altCmd, 10.0, 13.0) or mainThrottleSig
         if not self.ap.enabled and collectiveLift <= 0 then
             self.msPitchPID:reset()
             self.msRollPID:reset()
@@ -1493,52 +1491,12 @@ function Avionics:step(dt)
                 pitchTrim, rollTrim, surgeTrim = t.pitch, t.roll, t.surge or 0
             end
 
-            -- Closed-Loop Auto-Polarity Guard: if SAS is pushing hard but tilt is growing OR pinned at a large angle (not decreasing), flip sign
-            if self.gimbal and self.ap.sasEnabled and not isSpinTestingAny then
-                if self.prevRoll ~= nil and math.abs(tel.roll) > math.rad(2.0) and math.abs(rollTrim) >= 0.4 then
-                    if (tel.roll * self.prevRoll > 0) and (math.abs(tel.roll) >= math.abs(self.prevRoll) - math.rad(0.02)) and (tel.roll * rollTrim < 0) then
-                        local stepInc = (math.abs(tel.roll) > math.abs(self.prevRoll) + math.rad(0.08)) and 4 or 1
-                        self.rollDivergeTicks = (self.rollDivergeTicks or 0) + stepInc
-                        if self.rollDivergeTicks >= 20 then
-                            self.gimbalRollSign = -(self.gimbalRollSign or 1)
-                            self.msRollPID:reset()
-                            self.rollPID:reset()
-                            tel.roll = -tel.roll
-                            rollTrim = -rollTrim
-                            self.rollDivergeTicks = 0
-                        end
-                    elseif math.abs(tel.roll) < math.abs(self.prevRoll) - math.rad(0.05) then
-                        self.rollDivergeTicks = 0
-                    end
-                elseif math.abs(tel.roll) <= math.rad(1.5) then
-                    self.rollDivergeTicks = 0
-                end
-                if self.prevPitch ~= nil and math.abs(tel.pitch) > math.rad(2.0) and math.abs(pitchTrim) >= 0.4 then
-                    if (tel.pitch * self.prevPitch > 0) and (math.abs(tel.pitch) >= math.abs(self.prevPitch) - math.rad(0.02)) and (tel.pitch * pitchTrim < 0) then
-                        local stepInc = (math.abs(tel.pitch) > math.abs(self.prevPitch) + math.rad(0.08)) and 4 or 1
-                        self.pitchDivergeTicks = (self.pitchDivergeTicks or 0) + stepInc
-                        if self.pitchDivergeTicks >= 20 then
-                            self.gimbalPitchSign = -(self.gimbalPitchSign or 1)
-                            self.msPitchPID:reset()
-                            self.pitchPID:reset()
-                            tel.pitch = -tel.pitch
-                            pitchTrim = -pitchTrim
-                            self.pitchDivergeTicks = 0
-                        end
-                    elseif math.abs(tel.pitch) < math.abs(self.prevPitch) - math.rad(0.05) then
-                        self.pitchDivergeTicks = 0
-                    end
-                elseif math.abs(tel.pitch) <= math.rad(1.5) then
-                    self.pitchDivergeTicks = 0
-                end
-            end
-
-            local minLift = (self.ap.altHold or collectiveLift >= 5) and 8.5 or 0.0
-            local maxLift = 15.0
-            local cFL = clamp(pitchTrim + rollTrim, -2.5, 2.5)
-            local cFR = clamp(pitchTrim - rollTrim, -2.5, 2.5)
-            local cRL = clamp(-pitchTrim + rollTrim, -2.5, 2.5)
-            local cRR = clamp(-pitchTrim - rollTrim, -2.5, 2.5)
+            local minLift = (self.ap.altHold or collectiveLift >= 5) and 9.0 or 0.0
+            local maxLift = 14.5
+            local cFL = clamp(pitchTrim + rollTrim, -1.8, 1.8)
+            local cFR = clamp(pitchTrim - rollTrim, -1.8, 1.8)
+            local cRL = clamp(-pitchTrim + rollTrim, -1.8, 1.8)
+            local cRR = clamp(-pitchTrim - rollTrim, -1.8, 1.8)
             rawLiftFL = clamp(collectiveLift + cFL, minLift, maxLift)
             rawLiftFR = clamp(collectiveLift + cFR, minLift, maxLift)
             rawLiftRL = clamp(collectiveLift + cRL, minLift, maxLift)
