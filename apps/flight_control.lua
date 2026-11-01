@@ -504,7 +504,8 @@ local function run(context)
                     or ((item.kind or ""):gsub("Create_RotationSpeedController", "SpeedCtr"):gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", ""))
                 if #shortKind > 8 then shortKind = shortKind:sub(1, 8) end
 
-                local invStr = cfg.invert and "TERS" or "NRM "
+                local gLabels = { [0] = "NRM ", [1] = "ROLT", [2] = "PCHT", [3] = "TERS", [4] = "90XY", [5] = "270X" }
+                local invStr = (tostring(item.name or ""):lower():find("gimbal") and gLabels[tonumber(cfg.gimbalMode) or (cfg.invert and 3 or 0)]) or (cfg.invert and "TERS" or "NRM ")
                 local lineStr = string.format(
                     "%s%-21s %-8s %-12s %-4s",
                     isSel and ">" or " ",

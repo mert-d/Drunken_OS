@@ -751,7 +751,35 @@ local function runTests()
            testFC.lastMothershipState.rl == 0 and testFC.lastMothershipState.rr == 0,
            "Expected zero-throttle manual mode to lock all lift rotors to 0 RPM regardless of tilt")
 
-    print("  PASS: Test 14: Peripheral Scan Filtering, Remote I/O Bus Forwarding & Ground Zero-Throttle Lock")
+    -- 4. Create: Avionics getAnglesRad() right-handed roll convention & Closed-Loop Auto-Polarity Guard
+    testFC.spinTest = nil
+    testFC.gpsTick = 1
+    testFC:setMode("HOVER", { altitude = 100.0, heading = 0.0 })
+    testFC.gimbal = {
+        getAnglesRad = function() return { 0.0, math.rad(8.0) } end -- zAngle > 0 when rolled left
+    }
+    testFC:step(0.05)
+    assert(testFC.lastMothershipState.fl > testFC.lastMothershipState.fr,
+           "Expected left lift (FL) > right lift (FR) when gimbal getAnglesRad reports zAngle > 0 (rolled left)")
+    assert(testFC.lastMothershipState.fr >= 4,
+           "Expected minimum hover lift floor >= 4 (68 RPM) to prevent corner stall at 34 RPM")
+
+    -- Simulate inverted gimbal mounting causing roll divergence across 6 ticks -> Auto-Polarity Guard must flip gimbalRollSign
+    local divAngle = 3.0
+    testFC.gimbalRollSign = -1 -- Force wrong polarity
+    testFC.msRollPID:reset()
+    testFC.gimbal = {
+        getAnglesRad = function()
+            divAngle = divAngle + 0.5
+            return { 0.0, math.rad(divAngle) }
+        end
+    }
+    for _ = 1, 7 do testFC:step(0.05) end
+    assert(testFC.gimbalRollSign == 1, "Expected Closed-Loop Auto-Polarity Guard to flip gimbalRollSign back to +1 upon divergence")
+    assert(testFC.lastMothershipState.fl > testFC.lastMothershipState.fr,
+           "Expected left lift > right lift after Auto-Polarity Guard recovery")
+
+    print("  PASS: Test 14: Peripheral Scan Filtering, Remote I/O Bus, Ground Lock & Gimbal Auto-Polarity Guard")
 
     -- Restore globals
     _G.peripheral = origPeripheral

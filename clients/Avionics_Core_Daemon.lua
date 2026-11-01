@@ -135,7 +135,8 @@ local function run(context)
                     or ((item.kind or ""):gsub("Create_RotationSpeedController", "SpeedCtr"):gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", ""))
                 if #shortKind > 8 then shortKind = shortKind:sub(1, 8) end
 
-                local invStr = cfg.invert and "TERS" or "NRM "
+                local gLabels = { [0] = "NRM ", [1] = "ROLT", [2] = "PCHT", [3] = "TERS", [4] = "90XY", [5] = "270X" }
+                local invStr = (tostring(item.name or ""):lower():find("gimbal") and gLabels[tonumber(cfg.gimbalMode) or (cfg.invert and 3 or 0)]) or (cfg.invert and "TERS" or "NRM ")
                 local lineStr = string.format(
                     "%s%-21s %-8s %-12s %-4s",
                     isSel and ">" or " ",
@@ -216,14 +217,22 @@ local function run(context)
             #(fc.gearboxes or {}), #(fc.gyros or {}), #(fc.engines or {}), #(fc.speedControllers or {})
         ))
 
-        -- Attitude
+        -- Attitude & Quad-Lift Balance
         parentTerm.setCursorPos(2, 8)
         parentTerm.write(string.format("ATTITUDE: Pitch %+5.1f deg | Roll %+5.1f deg | Yaw %+5.1f deg",
             math.deg(lastTel.pitch), math.deg(lastTel.roll), math.deg(lastTel.heading) % 360
         ))
+        local ms = lastTel.mothership or fc.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0 }
+        parentTerm.setCursorPos(2, 9)
+        parentTerm.setTextColor(isColor and colors.cyan or colors.white)
+        parentTerm.write(string.format("LIFT SIG: FL:%2d FR:%2d RL:%2d RR:%2d (L:%3d R:%3d RPM)",
+            ms.fl or 0, ms.fr or 0, ms.rl or 0, ms.rr or 0,
+            math.floor(((ms.fl or 0) / 15.0) * 256 + 0.5),
+            math.floor(((ms.fr or 0) / 15.0) * 256 + 0.5)
+        ))
 
         -- Last Bus Command
-        parentTerm.setCursorPos(2, 9)
+        parentTerm.setCursorPos(2, 10)
         parentTerm.setTextColor(isColor and colors.yellow or colors.white)
         parentTerm.write(string.format("LAST CMD: %s (from ID:%s)",
             tostring(lastCmdName), tostring(lastCmdSender or "-")

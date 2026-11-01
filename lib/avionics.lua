@@ -278,9 +278,13 @@ function Avionics.new(config)
     self.pitchPID = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
 
-    -- Mothership Quad-Lift Gimbal Horizon Stabilization PIDs (output in -6..+6 lift signal units)
-    self.msPitchPID = createPID(14.0, 1.5, 4.5, -6.0, 6.0)
-    self.msRollPID  = createPID(14.0, 1.5, 4.5, -6.0, 6.0)
+    -- Mothership Quad-Lift Gimbal Horizon Stabilization PIDs (output in -4..+4 lift signal units)
+    self.msPitchPID = createPID(12.0, 1.0, 4.5, -4.0, 4.0)
+    self.msRollPID  = createPID(12.0, 1.0, 4.5, -4.0, 4.0)
+    self.gimbalPitchSign   = 1
+    self.gimbalRollSign    = 1
+    self.pitchDivergeTicks = 0
+    self.rollDivergeTicks  = 0
 
     self.mods = {}
     self:loadModules(self.config.modDir or "/lib/avx")
@@ -389,7 +393,18 @@ end
 
 function Avionics:toggleInvert(devName)
     local cfg = self:getDeviceConfig(devName)
-    cfg.invert = not cfg.invert
+    if tostring(devName or ""):lower():find("gimbal") then
+        cfg.gimbalMode = ((tonumber(cfg.gimbalMode) or (cfg.invert and 3 or 0)) + 1) % 6
+        cfg.invert = (cfg.gimbalMode ~= 0)
+        self.gimbalPitchSign   = 1
+        self.gimbalRollSign    = 1
+        self.pitchDivergeTicks = 0
+        self.rollDivergeTicks  = 0
+        if self.msPitchPID then self.msPitchPID:reset() end
+        if self.msRollPID then self.msRollPID:reset() end
+    else
+        cfg.invert = not cfg.invert
+    end
     self:saveIOMap()
     return cfg.invert
 end
@@ -398,6 +413,13 @@ function Avionics:resetDeviceRole(devName)
     local cfg = self:getDeviceConfig(devName)
     cfg.role = "AUTO"
     cfg.invert = false
+    cfg.gimbalMode = 0
+    if tostring(devName or ""):lower():find("gimbal") then
+        self.gimbalPitchSign   = 1
+        self.gimbalRollSign    = 1
+        self.pitchDivergeTicks = 0
+        self.rollDivergeTicks  = 0
+    end
     self:saveIOMap()
     return cfg.role
 end
@@ -500,12 +522,15 @@ function Avionics:scanPeripherals()
     -- Sensors
     local hadGimbal  = (self.gimbal ~= nil)
     self.altSensor   = peripheral and peripheral.find and peripheral.find("altitude_sensor")
+    self.altSensors  = (peripheral and peripheral.find and { peripheral.find("altitude_sensor") }) or {}
     self.gimbal      = peripheral and peripheral.find and peripheral.find("gimbal_sensor")
     if not hadGimbal and self.gimbal then
         if self.msPitchPID then self.msPitchPID:reset() end
         if self.msRollPID then self.msRollPID:reset() end
         if self.pitchPID then self.pitchPID:reset() end
         if self.rollPID then self.rollPID:reset() end
+        self.pitchDivergeTicks = 0
+        self.rollDivergeTicks  = 0
     end
     self.nav         = peripheral and peripheral.find and peripheral.find("navigation_table")
     self.velSensor   = peripheral and peripheral.find and peripheral.find("velocity_sensor")
@@ -658,15 +683,26 @@ function Avionics:readTelemetry(dt)
     dt = dt or 0.05
 
     self.gpsTick = (self.gpsTick or 0) + 1
-    if (self.gpsTick % 20 == 0) or (not self.altSensor and not self.velSensor) then
+    if (self.gpsTick % 20 == 0) or (not self.altSensor and not self.velSensor and not self.gimbal) then
         self:scanPeripherals()
     end
 
-    -- 1. Altitude & Vertical Speed (Supports Create Simulated getHeight and legacy getAltitude)
+    -- 1. Altitude & Vertical Speed (Averages all connected altitude_sensor blocks so corner tilt doesn't skew altitude)
     local alt = 0
     local sensorVsi = 0
     local pressure = 1.0
-    if self.altSensor then
+    if self.altSensors and #self.altSensors > 1 then
+        local sumA, cntA, sumV, cntV = 0, 0, 0, 0
+        for _, as in ipairs(self.altSensors) do
+            local a = tonumber(safeCall(as.getHeight)) or tonumber(safeCall(as.getAltitude))
+            if a then sumA = sumA + a; cntA = cntA + 1 end
+            local v = tonumber(safeCall(as.getVerticalSpeed))
+            if v then sumV = sumV + v; cntV = cntV + 1 end
+        end
+        if cntA > 0 then alt = sumA / cntA end
+        if cntV > 0 then sensorVsi = sumV / cntV end
+        pressure = tonumber(safeCall(self.altSensors[1].getAirPressure)) or 1.0
+    elseif self.altSensor then
         alt = tonumber(safeCall(self.altSensor.getHeight))
            or tonumber(safeCall(self.altSensor.getAltitude))
            or 0
@@ -690,22 +726,34 @@ function Avionics:readTelemetry(dt)
         local rads = safeCall(self.gimbal.getAnglesRad)
         if type(rads) == "table" and rads[1] and rads[2] then
             pitch = tonumber(rads[1]) or 0
-            roll  = tonumber(rads[2]) or 0
+            roll  = -(tonumber(rads[2]) or 0)
         else
             local degs = safeCall(self.gimbal.getAngles)
             if type(degs) == "table" and degs[1] and degs[2] then
                 pitch = math.rad(tonumber(degs[1]) or 0)
-                roll  = math.rad(tonumber(degs[2]) or 0)
+                roll  = -math.rad(tonumber(degs[2]) or 0)
             else
-                pitch = tonumber(safeCall(self.gimbal.getPitch)) or 0
-                roll  = tonumber(safeCall(self.gimbal.getRoll)) or 0
+                pitch = tonumber(safeCall(self.gimbal.getPitchRad)) or tonumber(safeCall(self.gimbal.getPitch)) or 0
+                roll  = tonumber(safeCall(self.gimbal.getRollRad)) or tonumber(safeCall(self.gimbal.getRoll)) or 0
             end
         end
         local gName = (peripheral and peripheral.getName and pcall(peripheral.getName, self.gimbal) and peripheral.getName(self.gimbal)) or nil
-        if gName and self:getDeviceConfig(gName).invert then
+        local gCfg  = gName and self:getDeviceConfig(gName) or nil
+        local gMode = gCfg and (tonumber(gCfg.gimbalMode) or (gCfg.invert and 3 or 0)) or 0
+        if gMode == 1 then
+            roll = -roll
+        elseif gMode == 2 then
+            pitch = -pitch
+        elseif gMode == 3 then
             pitch = -pitch
             roll  = -roll
+        elseif gMode == 4 then
+            pitch, roll = -roll, -pitch
+        elseif gMode == 5 then
+            pitch, roll = roll, pitch
         end
+        pitch = pitch * (self.gimbalPitchSign or 1)
+        roll  = roll  * (self.gimbalRollSign  or 1)
         local acc = safeCall(self.gimbal.getLinearAcceleration)
         if type(acc) == "table" then
             local ax = tonumber(acc[1] or acc.x) or 0
@@ -1439,16 +1487,52 @@ function Avionics:step(dt)
 
     local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
     if not (not self.ap.enabled and self.ap.parkingBrake) then
-        local collectiveLift = self.ap.altHold and clamp(8.0 + altCmd, 3.0, 11.0) or mainThrottleSig
+        local collectiveLift = self.ap.altHold and clamp(8.0 + altCmd, 5.0, 11.0) or mainThrottleSig
         if not self.ap.enabled and collectiveLift <= 0 then
             liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
         else
-            liftFL = math.floor(clamp(collectiveLift + pitchTrim + rollTrim, 0, 15) + 0.5)
-            liftFR = math.floor(clamp(collectiveLift + pitchTrim - rollTrim, 0, 15) + 0.5)
-            liftRL = math.floor(clamp(collectiveLift - pitchTrim + rollTrim, 0, 15) + 0.5)
-            liftRR = math.floor(clamp(collectiveLift - pitchTrim - rollTrim, 0, 15) + 0.5)
+            -- Closed-Loop Auto-Polarity Guard: if SAS is pushing hard but tilt is diverging away from 0°, flip that axis's sign
+            if self.gimbal and self.ap.sasEnabled and not isSpinTestingAny then
+                if self.prevRoll ~= nil and math.abs(tel.roll) > math.rad(1.2) and math.abs(rollTrim) >= 1.0 then
+                    if (tel.roll * self.prevRoll > 0) and (math.abs(tel.roll) > math.abs(self.prevRoll) + math.rad(0.05)) and (tel.roll * rollTrim < 0) then
+                        self.rollDivergeTicks = (self.rollDivergeTicks or 0) + 1
+                        if self.rollDivergeTicks >= 5 then
+                            self.gimbalRollSign = -(self.gimbalRollSign or 1)
+                            self.msRollPID:reset()
+                            self.rollPID:reset()
+                            tel.roll = -tel.roll
+                            rollTrim = -rollTrim
+                            self.rollDivergeTicks = 0
+                        end
+                    elseif math.abs(tel.roll) < math.abs(self.prevRoll) then
+                        self.rollDivergeTicks = math.max(0, (self.rollDivergeTicks or 0) - 1)
+                    end
+                end
+                if self.prevPitch ~= nil and math.abs(tel.pitch) > math.rad(1.2) and math.abs(pitchTrim) >= 1.0 then
+                    if (tel.pitch * self.prevPitch > 0) and (math.abs(tel.pitch) > math.abs(self.prevPitch) + math.rad(0.05)) and (tel.pitch * pitchTrim < 0) then
+                        self.pitchDivergeTicks = (self.pitchDivergeTicks or 0) + 1
+                        if self.pitchDivergeTicks >= 5 then
+                            self.gimbalPitchSign = -(self.gimbalPitchSign or 1)
+                            self.msPitchPID:reset()
+                            self.pitchPID:reset()
+                            tel.pitch = -tel.pitch
+                            pitchTrim = -pitchTrim
+                            self.pitchDivergeTicks = 0
+                        end
+                    elseif math.abs(tel.pitch) < math.abs(self.prevPitch) then
+                        self.pitchDivergeTicks = math.max(0, (self.pitchDivergeTicks or 0) - 1)
+                    end
+                end
+            end
+            local minLift = (self.ap.altHold or collectiveLift >= 5) and 4 or 0
+            liftFL = math.floor(clamp(collectiveLift + pitchTrim + rollTrim, minLift, 15) + 0.5)
+            liftFR = math.floor(clamp(collectiveLift + pitchTrim - rollTrim, minLift, 15) + 0.5)
+            liftRL = math.floor(clamp(collectiveLift - pitchTrim + rollTrim, minLift, 15) + 0.5)
+            liftRR = math.floor(clamp(collectiveLift - pitchTrim - rollTrim, minLift, 15) + 0.5)
         end
     end
+    self.prevRoll  = tel.roll
+    self.prevPitch = tel.pitch
 
     local fwdBase = (revActive and -mainThrottleSig or mainThrottleSig) + surgeTrim
     local fwdSig = clutchCut and 0 or fwdBase
