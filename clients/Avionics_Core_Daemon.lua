@@ -227,8 +227,8 @@ local function run(context)
         parentTerm.setTextColor(isColor and colors.cyan or colors.white)
         parentTerm.write(string.format("LIFT SIG: FL:%2d FR:%2d RL:%2d RR:%2d (L:%3d R:%3d RPM)",
             ms.fl or 0, ms.fr or 0, ms.rl or 0, ms.rr or 0,
-            math.floor(((ms.fl or 0) / 15.0) * 256 + 0.5),
-            math.floor(((ms.fr or 0) / 15.0) * 256 + 0.5)
+            ms.flRpm or math.floor(((ms.fl or 0) / 15.0) * 256 + 0.5),
+            ms.frRpm or math.floor(((ms.fr or 0) / 15.0) * 256 + 0.5)
         ))
 
         -- Last Bus Command

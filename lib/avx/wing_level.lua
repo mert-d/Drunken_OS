@@ -49,13 +49,14 @@ function M.onTelemetry(fc, tel, dt)
     end
 end
 
--- trim = { pitch = n, roll = n } (Mothership quad-lift SAS trims, modified in place)
+-- trim = { pitch = n, roll = n } (Mothership quad-lift SAS trims, modified in place when no gimbal_sensor is present)
 function M.onMix(fc, tel, trim, dt)
+    if fc.gimbal then return end
     local w = fc.wingAlt
     if not w then return end
     local k = fc.config.wingAltGain or 1.5
-    trim.roll  = clamp(trim.roll - w.dR * k, -6, 6)
-    trim.pitch = clamp(trim.pitch - w.dP * k, -6, 6)
+    trim.roll  = clamp(trim.roll - w.dR * k, -2.5, 2.5)
+    trim.pitch = clamp(trim.pitch - w.dP * k, -2.5, 2.5)
 end
 
 return M

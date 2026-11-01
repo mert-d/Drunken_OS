@@ -278,9 +278,9 @@ function Avionics.new(config)
     self.pitchPID = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
 
-    -- Mothership Quad-Lift Gimbal Horizon Stabilization PIDs (output in -4..+4 lift signal units)
-    self.msPitchPID = createPID(12.0, 1.0, 4.5, -4.0, 4.0)
-    self.msRollPID  = createPID(12.0, 1.0, 4.5, -4.0, 4.0)
+    -- Mothership Quad-Lift Gimbal Horizon Stabilization PD Controllers (zero integral windup, bounded -2..+2 trim)
+    self.msPitchPID = createPID(6.0, 0.0, 2.8, -2.0, 2.0)
+    self.msRollPID  = createPID(6.0, 0.0, 2.8, -2.0, 2.0)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
     self.pitchDivergeTicks = 0
@@ -739,7 +739,7 @@ function Avionics:readTelemetry(dt)
         end
         local gName = (peripheral and peripheral.getName and pcall(peripheral.getName, self.gimbal) and peripheral.getName(self.gimbal)) or nil
         local gCfg  = gName and self:getDeviceConfig(gName) or nil
-        local gMode = gCfg and (tonumber(gCfg.gimbalMode) or (gCfg.invert and 3 or 0)) or 0
+        local gMode = gCfg and tonumber(gCfg.gimbalMode) or 0
         if gMode == 1 then
             roll = -roll
         elseif gMode == 2 then
@@ -1296,7 +1296,7 @@ function Avionics:step(dt)
         yawDiff = self.hdgPID:compute(0, -hdgErr, dt)
     end
 
-    -- Supports Create Rotation Speed Controllers (-256..+256 RPM) and 0..15 Signal / Throttle Lever peripherals
+    -- Supports Create Rotation Speed Controllers (-256..+256 RPM with 1-RPM resolution) and 0..15 Signal / Throttle Lever peripherals
     local function driveSignal(dev, sig, inv)
         if dev.setTargetSpeed then
             local rpm = math.floor((sig / 15.0) * 256 + 0.5)
@@ -1304,7 +1304,7 @@ function Avionics:step(dt)
             callKinetic(dev, dev.setTargetSpeed, rpm)
             return
         end
-        local clampedSig = math.floor(clamp(math.abs(sig), 0, 15))
+        local clampedSig = math.floor(clamp(math.abs(sig), 0, 15) + 0.5)
         local outSig = inv and (15 - clampedSig) or clampedSig
         local called = false
         if dev.setSignal then callKinetic(dev, dev.setSignal, outSig); called = true end
@@ -1475,28 +1475,31 @@ function Avionics:step(dt)
     local pitchTrim = 0
     local rollTrim  = 0
     local surgeTrim = 0
-    if self.ap.sasEnabled or self.ap.enabled then
-        if self.ap.sasEnabled then
-            pitchTrim = self.msPitchPID:compute(0, tel.pitch, dt)
-            rollTrim  = self.msRollPID:compute(0, tel.roll, dt)
-        end
-        local t = { pitch = pitchTrim, roll = rollTrim, surge = 0 }
-        self:hook("onMix", tel, t, dt)
-        pitchTrim, rollTrim, surgeTrim = t.pitch, t.roll, t.surge or 0
-    end
-
     local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
+    local rawLiftFL, rawLiftFR, rawLiftRL, rawLiftRR = 0, 0, 0, 0
     if not (not self.ap.enabled and self.ap.parkingBrake) then
-        local collectiveLift = self.ap.altHold and clamp(8.0 + altCmd, 5.0, 11.0) or mainThrottleSig
+        local collectiveLift = self.ap.altHold and clamp(8.0 + altCmd, 6.0, 10.5) or mainThrottleSig
         if not self.ap.enabled and collectiveLift <= 0 then
-            liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
+            self.msPitchPID:reset()
+            self.msRollPID:reset()
         else
-            -- Closed-Loop Auto-Polarity Guard: if SAS is pushing hard but tilt is diverging away from 0°, flip that axis's sign
+            if self.ap.sasEnabled or self.ap.enabled then
+                if self.ap.sasEnabled then
+                    pitchTrim = self.msPitchPID:compute(0, tel.pitch, dt)
+                    rollTrim  = self.msRollPID:compute(0, tel.roll, dt)
+                end
+                local t = { pitch = pitchTrim, roll = rollTrim, surge = 0 }
+                self:hook("onMix", tel, t, dt)
+                pitchTrim, rollTrim, surgeTrim = t.pitch, t.roll, t.surge or 0
+            end
+
+            -- Closed-Loop Auto-Polarity Guard: if SAS is pushing hard but tilt is growing OR pinned at a large angle (not decreasing), flip sign
             if self.gimbal and self.ap.sasEnabled and not isSpinTestingAny then
-                if self.prevRoll ~= nil and math.abs(tel.roll) > math.rad(1.2) and math.abs(rollTrim) >= 1.0 then
-                    if (tel.roll * self.prevRoll > 0) and (math.abs(tel.roll) > math.abs(self.prevRoll) + math.rad(0.05)) and (tel.roll * rollTrim < 0) then
-                        self.rollDivergeTicks = (self.rollDivergeTicks or 0) + 1
-                        if self.rollDivergeTicks >= 5 then
+                if self.prevRoll ~= nil and math.abs(tel.roll) > math.rad(2.0) and math.abs(rollTrim) >= 0.4 then
+                    if (tel.roll * self.prevRoll > 0) and (math.abs(tel.roll) >= math.abs(self.prevRoll) - math.rad(0.02)) and (tel.roll * rollTrim < 0) then
+                        local stepInc = (math.abs(tel.roll) > math.abs(self.prevRoll) + math.rad(0.08)) and 4 or 1
+                        self.rollDivergeTicks = (self.rollDivergeTicks or 0) + stepInc
+                        if self.rollDivergeTicks >= 20 then
                             self.gimbalRollSign = -(self.gimbalRollSign or 1)
                             self.msRollPID:reset()
                             self.rollPID:reset()
@@ -1504,14 +1507,17 @@ function Avionics:step(dt)
                             rollTrim = -rollTrim
                             self.rollDivergeTicks = 0
                         end
-                    elseif math.abs(tel.roll) < math.abs(self.prevRoll) then
-                        self.rollDivergeTicks = math.max(0, (self.rollDivergeTicks or 0) - 1)
+                    elseif math.abs(tel.roll) < math.abs(self.prevRoll) - math.rad(0.05) then
+                        self.rollDivergeTicks = 0
                     end
+                elseif math.abs(tel.roll) <= math.rad(1.5) then
+                    self.rollDivergeTicks = 0
                 end
-                if self.prevPitch ~= nil and math.abs(tel.pitch) > math.rad(1.2) and math.abs(pitchTrim) >= 1.0 then
-                    if (tel.pitch * self.prevPitch > 0) and (math.abs(tel.pitch) > math.abs(self.prevPitch) + math.rad(0.05)) and (tel.pitch * pitchTrim < 0) then
-                        self.pitchDivergeTicks = (self.pitchDivergeTicks or 0) + 1
-                        if self.pitchDivergeTicks >= 5 then
+                if self.prevPitch ~= nil and math.abs(tel.pitch) > math.rad(2.0) and math.abs(pitchTrim) >= 0.4 then
+                    if (tel.pitch * self.prevPitch > 0) and (math.abs(tel.pitch) >= math.abs(self.prevPitch) - math.rad(0.02)) and (tel.pitch * pitchTrim < 0) then
+                        local stepInc = (math.abs(tel.pitch) > math.abs(self.prevPitch) + math.rad(0.08)) and 4 or 1
+                        self.pitchDivergeTicks = (self.pitchDivergeTicks or 0) + stepInc
+                        if self.pitchDivergeTicks >= 20 then
                             self.gimbalPitchSign = -(self.gimbalPitchSign or 1)
                             self.msPitchPID:reset()
                             self.pitchPID:reset()
@@ -1519,17 +1525,32 @@ function Avionics:step(dt)
                             pitchTrim = -pitchTrim
                             self.pitchDivergeTicks = 0
                         end
-                    elseif math.abs(tel.pitch) < math.abs(self.prevPitch) then
-                        self.pitchDivergeTicks = math.max(0, (self.pitchDivergeTicks or 0) - 1)
+                    elseif math.abs(tel.pitch) < math.abs(self.prevPitch) - math.rad(0.05) then
+                        self.pitchDivergeTicks = 0
                     end
+                elseif math.abs(tel.pitch) <= math.rad(1.5) then
+                    self.pitchDivergeTicks = 0
                 end
             end
-            local minLift = (self.ap.altHold or collectiveLift >= 5) and 4 or 0
-            liftFL = math.floor(clamp(collectiveLift + pitchTrim + rollTrim, minLift, 15) + 0.5)
-            liftFR = math.floor(clamp(collectiveLift + pitchTrim - rollTrim, minLift, 15) + 0.5)
-            liftRL = math.floor(clamp(collectiveLift - pitchTrim + rollTrim, minLift, 15) + 0.5)
-            liftRR = math.floor(clamp(collectiveLift - pitchTrim - rollTrim, minLift, 15) + 0.5)
+
+            local minLift = (self.ap.altHold or collectiveLift >= 5) and 5.0 or 0.0
+            local maxLift = self.ap.altHold and 13.5 or 15.0
+            local cFL = clamp(pitchTrim + rollTrim, -2.5, 2.5)
+            local cFR = clamp(pitchTrim - rollTrim, -2.5, 2.5)
+            local cRL = clamp(-pitchTrim + rollTrim, -2.5, 2.5)
+            local cRR = clamp(-pitchTrim - rollTrim, -2.5, 2.5)
+            rawLiftFL = clamp(collectiveLift + cFL, minLift, maxLift)
+            rawLiftFR = clamp(collectiveLift + cFR, minLift, maxLift)
+            rawLiftRL = clamp(collectiveLift + cRL, minLift, maxLift)
+            rawLiftRR = clamp(collectiveLift + cRR, minLift, maxLift)
+            liftFL = math.floor(rawLiftFL + 0.5)
+            liftFR = math.floor(rawLiftFR + 0.5)
+            liftRL = math.floor(rawLiftRL + 0.5)
+            liftRR = math.floor(rawLiftRR + 0.5)
         end
+    else
+        self.msPitchPID:reset()
+        self.msRollPID:reset()
     end
     self.prevRoll  = tel.roll
     self.prevPitch = tel.pitch
@@ -1549,11 +1570,18 @@ function Avionics:step(dt)
     local rearC = math.floor(clamp(fwdSig, minRear, 15) + 0.5)
     local rearR = math.floor(clamp(fwdSig + turnYaw, minRear, 15) + 0.5)
 
-    self.lastMothershipState = { fl = liftFL, fr = liftFR, rl = liftRL, rr = liftRR, rearL = rearL, rearC = rearC, rearR = rearR }
+    self.lastMothershipState = {
+        fl = liftFL, fr = liftFR, rl = liftRL, rr = liftRR,
+        flRpm = math.floor((rawLiftFL / 15.0) * 256 + 0.5),
+        frRpm = math.floor((rawLiftFR / 15.0) * 256 + 0.5),
+        rlRpm = math.floor((rawLiftRL / 15.0) * 256 + 0.5),
+        rrRpm = math.floor((rawLiftRR / 15.0) * 256 + 0.5),
+        rearL = rearL, rearC = rearC, rearR = rearR
+    }
     tel.mothership = self.lastMothershipState
 
     -- Route custom I/O role mappings (Hot-plug peripherals, Mothership 7-motor roles & Redstone sides)
-    local anyLiftActive = (liftFL > 0 or liftFR > 0 or liftRL > 0 or liftRR > 0) or isSpinTestingAny
+    local anyLiftActive = (rawLiftFL > 0 or rawLiftFR > 0 or rawLiftRL > 0 or rawLiftRR > 0) or isSpinTestingAny
     local spinRole = (isSpinTestingAny and self.spinTest.name and self.spinTest.name ~= "ALL")
         and self:getDeviceConfig(self.spinTest.name).role or nil
 
@@ -1588,7 +1616,7 @@ function Avionics:step(dt)
                 local sig = nil
                 local boolState = nil
                 local roleSigs = {
-                    LIFT_FL = liftFL, LIFT_FR = liftFR, LIFT_RL = liftRL, LIFT_RR = liftRR,
+                    LIFT_FL = rawLiftFL, LIFT_FR = rawLiftFR, LIFT_RL = rawLiftRL, LIFT_RR = rawLiftRR,
                     REAR_LEFT = rearL, REAR_CENTER = rearC, REAR_RIGHT = rearR,
                     THRUST_MAIN = mainThrottleSig, THRUST_PORT = portSignal, THRUST_STBD = stbdSignal,
                     AUX_BOOST = boostSignal
