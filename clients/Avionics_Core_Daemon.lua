@@ -437,6 +437,8 @@ local function run(context)
                             fc:resetDeviceRole(msg.name)
                         elseif msg.cmd == "SPIN_TEST" then
                             fc:triggerSpinTest(msg.name)
+                        elseif msg.cmd == "FLUSH_LOG" then
+                            if fc.blackbox and fc.blackbox.flush then pcall(fc.blackbox.flush, fc.blackbox) end
                         elseif msg.cmd == "OTA_UPDATE" then
                             performOtaUpdate()
                         elseif msg.cmd == "SAFE_DISARM" or msg.cmd == "DISARM" then
@@ -444,6 +446,7 @@ local function run(context)
                             fc.ap.parkingBrake = true
                             fc:setMode("MANUAL", lastTel)
                             fc:step(0.05)
+                            if fc.blackbox and fc.blackbox.flush then pcall(fc.blackbox.flush, fc.blackbox) end
                         end
                         broadcastState()
                     end

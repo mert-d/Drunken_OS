@@ -2,7 +2,6 @@
 return {
     version = 1.5,
 
-    -- Files common to almost all client-side installations
     shared = {
         "lib/sha1_hmac.lua",
         "lib/drunken_os_apps.lua",
@@ -28,7 +27,6 @@ return {
     },
 
     packages = {
-        -- Mainframe API Gateway
         server = {
             name = "Drunken OS Server Gateway",
             type = "server",
@@ -47,7 +45,6 @@ return {
             include_shared = false 
         },
 
-        -- Auth Server
         auth_server = {
             name = "Drunken OS Auth Server",
             type = "server",
@@ -58,7 +55,6 @@ return {
                 "lib/db.lua",
                 "lib/service_guard.lua",
                 "lib/ap_chatbox.lua",
-                -- HyperAuthClient Dependencies
                 "HyperAuthClient/config.lua",
                 "HyperAuthClient/api/auth_api.lua",
                 "HyperAuthClient/api/auth_client.lua",
@@ -68,7 +64,6 @@ return {
             include_shared = false 
         },
 
-        -- HyperAuth 2FA Server
         hyperauth_server = {
             name = "HyperAuth 2FA Server",
             type = "server",
@@ -85,7 +80,6 @@ return {
             include_shared = false
         },
 
-        -- Mail & Cloud Server
         mail_server = {
             name = "Drunken OS Mail Server",
             type = "server",
@@ -99,7 +93,6 @@ return {
             include_shared = false 
         },
 
-        -- Standard User Client (Pocket Computer / Terminal)
         client = {
             name = "Drunken OS Client",
             type = "client",
@@ -124,7 +117,6 @@ return {
                 "apps/flight_control.lua",
                 "clients/remote_switch.lua",
                 "clients/ILS_Beacon_Tower.lua",
-                -- Games
                 "games/Drunken_Doom.lua",
                 "games/Drunken_Duels.lua",
                 "games/Drunken_Dungeons.lua",
@@ -143,7 +135,6 @@ return {
             include_shared = true
         },
 
-        -- Base Automation Redstone Switch
         remote_switch = {
             name = "Drunken Remote Switch Node",
             type = "client",
@@ -154,7 +145,6 @@ return {
             include_shared = false
         },
 
-        -- Create: Avionics FCS (Flight Control System & Cockpit Computer)
         avionics_fcs = {
             name = "Create Avionics FCS (Flight Control)",
             type = "client",
@@ -169,12 +159,13 @@ return {
             remote_files = {
                 "lib/avx/wing_level.lua",
                 "lib/avx/sky_anchor.lua",
+                "lib/blackbox.lua",
+                "apps/blackbox.lua",
                 "apps/engineering_deck.lua"
             },
             include_shared = false
         },
 
-        -- Create: Avionics Core Daemon (FCC Sensor Fusion & Actuator Bus)
         avionics_core = {
             name = "Create Avionics Core Daemon (FCC)",
             type = "server",
@@ -187,12 +178,13 @@ return {
             remote_files = {
                 "lib/avx/wing_level.lua",
                 "lib/avx/sky_anchor.lua",
+                "lib/blackbox.lua",
+                "apps/blackbox.lua",
                 "apps/engineering_deck.lua"
             },
             include_shared = false
         },
 
-        -- Create: Avionics Runway ILS & RTB Beacon Tower
         ils_beacon = {
             name = "Runway ILS & RTB Beacon Tower",
             type = "server",
@@ -203,7 +195,6 @@ return {
             include_shared = false
         },
 
-        -- Bank Server
         bank_server = {
             name = "Drunken OS Bank Server",
             type = "server",
@@ -221,7 +212,6 @@ return {
             setup_type = "bank_server"
         },
 
-        -- ATM Client
         atm = {
             name = "DB Bank ATM",
             type = "client",
@@ -242,7 +232,6 @@ return {
             setup_type = "atm"
         },
 
-        -- Bank Clerk Terminal
         clerk = {
             name = "DB Bank Clerk Terminal",
             type = "client",
@@ -261,7 +250,6 @@ return {
             include_shared = false
         },
 
-        -- Vault Clerk Turtle
         bank_clerk_turtle = {
             name = "Vault Clerk Turtle",
             type = "turtle",
@@ -272,7 +260,6 @@ return {
             include_shared = false
         },
 
-        -- Auditor Turtle
         auditor = {
             name = "Auditor Turtle",
             type = "turtle",
@@ -287,7 +274,6 @@ return {
             setup_type = "auditor"
         },
         
-        -- Merchant POS
         merchant_pos = {
             name = "Merchant POS",
             type = "client",
@@ -308,7 +294,6 @@ return {
             include_shared = false
         },
 
-        -- Merchant Cashier
         merchant_cashier = {
             name = "Merchant Cashier PC",
             type = "client",
@@ -329,7 +314,6 @@ return {
             include_shared = false
         },
 
-        -- Restaurant Server
         restaurant_server = {
             name = "Restaurant Queue Manager",
             type = "server",
@@ -343,7 +327,6 @@ return {
             include_shared = false
         },
 
-        -- Chef Turtle
         chef_turtle = {
             name = "Drunken Bites Chef Turtle",
             type = "turtle",
@@ -354,7 +337,6 @@ return {
             include_shared = false
         },
 
-        -- Waiter Turtle
         waiter_turtle = {
             name = "Drunken Bites Waiter Turtle",
             type = "turtle",
@@ -365,7 +347,6 @@ return {
             include_shared = false
         },
 
-        -- Vending Turtle
         vending_turtle = {
             name = "Vending Turtle",
             type = "turtle",
@@ -376,7 +357,6 @@ return {
             include_shared = false
         },
 
-        -- Turtle Auth Terminal
         turtle_auth_terminal = {
             name = "Turtle Auth Terminal",
             type = "turtle",
@@ -387,7 +367,6 @@ return {
             include_shared = false
         },
         
-        -- Specialized Networking
         proxy_mainframe = {
             name = "Mainframe Proxy",
             type = "server",
@@ -436,7 +415,6 @@ return {
         "apps/flight_control.lua"
     },
     
-    -- Optional Apps (On-Demand Store)
     store = {
         ["Developer Portal"] = "apps/developer.lua",
         ["Drunken Remote"]   = "apps/remote.lua",

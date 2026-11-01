@@ -799,7 +799,7 @@ local function run(context)
 
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
-        drawTerm.write("[Up/Dn]:Alt+-5 [Lt/Rt]:Hdg+-5 [W/S]:Thr [Z]:Capa [Q]:Cik")
+        drawTerm.write("[Up/Dn]:Alt+-5 [Lt/Rt]:Hdg+-5 [W/S]:Thr [Z]:Capa [L]:Log [Q]:Cik")
         drawTerm = prevTerm
     end
 
@@ -963,7 +963,13 @@ local function run(context)
                     fc.ap.parkingBrake = true
                     fc:setMode("MANUAL", lastTel)
                     fc:step(0.05)
+                    if fc.blackbox and fc.blackbox.flush then pcall(fc.blackbox.flush, fc.blackbox) end
                     running = false
+                elseif key == keys.l then
+                    if isRemoteFCC then sendAvionicsCmd("FLUSH_LOG") end
+                    if fc.blackbox and fc.blackbox.flush then pcall(fc.blackbox.flush, fc.blackbox) end
+                    hotplugNotice = "KARA KUTU: /flight_log.txt KAYDEDILDI!"
+                    hotplugTimer = 80
                 elseif key == keys.u then
                     -- GitHub OTA via lib/netpkg: all package files + AVX modules, all-or-nothing
                     if isRemoteFCC then sendAvionicsCmd("OTA_UPDATE") end

@@ -792,6 +792,40 @@ local function runTests()
 
     print("  PASS: Test 14: Peripheral Scan Filtering, Remote I/O Bus, Ground Lock, Anti-Dive Governor & Gimbal Auto-Polarity Guard")
 
+    -- Test 15: Flight Data Recorder (Blackbox / Kara Kutu)
+    local BBox = require("lib.blackbox")
+    assert(BBox and BBox.new, "Expected lib.blackbox to export new()")
+    local mockFsFiles = {}
+    local origFs = _G.fs
+    _G.fs = {
+        open = function(path, mode)
+            local buf = {}
+            return {
+                write = function(s) table.insert(buf, s) end,
+                writeLine = function(s) table.insert(buf, s .. "\n") end,
+                close = function() mockFsFiles[path] = table.concat(buf) end
+            }
+        end,
+        delete = function(path) mockFsFiles[path] = nil end
+    }
+
+    local bb = BBox.new({ callsign = "SKYFIRE-LOG-TEST", vehicleType = "MOTHERSHIP", autoFlushSec = 0.05 })
+    local mockTel = { altitude = 185.0, vSpeed = 0.5, speed = 12.0, velocity = { z = 12.0 }, pitch = math.rad(-8.0), roll = math.rad(2.0), heading = 0 }
+    local mockAp  = { mode = "CRUISE", enabled = true, parkingBrake = false }
+    local mockMs  = { flRpm = 210, frRpm = 210, rlRpm = 170, rrRpm = 170, rearL = 8, rearC = 8, rearR = 8 }
+    local e = bb:record(mockTel, mockAp, mockMs, { dt = 0.05, pitchTrim = 1.2, diveFactor = 1.0 })
+
+    assert(e.alt == 185.0 and e.vz == 12.0 and e.flRpm == 210, "Expected telemetry recorded in blackbox entry")
+    assert(mockFsFiles["/flight_log.txt"] ~= nil, "Expected /flight_log.txt written to disk")
+    assert(mockFsFiles["/flight_log.csv"] ~= nil, "Expected /flight_log.csv written to disk")
+    assert(mockFsFiles["/flight_log.txt"]:find("SKYFIRE-LOG-TEST", 1, true) ~= nil, "Expected callsign in blackbox text log")
+    assert(mockFsFiles["/flight_log.csv"]:find("rpm_fl", 1, true) ~= nil, "Expected header in blackbox csv log")
+
+    local md = bb:getMarkdownTable(5)
+    assert(type(md) == "string" and md:find("| Zaman |"), "Expected formatted markdown table from blackbox")
+    _G.fs = origFs
+    print("  PASS: Test 15: Flight Data Recorder (Blackbox) Telemetry Logging & Disk Export")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

@@ -287,6 +287,14 @@ function Avionics.new(config)
 
     self.mods = {}
     self:loadModules(self.config.modDir or "/lib/avx")
+
+    -- Flight Data Recorder (Blackbox / Kara Kutu)
+    local okB, BBox = pcall(require, "lib.blackbox")
+    if not okB then okB, BBox = pcall(require, "blackbox") end
+    if okB and type(BBox) == "table" and BBox.new then
+        self.blackbox = BBox.new({ callsign = self.callsign, vehicleType = self.vehicleType })
+    end
+
     return self
 end
 
@@ -1701,6 +1709,9 @@ function Avionics:step(dt)
         if #tasks > 0 and parallel and parallel.waitForAll then
             parallel.waitForAll(table.unpack(tasks))
         end
+        if self.blackbox then
+            pcall(self.blackbox.record, self.blackbox, tel, self.ap, self.lastMothershipState, { dt = dt, pitchTrim = 0, rollTrim = 0 })
+        end
         return tel
     end
 
@@ -1799,6 +1810,16 @@ function Avionics:step(dt)
     -- Execute all mainThread actuator setters in parallel within a single server tick
     if #tasks > 0 and parallel and parallel.waitForAll then
         parallel.waitForAll(table.unpack(tasks))
+    end
+
+    if self.blackbox then
+        pcall(self.blackbox.record, self.blackbox, tel, self.ap, self.lastMothershipState, {
+            dt             = dt,
+            pitchTrim      = pitchTrim,
+            rollTrim       = rollTrim,
+            diveFactor     = (diveFactor or 1.0),
+            antiDiveActive = (noseDownDeg and noseDownDeg > 12.0)
+        })
     end
 
     return tel
