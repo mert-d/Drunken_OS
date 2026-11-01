@@ -280,8 +280,8 @@ function Avionics.new(config)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
 
     -- Mothership Quad-Lift Gimbal Horizon Stabilization PIDs (with bounded CoM offset auto-trim & strong pitch damping)
-    self.msPitchPID = createPID(8.0, 0.8, 4.2, -2.8, 2.8, 1.4)
-    self.msRollPID  = createPID(5.5, 0.4, 2.8, -1.8, 1.8, 0.8)
+    self.msPitchPID = createPID(7.5, 0.5, 4.5, -4.0, 4.0, 1.8)
+    self.msRollPID  = createPID(5.5, 0.4, 2.8, -2.5, 2.5, 1.0)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
 
@@ -963,9 +963,10 @@ function Avionics:readTelemetry(dt)
         end
     end
 
-    -- 8. Warnings (GPWS & Stall)
+    -- 8. Warnings (GPWS, Stall & Pitch Anti-Dive)
     local gpwsWarning = ((agl ~= nil and agl < 12 and vsi < -3.5 and not weightOnWheels) or radarGpws)
     local stallWarning = (self.vehicleType == "AIRCRAFT" and not weightOnWheels and speed < 3.0 and pitch > math.rad(15))
+    local pitchWarning = (math.abs(pitch) > math.rad(14.0))
 
     local tel = {
         callsign         = self.callsign,
@@ -993,6 +994,7 @@ function Avionics:readTelemetry(dt)
         mothership       = self.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
         gpwsWarning      = gpwsWarning,
         stallWarning     = stallWarning,
+        pitchWarning     = pitchWarning,
         fuelPct          = (maxFuel > 0 and (totalFuel / maxFuel)) or 1.0,
         navTarget        = navTarget,
         radarContact     = radarContact,
@@ -1476,6 +1478,11 @@ function Avionics:step(dt)
     local surgeTrim = 0
     local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
     local rawLiftFL, rawLiftFR, rawLiftRL, rawLiftRR = 0, 0, 0, 0
+    local fwdSig = 0
+
+    -- In body coordinates, nose down corresponds to -math.deg(tel.pitch) > 0
+    local noseDownDeg = -math.deg(tel.pitch or 0)
+
     if not (not self.ap.enabled and self.ap.parkingBrake) then
         local collectiveLift = self.ap.altHold and clamp(11.0 + altCmd, 10.0, 13.0) or mainThrottleSig
         if not self.ap.enabled and collectiveLift <= 0 then
@@ -1492,12 +1499,41 @@ function Avionics:step(dt)
                 pitchTrim, rollTrim, surgeTrim = t.pitch, t.roll, t.surge or 0
             end
 
-            local minLift = (self.ap.altHold or collectiveLift >= 5) and 8.5 or 0.0
-            local maxLift = 14.7
-            local cFL = clamp(pitchTrim + rollTrim, -2.8, 2.8)
-            local cFR = clamp(pitchTrim - rollTrim, -2.8, 2.8)
-            local cRL = clamp(-pitchTrim + rollTrim, -2.8, 2.8)
-            local cRR = clamp(-pitchTrim - rollTrim, -2.8, 2.8)
+            -- Compute forward thrust command & Anti-Dive governor after surge hook
+            local fwdBase = (revActive and -mainThrottleSig or mainThrottleSig) + surgeTrim
+            fwdSig = clutchCut and 0 or fwdBase
+
+            -- Pitch Envelope Protection & Anti-Dive Governor
+            if noseDownDeg > 10.0 and fwdSig > 0 then
+                -- Scale down rear thruster forward power: 100% at 10 deg, 50% at 17 deg, 0% at 24 deg
+                local diveFactor = math.max(0.0, 1.0 - ((noseDownDeg - 10.0) / 14.0))
+                fwdSig = fwdSig * diveFactor
+            end
+            if noseDownDeg > 22.0 then
+                -- Severe pitch dive: completely kill rear thrusters to eliminate the nose-down moment arm
+                fwdSig = 0
+                if (self.ap.mode == "CRUISE" or self.ap.mode == "LNAV") and self.ap.enabled then
+                    self:setMode("HOVER", tel)
+                end
+            end
+
+            -- Feedforward compensation for high-line rear thrusters above Center of Mass
+            if fwdSig > 0 then
+                local pitchFF = (fwdSig / 15.0) * 1.5
+                pitchTrim = pitchTrim + pitchFF
+            end
+
+            local minLift = (self.ap.altHold or collectiveLift >= 5) and 7.5 or 0.0
+            local maxLift = 15.0
+            local cFL = clamp(pitchTrim + rollTrim, -4.0, 4.0)
+            local cFR = clamp(pitchTrim - rollTrim, -4.0, 4.0)
+            local cRL = clamp(-pitchTrim + rollTrim, -4.0, 4.0)
+            local cRR = clamp(-pitchTrim - rollTrim, -4.0, 4.0)
+            if noseDownDeg > 12.0 then
+                local antiDiveBoost = math.min(2.5, (noseDownDeg - 12.0) * 0.15)
+                cFL = clamp(cFL + antiDiveBoost, -4.0, 4.0)
+                cFR = clamp(cFR + antiDiveBoost, -4.0, 4.0)
+            end
             rawLiftFL = clamp(collectiveLift + cFL, minLift, maxLift)
             rawLiftFR = clamp(collectiveLift + cFR, minLift, maxLift)
             rawLiftRL = clamp(collectiveLift + cRL, minLift, maxLift)
@@ -1514,8 +1550,6 @@ function Avionics:step(dt)
     self.prevRoll  = tel.roll
     self.prevPitch = tel.pitch
 
-    local fwdBase = (revActive and -mainThrottleSig or mainThrottleSig) + surgeTrim
-    local fwdSig = clutchCut and 0 or fwdBase
     local turnYaw = 0
     if not (not self.ap.enabled and self.ap.parkingBrake) then
         if clutchCut and math.abs(steerVal) < 0.02 and (self.ap.manualYaw or 0) == 0 then

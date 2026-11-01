@@ -749,12 +749,16 @@ local function run(context)
             ):sub(1, w - 2))
         end
 
-        -- Row 12: Warnings Banner (GPWS / Stall / Gear & Clutch)
+        -- Row 12: Warnings Banner (GPWS / Pitch Anti-Dive / Stall / Gear & Clutch)
         drawTerm.setCursorPos(2, 12)
         if lastTel.gpwsWarning then
             drawTerm.setBackgroundColor(colors.red)
             drawTerm.setTextColor(colors.white)
             drawTerm.write(" !! PULL UP - TERRAIN AHEAD !! ")
+        elseif lastTel.pitchWarning then
+            drawTerm.setBackgroundColor(colors.red)
+            drawTerm.setTextColor(colors.white)
+            drawTerm.write(" !! ANTI-DIVE: ARKA GAZ KESILDI !! ")
         elseif lastTel.stallWarning then
             drawTerm.setBackgroundColor(colors.orange)
             drawTerm.setTextColor(colors.black)

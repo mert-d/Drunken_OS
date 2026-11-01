@@ -763,8 +763,8 @@ local function runTests()
            "Expected right lift RPM (FR) > left lift RPM (FL) when rolled right (+15.2 deg)")
     assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.rlRpm and testFC.lastMothershipState.frRpm > testFC.lastMothershipState.rrRpm,
            "Expected front lift RPM (FL/FR) > rear lift RPM (RL/RR) when nose pitched down (+10.0 deg xAngle)")
-    assert(testFC.lastMothershipState.frRpm <= 252 and testFC.lastMothershipState.rlRpm >= 145,
-           "Expected bounded hover lift RPM within 145..252 RPM band")
+    assert(testFC.lastMothershipState.frRpm <= 256 and testFC.lastMothershipState.rlRpm >= 120,
+           "Expected bounded hover lift RPM within 120..256 RPM band")
 
     testFC.msRollPID:reset()
     testFC.msPitchPID:reset()
@@ -777,7 +777,20 @@ local function runTests()
     assert(testFC.lastMothershipState.rlRpm > testFC.lastMothershipState.flRpm,
            "Expected rear lift RPM (RL) > front lift RPM (FL) when nose pitched up (-10.0 deg xAngle)")
 
-    print("  PASS: Test 14: Peripheral Scan Filtering, Remote I/O Bus, Ground Lock & Gimbal Auto-Polarity Guard")
+    -- 5. Anti-Dive Envelope Protection: severe nose-down tilt (> 20 deg) forces rear thruster throttle to 0 and raises pitchWarning
+    testFC.ap.mode = "CRUISE"
+    testFC.ap.baseThrottle = 12
+    testFC.ap.parkingBrake = false
+    testFC.gimbal = {
+        getAnglesRad = function() return { math.rad(24.0), 0 } end -- Severe nose down (+24 deg xAngle)
+    }
+    local diveTel = testFC:step(0.05) or testFC:readTelemetry(0.05)
+    assert(diveTel.pitchWarning == true, "Expected pitchWarning active when pitched down > 14 deg")
+    assert(testFC.lastMothershipState.rearC == 0, "Expected rear propulsion to be completely cut to 0 RPM in severe dive (> 22 deg)")
+    assert(testFC.lastMothershipState.flRpm > 230 and testFC.lastMothershipState.flRpm >= testFC.lastMothershipState.rlRpm + 80,
+           "Expected maximum emergency lift boost on front rotors in severe dive")
+
+    print("  PASS: Test 14: Peripheral Scan Filtering, Remote I/O Bus, Ground Lock, Anti-Dive Governor & Gimbal Auto-Polarity Guard")
 
     -- Restore globals
     _G.peripheral = origPeripheral
