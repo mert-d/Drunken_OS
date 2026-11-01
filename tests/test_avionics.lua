@@ -778,6 +778,8 @@ local function runTests()
            "Expected rear lift RPM (RL) > front lift RPM (FL) when nose pitched up (-10.0 deg xAngle)")
 
     -- 5. Anti-Dive Envelope Protection: severe nose-down tilt (> 20 deg) forces rear thruster throttle to 0 and raises pitchWarning
+    testFC.msRollPID:reset()
+    testFC.msPitchPID:reset()
     testFC.ap.mode = "CRUISE"
     testFC.ap.baseThrottle = 12
     testFC.ap.parkingBrake = false

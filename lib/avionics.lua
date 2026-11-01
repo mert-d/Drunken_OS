@@ -1492,7 +1492,7 @@ function Avionics:step(dt)
     local noseDownDeg = -math.deg(tel.pitch or 0)
 
     if not (not self.ap.enabled and self.ap.parkingBrake) then
-        local collectiveLift = self.ap.altHold and clamp(11.0 + altCmd, 10.0, 13.0) or mainThrottleSig
+        local collectiveLift = self.ap.altHold and clamp(12.0 + altCmd, 11.0, 14.5) or mainThrottleSig
         if not self.ap.enabled and collectiveLift <= 0 then
             self.msPitchPID:reset()
             self.msRollPID:reset()
@@ -1513,45 +1513,66 @@ function Avionics:step(dt)
 
             -- Pitch Envelope Protection & Anti-Dive Governor
             local absPitchDeg = math.abs(math.deg(tel.pitch or 0))
-            if absPitchDeg > 10.0 and fwdSig > 0 then
-                -- Scale down rear thruster forward power: 100% at 10 deg, 50% at 16 deg, 0% at 22 deg
-                local diveFactor = math.max(0.0, 1.0 - ((absPitchDeg - 10.0) / 12.0))
+            if absPitchDeg > 6.0 and fwdSig > 0 then
+                -- Proactive scale down: 100% at 6 deg, 50% at 10 deg, 0% at 14 deg
+                local diveFactor = math.max(0.0, 1.0 - ((absPitchDeg - 6.0) / 8.0))
                 fwdSig = fwdSig * diveFactor
             end
-            if absPitchDeg > 20.0 then
+            if absPitchDeg > 14.0 then
                 -- Severe pitch dive/tilt: completely kill rear thrusters to eliminate the pitching moment
                 fwdSig = 0
                 if (self.ap.mode == "CRUISE" or self.ap.mode == "LNAV") and self.ap.enabled then
                     self:setMode("HOVER", tel)
                 end
+                if collectiveLift < 12.0 then
+                    collectiveLift = 12.0
+                end
             end
 
             -- Feedforward compensation for high-line rear thrusters above Center of Mass
             if fwdSig > 0 then
-                local pitchFF = (fwdSig / 15.0) * 1.5
+                local pitchFF = (fwdSig / 15.0) * 2.5
                 pitchTrim = pitchTrim + pitchFF
             end
 
             local minLift = (self.ap.altHold or collectiveLift >= 5) and 7.5 or 0.0
             local maxLift = 15.0
-            local cFL = clamp(pitchTrim + rollTrim, -4.0, 4.0)
-            local cFR = clamp(pitchTrim - rollTrim, -4.0, 4.0)
-            local cRL = clamp(-pitchTrim + rollTrim, -4.0, 4.0)
-            local cRR = clamp(-pitchTrim - rollTrim, -4.0, 4.0)
-            if absPitchDeg > 10.0 then
-                local antiDiveBoost = math.min(3.0, (absPitchDeg - 10.0) * 0.20)
+            local cFL = clamp(pitchTrim + rollTrim, -4.5, 4.5)
+            local cFR = clamp(pitchTrim - rollTrim, -4.5, 4.5)
+            local cRL = clamp(-pitchTrim + rollTrim, -4.5, 4.5)
+            local cRR = clamp(-pitchTrim - rollTrim, -4.5, 4.5)
+            if absPitchDeg > 6.0 then
+                local antiDiveBoost = math.min(3.0, (absPitchDeg - 6.0) * 0.35)
                 if pitchTrim >= 0 then
-                    cFL = clamp(cFL + antiDiveBoost, -4.0, 4.0)
-                    cFR = clamp(cFR + antiDiveBoost, -4.0, 4.0)
+                    cFL = cFL + antiDiveBoost
+                    cFR = cFR + antiDiveBoost
+                    cRL = cRL - antiDiveBoost
+                    cRR = cRR - antiDiveBoost
                 else
-                    cRL = clamp(cRL + antiDiveBoost, -4.0, 4.0)
-                    cRR = clamp(cRR + antiDiveBoost, -4.0, 4.0)
+                    cFL = cFL - antiDiveBoost
+                    cFR = cFR - antiDiveBoost
+                    cRL = cRL + antiDiveBoost
+                    cRR = cRR + antiDiveBoost
                 end
             end
-            rawLiftFL = clamp(collectiveLift + cFL, minLift, maxLift)
-            rawLiftFR = clamp(collectiveLift + cFR, minLift, maxLift)
-            rawLiftRL = clamp(collectiveLift + cRL, minLift, maxLift)
-            rawLiftRR = clamp(collectiveLift + cRR, minLift, maxLift)
+
+            -- Multirotor mixer desaturation: preserve roll torque when pitching or collective saturates
+            local function desaturatePair(l, r, lo, hi)
+                local mx = math.max(l, r)
+                if mx > hi then
+                    local ov = mx - hi
+                    l, r = l - ov, r - ov
+                end
+                local mn = math.min(l, r)
+                if mn < lo then
+                    local un = lo - mn
+                    l, r = l + un, r + un
+                end
+                return clamp(l, lo, hi), clamp(r, lo, hi)
+            end
+
+            rawLiftFL, rawLiftFR = desaturatePair(collectiveLift + cFL, collectiveLift + cFR, minLift, maxLift)
+            rawLiftRL, rawLiftRR = desaturatePair(collectiveLift + cRL, collectiveLift + cRR, minLift, maxLift)
             liftFL = math.floor(rawLiftFL + 0.5)
             liftFR = math.floor(rawLiftFR + 0.5)
             liftRL = math.floor(rawLiftRL + 0.5)
