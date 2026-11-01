@@ -8,19 +8,20 @@ Avionics.__index = Avionics
 local MAX_GYRO_CONE_RAD = math.rad(12) -- Gyroscopic Propeller Bearing 12 deg limit
 
 -- Derivative-on-Measurement & Anti-Windup PID Controller
-local function createPID(kp, ki, kd, minOut, maxOut)
+local function createPID(kp, ki, kd, minOut, maxOut, maxInt)
     local integral = 0
     local prevPV = nil
+    local intLimit = maxInt or maxOut
 
     return {
         compute = function(self, setpoint, pv, dt)
             if dt <= 0 then dt = 0.05 end
             local err = setpoint - pv
 
-            -- Integral with clamping (anti-windup)
+            -- Integral with independent anti-windup clamping (for CoM weight offset trim)
             integral = integral + (err * dt * ki)
-            if integral > maxOut then integral = maxOut end
-            if integral < minOut then integral = minOut end
+            if integral > intLimit then integral = intLimit end
+            if integral < -intLimit then integral = -intLimit end
 
             -- Derivative on measurement to avoid setpoint kick
             local deriv = 0
@@ -278,9 +279,9 @@ function Avionics.new(config)
     self.pitchPID = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
 
-    -- Mothership Quad-Lift Gimbal Horizon Stabilization PD Controllers (zero integral windup, bounded -1.5..+1.5 trim)
-    self.msPitchPID = createPID(5.0, 0.0, 2.5, -1.5, 1.5)
-    self.msRollPID  = createPID(5.0, 0.0, 2.5, -1.5, 1.5)
+    -- Mothership Quad-Lift Gimbal Horizon Stabilization PIDs (with bounded CoM offset auto-trim & strong pitch damping)
+    self.msPitchPID = createPID(8.0, 0.8, 4.2, -2.8, 2.8, 1.4)
+    self.msRollPID  = createPID(5.5, 0.4, 2.8, -1.8, 1.8, 0.8)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
 
@@ -723,12 +724,12 @@ function Avionics:readTelemetry(dt)
     if self.gimbal then
         local rads = safeCall(self.gimbal.getAnglesRad)
         if type(rads) == "table" and rads[1] and rads[2] then
-            pitch = tonumber(rads[1]) or 0
+            pitch = -(tonumber(rads[1]) or 0)
             roll  = tonumber(rads[2]) or 0
         else
             local degs = safeCall(self.gimbal.getAngles)
             if type(degs) == "table" and degs[1] and degs[2] then
-                pitch = math.rad(tonumber(degs[1]) or 0)
+                pitch = -math.rad(tonumber(degs[1]) or 0)
                 roll  = math.rad(tonumber(degs[2]) or 0)
             else
                 pitch = tonumber(safeCall(self.gimbal.getPitchRad)) or tonumber(safeCall(self.gimbal.getPitch)) or 0
@@ -1491,12 +1492,12 @@ function Avionics:step(dt)
                 pitchTrim, rollTrim, surgeTrim = t.pitch, t.roll, t.surge or 0
             end
 
-            local minLift = (self.ap.altHold or collectiveLift >= 5) and 9.0 or 0.0
-            local maxLift = 14.5
-            local cFL = clamp(pitchTrim + rollTrim, -1.8, 1.8)
-            local cFR = clamp(pitchTrim - rollTrim, -1.8, 1.8)
-            local cRL = clamp(-pitchTrim + rollTrim, -1.8, 1.8)
-            local cRR = clamp(-pitchTrim - rollTrim, -1.8, 1.8)
+            local minLift = (self.ap.altHold or collectiveLift >= 5) and 8.5 or 0.0
+            local maxLift = 14.7
+            local cFL = clamp(pitchTrim + rollTrim, -2.8, 2.8)
+            local cFR = clamp(pitchTrim - rollTrim, -2.8, 2.8)
+            local cRL = clamp(-pitchTrim + rollTrim, -2.8, 2.8)
+            local cRR = clamp(-pitchTrim - rollTrim, -2.8, 2.8)
             rawLiftFL = clamp(collectiveLift + cFL, minLift, maxLift)
             rawLiftFR = clamp(collectiveLift + cFR, minLift, maxLift)
             rawLiftRL = clamp(collectiveLift + cRL, minLift, maxLift)

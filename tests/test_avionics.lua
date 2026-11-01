@@ -751,26 +751,31 @@ local function runTests()
            testFC.lastMothershipState.rl == 0 and testFC.lastMothershipState.rr == 0,
            "Expected zero-throttle manual mode to lock all lift rotors to 0 RPM regardless of tilt")
 
-    -- 4. Create: Avionics getAnglesRad() body-frame roll convention & bounded 1-RPM PD stabilization
+    -- 4. Create: Avionics getAnglesRad() 3D right-handed Pitch (-rads[1]) & Roll (+rads[2]) convention
     testFC.spinTest = nil
     testFC.gpsTick = 1
     testFC:setMode("HOVER", { altitude = 100.0, heading = 0.0 })
     testFC.gimbal = {
-        getAnglesRad = function() return { 0.0, math.rad(15.2) } end -- +15.2 deg when rolled right (right wing low)
+        getAnglesRad = function() return { math.rad(10.0), math.rad(15.2) } end -- Nose down (+10 deg xAngle) & rolled right (+15.2 deg zAngle)
     }
     testFC:step(0.05)
     assert(testFC.lastMothershipState.frRpm > testFC.lastMothershipState.flRpm,
            "Expected right lift RPM (FR) > left lift RPM (FL) when rolled right (+15.2 deg)")
-    assert(testFC.lastMothershipState.frRpm <= 248 and testFC.lastMothershipState.flRpm >= 154,
-           "Expected bounded hover lift RPM within 154..248 RPM band (never saturating to 256 RPM)")
+    assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.rlRpm and testFC.lastMothershipState.frRpm > testFC.lastMothershipState.rrRpm,
+           "Expected front lift RPM (FL/FR) > rear lift RPM (RL/RR) when nose pitched down (+10.0 deg xAngle)")
+    assert(testFC.lastMothershipState.frRpm <= 252 and testFC.lastMothershipState.rlRpm >= 145,
+           "Expected bounded hover lift RPM within 145..252 RPM band")
 
     testFC.msRollPID:reset()
+    testFC.msPitchPID:reset()
     testFC.gimbal = {
-        getAnglesRad = function() return { 0.0, math.rad(-15.2) } end -- -15.2 deg when rolled left (left wing low)
+        getAnglesRad = function() return { math.rad(-10.0), math.rad(-15.2) } end -- Nose up (-10 deg xAngle) & rolled left (-15.2 deg zAngle)
     }
     testFC:step(0.05)
     assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.frRpm,
            "Expected left lift RPM (FL) > right lift RPM (FR) when rolled left (-15.2 deg)")
+    assert(testFC.lastMothershipState.rlRpm > testFC.lastMothershipState.flRpm,
+           "Expected rear lift RPM (RL) > front lift RPM (FL) when nose pitched up (-10.0 deg xAngle)")
 
     print("  PASS: Test 14: Peripheral Scan Filtering, Remote I/O Bus, Ground Lock & Gimbal Auto-Polarity Guard")
 
