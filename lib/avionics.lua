@@ -1478,7 +1478,7 @@ function Avionics:step(dt)
     local liftFL, liftFR, liftRL, liftRR = 0, 0, 0, 0
     local rawLiftFL, rawLiftFR, rawLiftRL, rawLiftRR = 0, 0, 0, 0
     if not (not self.ap.enabled and self.ap.parkingBrake) then
-        local collectiveLift = self.ap.altHold and clamp(8.0 + altCmd, 6.0, 10.5) or mainThrottleSig
+        local collectiveLift = self.ap.altHold and clamp(11.0 + altCmd, 9.5, 13.5) or mainThrottleSig
         if not self.ap.enabled and collectiveLift <= 0 then
             self.msPitchPID:reset()
             self.msRollPID:reset()
@@ -1533,8 +1533,8 @@ function Avionics:step(dt)
                 end
             end
 
-            local minLift = (self.ap.altHold or collectiveLift >= 5) and 5.0 or 0.0
-            local maxLift = self.ap.altHold and 13.5 or 15.0
+            local minLift = (self.ap.altHold or collectiveLift >= 5) and 8.5 or 0.0
+            local maxLift = 15.0
             local cFL = clamp(pitchTrim + rollTrim, -2.5, 2.5)
             local cFR = clamp(pitchTrim - rollTrim, -2.5, 2.5)
             local cRL = clamp(-pitchTrim + rollTrim, -2.5, 2.5)

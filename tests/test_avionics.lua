@@ -761,8 +761,8 @@ local function runTests()
     testFC:step(0.05)
     assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.frRpm,
            "Expected left lift RPM (FL) > right lift RPM (FR) when gimbal getAnglesRad reports zAngle > 0 (rolled left)")
-    assert(testFC.lastMothershipState.flRpm <= 230 and testFC.lastMothershipState.frRpm >= 85,
-           "Expected bounded hover lift RPM within 85..230 RPM band (never saturating to 256 vs 34 RPM)")
+    assert(testFC.lastMothershipState.flRpm <= 250 and testFC.lastMothershipState.frRpm >= 145,
+           "Expected bounded hover lift RPM within 145..250 RPM band (above 147.9k pN gravity threshold)")
 
     -- Simulate inverted gimbal mounting causing roll divergence -> Auto-Polarity Guard must flip gimbalRollSign
     local divAngle = 3.0
