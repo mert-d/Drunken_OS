@@ -1512,13 +1512,14 @@ function Avionics:step(dt)
             fwdSig = clutchCut and 0 or fwdBase
 
             -- Pitch Envelope Protection & Anti-Dive Governor
-            if noseDownDeg > 10.0 and fwdSig > 0 then
-                -- Scale down rear thruster forward power: 100% at 10 deg, 50% at 17 deg, 0% at 24 deg
-                local diveFactor = math.max(0.0, 1.0 - ((noseDownDeg - 10.0) / 14.0))
+            local absPitchDeg = math.abs(math.deg(tel.pitch or 0))
+            if absPitchDeg > 10.0 and fwdSig > 0 then
+                -- Scale down rear thruster forward power: 100% at 10 deg, 50% at 16 deg, 0% at 22 deg
+                local diveFactor = math.max(0.0, 1.0 - ((absPitchDeg - 10.0) / 12.0))
                 fwdSig = fwdSig * diveFactor
             end
-            if noseDownDeg > 22.0 then
-                -- Severe pitch dive: completely kill rear thrusters to eliminate the nose-down moment arm
+            if absPitchDeg > 20.0 then
+                -- Severe pitch dive/tilt: completely kill rear thrusters to eliminate the pitching moment
                 fwdSig = 0
                 if (self.ap.mode == "CRUISE" or self.ap.mode == "LNAV") and self.ap.enabled then
                     self:setMode("HOVER", tel)
@@ -1537,10 +1538,15 @@ function Avionics:step(dt)
             local cFR = clamp(pitchTrim - rollTrim, -4.0, 4.0)
             local cRL = clamp(-pitchTrim + rollTrim, -4.0, 4.0)
             local cRR = clamp(-pitchTrim - rollTrim, -4.0, 4.0)
-            if noseDownDeg > 12.0 then
-                local antiDiveBoost = math.min(2.5, (noseDownDeg - 12.0) * 0.15)
-                cFL = clamp(cFL + antiDiveBoost, -4.0, 4.0)
-                cFR = clamp(cFR + antiDiveBoost, -4.0, 4.0)
+            if absPitchDeg > 10.0 then
+                local antiDiveBoost = math.min(3.0, (absPitchDeg - 10.0) * 0.20)
+                if pitchTrim >= 0 then
+                    cFL = clamp(cFL + antiDiveBoost, -4.0, 4.0)
+                    cFR = clamp(cFR + antiDiveBoost, -4.0, 4.0)
+                else
+                    cRL = clamp(cRL + antiDiveBoost, -4.0, 4.0)
+                    cRR = clamp(cRR + antiDiveBoost, -4.0, 4.0)
+                end
             end
             rawLiftFL = clamp(collectiveLift + cFL, minLift, maxLift)
             rawLiftFR = clamp(collectiveLift + cFR, minLift, maxLift)
