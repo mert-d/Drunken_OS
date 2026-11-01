@@ -161,6 +161,7 @@ return {
                 "lib/avx/sky_anchor.lua",
                 "lib/blackbox.lua",
                 "apps/blackbox.lua",
+                "blackbox.lua",
                 "apps/engineering_deck.lua"
             },
             include_shared = false
@@ -180,6 +181,7 @@ return {
                 "lib/avx/sky_anchor.lua",
                 "lib/blackbox.lua",
                 "apps/blackbox.lua",
+                "blackbox.lua",
                 "apps/engineering_deck.lua"
             },
             include_shared = false
