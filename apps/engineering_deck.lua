@@ -48,6 +48,8 @@ local lastTel = {
     pitch = 0,
     roll = 0,
     mothership = { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
+    liftForcePN = 0,
+    twr = 0.0,
     wingAlt = { dR = 0, dP = 0 }
 }
 
@@ -201,8 +203,8 @@ local function renderDashboard()
         termObj.write("BAGLI")
     end
 
-    -- 4. Wing Matrix & Sky Anchor Status (Rows 12..14)
-    drawBox(2, 12, 49, 3, "KANAT TERAZISI & CAPA KILIDI", colors.orange)
+    -- 4. Wing Matrix & Live Lift Force / TWR Status (Rows 12..15)
+    drawBox(2, 12, 49, 4, "KANAT TERAZISI & KALDIRMA KUVVETI (SABLE)", colors.orange)
     termObj.setCursorPos(4, 13); termObj.setTextColor(colors.white)
     termObj.write(string.format("dR:%+4.1fm  dP:%+4.1fm", wA.dR or 0, wA.dP or 0))
 
@@ -217,6 +219,22 @@ local function renderDashboard()
         termObj.setTextColor(isColor and colors.lime or colors.white)
         termObj.write("[DENGELEME: OK]  ")
     end
+
+    local liftPN = lastTel.liftForcePN or 0
+    local gravPN = 150766.0
+    local twr    = (gravPN > 0) and (liftPN / gravPN) or 0.0
+    termObj.setCursorPos(4, 14)
+    termObj.setTextColor(isColor and colors.yellow or colors.white)
+    termObj.write(string.format("KALDIRMA:%6.0f pN", liftPN))
+
+    termObj.setCursorPos(25, 14)
+    local twrColor = (twr >= 1.0) and colors.lime or (twr >= 0.8 and colors.yellow or colors.red)
+    termObj.setTextColor(isColor and twrColor or colors.white)
+    termObj.write(string.format("TWR: %4.2fx", twr))
+
+    termObj.setCursorPos(38, 14)
+    termObj.setTextColor(isColor and colors.lightGray or colors.white)
+    termObj.write("[AGR: 151kN]")
 
     -- 5. Interactive Touch Buttons Bar (Rows 16..17)
     termObj.setCursorPos(btnScram.x1, btnScram.y1)

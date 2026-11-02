@@ -275,15 +275,30 @@ function Avionics.new(config)
     self.pos = { x = 0, y = 0, z = 0 }
     self.gpsTick = 0
 
-    -- PID Controllers (Smooth proportional + derivative damping for equilibrium altitude hold)
-    self.altPID   = createPID(1.6, 0.35, 2.2, -8.0, 7.0)
-    self.hdgPID   = createPID(3.8, 0.10, 1.2, -6.0, 6.0)
-    self.pitchPID = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
-    self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
+    -- Sable / Create: Simulated 8-Propeller Real Telemetry Calibrated Model (179,071 pN Lift / 150,766 pN Weight)
+    self.skyfireModel = {
+        mass          = 13706.0,   -- Sable real mass
+        gravityForce  = 150766.0,  -- Downward gravity force in pN
+        maxLiftForce  = 179071.2,  -- 8-propeller maximum lift force in pN
+        Lf            = 36.5,      -- Front turbine distance to CoM (blocks)
+        Lr            = 21.5,      -- Rear turbine distance to CoM (blocks)
+        W             = 37.0,      -- Lateral turbine arm (blocks)
+        gammaFront    = 0.785,     -- Front rotor trim multiplier (produces ~9.8 signal at hover)
+        gammaRear     = 1.215,     -- Rear rotor trim multiplier (produces ~15.0 signal at hover)
+        hoverBaseSig  = 12.63,     -- 150,766 / 179,071 * 15 = 12.63 hover center
+        ditherAcc     = { 0, 0, 0, 0 } -- 20 Hz Delta-Sigma fractional accumulator for 4 channels
+    }
 
-    -- Mothership Quad-Lift Gimbal Horizon Stabilization PIDs (with bounded CoM offset auto-trim & strong pitch damping)
-    self.msPitchPID = createPID(14.0, 2.5, 12.0, -6.5, 6.5, 6.0)
-    self.msRollPID  = createPID(5.5, 0.4, 2.8, -2.5, 2.5, 1.0)
+    -- PID Controllers (Smooth proportional + derivative damping for equilibrium altitude hold)
+    self.altPID   = createPID(2.40, 0.65, 3.20, -6.5, 6.5) -- Dikey irtifa (Y)
+    self.hdgPID   = createPID(3.80, 0.10, 1.20, -6.0, 6.0)
+    self.pitchPID = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
+    self.rollPID  = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
+    self.yawPID   = createPID(4.00, 0.25, 2.10, -4.5, 4.5) -- Pruva (Psi)
+
+    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (with Sable CoM offset & strong pitch damping)
+    self.msPitchPID = createPID(14.0, 1.20, 8.00, -6.5, 6.5, 4.0)
+    self.msRollPID  = createPID(5.50, 0.40, 2.80, -5.0, 5.0, 2.0)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
 
@@ -757,8 +772,12 @@ function Avionics:readTelemetry(dt)
                 pitch = -math.rad(tonumber(degs[1]) or 0)
                 roll  = math.rad(tonumber(degs[2]) or 0)
             else
-                pitch = -(tonumber(safeCall(self.gimbal.getPitchRad)) or math.rad(tonumber(safeCall(self.gimbal.getPitch)) or 0) or 0)
-                roll  = tonumber(safeCall(self.gimbal.getRollRad)) or math.rad(tonumber(safeCall(self.gimbal.getRoll)) or 0) or 0
+                local p = tonumber(safeCall(self.gimbal.getPitchRad)) or tonumber(safeCall(self.gimbal.getPitch)) or 0
+                local r = tonumber(safeCall(self.gimbal.getRollRad)) or tonumber(safeCall(self.gimbal.getRoll)) or 0
+                if math.abs(p) > math.pi then p = math.rad(p) end
+                if math.abs(r) > math.pi then r = math.rad(r) end
+                pitch = p
+                roll  = r
             end
         end
         local gName = (peripheral and peripheral.getName and pcall(peripheral.getName, self.gimbal) and peripheral.getName(self.gimbal)) or nil
@@ -1017,6 +1036,9 @@ function Avionics:readTelemetry(dt)
         burnerActive     = burnerActive,
         balloonVolChange = balloonVolChange,
         mothership       = self.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
+        liftForcePN      = self.lastLiftForcePN or 0,
+        twr              = (self.skyfireModel and self.skyfireModel.gravityForce and self.skyfireModel.gravityForce > 0)
+            and ((self.lastLiftForcePN or 0) / self.skyfireModel.gravityForce) or 0.0,
         pitchBias        = self.pitchBias or 0.0,
         rollBias         = self.rollBias or 0.0,
         gpwsWarning      = gpwsWarning,
@@ -1495,11 +1517,26 @@ function Avionics:step(dt)
     local boostSignal = (not clutchCut and self.ap.baseThrottle >= 12) and 15 or 0
     local burnerSignal = mainThrottleSig
 
-    -- Compute Mothership 4-Lift + 3-Rear Thruster Mixing Matrix (Gimbal Pitch/Roll + Altitude + Yaw)
+    -- Compute Mothership / Gunship 8-Propeller Sable Lift Matrix (Lf=36.5, Lr=21.5, Delta-Sigma Modulation)
+    local isMothershipOrGunship = (self.vehicleType == "MOTHERSHIP" or self.vehicleType == "GUNSHIP")
+    local m = self.skyfireModel or {
+        mass          = 13706.0,
+        gravityForce  = 150766.0,
+        maxLiftForce  = 179071.2,
+        Lf            = 36.5,
+        Lr            = 21.5,
+        W             = 37.0,
+        gammaFront    = 0.785,
+        gammaRear     = 1.215,
+        hoverBaseSig  = 12.63,
+        ditherAcc     = { 0, 0, 0, 0 }
+    }
+
     local altCmd = 0
-    if self.ap.altHold then
+    if self.ap.altHold or self.ap.mode == "HOVER" or self.ap.mode == "AUTOLAND" then
         altCmd = self.altPID:compute(self.ap.targetAlt, tel.altitude, dt)
     end
+
     local pitchTrim = 0
     local rollTrim  = 0
     local surgeTrim = 0
@@ -1507,87 +1544,160 @@ function Avionics:step(dt)
     local rawLiftFL, rawLiftFR, rawLiftRL, rawLiftRR = 0, 0, 0, 0
     local fwdSig = 0
 
-    -- In body coordinates, nose down corresponds to -math.deg(tel.pitch) > 0
-    local noseDownDeg = -math.deg(tel.pitch or 0)
+    local isZeroThrottleManual = (not self.ap.enabled or self.ap.mode == "MANUAL") and (self.ap.baseThrottle <= 0 or self.ap.parkingBrake)
 
-    if not (not self.ap.enabled and self.ap.parkingBrake) then
-        local collectiveLift = self.ap.altHold and clamp(11.0 + altCmd, 6.0, 14.8) or mainThrottleSig
-        if not self.ap.enabled and collectiveLift <= 0 then
-            self.msPitchPID:reset()
-            self.msRollPID:reset()
-        else
-            if self.ap.sasEnabled or self.ap.enabled then
-                if self.ap.sasEnabled then
-                    local pidPitch = self.msPitchPID:compute(0, tel.pitch, dt)
-                    local pidRoll  = self.msRollPID:compute(0, tel.roll, dt)
-                    pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -6.5, 6.5)
-                    rollTrim  = clamp((self.rollBias or 0.0) + pidRoll, -2.5, 2.5)
-                end
-                local t = { pitch = pitchTrim, roll = rollTrim, surge = 0 }
-                self:hook("onMix", tel, t, dt)
-                pitchTrim, rollTrim, surgeTrim = t.pitch, t.roll, t.surge or 0
-            end
-
-            -- Compute forward thrust command & Anti-Dive governor after surge hook
-            local fwdBase = (revActive and -mainThrottleSig or mainThrottleSig) + surgeTrim
-            fwdSig = clutchCut and 0 or fwdBase
-
-            -- Pitch Envelope Protection & Anti-Dive Governor
-            local absPitchDeg = math.abs(math.deg(tel.pitch or 0))
-            if absPitchDeg > 6.0 and fwdSig > 0 then
-                -- Proactive scale down: 100% at 6 deg, 50% at 10 deg, 0% at 14 deg
-                local diveFactor = math.max(0.0, 1.0 - ((absPitchDeg - 6.0) / 8.0))
-                fwdSig = fwdSig * diveFactor
-            end
-            if absPitchDeg > 14.0 then
-                -- Severe pitch dive/tilt: completely kill rear thrusters to eliminate the pitching moment
-                fwdSig = 0
-                if (self.ap.mode == "CRUISE" or self.ap.mode == "LNAV") and self.ap.enabled then
-                    self:setMode("HOVER", tel)
-                end
-                if collectiveLift < 12.0 then
-                    collectiveLift = 12.0
-                end
-            end
-
-            -- Feedforward compensation for high-line rear thrusters above Center of Mass
-            if fwdSig > 0 then
-                local pitchFF = (fwdSig / 15.0) * 2.5
-                pitchTrim = pitchTrim + pitchFF
-            end
-
-            local minLift = (self.ap.altHold or collectiveLift >= 5) and 3.5 or 0.0
-            local maxLift = 15.0
-            local cFL = clamp(pitchTrim + rollTrim, -6.5, 6.5)
-            local cFR = clamp(pitchTrim - rollTrim, -6.5, 6.5)
-            local cRL = clamp(-pitchTrim + rollTrim, -6.5, 6.5)
-            local cRR = clamp(-pitchTrim - rollTrim, -6.5, 6.5)
-
-            -- Multirotor mixer desaturation: preserve roll torque when pitching or collective saturates
-            local function desaturatePair(l, r, lo, hi)
-                local mx = math.max(l, r)
-                if mx > hi then
-                    local ov = mx - hi
-                    l, r = l - ov, r - ov
-                end
-                local mn = math.min(l, r)
-                if mn < lo then
-                    local un = lo - mn
-                    l, r = l + un, r + un
-                end
-                return clamp(l, lo, hi), clamp(r, lo, hi)
-            end
-
-            rawLiftFL, rawLiftFR = desaturatePair(collectiveLift + cFL, collectiveLift + cFR, minLift, maxLift)
-            rawLiftRL, rawLiftRR = desaturatePair(collectiveLift + cRL, collectiveLift + cRR, minLift, maxLift)
-            liftFL = math.floor(rawLiftFL + 0.5)
-            liftFR = math.floor(rawLiftFR + 0.5)
-            liftRL = math.floor(rawLiftRL + 0.5)
-            liftRR = math.floor(rawLiftRR + 0.5)
-        end
-    else
+    if isZeroThrottleManual then
         self.msPitchPID:reset()
         self.msRollPID:reset()
+        self.lastMotorSignals = { 0, 0, 0, 0 }
+        self.lastLiftForcePN = 0
+    else
+        local targetPitch = 0.0
+        local targetRoll  = 0.0
+        local pidPitch = self.msPitchPID:compute(targetPitch, tel.pitch, dt)
+        local pidRoll  = self.msRollPID:compute(targetRoll, tel.roll, dt)
+
+        pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -6.5, 6.5)
+        rollTrim  = clamp((self.rollBias  or 0.0) + pidRoll, -5.0, 5.0)
+
+        local u_yaw = 0
+        if self.ap.hdgHold or self.ap.mode == "LNAV" or self.ap.mode == "AUTOLAND" then
+            local hdgErr = (self.ap.targetHdg - tel.heading + math.pi) % (2 * math.pi) - math.pi
+            u_yaw = self.yawPID:compute(0, -hdgErr, dt)
+        else
+            u_yaw = (steerVal ~= 0 and (steerVal * 4.0)) or (self.ap.manualYaw or 0)
+        end
+
+        local t = { pitch = pitchTrim, roll = rollTrim, surge = 0, alt = altCmd, yaw = u_yaw }
+        self:hook("onMix", tel, t, dt)
+        pitchTrim, rollTrim, surgeTrim = t.pitch, t.roll, t.surge or 0
+        if t.alt then altCmd = t.alt end
+        if t.yaw then u_yaw = t.yaw end
+
+        -- Forward thrust command & Anti-Dive governor for rear propulsion thrusters
+        local fwdBase = (revActive and -mainThrottleSig or mainThrottleSig) + surgeTrim
+        fwdSig = clutchCut and 0 or fwdBase
+
+        local absPitchDeg = math.abs(math.deg(tel.pitch or 0))
+        if absPitchDeg > 6.0 and fwdSig > 0 then
+            local diveFactor = math.max(0.0, 1.0 - ((absPitchDeg - 6.0) / 8.0))
+            fwdSig = fwdSig * diveFactor
+        end
+        if absPitchDeg > 14.0 then
+            fwdSig = 0
+            if (self.ap.mode == "CRUISE" or self.ap.mode == "LNAV") and self.ap.enabled then
+                self:setMode("HOVER", tel)
+            end
+            -- Emergency pitch recovery torque scaling
+            local emergencyPitch = ((absPitchDeg - 14.0) / 10.0) * 4.0
+            if (tel.pitch or 0) > 0 then
+                pitchTrim = clamp(pitchTrim - emergencyPitch, -6.5, 6.5)
+            else
+                pitchTrim = clamp(pitchTrim + emergencyPitch, -6.5, 6.5)
+            end
+        end
+
+        -- Base collective lift calculation (Hover center calibrated at 12.63)
+        local baseCenter = (self.ap.altHold or (self.ap.mode ~= "MANUAL" and self.ap.enabled))
+            and math.max(self.ap.baseThrottle, m.hoverBaseSig)
+            or self.ap.baseThrottle
+        local baseThrust = clamp(baseCenter + altCmd, 0.0, 15.0)
+
+        -- Front & Rear base power distribution with anti-saturation overflow
+        local frontBase = baseThrust * m.gammaFront
+        local rearBase  = baseThrust * m.gammaRear
+
+        if rearBase > 15.0 then
+            local overflow = rearBase - 15.0
+            rearBase  = 15.0
+            frontBase = math.min(15.0, frontBase + overflow * 0.90)
+        end
+
+        -- 4-Channel Mixing Matrix
+        -- G1: Front-Left (FL), G2: Rear-Left (RL), G3: Front-Right (FR), G4: Rear-Right (RR)
+        local rawFloat = {
+            frontBase + (pitchTrim * m.gammaFront) + rollTrim - (u_yaw * 0.5), -- G1: FL
+            rearBase  - (pitchTrim * m.gammaRear)  + rollTrim - (u_yaw * 0.5), -- G2: RL
+            frontBase + (pitchTrim * m.gammaFront) - rollTrim + (u_yaw * 0.5), -- G3: FR
+            rearBase  - (pitchTrim * m.gammaRear)  - rollTrim + (u_yaw * 0.5)  -- G4: RR
+        }
+
+        -- Multirotor mixer desaturation: preserve roll torque when collective saturates
+        local function desaturatePair(l, r, lo, hi)
+            local mx = math.max(l, r)
+            if mx > hi then
+                local ov = mx - hi
+                l, r = l - ov, r - ov
+            end
+            local mn = math.min(l, r)
+            if mn < lo then
+                local un = lo - mn
+                l, r = l + un, r + un
+            end
+            return clamp(l, lo, hi), clamp(r, lo, hi)
+        end
+
+        local minLift = (self.ap.altHold or baseThrust >= 5) and 3.5 or 0.0
+        local maxLift = 15.0
+        rawFloat[1], rawFloat[3] = desaturatePair(rawFloat[1], rawFloat[3], minLift, maxLift)
+        rawFloat[2], rawFloat[4] = desaturatePair(rawFloat[2], rawFloat[4], minLift, maxLift)
+
+        -- 20 Hz Delta-Sigma fractional pulse modulation (PWM Dithering)
+        local sig = {}
+        for i = 1, 4 do
+            local clamped = math.max(0.0, math.min(15.0, rawFloat[i]))
+            if clamped <= 0.05 or clamped >= 14.95 then
+                sig[i] = math.floor(clamped + 0.5)
+                m.ditherAcc[i] = 0
+            else
+                local desired = clamped + (m.ditherAcc[i] or 0)
+                local outInt  = math.floor(desired + 0.5)
+                outInt = math.max(0, math.min(15, outInt))
+                m.ditherAcc[i] = desired - outInt
+                sig[i] = outInt
+            end
+        end
+
+        rawLiftFL = rawFloat[1]
+        rawLiftRL = rawFloat[2]
+        rawLiftFR = rawFloat[3]
+        rawLiftRR = rawFloat[4]
+
+        liftFL = sig[1]
+        liftRL = sig[2]
+        liftFR = sig[3]
+        liftRR = sig[4]
+
+        self.lastMotorSignals = sig
+        self.lastLiftForcePN = ((sig[1] + sig[2] + sig[3] + sig[4]) / 60.0) * m.maxLiftForce
+
+        -- 7. Dispatch directly to gearboxes (Analog Transmissions) if 4 or 8 present
+        if #self.gearboxes >= 4 then
+            for idx, gb in ipairs(self.gearboxes) do
+                local groupIdx = ((idx - 1) % 4) + 1
+                local targetSig = sig[groupIdx]
+                table.insert(tasks, function() driveSignal(gb, targetSig, false) end)
+            end
+        end
+
+        -- 8. Dispatch to Gyroscopic Propeller Bearings (3D vectoring) if 4 or more present
+        if #self.gyros >= 4 then
+            local gyroPitchTrim = -0.025
+            local pitchTilt = math.max(-0.20, math.min(0.20, gyroPitchTrim + (pitchTrim * 0.038)))
+            local rollTilt  = math.max(-0.18, math.min(0.18, -rollTrim * 0.032))
+            local yawTilt   = math.max(-0.15, math.min(0.15, u_yaw * 0.035))
+
+            local halfGyros = math.floor(#self.gyros / 2)
+            local portVec = { x = rollTilt, y = math.cos(pitchTilt + yawTilt), z = math.sin(pitchTilt + yawTilt),
+                              rollTilt, math.cos(pitchTilt + yawTilt), math.sin(pitchTilt + yawTilt) }
+            local stbdVec = { x = rollTilt, y = math.cos(pitchTilt - yawTilt), z = math.sin(pitchTilt - yawTilt),
+                              rollTilt, math.cos(pitchTilt - yawTilt), math.sin(pitchTilt - yawTilt) }
+
+            for gIdx, gyro in ipairs(self.gyros) do
+                local vec = (gIdx <= halfGyros) and portVec or stbdVec
+                table.insert(tasks, function() safeCall(gyro.setManualTarget, vec) end)
+            end
+        end
     end
     self.prevRoll  = tel.roll
     self.prevPitch = tel.pitch
@@ -1607,10 +1717,10 @@ function Avionics:step(dt)
 
     self.lastMothershipState = {
         fl = liftFL, fr = liftFR, rl = liftRL, rr = liftRR,
-        flRpm = math.floor((rawLiftFL / 15.0) * 256 + 0.5),
-        frRpm = math.floor((rawLiftFR / 15.0) * 256 + 0.5),
-        rlRpm = math.floor((rawLiftRL / 15.0) * 256 + 0.5),
-        rrRpm = math.floor((rawLiftRR / 15.0) * 256 + 0.5),
+        flRpm = math.floor((clamp(rawLiftFL, 0, 15) / 15.0) * 256 + 0.5),
+        frRpm = math.floor((clamp(rawLiftFR, 0, 15) / 15.0) * 256 + 0.5),
+        rlRpm = math.floor((clamp(rawLiftRL, 0, 15) / 15.0) * 256 + 0.5),
+        rrRpm = math.floor((clamp(rawLiftRR, 0, 15) / 15.0) * 256 + 0.5),
         rearL = rearL, rearC = rearC, rearR = rearR
     }
     tel.mothership = self.lastMothershipState

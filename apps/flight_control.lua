@@ -624,7 +624,7 @@ local function run(context)
             drawTerm.write(isClutchCut and "VTS : ILERI[CUT]" or "VTS : ILERI [ON]")
         end
 
-        if lastTel.vehicleType == "MOTHERSHIP" then
+        if lastTel.vehicleType == "MOTHERSHIP" or lastTel.vehicleType == "GUNSHIP" then
             local ms = lastTel.mothership or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 }
             drawTerm.setCursorPos(2, 6)
             drawTerm.setTextColor(theme.accent or colors.cyan)
