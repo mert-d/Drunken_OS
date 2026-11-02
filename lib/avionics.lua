@@ -749,15 +749,15 @@ function Avionics:readTelemetry(dt)
     if self.gimbal then
         local rads = safeCall(self.gimbal.getAnglesRad)
         if type(rads) == "table" and rads[1] and rads[2] then
-            pitch = tonumber(rads[1]) or 0
+            pitch = -(tonumber(rads[1]) or 0)
             roll  = tonumber(rads[2]) or 0
         else
             local degs = safeCall(self.gimbal.getAngles)
             if type(degs) == "table" and degs[1] and degs[2] then
-                pitch = math.rad(tonumber(degs[1]) or 0)
+                pitch = -math.rad(tonumber(degs[1]) or 0)
                 roll  = math.rad(tonumber(degs[2]) or 0)
             else
-                pitch = tonumber(safeCall(self.gimbal.getPitchRad)) or math.rad(tonumber(safeCall(self.gimbal.getPitch)) or 0) or 0
+                pitch = -(tonumber(safeCall(self.gimbal.getPitchRad)) or math.rad(tonumber(safeCall(self.gimbal.getPitch)) or 0) or 0)
                 roll  = tonumber(safeCall(self.gimbal.getRollRad)) or math.rad(tonumber(safeCall(self.gimbal.getRoll)) or 0) or 0
             end
         end
@@ -1562,22 +1562,6 @@ function Avionics:step(dt)
             local cFR = clamp(pitchTrim - rollTrim, -6.5, 6.5)
             local cRL = clamp(-pitchTrim + rollTrim, -6.5, 6.5)
             local cRR = clamp(-pitchTrim - rollTrim, -6.5, 6.5)
-            if absPitchDeg > 12.0 then
-                local antiDiveBoost = math.min(3.5, (absPitchDeg - 12.0) * 0.50)
-                if (tel.pitch or 0) < 0 then
-                    -- Severe nose down: emergency lift boost on front rotors, reduce rear rotors
-                    cFL = cFL + antiDiveBoost
-                    cFR = cFR + antiDiveBoost
-                    cRL = cRL - antiDiveBoost
-                    cRR = cRR - antiDiveBoost
-                else
-                    -- Severe nose up: emergency lift boost on rear rotors, reduce front rotors
-                    cFL = cFL - antiDiveBoost
-                    cFR = cFR - antiDiveBoost
-                    cRL = cRL + antiDiveBoost
-                    cRR = cRR + antiDiveBoost
-                end
-            end
 
             -- Multirotor mixer desaturation: preserve roll torque when pitching or collective saturates
             local function desaturatePair(l, r, lo, hi)
