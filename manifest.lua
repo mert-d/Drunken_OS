@@ -159,6 +159,7 @@ return {
             remote_files = {
                 "lib/avx/wing_level.lua",
                 "lib/avx/sky_anchor.lua",
+                "lib/avx/route_manager.lua",
                 "lib/blackbox.lua",
                 "apps/blackbox.lua",
                 "blackbox.lua",
@@ -180,6 +181,7 @@ return {
             remote_files = {
                 "lib/avx/wing_level.lua",
                 "lib/avx/sky_anchor.lua",
+                "lib/avx/route_manager.lua",
                 "lib/blackbox.lua",
                 "apps/blackbox.lua",
                 "blackbox.lua",

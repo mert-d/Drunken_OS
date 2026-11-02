@@ -279,9 +279,10 @@ local function renderTacticalTable(mon, tel, ap, fcObj)
     end
 
     -- 3. Center Polar Radar
-    local rcx = math.floor(w * 0.58)
+    local hasRightCol = (w >= 48)
+    local rcx = hasRightCol and math.floor(w * 0.5) or math.floor(w * 0.58)
     local rcy = math.floor((h - 2) * 0.5) + 2
-    local rx = math.min(14, math.floor(w * 0.22))
+    local rx = hasRightCol and math.min(11, math.floor((w - 36) * 0.5)) or math.min(14, math.floor(w * 0.22))
     local ry = math.min(6, math.floor((h - 4) * 0.45))
 
     mon.setTextColor(isCol and colors.gray or colors.white)
@@ -324,8 +325,35 @@ local function renderTacticalTable(mon, tel, ap, fcObj)
         mon.write("⚓")
     end
 
-    -- 4. Right Status Column (If w >= 55)
-    if w >= 55 then
+    -- Route Waypoints & Flight Corridor on Radar
+    if tel.navRoute and tel.navRoute.waypoints and tel.pos then
+        local wps = tel.navRoute.waypoints
+        local maxRange = 250
+        for idx, wp in ipairs(wps) do
+            local dx = wp.x - tel.pos.x
+            local dz = wp.z - tel.pos.z
+            local dist = math.sqrt(dx * dx + dz * dz)
+            if dist < maxRange then
+                local scale = dist / maxRange
+                local angle = math.atan2(dx, -dz)
+                local wx = math.floor(rcx + math.sin(angle) * (scale * rx) + 0.5)
+                local wy = math.floor(rcy - math.cos(angle) * (scale * ry) + 0.5)
+                if wx >= 1 and wx <= w and wy >= 2 and wy <= h - 1 then
+                    mon.setCursorPos(wx, wy)
+                    if idx == tel.navRoute.activeIdx then
+                        mon.setTextColor(isCol and colors.lime or colors.white)
+                        mon.write(tostring(idx))
+                    else
+                        mon.setTextColor(isCol and colors.gray or colors.white)
+                        mon.write("o")
+                    end
+                end
+            end
+        end
+    end
+
+    -- 4. Right Status Column (If w >= 48)
+    if w >= 48 then
         local stX = w - 18
         mon.setCursorPos(stX, 3)
         mon.setTextColor(isCol and colors.cyan or colors.white)
@@ -338,6 +366,21 @@ local function renderTacticalTable(mon, tel, ap, fcObj)
         mon.setCursorPos(stX, 6)
         mon.setTextColor(isCol and colors.lightGray or colors.white)
         mon.write("ENG GUVRT  : HAZIR")
+
+        if tel.navRoute and tel.navRoute.wpName then
+            mon.setCursorPos(stX, 8)
+            mon.setTextColor(isCol and colors.cyan or colors.white)
+            mon.write("--- OTONOM NAV ---")
+            mon.setCursorPos(stX, 9)
+            mon.setTextColor(isCol and colors.lime or colors.white)
+            mon.write(string.format("WP: %s", tel.navRoute.wpName:sub(1, 13)))
+            mon.setCursorPos(stX, 10)
+            mon.setTextColor(colors.white)
+            mon.write(string.format("DST:%4.0fm T:%3.0fs", tel.navRoute.dist or 0, tel.navRoute.ete or 0))
+            mon.setCursorPos(stX, 11)
+            mon.setTextColor(colors.lightGray)
+            mon.write(string.format("XTK: %+5.1fm", tel.navRoute.xtk or 0))
+        end
     end
 
     -- 5. Bottom Status
@@ -571,8 +614,9 @@ local function run(context)
             or (lastTel.vehicleType == "GUNSHIP" and "GSHIP")
             or (lastTel.vehicleType == "ZEPPELIN" and "ZEP")
             or "AIR"
-        local tabLabel = (activeTab == "PFD") and "[PFD] [P:I/O] [V:ARAC]"
-            or ((activeTab == "IO") and "[P:PFD] [I/O] [V:ARAC]" or "[ARAC SECIMI]")
+        local tabLabel = (activeTab == "PFD") and "[PFD] [N:NAV] [P:I/O] [V:ARAC]"
+            or ((activeTab == "NAV") and "[N:PFD] [NAV] [P:I/O] [V:ARAC]"
+            or ((activeTab == "IO") and "[P:PFD] [N:NAV] [I/O] [V:ARAC]" or "[ARAC SECIMI]"))
         local modeStr = fc.ap.mode
         if isRemoteFCC then
             modeStr = modeStr .. " [REMOTE FCC]"
@@ -734,6 +778,104 @@ local function run(context)
         drawTerm.write("[I]:Invert [X]:AUTO [V]:AracProfil [P/Tab]:Kokpit")
     end
 
+    local selectedWpIdx = 1
+    local function renderFMS(w, h)
+        drawTerm.setBackgroundColor(theme.bg)
+        drawTerm.clear()
+        renderHeader(w)
+
+        drawTerm.setCursorPos(2, 2)
+        drawTerm.setTextColor(theme.accent or colors.cyan)
+        local rm = fc:getRouteManager()
+        local r = rm and rm.activeRoute
+        local rName = r and r.name or "ROTA_YOK"
+        local rLoop = (r and r.loop) and "[DONGU:ACIK]" or "[DONGU:KAPALI]"
+        local rEnd  = r and r.endAction or "HOVER"
+        drawTerm.write(string.format("=== FMS ROTA: %s %s [SON:%s] ===", rName:sub(1, 14), rLoop, rEnd))
+
+        -- Table header
+        drawTerm.setCursorPos(2, 3)
+        drawTerm.setTextColor(theme.muted)
+        drawTerm.write(string.format("%-3s %-12s %-5s %-5s %-5s %-4s %-6s %s", "ID", "WAYPOINT", "X", "Y", "Z", "SPD", "EYLEM", "DURUM"))
+        drawTerm.setCursorPos(2, 4)
+        drawTerm.write(string.rep("-", w - 3))
+
+        local wps = (r and r.waypoints) or {}
+        local activeIdx = r and r.activeIdx or 1
+        local maxRows = math.max(1, h - 8)
+
+        local scrollOffset = 0
+        if selectedWpIdx > maxRows then
+            scrollOffset = selectedWpIdx - maxRows
+        end
+
+        for i = 1, maxRows do
+            local wpIdx = i + scrollOffset
+            local wp = wps[wpIdx]
+            if not wp then break end
+
+            local isSel = (wpIdx == selectedWpIdx)
+            local isCurrent = (wpIdx == activeIdx)
+            local rowY = 4 + i
+            drawTerm.setCursorPos(2, rowY)
+
+            local statusStr = "[BEKLIYOR]"
+            if isCurrent then
+                if fc.ap.mode == "LNAV" then
+                    local d = lastTel.navRoute and lastTel.navRoute.dist or 0
+                    statusStr = string.format("[AKTIF:%3.0fm]", d)
+                else
+                    statusStr = "[HEDEF]"
+                end
+            elseif wpIdx < activeIdx then
+                statusStr = "[GECILDI]"
+            end
+
+            if isSel then
+                drawTerm.setBackgroundColor(isColor and colors.blue or colors.white)
+                drawTerm.setTextColor(isColor and colors.white or colors.black)
+            else
+                drawTerm.setBackgroundColor(theme.bg)
+                drawTerm.setTextColor(isCurrent and (theme.ok or colors.lime) or theme.fg)
+            end
+
+            local prefix = isCurrent and ">" or " "
+            local line = string.format(
+                "%s%-2d %-12s %+5d %4d %+5d %2dm %-6s %s",
+                prefix,
+                wpIdx,
+                wp.name:sub(1, 12),
+                math.floor(wp.x + 0.5),
+                math.floor(wp.y + 0.5),
+                math.floor(wp.z + 0.5),
+                math.floor(wp.speed or 8),
+                wp.action or "FLYBY",
+                statusStr
+            )
+            drawTerm.write(line:sub(1, w - 2))
+        end
+
+        -- Summary & Quick POI info
+        drawTerm.setBackgroundColor(theme.bg)
+        drawTerm.setCursorPos(2, h - 2)
+        drawTerm.setTextColor(theme.accent or colors.cyan)
+        if #wps == 0 then
+            drawTerm.write("ROTA BOS! [C]:Mevcut Konum | [1-4]:Hazir POI Ekle | [L]:Yukle")
+        else
+            local curWp = wps[activeIdx]
+            local cName = curWp and curWp.name or "-"
+            drawTerm.write(string.format("HEDEF: %s (%d/%d WP) | [Space]: LNAV %s", cName, activeIdx, #wps, (fc.ap.mode == "LNAV") and "DURDUR" or "BASLAT"))
+        end
+
+        drawTerm.setCursorPos(2, h - 1)
+        drawTerm.setTextColor(theme.ok or colors.lime)
+        drawTerm.write("[C]:KonumCapture [1-4]:POI [A/Enter]:Aktif [D]:Sil [O]:Loop [Space]:Ucus")
+
+        drawTerm.setCursorPos(2, h)
+        drawTerm.setTextColor(colors.lightGray)
+        drawTerm.write("[Up/Dn]:Sec [S]:Kaydet [L]:Yukle [X]:Temizle [N/Tab]:Kokpit")
+    end
+
     local function renderPFD(targetTerm)
         local prevTerm = drawTerm
         drawTerm = targetTerm or parentTerm
@@ -749,6 +891,10 @@ local function run(context)
                 renderIOConfigurator(w, h)
                 drawTerm = prevTerm
                 return
+            elseif activeTab == "NAV" then
+                renderFMS(w, h)
+                drawTerm = prevTerm
+                return
             end
         end
         if activeTab == "PROFILE" then
@@ -756,6 +902,9 @@ local function run(context)
             return
         elseif activeTab == "IO" then
             renderIOConfigurator(w, h)
+            return
+        elseif activeTab == "NAV" then
+            renderFMS(w, h)
             return
         end
 
@@ -907,13 +1056,20 @@ local function run(context)
             drawTerm.write(string.format("BAR : %4.0f hPa", pHpa))
         end
 
-        -- Row 11: Hot-Plug Toast Notification OR ILS Status
+        -- Row 11: Hot-Plug Toast Notification OR LNAV Status OR Anchor OR ILS Status
         drawTerm.setCursorPos(2, 11)
         if hotplugNotice and hotplugTimer > 0 then
             drawTerm.setBackgroundColor(isColor and colors.cyan or colors.white)
             drawTerm.setTextColor(colors.black)
             local msg = " " .. hotplugNotice .. " "
             drawTerm.write(msg:sub(1, w - 2))
+        elseif lastTel.navRoute and lastTel.navRoute.wpName then
+            local nr = lastTel.navRoute
+            drawTerm.setBackgroundColor(isColor and colors.purple or colors.blue)
+            drawTerm.setTextColor(colors.white)
+            local navMsg = string.format(" LNAV [%d/%d %s] DST:%3.0fm ETE:%2.0fs XTK:%+4.1fm ",
+                nr.activeIdx, nr.totalWps, nr.wpName, nr.dist, nr.ete, nr.xtk)
+            drawTerm.write(navMsg:sub(1, w - 2))
         elseif fc.ap.mode == "ANCHOR" and lastTel.anchor and lastTel.anchor.active then
             drawTerm.setBackgroundColor(isColor and colors.yellow or colors.white)
             drawTerm.setTextColor(colors.black)
@@ -999,7 +1155,7 @@ local function run(context)
 
         drawTerm.setCursorPos(2, h - 1)
         drawTerm.setTextColor(theme.accent or colors.cyan)
-        drawTerm.write("[V]:Profil Sec | [P]:I/O Matrix | [U]:GitHub OTA Guncelle")
+        drawTerm.write("[V]:Profil Sec | [N]:FMS/Rota | [P]:I/O Matrix | [U]:OTA")
 
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
@@ -1175,6 +1331,10 @@ local function run(context)
                         isRemoteFCC = true
                         if msg.tel then lastTel = msg.tel end
                         if msg.alertLevel then fc.alertLevel = msg.alertLevel end
+                        if msg.route then
+                            local rm = fc:getRouteManager()
+                            if rm then rm.activeRoute = msg.route end
+                        end
                         if msg.ap then
                             for k, v in pairs(msg.ap) do
                                 fc.ap[k] = v
@@ -1319,13 +1479,27 @@ local function run(context)
                     else
                         activeTab = "PROFILE"
                     end
-                elseif key == keys.p or key == keys.tab then
+                elseif key == keys.n then
+                    activeTab = (activeTab == "NAV") and "PFD" or "NAV"
+                elseif key == keys.p then
                     if activeTab == "IO" then
                         activeTab = "PFD"
                     else
                         fc:scanPeripherals()
                         cachedMonitors = { peripheral.find("monitor") }
                         activeTab = "IO"
+                    end
+                elseif key == keys.tab then
+                    if activeTab == "PFD" then
+                        activeTab = "NAV"
+                    elseif activeTab == "NAV" then
+                        fc:scanPeripherals()
+                        cachedMonitors = { peripheral.find("monitor") }
+                        activeTab = "IO"
+                    elseif activeTab == "IO" then
+                        activeTab = "PROFILE"
+                    else
+                        activeTab = "PFD"
                     end
                 elseif activeTab == "PROFILE" then
                     if key == keys.up then
@@ -1347,6 +1521,109 @@ local function run(context)
                             if isRemoteFCC then sendAvionicsCmd("SET_PROFILE", { profile = chosen.id, autoAssign = (chosen.id == "MOTHERSHIP") }) end
                             activeTab = "PFD"
                         end
+                    end
+                elseif activeTab == "NAV" then
+                    local rm = fc:getRouteManager()
+                    local r = rm and rm.activeRoute
+                    local wps = (r and r.waypoints) or {}
+                    if key == keys.up then
+                        selectedWpIdx = math.max(1, selectedWpIdx - 1)
+                    elseif key == keys.down then
+                        selectedWpIdx = math.min(math.max(1, #wps), selectedWpIdx + 1)
+                    elseif key == keys.c then
+                        local px = math.floor(lastTel.pos.x + 0.5)
+                        local py = math.floor(lastTel.altitude + 0.5)
+                        local pz = math.floor(lastTel.pos.z + 0.5)
+                        local spd = fc.ap.baseThrottle > 0 and fc.ap.baseThrottle or 8
+                        local wpNum = #wps + 1
+                        local newWp = {
+                            name   = string.format("WP%d_CAP", wpNum),
+                            x      = px,
+                            y      = py,
+                            z      = pz,
+                            speed  = spd,
+                            radius = 8,
+                            action = "FLYBY"
+                        }
+                        rm:addWaypoint(newWp)
+                        if isRemoteFCC then sendAvionicsCmd("ADD_WAYPOINT", { waypoint = newWp }) end
+                        hotplugNotice = "WAYPOINT EKLENDI: " .. newWp.name
+                        hotplugTimer = 60
+                    elseif (key >= keys.one and key <= keys.four) or (keys.numPad1 and key >= keys.numPad1 and key <= keys.numPad4) then
+                        local idx = (key >= keys.one and key <= keys.four) and (key - keys.one + 1) or (key - keys.numPad1 + 1)
+                        local poi = rm.pois[idx]
+                        if poi then
+                            local newWp = {
+                                name   = poi.name,
+                                x      = poi.x,
+                                y      = poi.y,
+                                z      = poi.z,
+                                speed  = 8,
+                                radius = 8,
+                                action = poi.action or "FLYBY"
+                            }
+                            rm:addWaypoint(newWp)
+                            if isRemoteFCC then sendAvionicsCmd("ADD_WAYPOINT", { waypoint = newWp }) end
+                            hotplugNotice = "POI EKLENDI: " .. poi.name
+                            hotplugTimer = 60
+                        end
+                    elseif key == keys.space then
+                        if fc.ap.mode == "LNAV" then
+                            if isRemoteFCC then sendAvionicsCmd("SET_MODE", { mode = "HOVER" }) else fc:setMode("HOVER", lastTel) end
+                            hotplugNotice = "LNAV DURDURULDU -> HOVER"
+                        else
+                            local okS, errS = fc:startRoute(nil, lastTel)
+                            if okS then
+                                if isRemoteFCC then sendAvionicsCmd("START_ROUTE", { name = r and r.name }) end
+                                hotplugNotice = "LNAV OTONOM UCUS AKTIF!"
+                            else
+                                hotplugNotice = "ROTA BOS! [C] veya [1-4] ile WP ekleyin"
+                            end
+                        end
+                        hotplugTimer = 60
+                    elseif key == keys.o then
+                        if r then
+                            r.loop = not r.loop
+                            if isRemoteFCC then sendAvionicsCmd("SET_ROUTE_LOOP", { loop = r.loop }) end
+                            hotplugNotice = r.loop and "ROTA DONGUSU: ACIK" or "ROTA DONGUSU: TEK SEFER"
+                            hotplugTimer = 50
+                        end
+                    elseif (key == keys.a or key == keys.enter) and #wps > 0 then
+                        rm:setActiveIndex(selectedWpIdx, lastTel.pos)
+                        if isRemoteFCC then sendAvionicsCmd("SET_ACTIVE_WAYPOINT", { index = selectedWpIdx }) end
+                        local targetWp = wps[selectedWpIdx]
+                        hotplugNotice = "AKTIF WP: " .. (targetWp and targetWp.name or tostring(selectedWpIdx))
+                        hotplugTimer = 50
+                    elseif key == keys.d and #wps > 0 then
+                        rm:removeWaypoint(selectedWpIdx)
+                        if isRemoteFCC then
+                            sendAvionicsCmd("CLEAR_ROUTE")
+                            for _, w in ipairs(rm.activeRoute.waypoints) do
+                                sendAvionicsCmd("ADD_WAYPOINT", { waypoint = w })
+                            end
+                        end
+                        hotplugNotice = "WAYPOINT SILINDI"
+                        hotplugTimer = 40
+                    elseif key == keys.x then
+                        rm:clearRoute()
+                        if isRemoteFCC then sendAvionicsCmd("CLEAR_ROUTE") end
+                        hotplugNotice = "ROTA TEMIZLENDI"
+                        hotplugTimer = 50
+                    elseif key == keys.s then
+                        local okSv, svPath = rm:saveRoute()
+                        hotplugNotice = okSv and ("KAYDEDILDI: " .. tostring(svPath)) or "KAYIT HATASI"
+                        hotplugTimer = 60
+                    elseif key == keys.l then
+                        local routes = rm:listSavedRoutes()
+                        if #routes > 0 then
+                            local chosen = routes[1]
+                            local okL = rm:loadRoute(chosen)
+                            if okL and isRemoteFCC then sendAvionicsCmd("LOAD_ROUTE", { name = chosen }) end
+                            hotplugNotice = "ROTA YUKLENDI: " .. chosen
+                        else
+                            hotplugNotice = "KAYITLI ROTA YOK"
+                        end
+                        hotplugTimer = 60
                     end
                 elseif activeTab == "IO" then
                     local devs = fc.ioDevices or {}

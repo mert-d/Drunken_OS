@@ -329,6 +329,13 @@ function Avionics.new(config)
         self.blackbox = BBox.new({ callsign = self.callsign, vehicleType = self.vehicleType })
     end
 
+    -- Flight Management / Route Manager
+    local okRM, RMModule = pcall(require, "lib.avx.route_manager")
+    if not okRM or type(RMModule) ~= "table" then okRM, RMModule = pcall(require, "avx.route_manager") end
+    if okRM and type(RMModule) == "table" and RMModule.RouteManager then
+        self.routeManager = RMModule.RouteManager.new()
+    end
+
     return self
 end
 
@@ -354,7 +361,7 @@ function Avionics:loadModules(dir)
         end
     end
     if not found then
-        for _, rel in ipairs({ "lib.avx.wing_level", "avx.wing_level", "lib.avx.sky_anchor", "avx.sky_anchor" }) do
+        for _, rel in ipairs({ "lib.avx.wing_level", "avx.wing_level", "lib.avx.sky_anchor", "avx.sky_anchor", "lib.avx.route_manager", "avx.route_manager" }) do
             local ok, m = pcall(require, rel)
             if ok and type(m) == "table" then self:addModule(m) end
         end
@@ -1134,6 +1141,34 @@ end
 
 function Avionics:triggerSpinTest(devName)
     self.spinTest = { name = devName or "ALL", ticks = 30 } -- 1.5 seconds at 20Hz
+end
+
+function Avionics:getRouteManager()
+    if not self.routeManager then
+        local okRM, RMModule = pcall(require, "lib.avx.route_manager")
+        if not okRM or type(RMModule) ~= "table" then okRM, RMModule = pcall(require, "avx.route_manager") end
+        if okRM and type(RMModule) == "table" and RMModule.RouteManager then
+            self.routeManager = RMModule.RouteManager.new()
+        end
+    end
+    return self.routeManager
+end
+
+function Avionics:startRoute(name, tel)
+    local rm = self:getRouteManager()
+    if not rm then return false, "NO_RM" end
+    if name and name ~= "" then
+        local okL, errL = rm:loadRoute(name)
+        if not okL and (not rm.activeRoute or #rm.activeRoute.waypoints == 0) then
+            return false, errL
+        end
+    end
+    if not rm.activeRoute or #rm.activeRoute.waypoints == 0 then
+        return false, "EMPTY_ROUTE"
+    end
+    rm:setActiveIndex(1, tel and tel.pos)
+    self:setMode("LNAV", tel)
+    return true, rm.activeRoute
 end
 
 function Avionics:setHomeBase(ilsBeacon)

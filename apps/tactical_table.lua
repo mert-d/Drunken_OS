@@ -184,6 +184,32 @@ local function drawRadar(cx, cy, radiusX, radiusY, maxDist)
         termObj.write("⚓")
     end
 
+    -- Route Waypoints & Flight Legs on Radar
+    if lastTel.navRoute and lastTel.navRoute.waypoints then
+        local wps = lastTel.navRoute.waypoints
+        for idx, wp in ipairs(wps) do
+            local wx = wp.x - curX
+            local wz = wp.z - curZ
+            local dist = math.sqrt(wx * wx + wz * wz)
+            if dist < maxDist * 1.5 then
+                local scale = math.min(1.0, dist / maxDist)
+                local angle = math.atan2(wx, -wz)
+                local rpx = math.floor(cx + math.sin(angle) * (scale * radiusX) + 0.5)
+                local rpy = math.floor(cy - math.cos(angle) * (scale * radiusY) + 0.5)
+                if rpx >= 1 and rpx <= w and rpy >= 2 and rpy <= h - 1 then
+                    termObj.setCursorPos(rpx, rpy)
+                    if idx == lastTel.navRoute.activeIdx then
+                        termObj.setTextColor(isColor and colors.lime or colors.white)
+                        termObj.write(tostring(idx))
+                    else
+                        termObj.setTextColor(isColor and colors.lightGray or colors.white)
+                        termObj.write("o")
+                    end
+                end
+            end
+        end
+    end
+
     -- Ship Symbol in Center with Heading Needle
     local hdgDeg = math.deg(lastTel.heading or 0) % 360
     local sym = "^"
@@ -264,10 +290,11 @@ local function renderTable()
     end
 
     -- 3. Center 360 Polar Tactical Radar
+    local hasRightCol = (w >= 48)
     local maxDist = radarRanges[currentRangeIdx] or 100
-    local radarCx = math.floor(w * 0.58)
+    local radarCx = hasRightCol and math.floor(w * 0.5) or math.floor(w * 0.58)
     local radarCy = math.floor((h - 3) * 0.5) + 2
-    local radX = math.min(18, math.floor(w * 0.22))
+    local radX = hasRightCol and math.min(12, math.floor((w - 36) * 0.5)) or math.min(18, math.floor(w * 0.22))
     local radY = math.min(8, math.floor((h - 6) * 0.45))
 
     drawRadar(radarCx, radarCy, radX, radY, maxDist)
@@ -278,7 +305,7 @@ local function renderTable()
     termObj.write(string.format("[ RADAR: %dm ]", maxDist))
 
     -- 4. Right Status Column (If screen is wide enough)
-    if w >= 55 then
+    if w >= 48 then
         local rx = w - 18
         termObj.setCursorPos(rx, 3)
         termObj.setTextColor(isColor and colors.cyan or colors.white)
@@ -305,6 +332,21 @@ local function renderTable()
         termObj.setCursorPos(rx, 11)
         termObj.setTextColor(colors.white)
         termObj.write("MOD: " .. tostring(lastAp.mode or "MANUAL"))
+
+        if lastTel.navRoute and lastTel.navRoute.wpName then
+            termObj.setCursorPos(rx, 13)
+            termObj.setTextColor(isColor and colors.cyan or colors.white)
+            termObj.write("--- OTONOM NAV ---")
+            termObj.setCursorPos(rx, 14)
+            termObj.setTextColor(isColor and colors.lime or colors.white)
+            termObj.write(string.format("WP: %s", lastTel.navRoute.wpName:sub(1, 13)))
+            termObj.setCursorPos(rx, 15)
+            termObj.setTextColor(colors.white)
+            termObj.write(string.format("D:%4.0fm T:%3.0fs", lastTel.navRoute.dist or 0, lastTel.navRoute.ete or 0))
+            termObj.setCursorPos(rx, 16)
+            termObj.setTextColor(colors.lightGray)
+            termObj.write(string.format("XTK: %+5.1fm", lastTel.navRoute.xtk or 0))
+        end
     end
 
     -- 5. Toast / Status Line (Row h - 2)

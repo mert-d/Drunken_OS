@@ -958,6 +958,107 @@ local function runTests()
     assert(redText:find("KIRMIZI ALARM") ~= nil, "Expected Tactical Table to show RED ALARM banner")
     print("  PASS: Test 16: Tactical Holo-Table & Red Alert Klaxon / Strobe System")
 
+    -- Test 17: Autonomous Multi-Waypoint Navigation, Cross-Track Error (XTK) & Precision Docking
+    local RM = require("lib.avx.route_manager")
+    assert(RM and RM.RouteManager, "Expected lib.avx.route_manager to export RouteManager")
+
+    local mockRoutesFs = {}
+    local origFs2 = _G.fs
+    _G.fs = {
+        open = function(path, mode)
+            local buf = {}
+            return {
+                write = function(s) table.insert(buf, s) end,
+                writeLine = function(s) table.insert(buf, s .. "\n") end,
+                readAll = function() return mockRoutesFs[path] or "" end,
+                close = function() if mode:find("w") then mockRoutesFs[path] = table.concat(buf) end end
+            }
+        end,
+        exists = function(path) return mockRoutesFs[path] ~= nil or path == "/routes" end,
+        makeDir = function() end,
+        list = function(dir)
+            local files = {}
+            for p, _ in pairs(mockRoutesFs) do
+                if p:find("^" .. dir .. "/") then
+                    local name = p:match("^" .. dir .. "/(.+)$")
+                    if name then table.insert(files, name) end
+                end
+            end
+            return files
+        end
+    }
+
+    local rm = RM.RouteManager.new({ routesDir = "/routes" })
+    assert(#rm.pois >= 2, "Expected default POIs present in RouteManager")
+    rm:createRoute("PATROL_ALPHA", {}, false, "DOCK")
+    rm:addWaypoint({ name = "WP1", x = 0, y = 185, z = 100, speed = 8, radius = 8, action = "FLYBY" })
+    rm:addWaypoint({ name = "WP2", x = 100, y = 200, z = 100, speed = 10, radius = 8, action = "FLYBY" })
+    rm:addWaypoint({ name = "WP3", x = 100, y = 185, z = 0, speed = 6, radius = 8, action = "DOCK" })
+
+    assert(#rm.activeRoute.waypoints == 3, "Expected 3 waypoints in active route")
+
+    -- Cross-Track Error (XTK) verification:
+    -- Desired track: (0, 185, 0) -> (0, 185, 100) [Heading South: 0 deg]
+    local prevPt = { x = 0, y = 185, z = 0 }
+    local tgtPt  = rm.activeRoute.waypoints[1]
+
+    -- 1. Vessel 5m to the right (X = +5): XTK must be positive and intercept heading turns left (< 0 or > 180 deg)
+    local curRight = { x = 5.0, y = 185, z = 40.0 }
+    local gRight = rm:calculateGuidance(curRight, { speed = 8 }, prevPt, tgtPt)
+    assert(math.abs(gRight.xtk - 5.0) < 0.1, "Expected XTK ~ +5.0m when 5m right of track")
+    assert(gRight.commandedHdg < gRight.legHdg or gRight.commandedHdg > math.pi, "Expected commanded heading to steer left to intercept course")
+
+    -- 2. Vessel 5m to the left (X = -5): XTK must be negative and intercept heading turns right
+    local curLeft = { x = -5.0, y = 185, z = 40.0 }
+    local gLeft = rm:calculateGuidance(curLeft, { speed = 8 }, prevPt, tgtPt)
+    assert(math.abs(gLeft.xtk - (-5.0)) < 0.1, "Expected XTK ~ -5.0m when 5m left of track")
+    assert(gLeft.commandedHdg > gLeft.legHdg, "Expected commanded heading to steer right to intercept course")
+
+    -- 3. VNAV Guidance:
+    local climbTgt = rm.activeRoute.waypoints[2]
+    local gClimb = rm:calculateGuidance({ x = 0, y = 185, z = 100 }, { speed = 8 }, tgtPt, climbTgt)
+    assert(gClimb.targetAlt == 200 and gClimb.deltaAlt == 15 and gClimb.vSpeedTarget > 0, "Expected VNAV climb target")
+
+    -- 4. Waypoint Sequencing:
+    local curNearWP1 = { x = 0, y = 185, z = 95 } -- 5m from WP1 (radius 8m + anticipation)
+    local gArrive = rm:calculateGuidance(curNearWP1, { speed = 8 }, prevPt, tgtPt)
+    assert(gArrive.isArrived == true, "Expected waypoint arrival detected within radius")
+    local advOk, status, nextWp = rm:advance(curNearWP1)
+    assert(advOk == true and status == "ADVANCED" and nextWp.name == "WP2", "Expected advance to switch active waypoint to WP2")
+    assert(rm.activeRoute.activeIdx == 2, "Expected activeIdx updated to 2")
+
+    -- 5. Route Persistence:
+    local svOk, svPath = rm:saveRoute("PATROL_ALPHA")
+    assert(svOk == true, "Expected saveRoute to succeed")
+    assert(mockRoutesFs["/routes/PATROL_ALPHA.json"] ~= nil, "Expected route file written to disk")
+
+    local rm2 = RM.RouteManager.new({ routesDir = "/routes" })
+    local ldOk, ldRoute = rm2:loadRoute("PATROL_ALPHA")
+    assert(ldOk == true and #ldRoute.waypoints == 3, "Expected loadRoute to recover 3 waypoints")
+    assert(ldRoute.waypoints[1].name == "WP1" and ldRoute.waypoints[3].action == "DOCK", "Expected recovered waypoint data match")
+
+    -- 6. Core LNAV Integration & Telemetry:
+    local navFC = Avionics.new({ callsign = "AUTONAV-TEST", profile = "MOTHERSHIP", useGPS = false })
+    navFC.routeManager = rm2
+    navFC:startRoute("PATROL_ALPHA", { pos = { x = 0, y = 185, z = 0 }, altitude = 185 })
+    assert(navFC.ap.mode == "LNAV" and navFC.ap.enabled == true, "Expected startRoute to engage LNAV mode")
+
+    local navTel = navFC:step(0.05) or navFC:readTelemetry(0.05)
+    assert(navTel.navRoute ~= nil, "Expected navRoute telemetry exported in LNAV mode")
+    assert(navTel.navRoute.wpName == "WP1", "Expected active waypoint WP1 in telemetry")
+    assert(type(navTel.navRoute.xtk) == "number", "Expected numeric XTK in telemetry")
+    assert(type(navTel.navRoute.dist) == "number", "Expected numeric distance to target in telemetry")
+
+    -- 7. Tactical Table Radar Route Leg Rendering:
+    local monNavTable = createMockMonitor(50, 18, true)
+    FlightApp.renderTacticalTable(monNavTable, navTel, navFC.ap, navFC)
+    local navTableText = monNavTable.getOutput()
+    assert(navTableText:find("OTONOM NAV") ~= nil, "Expected Tactical Table to render OTONOM NAV status section")
+    assert(navTableText:find("WP: WP1") ~= nil, "Expected Tactical Table to display active waypoint WP1")
+
+    _G.fs = origFs2
+    print("  PASS: Test 17: Autonomous Multi-Waypoint Navigation, Cross-Track Error (XTK) & Precision Docking")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

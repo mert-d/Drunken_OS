@@ -282,6 +282,7 @@ local function run(context)
             sender     = (os.getComputerID and os.getComputerID()) or 0,
             tel        = lastTel,
             alertLevel = fc.alertLevel or "NORMAL",
+            route      = fc.routeManager and fc.routeManager.activeRoute or nil,
             ioMap      = fc.ioMap,
             ioDevices  = ioDevs,
             ap        = {
@@ -475,6 +476,23 @@ local function run(context)
                         elseif msg.cmd == "SET_WAYPOINT" and type(msg.waypoint) == "table" then
                             fc.ap.waypoint = msg.waypoint
                             fc:setMode("LNAV", lastTel)
+                        elseif msg.cmd == "START_ROUTE" or msg.cmd == "LOAD_ROUTE" then
+                            fc:startRoute(msg.name, lastTel)
+                            lastCmdName = "NAV:" .. tostring(msg.name or "ROTA")
+                        elseif msg.cmd == "ADD_WAYPOINT" and type(msg.waypoint) == "table" then
+                            local rm = fc:getRouteManager()
+                            if rm then rm:addWaypoint(msg.waypoint) end
+                            lastCmdName = "NAV:+WP"
+                        elseif msg.cmd == "CLEAR_ROUTE" then
+                            local rm = fc:getRouteManager()
+                            if rm then rm:clearRoute() end
+                            lastCmdName = "NAV:CLEAR"
+                        elseif msg.cmd == "SET_ACTIVE_WAYPOINT" and msg.index then
+                            local rm = fc:getRouteManager()
+                            if rm then rm:setActiveIndex(tonumber(msg.index) or 1, lastTel.pos) end
+                        elseif msg.cmd == "SET_ROUTE_LOOP" then
+                            local rm = fc:getRouteManager()
+                            if rm and rm.activeRoute then rm.activeRoute.loop = (msg.loop == true) end
                         elseif msg.cmd == "SET_PROFILE" and msg.profile then
                             fc:setVehicleProfile(msg.profile, msg.autoAssign == true)
                         elseif msg.cmd == "SCAN_PERIPHERALS" then
