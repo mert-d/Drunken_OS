@@ -763,8 +763,8 @@ local function runTests()
            "Expected right lift RPM (FR) > left lift RPM (FL) when rolled right (+15.2 deg)")
     assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.rlRpm and testFC.lastMothershipState.frRpm > testFC.lastMothershipState.rrRpm,
            "Expected front lift RPM (FL/FR) > rear lift RPM (RL/RR) when nose pitched down (+10.0 deg xAngle)")
-    assert(testFC.lastMothershipState.frRpm <= 256 and testFC.lastMothershipState.rlRpm >= 120,
-           "Expected bounded hover lift RPM within 120..256 RPM band")
+    assert(testFC.lastMothershipState.frRpm <= 256 and testFC.lastMothershipState.rlRpm >= 60,
+           "Expected bounded hover lift RPM within 60..256 RPM band")
 
     testFC.msRollPID:reset()
     testFC.msPitchPID:reset()

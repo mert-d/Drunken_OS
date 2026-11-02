@@ -280,7 +280,7 @@ function Avionics.new(config)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
 
     -- Mothership Quad-Lift Gimbal Horizon Stabilization PIDs (with bounded CoM offset auto-trim & strong pitch damping)
-    self.msPitchPID = createPID(7.5, 0.5, 4.5, -4.0, 4.0, 1.8)
+    self.msPitchPID = createPID(12.5, 1.0, 8.0, -6.5, 6.5, 3.0)
     self.msRollPID  = createPID(5.5, 0.4, 2.8, -2.5, 2.5, 1.0)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
@@ -1535,14 +1535,14 @@ function Avionics:step(dt)
                 pitchTrim = pitchTrim + pitchFF
             end
 
-            local minLift = (self.ap.altHold or collectiveLift >= 5) and 7.5 or 0.0
+            local minLift = (self.ap.altHold or collectiveLift >= 5) and 3.5 or 0.0
             local maxLift = 15.0
-            local cFL = clamp(pitchTrim + rollTrim, -4.5, 4.5)
-            local cFR = clamp(pitchTrim - rollTrim, -4.5, 4.5)
-            local cRL = clamp(-pitchTrim + rollTrim, -4.5, 4.5)
-            local cRR = clamp(-pitchTrim - rollTrim, -4.5, 4.5)
-            if absPitchDeg > 6.0 then
-                local antiDiveBoost = math.min(3.0, (absPitchDeg - 6.0) * 0.35)
+            local cFL = clamp(pitchTrim + rollTrim, -6.5, 6.5)
+            local cFR = clamp(pitchTrim - rollTrim, -6.5, 6.5)
+            local cRL = clamp(-pitchTrim + rollTrim, -6.5, 6.5)
+            local cRR = clamp(-pitchTrim - rollTrim, -6.5, 6.5)
+            if absPitchDeg > 3.0 then
+                local antiDiveBoost = math.min(4.5, (absPitchDeg - 3.0) * 0.60)
                 if pitchTrim >= 0 then
                     cFL = cFL + antiDiveBoost
                     cFR = cFR + antiDiveBoost
