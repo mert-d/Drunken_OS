@@ -690,7 +690,8 @@ local function runTests()
             "turtle_1",
             "speed_controller_1",
             "create:encased_chain_drive_0",
-            "create_gearshift_0"
+            "create_gearshift_0",
+            "monitor_0"
         }
     end
     _G.peripheral.getType = function(name)
@@ -699,10 +700,22 @@ local function runTests()
         elseif name == "speed_controller_1" then return "speed_controller"
         elseif name == "create:encased_chain_drive_0" then return "create:encased_chain_drive"
         elseif name == "create_gearshift_0" then return "create_gearshift"
+        elseif name == "monitor_0" then return "monitor"
         end
         return nil
     end
     _G.peripheral.wrap = function(name)
+        if name == "monitor_0" then
+            return {
+                setTextScale = function() end,
+                getSize = function() return 51, 19 end,
+                setCursorPos = function() end,
+                write = function() end,
+                clear = function() end,
+                setBackgroundColor = function() end,
+                setTextColor = function() end
+            }
+        end
         return {
             setTargetSpeed = function() end,
             setSignal = function() end
@@ -711,20 +724,39 @@ local function runTests()
 
     testFC:scanPeripherals()
 
-    -- 1. Verify computer and turtle are excluded from controllable I/O devices
+    -- 1. Verify computer and turtle are excluded, and monitor is included with DISP capability
     local foundComputer = false
     local foundChainDrive = false
+    local foundMonitor = false
     for _, dev in ipairs(testFC.ioDevices or {}) do
         if dev.name == "computer_7" or dev.type == "computer" then foundComputer = true end
         if dev.name == "create:encased_chain_drive_0" then
             foundChainDrive = true
             assert(dev.cap == "RPM", "Expected encased chain drive capability to be RPM")
         end
+        if dev.name == "monitor_0" then
+            foundMonitor = true
+            assert(dev.cap == "DISP", "Expected monitor_0 capability to be DISP")
+            assert(dev.kind == "monitor", "Expected monitor_0 kind to be monitor")
+        end
     end
     assert(not foundComputer, "Expected computer_7 to be filtered out of controllable peripherals")
     assert(foundChainDrive, "Expected create:encased_chain_drive_0 to be discovered")
+    assert(foundMonitor, "Expected monitor_0 to be discovered in ioDevices for TAB assignment")
 
-    -- 2. Verify Remote FCC I/O role methods: setDeviceRole, toggleInvert, resetDeviceRole, triggerSpinTest
+    -- 2. Verify Monitor Display Role Cycling (AUTO -> DISP_NAV -> DISP_SCADA -> DISP_PFD -> DISP_OFF -> AUTO)
+    local r1 = testFC:cycleRole("monitor_0", 1)
+    assert(r1 == "DISP_NAV", "Expected monitor_0 cycle 1 to be DISP_NAV, got " .. tostring(r1))
+    local r2 = testFC:cycleRole("monitor_0", 1)
+    assert(r2 == "DISP_SCADA", "Expected monitor_0 cycle 2 to be DISP_SCADA, got " .. tostring(r2))
+    local r3 = testFC:cycleRole("monitor_0", 1)
+    assert(r3 == "DISP_PFD", "Expected monitor_0 cycle 3 to be DISP_PFD, got " .. tostring(r3))
+    local r4 = testFC:cycleRole("monitor_0", 1)
+    assert(r4 == "DISP_OFF", "Expected monitor_0 cycle 4 to be DISP_OFF, got " .. tostring(r4))
+    local r5 = testFC:cycleRole("monitor_0", 1)
+    assert(r5 == "AUTO", "Expected monitor_0 cycle 5 to loop back to AUTO, got " .. tostring(r5))
+
+    -- 3. Verify Remote FCC I/O role methods: setDeviceRole, toggleInvert, resetDeviceRole, triggerSpinTest
     testFC:setDeviceRole("speed_controller_1", "LIFT_FL")
     assert(testFC:getDeviceConfig("speed_controller_1").role == "LIFT_FL", "Expected setDeviceRole to update role to LIFT_FL")
     local invState = testFC:toggleInvert("speed_controller_1")

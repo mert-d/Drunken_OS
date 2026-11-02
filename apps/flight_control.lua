@@ -269,24 +269,31 @@ local function run(context)
     }
 
     local ROLE_DESC = {
-        AUTO         = "Otomatik: Blok tipine gore varsayilan gorev",
-        LIFT_FL      = "[1] Mothership ON-SOL Dikey Lift & Gimbal Denge",
-        LIFT_FR      = "[2] Mothership ON-SAG Dikey Lift & Gimbal Denge",
-        LIFT_RL      = "[3] Mothership ARKA-SOL Dikey Lift & Gimbal Denge",
-        LIFT_RR      = "[4] Mothership ARKA-SAG Dikey Lift & Gimbal Denge",
-        REAR_LEFT    = "[5] Mothership ARKA-SOL Manevra & Ileri/Geri Itki",
-        REAR_CENTER  = "[6] Mothership ARKA-ORTA Ana Ileri/Geri Itki",
-        REAR_RIGHT   = "[7] Mothership ARKA-SAG Manevra & Ileri/Geri Itki",
-        LIFT_BURNER  = "Irtifa / Kazan: PID yukseklik sinyali (0-15)",
-        THRUST_MAIN  = "Ana Itki: Ileri/Geri ana gaz sinyali (0-15)",
-        THRUST_PORT  = "Sol Itki (Port): Diferansiyel sol motor gucu",
-        THRUST_STBD  = "Sag Itki (Stbd): Diferansiyel sag motor gucu",
-        AUX_BOOST    = "Boost Thruster: Gaz >= 12 oldugunda tam guc",
-        CLUTCH_LIFT  = "Lift Debriyaji: 4 Dikey motor donerken kavrar, durunca keser",
-        CLUTCH_BRAKE = "Itki Debriyaji: Arka iticiler donerken kavrar, Hover/Parkta keser",
-        GEAR_REVERSE = "Geri Vites (Gearshift): [G] ile yonu tersler",
-        RUDDER_YAW   = "Dumen (Rudder): Yonlendirme acisi / sinyali",
-        IGNORE       = "Devre Disi: Ucus bilgisayari bu bloga dokunmaz"
+        AUTO          = "Otomatik: Blok tipine gore varsayilan gorev",
+        LIFT_FL       = "[1] Mothership ON-SOL Dikey Lift & Gimbal Denge",
+        LIFT_FR       = "[2] Mothership ON-SAG Dikey Lift & Gimbal Denge",
+        LIFT_RL       = "[3] Mothership ARKA-SOL Dikey Lift & Gimbal Denge",
+        LIFT_RR       = "[4] Mothership ARKA-SAG Dikey Lift & Gimbal Denge",
+        REAR_LEFT     = "[5] Mothership ARKA-SOL Manevra & Ileri/Geri Itki",
+        REAR_CENTER   = "[6] Mothership ARKA-ORTA Ana Ileri/Geri Itki",
+        REAR_RIGHT    = "[7] Mothership ARKA-SAG Manevra & Ileri/Geri Itki",
+        LIFT_BURNER   = "Irtifa / Kazan: PID yukseklik sinyali (0-15)",
+        THRUST_MAIN   = "Ana Itki: Ileri/Geri ana gaz sinyali (0-15)",
+        THRUST_PORT   = "Sol Itki (Port): Diferansiyel sol motor gucu",
+        THRUST_STBD   = "Sag Itki (Stbd): Diferansiyel sag motor gucu",
+        AUX_BOOST     = "Boost Thruster: Gaz >= 12 oldugunda tam guc",
+        CLUTCH_LIFT   = "Lift Debriyaji: 4 Dikey motor donerken kavrar, durunca keser",
+        CLUTCH_BRAKE  = "Itki Debriyaji: Arka iticiler donerken kavrar, Hover/Parkta keser",
+        GEAR_REVERSE  = "Geri Vites (Gearshift): [G] ile yonu tersler",
+        RUDDER_YAW    = "Dumen (Rudder): Yonlendirme acisi / sinyali",
+        IGNORE        = "Devre Disi: Ucus bilgisayari bu bloga dokunmaz",
+        DISP_NAV      = "[1] Taktik Radar: 360 seyrüsefer, pusula, radar & rota haritasi",
+        DISP_TACTICAL = "[1] Taktik Radar: 360 seyrüsefer, pusula, radar & rota haritasi",
+        DISP_SCADA    = "[2] SCADA Panel: Motor RPM, debriyaj, fren & guc aktarimi",
+        DISP_ENGINE   = "[2] SCADA Panel: Motor RPM, debriyaj, fren & guc aktarimi",
+        DISP_PFD      = "[3] PFD Ayna: Kokpit yapay ufuk, irtifa, hiz & otopilot",
+        DISP_MIRROR   = "[3] PFD Ayna: Kokpit yapay ufuk, irtifa, hiz & otopilot",
+        DISP_OFF      = "[4] Ekran Kapali: Monitor karartilir (enerji tasarrufu)"
     }
 
     -- Open all available modems (wired & wireless) for Fly-by-Wire Bus & ADS-B Telemetry
@@ -302,6 +309,24 @@ local function run(context)
     local hasLocalSensors = (fc.altSensor ~= nil or fc.gimbal ~= nil or fc.nav ~= nil or fc.velSensor ~= nil)
     local isRemoteFCC = not hasLocalSensors
     local cachedMonitors = { peripheral.find("monitor") }
+    local activeMonitorTest = nil
+
+    local function getMonitorName(monHandle, fallbackIdx)
+        if peripheral and peripheral.getName then
+            local ok, n = pcall(peripheral.getName, monHandle)
+            if ok and n then return n end
+        end
+        if peripheral and peripheral.getNames then
+            local ok, names = pcall(peripheral.getNames)
+            if ok and type(names) == "table" then
+                for _, n in ipairs(names) do
+                    local okW, h = pcall(peripheral.wrap, n)
+                    if okW and h == monHandle then return n end
+                end
+            end
+        end
+        return "monitor_" .. tostring((fallbackIdx or 1) - 1)
+    end
 
     -- Probe Avionics Core Daemon on bus if available
     if rednet and rednet.isOpen and rednet.isOpen() then
@@ -501,11 +526,13 @@ local function run(context)
 
                 local shortName = formatShortDevName(item.name, 21)
                 local shortKind = item.cap == "PASSIVE" and "PASIF"
-                    or ((item.kind or ""):gsub("Create_RotationSpeedController", "SpeedCtr"):gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", ""))
+                    or (item.cap == "DISP" and "MONITOR"
+                    or ((item.kind or ""):gsub("Create_RotationSpeedController", "SpeedCtr"):gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", "")))
                 if #shortKind > 8 then shortKind = shortKind:sub(1, 8) end
 
                 local gLabels = { [0] = "NRM ", [1] = "ROLT", [2] = "PCHT", [3] = "TERS", [4] = "90XY", [5] = "270X" }
-                local invStr = (tostring(item.name or ""):lower():find("gimbal") and gLabels[tonumber(cfg.gimbalMode) or (cfg.invert and 3 or 0)]) or (cfg.invert and "TERS" or "NRM ")
+                local invStr = item.cap == "DISP" and " -  "
+                    or ((tostring(item.name or ""):lower():find("gimbal") and gLabels[tonumber(cfg.gimbalMode) or (cfg.invert and 3 or 0)]) or (cfg.invert and "TERS" or "NRM "))
                 local lineStr = string.format(
                     "%s%-21s %-8s %-12s %-4s",
                     isSel and ">" or " ",
@@ -532,6 +559,9 @@ local function run(context)
             if selItem.cap == "PASSIVE" then
                 drawTerm.setTextColor(theme.warn or colors.orange)
                 desc = "TAM AD: " .. selItem.name .. " [PASIF SAFT]"
+            elseif selItem.cap == "DISP" or selItem.kind == "monitor" then
+                drawTerm.setTextColor(theme.accent or colors.cyan)
+                desc = "MONITOR: " .. selItem.name .. " | " .. desc
             else
                 drawTerm.setTextColor(theme.accent or colors.cyan)
                 desc = "TAM AD: " .. selItem.name .. " | " .. desc
@@ -541,7 +571,11 @@ local function run(context)
 
         drawTerm.setCursorPos(2, h - 1)
         drawTerm.setTextColor(theme.ok or colors.lime)
-        drawTerm.write("[Sol/Sag]:Gorev [1-7]:Motor [Space]:SpinTest")
+        if selItem and (selItem.cap == "DISP" or selItem.kind == "monitor") then
+            drawTerm.write("[Sol/Sag]:Rol [1]:Radar [2]:SCADA [3]:PFD [4]:Kapat [Space]:Test")
+        else
+            drawTerm.write("[Sol/Sag]:Gorev [1-7]:Motor [Space]:SpinTest")
+        end
 
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
@@ -803,24 +837,84 @@ local function run(context)
         drawTerm = prevTerm
     end
 
+    local function renderMonitorTestPattern(mon, mName, role)
+        local w, h = mon.getSize()
+        mon.setBackgroundColor(colors.blue)
+        mon.clear()
+        mon.setTextColor(colors.yellow)
+        local title = ">>> DRUNKEN OS DISPLAY TEST <<<"
+        mon.setCursorPos(math.max(1, math.floor((w - #title) / 2) + 1), math.max(1, math.floor(h / 2) - 1))
+        mon.write(title)
+
+        mon.setTextColor(colors.white)
+        local idLine = "MONITOR: " .. tostring(mName) .. " (" .. tostring(w) .. "x" .. tostring(h) .. ")"
+        mon.setCursorPos(math.max(1, math.floor((w - #idLine) / 2) + 1), math.max(1, math.floor(h / 2)))
+        mon.write(idLine)
+
+        local roleDesc = (role == "DISP_NAV" and "1: Taktik Radar & Seyrüsefer")
+            or (role == "DISP_SCADA" and "2: SCADA & Guc Aktarimi")
+            or (role == "DISP_PFD" and "3: PFD Kokpit Ayna")
+            or (role == "DISP_OFF" and "4: Kapali")
+            or ("AUTO: Otomatik Rol")
+        local roleLine = "GOREV: " .. roleDesc
+        mon.setTextColor(colors.lime)
+        mon.setCursorPos(math.max(1, math.floor((w - #roleLine) / 2) + 1), math.max(1, math.floor(h / 2) + 1))
+        mon.write(roleLine)
+    end
+
     local function renderSecondaryMonitors()
         local n = #cachedMonitors
         if n == 0 then return end
 
-        if n == 1 then
-            pcall(renderTacticalDisplay, cachedMonitors[1], lastTel, fc.ap)
-        elseif n == 2 then
-            pcall(renderTacticalDisplay, cachedMonitors[1], lastTel, fc.ap)
-            pcall(renderScadaDisplay, cachedMonitors[2], lastTel, fc.ap)
-        else
-            pcall(renderPFD, cachedMonitors[1])
-            pcall(renderTacticalDisplay, cachedMonitors[2], lastTel, fc.ap)
-            pcall(renderScadaDisplay, cachedMonitors[3], lastTel, fc.ap)
-            for i = 4, n do
-                if i % 2 == 0 then
-                    pcall(renderTacticalDisplay, cachedMonitors[i], lastTel, fc.ap)
-                else
-                    pcall(renderScadaDisplay, cachedMonitors[i], lastTel, fc.ap)
+        local nowTime = (os.epoch and os.epoch("utc")) or os.time()
+        for i, mon in ipairs(cachedMonitors) do
+            local mName = getMonitorName(mon, i)
+            local cfg = fc:getDeviceConfig(mName)
+            local role = cfg and cfg.role or "AUTO"
+
+            if activeMonitorTest and activeMonitorTest.name == mName and nowTime < (activeMonitorTest.untilTime or 0) then
+                pcall(renderMonitorTestPattern, mon, mName, role)
+            else
+                local effectiveRole = role
+                if effectiveRole == "AUTO" then
+                    if n == 1 then
+                        effectiveRole = "DISP_NAV"
+                    elseif n == 2 then
+                        effectiveRole = (i == 1) and "DISP_NAV" or "DISP_SCADA"
+                    else
+                        if i == 1 then effectiveRole = "DISP_PFD"
+                        elseif i == 2 then effectiveRole = "DISP_NAV"
+                        elseif i == 3 then effectiveRole = "DISP_SCADA"
+                        elseif i % 2 == 0 then effectiveRole = "DISP_NAV"
+                        else effectiveRole = "DISP_SCADA" end
+                    end
+                end
+
+                if mon._lastRole and mon._lastRole ~= effectiveRole then
+                    pcall(function()
+                        mon.setBackgroundColor(colors.black)
+                        mon.clear()
+                    end)
+                end
+                mon._lastRole = effectiveRole
+
+                if effectiveRole == "DISP_NAV" or effectiveRole == "DISP_TACTICAL" then
+                    pcall(renderTacticalDisplay, mon, lastTel, fc.ap)
+                elseif effectiveRole == "DISP_SCADA" or effectiveRole == "DISP_ENGINE" then
+                    pcall(renderScadaDisplay, mon, lastTel, fc.ap)
+                elseif effectiveRole == "DISP_PFD" or effectiveRole == "DISP_MIRROR" then
+                    pcall(renderPFD, mon)
+                elseif effectiveRole == "DISP_OFF" or effectiveRole == "IGNORE" then
+                    if not mon._isBlanked then
+                        pcall(function()
+                            mon.setBackgroundColor(colors.black)
+                            mon.clear()
+                            mon._isBlanked = true
+                        end)
+                    end
+                end
+                if effectiveRole ~= "DISP_OFF" and effectiveRole ~= "IGNORE" then
+                    mon._isBlanked = false
                 end
             end
         end
@@ -909,7 +1003,29 @@ local function run(context)
                             fc.ioMap = msg.ioMap
                         end
                         if msg.ioDevices then
-                            fc.ioDevices = msg.ioDevices
+                            local merged = {}
+                            local seen = {}
+                            for _, d in ipairs(msg.ioDevices) do
+                                table.insert(merged, d)
+                                seen[d.name] = true
+                            end
+                            if cachedMonitors then
+                                for idx, m in ipairs(cachedMonitors) do
+                                    local mName = getMonitorName(m, idx)
+                                    if mName and not seen[mName] then
+                                        table.insert(merged, { name = mName, kind = "monitor", handle = m, cap = "DISP", isRedstone = false })
+                                        seen[mName] = true
+                                    end
+                                end
+                            end
+                            local capRank = { RPM = 1, SIG = 2, SENS = 3, DISP = 4, PASSIVE = 5 }
+                            table.sort(merged, function(a, b)
+                                local ra = capRank[a.cap] or 5
+                                local rb = capRank[b.cap] or 5
+                                if ra ~= rb then return ra < rb end
+                                return tostring(a.name) < tostring(b.name)
+                            end)
+                            fc.ioDevices = merged
                         end
                     elseif msg.type == "AVIONICS_CMD" then
                         if msg.cmd == "OTA_UPDATE" then
@@ -965,6 +1081,17 @@ local function run(context)
                 fc:scanPeripherals()
                 hotplugNotice = "HOTPLUG - " .. tostring(p1) .. " ayrildi!"
                 hotplugTimer = 80
+            elseif ev == "monitor_touch" then
+                local monSide = p1
+                if monSide then
+                    local newR = fc:cycleRole(monSide, 1)
+                    if isRemoteFCC then
+                        sendAvionicsCmd("SET_IO_ROLE", { name = monSide, role = newR })
+                    end
+                    hotplugNotice = "EKRAN DOKUNULDU: " .. tostring(monSide) .. " -> " .. tostring(newR)
+                    hotplugTimer = 80
+                    playAlert("CLICK")
+                end
             elseif ev == "key" then
                 local key = p1
                 playAlert("CLICK")
@@ -1009,6 +1136,7 @@ local function run(context)
                         activeTab = "PFD"
                     else
                         fc:scanPeripherals()
+                        cachedMonitors = { peripheral.find("monitor") }
                         activeTab = "IO"
                     end
                 elseif activeTab == "PROFILE" then
@@ -1035,6 +1163,7 @@ local function run(context)
                 elseif activeTab == "IO" then
                     local devs = fc.ioDevices or {}
                     local selItem = devs[selectedIOIdx]
+                    local isDisp = selItem and (selItem.cap == "DISP" or selItem.kind == "monitor" or tostring(selItem.name):lower():find("monitor") ~= nil)
                     local quickRoles = {
                         [keys.one]   = "LIFT_FL",
                         [keys.two]   = "LIFT_FR",
@@ -1047,6 +1176,13 @@ local function run(context)
                         [keys.nine]  = "CLUTCH_BRAKE",
                         [keys.zero]  = "GEAR_REVERSE"
                     }
+                    local dispQuickRoles = {
+                        [keys.one]   = "DISP_NAV",
+                        [keys.two]   = "DISP_SCADA",
+                        [keys.three] = "DISP_PFD",
+                        [keys.four]  = "DISP_OFF",
+                        [keys.five]  = "AUTO"
+                    }
                     if key == keys.up then
                         selectedIOIdx = math.max(1, selectedIOIdx - 1)
                     elseif key == keys.down then
@@ -1054,16 +1190,29 @@ local function run(context)
                     elseif (key == keys.right or key == keys.enter) and selItem then
                         local newR = fc:cycleRole(selItem.name, 1)
                         if isRemoteFCC then sendAvionicsCmd("SET_IO_ROLE", { name = selItem.name, role = newR }) end
+                        playAlert("CLICK")
                     elseif key == keys.left and selItem then
                         local newR = fc:cycleRole(selItem.name, -1)
                         if isRemoteFCC then sendAvionicsCmd("SET_IO_ROLE", { name = selItem.name, role = newR }) end
-                    elseif quickRoles[key] and selItem then
+                        playAlert("CLICK")
+                    elseif isDisp and dispQuickRoles[key] and selItem then
+                        local newR = dispQuickRoles[key]
+                        fc:setDeviceRole(selItem.name, newR)
+                        if isRemoteFCC then sendAvionicsCmd("SET_IO_ROLE", { name = selItem.name, role = newR }) end
+                        playAlert("CLICK")
+                    elseif (not isDisp) and quickRoles[key] and selItem then
                         fc:setDeviceRole(selItem.name, quickRoles[key])
                         if isRemoteFCC then sendAvionicsCmd("SET_IO_ROLE", { name = selItem.name, role = quickRoles[key] }) end
                     elseif (key == keys.space or key == keys.g or key == keys.t) and selItem then
-                        fc:triggerSpinTest(selItem.name)
-                        if isRemoteFCC then sendAvionicsCmd("SPIN_TEST", { name = selItem.name }) end
-                    elseif key == keys.i and selItem then
+                        if isDisp then
+                            local nowTime = (os.epoch and os.epoch("utc")) or os.time()
+                            activeMonitorTest = { name = selItem.name, untilTime = nowTime + 2500 }
+                            playAlert("CLICK")
+                        else
+                            fc:triggerSpinTest(selItem.name)
+                            if isRemoteFCC then sendAvionicsCmd("SPIN_TEST", { name = selItem.name }) end
+                        end
+                    elseif key == keys.i and selItem and not isDisp then
                         local inv = fc:toggleInvert(selItem.name)
                         if isRemoteFCC then sendAvionicsCmd("TOGGLE_IO_INVERT", { name = selItem.name }) end
                     elseif key == keys.x and selItem then
@@ -1072,8 +1221,10 @@ local function run(context)
                         cfg.invert = false
                         fc:saveIOMap()
                         if isRemoteFCC then sendAvionicsCmd("RESET_IO_ROLE", { name = selItem.name }) end
+                        playAlert("CLICK")
                     elseif key == keys.r then
                         fc:scanPeripherals()
+                        cachedMonitors = { peripheral.find("monitor") }
                         if isRemoteFCC then sendAvionicsCmd("SCAN_PERIPHERALS") end
                     end
                 else

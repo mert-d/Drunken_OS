@@ -216,7 +216,19 @@ Avionics.ROLES = {
     "CLUTCH_BRAKE",
     "GEAR_REVERSE",
     "RUDDER_YAW",
-    "IGNORE"
+    "IGNORE",
+    "DISP_NAV",
+    "DISP_SCADA",
+    "DISP_PFD",
+    "DISP_OFF"
+}
+
+Avionics.MONITOR_ROLES = {
+    "AUTO",
+    "DISP_NAV",
+    "DISP_SCADA",
+    "DISP_PFD",
+    "DISP_OFF"
 }
 
 Avionics.MOTHERSHIP_ROLES = {
@@ -420,12 +432,24 @@ end
 function Avionics:cycleRole(devName, dir)
     dir = dir or 1
     local cfg = self:getDeviceConfig(devName)
-    local idx = 1
-    for i, r in ipairs(Avionics.ROLES) do
-        if r == cfg.role then idx = i break end
+    local isMon = tostring(devName):lower():find("monitor") ~= nil
+    if not isMon and self.ioDevices then
+        for _, dev in ipairs(self.ioDevices) do
+            if dev.name == devName and (dev.kind == "monitor" or dev.cap == "DISP") then
+                isMon = true
+                break
+            end
+        end
     end
-    idx = ((idx - 1 + dir) % #Avionics.ROLES) + 1
-    cfg.role = Avionics.ROLES[idx]
+
+    local roleList = isMon and Avionics.MONITOR_ROLES or Avionics.ROLES
+    local maxLen = isMon and #roleList or 18 -- exclude display roles when cycling standard motors
+    local idx = 1
+    for i = 1, maxLen do
+        if roleList[i] == cfg.role then idx = i break end
+    end
+    idx = ((idx - 1 + dir) % maxLen) + 1
+    cfg.role = roleList[idx]
     self:saveIOMap()
     return cfg.role
 end
@@ -632,7 +656,7 @@ function Avionics:scanPeripherals()
             for _, name in ipairs(names) do
                 local okT, pType = pcall(peripheral.getType, name)
                 local pStr = tostring(okT and pType or "peripheral")
-                if pStr ~= "modem" and pStr ~= "monitor" and pStr ~= "speaker" and pStr ~= "drive" and pStr ~= "computer" and pStr ~= "turtle" then
+                if pStr ~= "modem" and pStr ~= "speaker" and pStr ~= "drive" and pStr ~= "computer" and pStr ~= "turtle" then
                     local okW, handle = pcall(peripheral.wrap, name)
                     local h = okW and handle or nil
                     local bId = (h and type(h.getBlockId) == "function" and tostring(safeCall(h.getBlockId) or "")) or ""
@@ -668,16 +692,18 @@ function Avionics:scanPeripherals()
                             or type(h.getAngles) == "function" or type(h.getAnglesRad) == "function"
                             or type(h.getVelocity) == "function" or type(h.getAirPressure) == "function" then
                             cap = "SENS"
+                        elseif pStr == "monitor" or type(h.setTextScale) == "function" then
+                            cap = "DISP"
                         end
                     end
                     table.insert(self.ioDevices, { name = name, kind = pStr, handle = h, cap = cap, isRedstone = false })
                 end
             end
         end
-        local capRank = { RPM = 1, SIG = 2, SENS = 3, PASSIVE = 4 }
+        local capRank = { RPM = 1, SIG = 2, SENS = 3, DISP = 4, PASSIVE = 5 }
         table.sort(self.ioDevices, function(a, b)
-            local ra = capRank[a.cap] or 4
-            local rb = capRank[b.cap] or 4
+            local ra = capRank[a.cap] or 5
+            local rb = capRank[b.cap] or 5
             if ra ~= rb then return ra < rb end
             return tostring(a.name) < tostring(b.name)
         end)

@@ -132,11 +132,13 @@ local function run(context)
 
                 local shortName = formatShortDevName(item.name, 21)
                 local shortKind = item.cap == "PASSIVE" and "PASIF"
-                    or ((item.kind or ""):gsub("Create_RotationSpeedController", "SpeedCtr"):gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", ""))
+                    or (item.cap == "DISP" and "MONITOR"
+                    or ((item.kind or ""):gsub("Create_RotationSpeedController", "SpeedCtr"):gsub("create_connected_", ""):gsub("create:", ""):gsub("create_", ""):gsub("rotation_", "")))
                 if #shortKind > 8 then shortKind = shortKind:sub(1, 8) end
 
                 local gLabels = { [0] = "NRM ", [1] = "ROLT", [2] = "PCHT", [3] = "TERS", [4] = "90XY", [5] = "270X" }
-                local invStr = (tostring(item.name or ""):lower():find("gimbal") and gLabels[tonumber(cfg.gimbalMode) or (cfg.invert and 3 or 0)]) or (cfg.invert and "TERS" or "NRM ")
+                local invStr = item.cap == "DISP" and " -  "
+                    or ((tostring(item.name or ""):lower():find("gimbal") and gLabels[tonumber(cfg.gimbalMode) or (cfg.invert and 3 or 0)]) or (cfg.invert and "TERS" or "NRM "))
                 local lineStr = string.format(
                     "%s%-21s %-8s %-12s %-4s",
                     isSel and ">" or " ",
@@ -160,6 +162,9 @@ local function run(context)
             if selItem.cap == "PASSIVE" then
                 parentTerm.setTextColor(isColor and colors.orange or colors.white)
                 parentTerm.write(("TAM AD: " .. selItem.name .. " [PASIF SAFT]"):sub(1, w - 2))
+            elseif selItem.cap == "DISP" or selItem.kind == "monitor" then
+                parentTerm.setTextColor(isColor and colors.cyan or colors.white)
+                parentTerm.write(("MONITOR: " .. selItem.name .. " [EKRAN: " .. tostring((fc:getDeviceConfig(selItem.name) or {}).role or "AUTO") .. "]"):sub(1, w - 2))
             else
                 parentTerm.setTextColor(isColor and colors.yellow or colors.white)
                 parentTerm.write(("TAM AD: " .. selItem.name .. " [" .. tostring(selItem.cap or "IO") .. "]"):sub(1, w - 2))
@@ -168,7 +173,11 @@ local function run(context)
 
         parentTerm.setCursorPos(2, h - 1)
         parentTerm.setTextColor(isColor and colors.lime or colors.white)
-        parentTerm.write("[Sol/Sag]:Rol [1-7]:Mothership [T]:SpinTest [A]:OtoDiz")
+        if selItem and (selItem.cap == "DISP" or selItem.kind == "monitor") then
+            parentTerm.write("[Sol/Sag]:Rol [1]:Radar [2]:SCADA [3]:PFD [4]:Kapat")
+        else
+            parentTerm.write("[Sol/Sag]:Rol [1-7]:Mothership [T]:SpinTest [A]:OtoDiz")
+        end
         parentTerm.setCursorPos(2, h)
         parentTerm.setTextColor(isColor and colors.lightGray or colors.white)
         parentTerm.write("[I]:Ters [X]:AUTO [R]:Yenile [V]:Profil [P/Tab]:Durum")
@@ -501,6 +510,14 @@ local function run(context)
                 elseif viewMode == "IO" then
                     local devs = fc.ioDevices or {}
                     local selItem = devs[selectedIOIdx]
+                    local isDisp = selItem and (selItem.cap == "DISP" or selItem.kind == "monitor" or tostring(selItem.name):lower():find("monitor") ~= nil)
+                    local dispQuickRoles = {
+                        [keys.one]   = "DISP_NAV",
+                        [keys.two]   = "DISP_SCADA",
+                        [keys.three] = "DISP_PFD",
+                        [keys.four]  = "DISP_OFF",
+                        [keys.five]  = "AUTO"
+                    }
                     if p1 == keys.up then
                         selectedIOIdx = math.max(1, selectedIOIdx - 1)
                     elseif p1 == keys.down then
@@ -511,12 +528,15 @@ local function run(context)
                     elseif p1 == keys.right and selItem then
                         fc:cycleRole(selItem.name, 1)
                         broadcastState()
-                    elseif quickRoles[p1] and selItem then
+                    elseif isDisp and dispQuickRoles[p1] and selItem then
+                        fc:setDeviceRole(selItem.name, dispQuickRoles[p1])
+                        broadcastState()
+                    elseif (not isDisp) and quickRoles[p1] and selItem then
                         fc:setDeviceRole(selItem.name, quickRoles[p1])
                         broadcastState()
-                    elseif p1 == keys.t and selItem then
+                    elseif p1 == keys.t and selItem and not isDisp then
                         fc:triggerSpinTest(selItem.name)
-                    elseif p1 == keys.i and selItem then
+                    elseif p1 == keys.i and selItem and not isDisp then
                         fc:toggleInvert(selItem.name)
                         broadcastState()
                     elseif p1 == keys.x and selItem then

@@ -15,7 +15,7 @@ Bu dosya, Poco F7 sunucusundaki "Skyfire" gemisinin autonomous Hover test sonuç
 ---
 
 ## 📌 Güncel Durum
-* **Gemi:** Serbest Uçuşta `(1114.27, 211.50, -333.70)` — 🚀 AIRBORNE & ACTIVE!
+* **Gemi:** İskelede `(1116.70, 184.69, -242.80)` — ❄️ FROZEN (Tersane Geliştirme Modu)
 * **Donanım:** 
   * Arka motorların (RL, RR) yelken (sail) sayısı artırıldı; ağırlık merkezi (CoM) geride olduğu için arka türbinlerin kaldırma kapasitesi yükseltildi.
   * Tüm motorlar normal yönde (`invert = false`) çalışmakta olup aşağı üfleyerek saf dikey kaldırma üretmektedir.
