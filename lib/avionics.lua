@@ -216,10 +216,12 @@ Avionics.ROLES = {
     "CLUTCH_BRAKE",
     "GEAR_REVERSE",
     "RUDDER_YAW",
+    "ALARM_LIGHTS",
     "IGNORE",
     "DISP_NAV",
     "DISP_SCADA",
     "DISP_PFD",
+    "DISP_TABLE",
     "DISP_OFF"
 }
 
@@ -228,6 +230,7 @@ Avionics.MONITOR_ROLES = {
     "DISP_NAV",
     "DISP_SCADA",
     "DISP_PFD",
+    "DISP_TABLE",
     "DISP_OFF"
 }
 
@@ -256,6 +259,8 @@ function Avionics.new(config)
     self.clutchPolarInvert = false -- Auto or manual [K] polarity inversion for clutches
     self.clutchSpinTicks = 0
     self.prevAlt = nil
+    self.alertLevel = self.config.alertLevel or "NORMAL"
+    self.alertStrobeTick = 0
 
     self:loadIOMap()
     self:scanPeripherals()
@@ -415,6 +420,29 @@ function Avionics:adjustPitchBias(delta)
     return self:setPitchBias((self.pitchBias or 0.0) + (tonumber(delta) or 0.0))
 end
 
+function Avionics:setAlertLevel(lvl)
+    local l = tostring(lvl or "NORMAL"):upper()
+    if l == "RED" or l == "YELLOW" or l == "CLEAR" or l == "NORMAL" then
+        self.alertLevel = (l == "CLEAR") and "NORMAL" or l
+    else
+        self.alertLevel = "NORMAL"
+    end
+    return self.alertLevel
+end
+
+function Avionics:getAlertLevel()
+    return self.alertLevel or "NORMAL"
+end
+
+function Avionics:toggleRedAlert()
+    if self.alertLevel == "RED" then
+        self.alertLevel = "NORMAL"
+    else
+        self.alertLevel = "RED"
+    end
+    return self.alertLevel
+end
+
 function Avionics:getDeviceConfig(devName)
     if not self.ioMap[devName] then
         self.ioMap[devName] = { role = "AUTO", invert = false }
@@ -443,7 +471,7 @@ function Avionics:cycleRole(devName, dir)
     end
 
     local roleList = isMon and Avionics.MONITOR_ROLES or Avionics.ROLES
-    local maxLen = isMon and #roleList or 18 -- exclude display roles when cycling standard motors
+    local maxLen = isMon and #roleList or 19 -- exclude display roles when cycling standard motors/redstone
     local idx = 1
     for i = 1, maxLen do
         if roleList[i] == cfg.role then idx = i break end
@@ -1088,6 +1116,7 @@ function Avionics:readTelemetry(dt)
         gpwsWarning      = gpwsWarning,
         stallWarning     = stallWarning,
         pitchWarning     = pitchWarning,
+        alertLevel       = self.alertLevel or "NORMAL",
         fuelPct          = (maxFuel > 0 and (totalFuel / maxFuel)) or 1.0,
         navTarget        = navTarget,
         radarContact     = radarContact,
@@ -1773,6 +1802,7 @@ function Avionics:step(dt)
     tel.mothership = self.lastMothershipState
 
     -- Route custom I/O role mappings (Hot-plug peripherals, Mothership 7-motor roles & Redstone sides)
+    self.alertStrobeTick = ((self.alertStrobeTick or 0) + 1) % 480
     local anyLiftActive = (rawLiftFL > 0 or rawLiftFR > 0 or rawLiftRL > 0 or rawLiftRR > 0) or isSpinTestingAny
     local spinRole = (isSpinTestingAny and self.spinTest.name and self.spinTest.name ~= "ALL")
         and self:getDeviceConfig(self.spinTest.name).role or nil
@@ -1833,6 +1863,23 @@ function Avionics:step(dt)
                         sig = revActive and 15 or 0
                     elseif role == "RUDDER_YAW" then
                         sig = math.floor(clamp(8 + steerVal * 7, 0, 15) + 0.5)
+                    elseif role == "ALARM_LIGHTS" then
+                        local isRed = (self.alertLevel == "RED")
+                        local isYel = (self.alertLevel == "YELLOW")
+                        if isRed then
+                            -- Strobe pattern: 16 ticks period (~0.8s), 10 ticks ON, 6 ticks OFF
+                            local strobeOn = ((self.alertStrobeTick or 0) % 16) < 10
+                            boolState = strobeOn
+                            sig = strobeOn and 15 or 0
+                        elseif isYel then
+                            -- Slower flash: 24 ticks period (~1.2s), 12 ticks ON, 12 ticks OFF
+                            local strobeOn = ((self.alertStrobeTick or 0) % 24) < 12
+                            boolState = strobeOn
+                            sig = strobeOn and 15 or 0
+                        else
+                            boolState = false
+                            sig = 0
+                        end
                     end
                 end
 

@@ -209,6 +209,140 @@ local function renderScadaDisplay(mon, tel, ap)
     end
 end
 
+local function renderTacticalTable(mon, tel, ap, fcObj)
+    if not mon or not mon.getSize then return end
+    local w, h = mon.getSize()
+    if w < 20 or h < 8 then
+        pcall(renderTacticalDisplay, mon, tel, ap)
+        return
+    end
+    local isCol = mon.isColor and mon.isColor()
+    mon.setBackgroundColor(colors.black)
+    mon.clear()
+
+    local isRed = (fcObj and fcObj.alertLevel == "RED") or (tel and tel.alertLevel == "RED")
+    -- 1. Header Banner
+    mon.setCursorPos(1, 1)
+    if isRed then
+        mon.setBackgroundColor(colors.red)
+        mon.setTextColor(colors.white)
+        local hdr = " 🚨 KAPTAN KOSKU // KIRMIZI ALARM - SAVAS DURUMU 🚨 "
+        mon.write(hdr .. string.rep(" ", math.max(0, w - #hdr)))
+    else
+        mon.setBackgroundColor(isCol and colors.blue or colors.white)
+        mon.setTextColor(isCol and colors.white or colors.black)
+        local hdr = string.format(" KAPTAN KOSKU // TAKTIK MASA [%s] ", tostring(tel.callsign or "SKYFIRE"))
+        mon.write(hdr .. string.rep(" ", math.max(0, w - #hdr)))
+    end
+    mon.setBackgroundColor(colors.black)
+
+    -- 2. Left Column: Propulsion & Live Rotor RPMs
+    local ms = tel.mothership or { flRpm = 0, frRpm = 0, rlRpm = 0, rrRpm = 0, rearL = 0, rearC = 0, rearR = 0 }
+    mon.setCursorPos(2, 3)
+    mon.setTextColor(isCol and colors.cyan or colors.white)
+    mon.write("--- GUC DAGILIMI ---")
+    mon.setCursorPos(2, 4)
+    mon.setTextColor(colors.white)
+    mon.write(string.format("FL:%3d FR:%3d", ms.flRpm or 0, ms.frRpm or 0))
+    mon.setCursorPos(2, 5)
+    mon.write(string.format("RL:%3d RR:%3d", ms.rlRpm or 0, ms.rrRpm or 0))
+    mon.setCursorPos(2, 6)
+    mon.setTextColor(isCol and colors.lightGray or colors.white)
+    mon.write(string.format("ARKA: %d/%d/%d", ms.rearL or 0, ms.rearC or 0, ms.rearR or 0))
+
+    mon.setCursorPos(2, 8)
+    mon.setTextColor(isCol and colors.cyan or colors.white)
+    mon.write("--- UCUS VERISI ---")
+    mon.setCursorPos(2, 9)
+    mon.setTextColor(colors.white)
+    mon.write(string.format("ALT: %4.0fm", tel.altitude or 0))
+    mon.setCursorPos(2, 10)
+    mon.write(string.format("SPD: %4.1fm/s", tel.speed or 0))
+    mon.setCursorPos(2, 11)
+    mon.write(string.format("PCH: %+4.1f°", math.deg(tel.pitch or 0)))
+    mon.setCursorPos(2, 12)
+    local hdg = math.deg(tel.heading or 0) % 360
+    mon.write(string.format("PUS: %03.0f°", hdg))
+
+    -- 3. Center Polar Radar
+    local rcx = math.floor(w * 0.58)
+    local rcy = math.floor((h - 2) * 0.5) + 2
+    local rx = math.min(14, math.floor(w * 0.22))
+    local ry = math.min(6, math.floor((h - 4) * 0.45))
+
+    mon.setTextColor(isCol and colors.gray or colors.white)
+    for a = 0, 315, 45 do
+        local rad = math.rad(a)
+        local ox = math.floor(rcx + math.sin(rad) * rx + 0.5)
+        local oy = math.floor(rcy - math.cos(rad) * ry + 0.5)
+        if ox >= 1 and oy >= 2 then
+            mon.setCursorPos(ox, oy)
+            mon.write(".")
+        end
+    end
+    mon.setTextColor(isCol and colors.cyan or colors.white)
+    mon.setCursorPos(rcx, math.max(2, rcy - ry))
+    mon.write("N")
+    mon.setCursorPos(rcx, rcy + ry)
+    mon.write("S")
+    mon.setCursorPos(math.max(1, rcx - rx), rcy)
+    mon.write("W")
+    mon.setCursorPos(rcx + rx, rcy)
+    mon.write("E")
+
+    mon.setCursorPos(rcx, rcy)
+    mon.setBackgroundColor(isCol and colors.blue or colors.white)
+    mon.setTextColor(isCol and colors.yellow or colors.black)
+    mon.write("^")
+    mon.setBackgroundColor(colors.black)
+
+    -- Dock / Base Beacon
+    if ap and ap.homeBase and ap.homeBase.pos and tel.pos then
+        local dx = ap.homeBase.pos.x - tel.pos.x
+        local dz = ap.homeBase.pos.z - tel.pos.z
+        local dist = math.sqrt(dx * dx + dz * dz)
+        local scale = math.min(1.0, dist / 150)
+        local angle = math.atan2(dx, -dz)
+        local bx = math.floor(rcx + math.sin(angle) * (scale * rx) + 0.5)
+        local by = math.floor(rcy - math.cos(angle) * (scale * ry) + 0.5)
+        mon.setCursorPos(bx, by)
+        mon.setTextColor(isCol and colors.yellow or colors.white)
+        mon.write("⚓")
+    end
+
+    -- 4. Right Status Column (If w >= 55)
+    if w >= 55 then
+        local stX = w - 18
+        mon.setCursorPos(stX, 3)
+        mon.setTextColor(isCol and colors.cyan or colors.white)
+        mon.write("--- ISTASYONLAR ---")
+        mon.setCursorPos(stX, 4)
+        mon.setTextColor(isCol and colors.lime or colors.white)
+        mon.write("KOKPIT FCS : OK")
+        mon.setCursorPos(stX, 5)
+        mon.write("MOTOR FCC  : OK")
+        mon.setCursorPos(stX, 6)
+        mon.setTextColor(isCol and colors.lightGray or colors.white)
+        mon.write("ENG GUVRT  : HAZIR")
+    end
+
+    -- 5. Bottom Status
+    mon.setCursorPos(2, h)
+    if isRed then
+        mon.setBackgroundColor(colors.red)
+        mon.setTextColor(colors.white)
+        mon.write(" [🚨 KIRMIZI ALARM] ")
+    else
+        mon.setBackgroundColor(isCol and colors.gray or colors.black)
+        mon.setTextColor(isCol and colors.lime or colors.white)
+        mon.write(" [🟢 GUVENLI SEYIR] ")
+    end
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(isCol and colors.lightGray or colors.white)
+    local modeTxt = string.format(" MOD:%s | PARK:%s", tostring(ap.mode or "MANUAL"), ap.parkingBrake and "EVET" or "HAYIR")
+    mon.write(modeTxt:sub(1, w - 24))
+end
+
 
 local function run(context)
     context = context or {}
@@ -286,6 +420,7 @@ local function run(context)
         CLUTCH_BRAKE  = "Itki Debriyaji: Arka iticiler donerken kavrar, Hover/Parkta keser",
         GEAR_REVERSE  = "Geri Vites (Gearshift): [G] ile yonu tersler",
         RUDDER_YAW    = "Dumen (Rudder): Yonlendirme acisi / sinyali",
+        ALARM_LIGHTS  = "Alarm Flasoru: Kirmizi alarmda Redstone lambalarini flasor gibi yakar",
         IGNORE        = "Devre Disi: Ucus bilgisayari bu bloga dokunmaz",
         DISP_NAV      = "[1] Taktik Radar: 360 seyrüsefer, pusula, radar & rota haritasi",
         DISP_TACTICAL = "[1] Taktik Radar: 360 seyrüsefer, pusula, radar & rota haritasi",
@@ -293,7 +428,8 @@ local function run(context)
         DISP_ENGINE   = "[2] SCADA Panel: Motor RPM, debriyaj, fren & guc aktarimi",
         DISP_PFD      = "[3] PFD Ayna: Kokpit yapay ufuk, irtifa, hiz & otopilot",
         DISP_MIRROR   = "[3] PFD Ayna: Kokpit yapay ufuk, irtifa, hiz & otopilot",
-        DISP_OFF      = "[4] Ekran Kapali: Monitor karartilir (enerji tasarrufu)"
+        DISP_TABLE    = "[4] Kaptan Masasi: 360 holomasa radari, istasyonlar & kontrol",
+        DISP_OFF      = "[5] Ekran Kapali: Monitor karartilir (enerji tasarrufu)"
     }
 
     -- Open all available modems (wired & wireless) for Fly-by-Wire Bus & ADS-B Telemetry
@@ -349,6 +485,8 @@ local function run(context)
         if not okSound or not Sound then return end
         if alertType == "GPWS" and Sound.playError then
             pcall(Sound.playError)
+        elseif alertType == "ALARM" and Sound.playAlarm then
+            pcall(Sound.playAlarm, "RED")
         elseif alertType == "CLICK" and Sound.playClick then
             pcall(Sound.playClick)
         end
@@ -572,7 +710,7 @@ local function run(context)
         drawTerm.setCursorPos(2, h - 1)
         drawTerm.setTextColor(theme.ok or colors.lime)
         if selItem and (selItem.cap == "DISP" or selItem.kind == "monitor") then
-            drawTerm.write("[Sol/Sag]:Rol [1]:Radar [2]:SCADA [3]:PFD [4]:Kapat [Space]:Test")
+            drawTerm.write("[Sol/Sag]:Rol [1]:Radar [2]:SCADA [3]:PFD [4]:Masa [5]:Kapat [Space]:Test")
         else
             drawTerm.write("[Sol/Sag]:Gorev [1-7]:Motor [Space]:SpinTest")
         end
@@ -783,9 +921,13 @@ local function run(context)
             ):sub(1, w - 2))
         end
 
-        -- Row 12: Warnings Banner (GPWS / Pitch Anti-Dive / Stall / Gear & Clutch)
+        -- Row 12: Warnings Banner (GPWS / Pitch Anti-Dive / Stall / Gear & Clutch / Red Alert)
         drawTerm.setCursorPos(2, 12)
-        if lastTel.gpwsWarning then
+        if (fc.alertLevel == "RED" or lastTel.alertLevel == "RED") then
+            drawTerm.setBackgroundColor(colors.red)
+            drawTerm.setTextColor(colors.white)
+            drawTerm.write(" 🚨 KIRMIZI ALARM // SAVAS ISTASYONLARI [K]: Kapat 🚨 ")
+        elseif lastTel.gpwsWarning then
             drawTerm.setBackgroundColor(colors.red)
             drawTerm.setTextColor(colors.white)
             drawTerm.write(" !! PULL UP - TERRAIN AHEAD !! ")
@@ -833,7 +975,7 @@ local function run(context)
 
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
-        drawTerm.write("[Up/Dn]:Alt [Lt/Rt]:Hdg [9/0]:Trim [W/S]:Thr [Z]:Capa [L]:Log [Q]:Cik")
+        drawTerm.write("[Up/Dn]:Alt [Lt/Rt]:Hdg [9/0]:Trim [W/S]:Thr [Z]:Capa [K]:Alarm [Q]:Cik")
         drawTerm = prevTerm
     end
 
@@ -854,7 +996,8 @@ local function run(context)
         local roleDesc = (role == "DISP_NAV" and "1: Taktik Radar & Seyrüsefer")
             or (role == "DISP_SCADA" and "2: SCADA & Guc Aktarimi")
             or (role == "DISP_PFD" and "3: PFD Kokpit Ayna")
-            or (role == "DISP_OFF" and "4: Kapali")
+            or (role == "DISP_TABLE" and "4: Taktik Masa / Holo-Table")
+            or (role == "DISP_OFF" and "5: Kapali")
             or ("AUTO: Otomatik Rol")
         local roleLine = "GOREV: " .. roleDesc
         mon.setTextColor(colors.lime)
@@ -904,6 +1047,8 @@ local function run(context)
                     pcall(renderScadaDisplay, mon, lastTel, fc.ap)
                 elseif effectiveRole == "DISP_PFD" or effectiveRole == "DISP_MIRROR" then
                     pcall(renderPFD, mon)
+                elseif effectiveRole == "DISP_TABLE" then
+                    pcall(renderTacticalTable, mon, lastTel, fc.ap, fc)
                 elseif effectiveRole == "DISP_OFF" or effectiveRole == "IGNORE" then
                     if not mon._isBlanked then
                         pcall(function()
@@ -932,6 +1077,9 @@ local function run(context)
                 if lastTel.gpwsWarning and (tickCount % 10 == 0) then
                     playAlert("GPWS")
                 end
+                if (fc.alertLevel == "RED" or lastTel.alertLevel == "RED") and (tickCount % 20 == 0) then
+                    playAlert("ALARM")
+                end
 
                 renderPFD()
                 renderSecondaryMonitors()
@@ -946,14 +1094,18 @@ local function run(context)
                 if lastTel.gpwsWarning and (tickCount % 10 == 0) then
                     playAlert("GPWS")
                 end
+                if (fc.alertLevel == "RED" or lastTel.alertLevel == "RED") and (tickCount % 20 == 0) then
+                    playAlert("ALARM")
+                end
 
                 -- Broadcast Internal Bus State (10 Hz) so Lower Deck Engineering Deck receives live telemetry!
                 if (tickCount % 2 == 0) and rednet and rednet.isOpen and rednet.isOpen() then
                     pcall(rednet.broadcast, {
-                        type   = "AVIONICS_STATE",
-                        sender = (os.getComputerID and os.getComputerID()) or 0,
-                        tel    = lastTel,
-                        ap     = fc.ap
+                        type       = "AVIONICS_STATE",
+                        sender     = (os.getComputerID and os.getComputerID()) or 0,
+                        tel        = lastTel,
+                        alertLevel = fc.alertLevel or "NORMAL",
+                        ap         = fc.ap
                     }, "DRUNKEN_AVIONICS_BUS")
                 end
 
@@ -994,6 +1146,7 @@ local function run(context)
                     if msg.type == "AVIONICS_STATE" then
                         isRemoteFCC = true
                         if msg.tel then lastTel = msg.tel end
+                        if msg.alertLevel then fc.alertLevel = msg.alertLevel end
                         if msg.ap then
                             for k, v in pairs(msg.ap) do
                                 fc.ap[k] = v
@@ -1054,6 +1207,13 @@ local function run(context)
                                 fc:setVehicleProfile(msg.profile, msg.autoAssign == true)
                             elseif msg.cmd == "ADJUST_PITCH_BIAS" and msg.delta then
                                 fc:adjustPitchBias(msg.delta)
+                            end
+                        end
+                    elseif msg.type == "AVIONICS_ALERT" then
+                        if msg.level then
+                            fc:setAlertLevel(msg.level)
+                            if msg.level == "RED" then
+                                playAlert("ALARM")
                             end
                         end
                     end
@@ -1180,8 +1340,9 @@ local function run(context)
                         [keys.one]   = "DISP_NAV",
                         [keys.two]   = "DISP_SCADA",
                         [keys.three] = "DISP_PFD",
-                        [keys.four]  = "DISP_OFF",
-                        [keys.five]  = "AUTO"
+                        [keys.four]  = "DISP_TABLE",
+                        [keys.five]  = "DISP_OFF",
+                        [keys.six]   = "AUTO"
                     }
                     if key == keys.up then
                         selectedIOIdx = math.max(1, selectedIOIdx - 1)
@@ -1262,6 +1423,19 @@ local function run(context)
                             hotplugTimer = 60
                         end
                     elseif key == keys.k then
+                        if isRemoteFCC then
+                            sendAvionicsCmd("TOGGLE_ALERT")
+                        else
+                            local newLvl = fc:toggleRedAlert()
+                            pcall(rednet.broadcast, { type = "AVIONICS_ALERT", level = newLvl }, "DRUNKEN_AVIONICS_BUS")
+                            if newLvl == "RED" then
+                                playAlert("ALARM")
+                            end
+                        end
+                        local isRed = (fc.alertLevel == "RED")
+                        hotplugNotice = isRed and "🚨 KIRMIZI ALARM AKTIF! 🚨" or "ALARM COZULDU (NORMAL)"
+                        hotplugTimer = 60
+                    elseif key == keys.d then
                         if isRemoteFCC then sendAvionicsCmd("TOGGLE_CLUTCH")
                         else
                             local inv = fc:toggleClutchPolarity()
@@ -1381,6 +1555,7 @@ end
 return {
     run = run,
     renderTacticalDisplay = renderTacticalDisplay,
-    renderScadaDisplay = renderScadaDisplay
+    renderScadaDisplay = renderScadaDisplay,
+    renderTacticalTable = renderTacticalTable
 }
 

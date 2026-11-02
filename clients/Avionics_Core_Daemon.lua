@@ -194,10 +194,17 @@ local function run(context)
 
         -- Top Header Banner
         parentTerm.setCursorPos(1, 1)
-        parentTerm.setBackgroundColor(isColor and colors.blue or colors.white)
-        parentTerm.setTextColor(isColor and colors.white or colors.black)
-        local header = " DRUNKEN OS - FLIGHT CONTROL CORE (FCC DAEMON) "
-        parentTerm.write(header .. string.rep(" ", math.max(0, w - #header)))
+        if fc.alertLevel == "RED" then
+            parentTerm.setBackgroundColor(colors.red)
+            parentTerm.setTextColor(colors.white)
+            local header = " 🚨 DRUNKEN OS - KIRMIZI ALARM // SAVAS ISTASYONLARI 🚨 "
+            parentTerm.write(header .. string.rep(" ", math.max(0, w - #header)))
+        else
+            parentTerm.setBackgroundColor(isColor and colors.blue or colors.white)
+            parentTerm.setTextColor(isColor and colors.white or colors.black)
+            local header = " DRUNKEN OS - FLIGHT CONTROL CORE (FCC DAEMON) "
+            parentTerm.write(header .. string.rep(" ", math.max(0, w - #header)))
+        end
 
         parentTerm.setBackgroundColor(colors.black)
 
@@ -253,7 +260,7 @@ local function run(context)
         parentTerm.write("[P / Tab]: FCC Donanim & Motor Rol Atama Ekrani")
         parentTerm.setCursorPos(2, math.min(h, 12))
         parentTerm.setTextColor(isColor and colors.lightGray or colors.white)
-        parentTerm.write("[H]:Hover [M]:Manual [C]:Cruise [Z]:Anchor [B]:Brake [U]:OTA [Q]:Stop")
+        parentTerm.write("[H]:Hover [M]:Manual [C]:Cruise [Z]:Anchor [B]:Brake [K]:Alarm [U]:OTA")
     end
 
     local function broadcastState()
@@ -268,11 +275,12 @@ local function run(context)
             }
         end
         pcall(rednet.broadcast, {
-            type      = "AVIONICS_STATE",
-            sender    = (os.getComputerID and os.getComputerID()) or 0,
-            tel       = lastTel,
-            ioMap     = fc.ioMap,
-            ioDevices = ioDevs,
+            type       = "AVIONICS_STATE",
+            sender     = (os.getComputerID and os.getComputerID()) or 0,
+            tel        = lastTel,
+            alertLevel = fc.alertLevel or "NORMAL",
+            ioMap      = fc.ioMap,
+            ioDevices  = ioDevs,
             ap        = {
                 enabled      = fc.ap.enabled,
                 mode         = fc.ap.mode,
@@ -478,6 +486,12 @@ local function run(context)
                             if fc.blackbox and fc.blackbox.flush then pcall(fc.blackbox.flush, fc.blackbox) end
                         elseif msg.cmd == "OTA_UPDATE" then
                             performOtaUpdate()
+                        elseif msg.cmd == "SET_ALERT" and msg.level then
+                            fc:setAlertLevel(msg.level)
+                            lastCmdName = "ALERT:" .. tostring(fc.alertLevel)
+                        elseif msg.cmd == "TOGGLE_ALERT" then
+                            fc:toggleRedAlert()
+                            lastCmdName = "ALERT:" .. tostring(fc.alertLevel)
                         elseif msg.cmd == "SAFE_DISARM" or msg.cmd == "DISARM" then
                             fc.ap.baseThrottle = 0
                             fc.ap.parkingBrake = true
@@ -504,6 +518,10 @@ local function run(context)
                     running = false
                 elseif p1 == keys.u then
                     performOtaUpdate()
+                elseif p1 == keys.k then
+                    fc:toggleRedAlert()
+                    broadcastState()
+                    drawCoreStatus()
                 elseif p1 == keys.p or p1 == keys.tab then
                     viewMode = (viewMode == "IO") and "STATUS" or "IO"
                     drawCoreStatus()

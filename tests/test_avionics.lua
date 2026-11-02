@@ -744,7 +744,7 @@ local function runTests()
     assert(foundChainDrive, "Expected create:encased_chain_drive_0 to be discovered")
     assert(foundMonitor, "Expected monitor_0 to be discovered in ioDevices for TAB assignment")
 
-    -- 2. Verify Monitor Display Role Cycling (AUTO -> DISP_NAV -> DISP_SCADA -> DISP_PFD -> DISP_OFF -> AUTO)
+    -- 2. Verify Monitor Display Role Cycling (AUTO -> DISP_NAV -> DISP_SCADA -> DISP_PFD -> DISP_TABLE -> DISP_OFF -> AUTO)
     local r1 = testFC:cycleRole("monitor_0", 1)
     assert(r1 == "DISP_NAV", "Expected monitor_0 cycle 1 to be DISP_NAV, got " .. tostring(r1))
     local r2 = testFC:cycleRole("monitor_0", 1)
@@ -752,9 +752,11 @@ local function runTests()
     local r3 = testFC:cycleRole("monitor_0", 1)
     assert(r3 == "DISP_PFD", "Expected monitor_0 cycle 3 to be DISP_PFD, got " .. tostring(r3))
     local r4 = testFC:cycleRole("monitor_0", 1)
-    assert(r4 == "DISP_OFF", "Expected monitor_0 cycle 4 to be DISP_OFF, got " .. tostring(r4))
+    assert(r4 == "DISP_TABLE", "Expected monitor_0 cycle 4 to be DISP_TABLE, got " .. tostring(r4))
     local r5 = testFC:cycleRole("monitor_0", 1)
-    assert(r5 == "AUTO", "Expected monitor_0 cycle 5 to loop back to AUTO, got " .. tostring(r5))
+    assert(r5 == "DISP_OFF", "Expected monitor_0 cycle 5 to be DISP_OFF, got " .. tostring(r5))
+    local r6 = testFC:cycleRole("monitor_0", 1)
+    assert(r6 == "AUTO", "Expected monitor_0 cycle 6 to loop back to AUTO, got " .. tostring(r6))
 
     -- 3. Verify Remote FCC I/O role methods: setDeviceRole, toggleInvert, resetDeviceRole, triggerSpinTest
     testFC:setDeviceRole("speed_controller_1", "LIFT_FL")
@@ -866,6 +868,91 @@ local function runTests()
     assert(type(md) == "string" and md:find("| Zaman |"), "Expected formatted markdown table from blackbox")
     _G.fs = origFs
     print("  PASS: Test 15: Flight Data Recorder (Blackbox) Telemetry Logging & Disk Export")
+
+    -- Test 16: Tactical Holo-Table & Red Alert Klaxon / Strobe System
+    local Sound = require("lib.sound")
+    assert(Sound and Sound.playKlaxon and Sound.playAlarm, "Expected lib.sound to export playKlaxon and playAlarm")
+
+    local playedNotes = {}
+    local mockSpeaker = {
+        playNote = function(inst, vol, pitch)
+            table.insert(playedNotes, { inst = inst, vol = vol, pitch = pitch })
+            return true
+        end
+    }
+    _G.peripheral.find = function(pType)
+        if pType == "speaker" then return mockSpeaker end
+        return nil
+    end
+
+    Sound.playAlarm("RED")
+    assert(#playedNotes >= 3, "Expected playAlarm RED to play at least 3 klaxon tones")
+    assert(playedNotes[1].inst == "didgeridoo", "Expected didgeridoo klaxon horn instrument")
+
+    -- Test Alert Levels on Avionics Core
+    local alertFC = Avionics.new({ callsign = "ALERT-TEST", vehicleType = "MOTHERSHIP" })
+    assert(alertFC:getAlertLevel() == "NORMAL", "Expected default alert level to be NORMAL")
+    local lvlRed = alertFC:toggleRedAlert()
+    assert(lvlRed == "RED" and alertFC:getAlertLevel() == "RED", "Expected toggleRedAlert to switch to RED")
+    local lvlNorm = alertFC:toggleRedAlert()
+    assert(lvlNorm == "NORMAL" and alertFC:getAlertLevel() == "NORMAL", "Expected toggleRedAlert to switch back to NORMAL")
+
+    -- Test ALARM_LIGHTS strobe pattern
+    local lampOuts = {}
+    local mockLamp = {
+        setOutput = function(side, state)
+            lampOuts[side] = state
+        end,
+        setAnalogOutput = function(side, val)
+            lampOuts[side] = val
+        end,
+        getOutput = function(side) return lampOuts[side] end,
+        getAnalogOutput = function(side) return lampOuts[side] end
+    }
+
+    _G.peripheral.getNames = function() return { "redstone_alarm_lamp" } end
+    _G.peripheral.getType = function(n) return (n == "redstone_alarm_lamp") and "redstone" or "peripheral" end
+    _G.peripheral.wrap = function(n) return (n == "redstone_alarm_lamp") and mockLamp or nil end
+
+    alertFC:scanPeripherals()
+    alertFC:setDeviceRole("redstone_alarm_lamp", "ALARM_LIGHTS")
+    assert(alertFC:getDeviceConfig("redstone_alarm_lamp").role == "ALARM_LIGHTS", "Expected role ALARM_LIGHTS assigned")
+
+    -- When NORMAL: lamp output must be 0 / false
+    alertFC:setAlertLevel("NORMAL")
+    alertFC:step(0.05)
+    assert(lampOuts["top"] == 0 or lampOuts["top"] == false or lampOuts["top"] == nil, "Expected lamp OFF when NORMAL")
+
+    -- When RED: 16-tick cycle (10 ticks ON, 6 ticks OFF)
+    alertFC:setAlertLevel("RED")
+    alertFC.alertStrobeTick = 0
+    for t = 1, 32 do
+        alertFC:step(0.05)
+        local expectedOn = (alertFC.alertStrobeTick % 16) < 10
+        if expectedOn then
+            assert(lampOuts["top"] == 15 or lampOuts["top"] == true, "Expected lamp ON during strobe active tick " .. alertFC.alertStrobeTick)
+        else
+            assert(lampOuts["top"] == 0 or lampOuts["top"] == false, "Expected lamp OFF during strobe quiet tick " .. alertFC.alertStrobeTick)
+        end
+    end
+
+    -- Render Tactical Holo-Table (NORMAL State)
+    alertFC:setAlertLevel("NORMAL")
+    local monTable = createMockMonitor(50, 18, true)
+    FlightApp.renderTacticalTable(monTable, fccTel, fccFC.ap, alertFC)
+    local tableText = monTable.getOutput()
+    assert(tableText:find("TAKTIK MASA") ~= nil, "Expected Tactical Table to contain header")
+    assert(tableText:find("GUC DAGILIMI") ~= nil, "Expected Tactical Table to contain power distribution section")
+    assert(tableText:find("UCUS VERISI") ~= nil, "Expected Tactical Table to contain flight telemetry section")
+    assert(tableText:find("GUVENLI SEYIR") ~= nil, "Expected Tactical Table to show normal status banner")
+
+    -- Render Tactical Holo-Table (RED ALERT State)
+    alertFC:setAlertLevel("RED")
+    monTable.clear()
+    FlightApp.renderTacticalTable(monTable, fccTel, fccFC.ap, alertFC)
+    local redText = monTable.getOutput()
+    assert(redText:find("KIRMIZI ALARM") ~= nil, "Expected Tactical Table to show RED ALARM banner")
+    print("  PASS: Test 16: Tactical Holo-Table & Red Alert Klaxon / Strobe System")
 
     -- Restore globals
     _G.peripheral = origPeripheral

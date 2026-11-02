@@ -196,4 +196,46 @@ function Sound.playGameBeep(effect)
     return false
 end
 
+---
+-- Plays a resonant two-tone airship/naval klaxon alarm.
+-- @param tone string|nil: "high", "low", or nil (full siren)
+-- @return boolean
+function Sound.playKlaxon(tone)
+    if not Sound.isAvailable() then return false end
+    if tone == "high" then
+        Sound.playNote("iron_xylophone", 1.8, 14)
+        Sound.playNote("bell", 1.5, 12)
+    elseif tone == "low" then
+        Sound.playNote("didgeridoo", 1.8, 6)
+        Sound.playNote("bass", 1.5, 4)
+    else
+        -- Classic two-tone wailing siren
+        Sound.playNote("didgeridoo", 2.0, 6)
+        Sound.playNote("bass", 1.6, 6)
+        Sound.playNote("iron_xylophone", 1.8, 12)
+    end
+    return true
+end
+
+---
+-- Plays an avionics alarm sound based on alert level.
+-- @param level string: "RED", "YELLOW", "CLEAR", "NORMAL"
+-- @return boolean
+function Sound.playAlarm(level)
+    if not Sound.isAvailable() then return false end
+    local lvl = tostring(level or "RED"):upper()
+    if lvl == "RED" then
+        return Sound.playKlaxon()
+    elseif lvl == "YELLOW" then
+        Sound.playNote("bell", 1.2, 10)
+        Sound.playNote("pling", 1.0, 14)
+        return true
+    elseif lvl == "CLEAR" or lvl == "NORMAL" then
+        Sound.playNote("harp", 1.0, 10)
+        Sound.playNote("chime", 1.2, 16)
+        return true
+    end
+    return false
+end
+
 return Sound

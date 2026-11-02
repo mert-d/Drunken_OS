@@ -162,7 +162,8 @@ return {
                 "lib/blackbox.lua",
                 "apps/blackbox.lua",
                 "blackbox.lua",
-                "apps/engineering_deck.lua"
+                "apps/engineering_deck.lua",
+                "apps/tactical_table.lua"
             },
             include_shared = false
         },
@@ -182,7 +183,8 @@ return {
                 "lib/blackbox.lua",
                 "apps/blackbox.lua",
                 "blackbox.lua",
-                "apps/engineering_deck.lua"
+                "apps/engineering_deck.lua",
+                "apps/tactical_table.lua"
             },
             include_shared = false
         },
