@@ -911,23 +911,32 @@ local function run(context)
                         if msg.ioDevices then
                             fc.ioDevices = msg.ioDevices
                         end
-                    elseif msg.type == "AVIONICS_CMD" and not isRemoteFCC then
-                        if msg.cmd == "SAFE_DISARM" then
-                            fc.ap.baseThrottle = 0; fc.ap.parkingBrake = true; fc:setMode("MANUAL", lastTel); fc:step(0.05)
-                        elseif msg.cmd == "SET_MODE" and msg.mode then
-                            fc:setMode(msg.mode, lastTel)
-                        elseif msg.cmd == "SPIN_TEST" then
-                            fc:triggerSpinTest(msg.name)
-                        elseif msg.cmd == "SET_IO_ROLE" and msg.name and msg.role then
-                            fc:setDeviceRole(msg.name, msg.role)
-                        elseif msg.cmd == "TOGGLE_IO_INVERT" and msg.name then
-                            fc:toggleInvert(msg.name)
-                        elseif msg.cmd == "RESET_IO_ROLE" and msg.name then
-                            fc:resetDeviceRole(msg.name)
-                        elseif msg.cmd == "SCAN_PERIPHERALS" then
-                            fc:scanPeripherals()
-                        elseif msg.cmd == "SET_PROFILE" and msg.profile then
-                            fc:setVehicleProfile(msg.profile, msg.autoAssign == true)
+                    elseif msg.type == "AVIONICS_CMD" then
+                        if msg.cmd == "OTA_UPDATE" then
+                            local okN, Net = pcall(require, "lib.netpkg")
+                            if not okN then okN, Net = pcall(require, "netpkg") end
+                            if okN then
+                                local okU = Net.update("avionics_fcs")
+                                if okU then sleep(0.8); os.reboot() end
+                            end
+                        elseif not isRemoteFCC then
+                            if msg.cmd == "SAFE_DISARM" then
+                                fc.ap.baseThrottle = 0; fc.ap.parkingBrake = true; fc:setMode("MANUAL", lastTel); fc:step(0.05)
+                            elseif msg.cmd == "SET_MODE" and msg.mode then
+                                fc:setMode(msg.mode, lastTel)
+                            elseif msg.cmd == "SPIN_TEST" then
+                                fc:triggerSpinTest(msg.name)
+                            elseif msg.cmd == "SET_IO_ROLE" and msg.name and msg.role then
+                                fc:setDeviceRole(msg.name, msg.role)
+                            elseif msg.cmd == "TOGGLE_IO_INVERT" and msg.name then
+                                fc:toggleInvert(msg.name)
+                            elseif msg.cmd == "RESET_IO_ROLE" and msg.name then
+                                fc:resetDeviceRole(msg.name)
+                            elseif msg.cmd == "SCAN_PERIPHERALS" then
+                                fc:scanPeripherals()
+                            elseif msg.cmd == "SET_PROFILE" and msg.profile then
+                                fc:setVehicleProfile(msg.profile, msg.autoAssign == true)
+                            end
                         end
                     end
                 elseif protocol == "DRUNKEN_ILS" and type(msg) == "table" and msg.type == "AVIONICS_ILS_BEACON" then
@@ -971,8 +980,8 @@ local function run(context)
                     hotplugNotice = "KARA KUTU: /flight_log.txt KAYDEDILDI!"
                     hotplugTimer = 80
                 elseif key == keys.u then
-                    -- GitHub OTA via lib/netpkg: all package files + AVX modules, all-or-nothing
-                    if isRemoteFCC then sendAvionicsCmd("OTA_UPDATE") end
+                    -- GitHub OTA via lib/netpkg: all package files + AVX modules, broadcast to peer FCS/FCC
+                    sendAvionicsCmd("OTA_UPDATE")
                     hotplugNotice = "GitHub OTA: Guncelleniyor..."
                     hotplugTimer = 80
                     renderPFD()
