@@ -298,8 +298,10 @@ local function run(context)
                     f.close()
                     pcall(fs.delete, "/fcc_cmd.txt")
                     local cmd = (tostring(rawCmd or "")):gsub("%s+", ""):upper()
-                    if cmd == "HOVER" then
+                    if cmd == "HOVER" or cmd:find("^HOVER") then
+                        local tgtAlt = tonumber(cmd:match("^HOVER:(%d+%.?%d*)"))
                         fc:setMode("HOVER", lastTel)
+                        if tgtAlt then fc.ap.targetAlt = tgtAlt end
                         lastCmdName = "IPC:HOVER"
                         broadcastState()
                     elseif cmd == "MANUAL" then

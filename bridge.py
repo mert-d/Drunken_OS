@@ -258,8 +258,9 @@ def cmd_test(args):
     init_y = init_tel["pos"][1]
     print(f"Initial State: Y = {init_y:.2f} m, Pitch = {init_tel['euler'][1]:.2f}°")
 
-    print(f"🚁 Engaging Computer #15 HOVER Autopilot Mode...")
-    subprocess.run(["adb", "shell", f"run-as com.termux sh -c 'echo HOVER > {PHONE_CC_DIR}/fcc_cmd.txt'"], check=False)
+    hover_cmd = f"HOVER:{args.alt:.1f}" if args.alt else "HOVER"
+    print(f"🚁 Engaging Computer #15 HOVER Autopilot Mode ({hover_cmd})...")
+    subprocess.run(["adb", "shell", f"run-as com.termux sh -c 'echo {hover_cmd} > {PHONE_CC_DIR}/fcc_cmd.txt'"], check=False)
     time.sleep(0.5)
 
     print(f"🔥 Unfreezing Skyfire... Monitoring for {duration} seconds...")
@@ -362,6 +363,7 @@ def main():
     # test
     p_test = subparsers.add_parser("test", help="Run autonomous flight trial with live telemetry")
     p_test.add_argument("--seconds", type=float, default=15.0, help="Test duration in seconds (default: 15)")
+    p_test.add_argument("--alt", type=float, default=None, help="Target altitude for HOVER mode (default: current)")
     p_test.set_defaults(func=cmd_test)
 
     # rescue

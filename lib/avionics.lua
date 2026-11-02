@@ -283,9 +283,9 @@ function Avionics.new(config)
         Lf            = 36.5,      -- Front turbine distance to CoM (blocks)
         Lr            = 21.5,      -- Rear turbine distance to CoM (blocks)
         W             = 37.0,      -- Lateral turbine arm (blocks)
-        gammaFront    = 0.785,     -- Front rotor trim multiplier (produces ~9.8 signal at hover)
-        gammaRear     = 1.215,     -- Rear rotor trim multiplier (produces ~15.0 signal at hover)
-        hoverBaseSig  = 12.63,     -- 150,766 / 179,071 * 15 = 12.63 hover center
+        gammaFront    = 0.5981,    -- Physical moment balance: (90221.2 / 88850.0) * (21.5 / 36.5) = 0.5981
+        gammaRear     = 1.0000,    -- Rear rotor reference
+        hoverBaseSig  = 15.00,     -- Full rear authority for static hover equilibrium
         ditherAcc     = { 0, 0, 0, 0 } -- 20 Hz Delta-Sigma fractional accumulator for 4 channels
     }
 
@@ -297,7 +297,7 @@ function Avionics.new(config)
     self.yawPID   = createPID(4.00, 0.25, 2.10, -4.5, 4.5) -- Pruva (Psi)
 
     -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (with Sable CoM offset & strong pitch damping)
-    self.msPitchPID = createPID(14.0, 1.20, 8.00, -6.5, 6.5, 4.0)
+    self.msPitchPID = createPID(32.0, 1.80, 14.00, -10.0, 10.0, 4.0)
     self.msRollPID  = createPID(5.50, 0.40, 2.80, -5.0, 5.0, 2.0)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
@@ -363,15 +363,6 @@ function Avionics:loadIOMap()
             if type(parsed) == "table" then
                 if parsed.ioMap and type(parsed.ioMap) == "table" then
                     self.ioMap = parsed.ioMap
-                    -- Skyfire hardware mechanical reverse: Controller 8 (FR) and Controller 5 (RL) have reverse gearing
-                    for devName, cfg in pairs(self.ioMap) do
-                        if type(cfg) == "table" then
-                            local dLow = tostring(devName):lower()
-                            if dLow == "create_rotationspeedcontroller_8" or dLow == "create_rotationspeedcontroller_5" then
-                                cfg.invert = true
-                            end
-                        end
-                    end
                     if type(parsed.profile) == "string" then
                         self.profile = parsed.profile
                         self.hasSavedProfile = true
@@ -536,10 +527,6 @@ function Avionics:autoAssignMothershipRoles(forceOverwrite)
                     end
                 end
                 cfg.role = picked or "AUTO"
-            end
-            local dLow = tostring(devName):lower()
-            if dLow == "create_rotationspeedcontroller_8" or dLow == "create_rotationspeedcontroller_5" then
-                cfg.invert = true
             end
         end
     end
@@ -774,6 +761,7 @@ function Avionics:readTelemetry(dt)
     -- 2. Attitude (Pitch, Roll, Linear Acceleration from Create: Avionics Gimbal Sensor)
     local pitch, roll = 0, 0
     local linAcc = { x = 0, y = 0, z = 0, 0, 0, 0 }
+    local angVel = { x = 0, y = 0, z = 0 }
     if self.gimbal then
         local rads = safeCall(self.gimbal.getAnglesRad)
         if type(rads) == "table" and rads[1] and rads[2] then
@@ -817,6 +805,19 @@ function Avionics:readTelemetry(dt)
             local az = tonumber(acc[3] or acc.z) or 0
             linAcc = { x = ax, y = ay, z = az, ax, ay, az }
         end
+        local rates = safeCall(self.gimbal.getAngularRatesRad)
+        local wx, wy, wz = 0, 0, 0
+        if type(rates) == "table" then
+            wx = tonumber(rates[1] or rates.x) or 0
+            wy = tonumber(rates[2] or rates.y) or 0
+            wz = tonumber(rates[3] or rates.z) or 0
+            if gMode == 2 or gMode == 3 then wx = -wx end
+            if gMode == 1 or gMode == 3 then wz = -wz end
+            if gMode == 4 or gMode == 5 then wx, wz = wz, wx end
+            wx = wx * (self.gimbalPitchSign or 1)
+            wz = wz * (self.gimbalRollSign or 1)
+        end
+        angVel = { x = wx, y = wy, z = wz }
     end
 
     -- 3. Heading & Navigation Target (Create: Avionics Navigation Table)
@@ -1038,6 +1039,10 @@ function Avionics:readTelemetry(dt)
         speed            = speed,
         velocity         = vel,
         linAcc           = linAcc,
+        angVel           = angVel,
+        wx               = angVel.x,
+        wy               = angVel.y,
+        wz               = angVel.z,
         pos              = { x = self.pos.x, y = self.pos.y, z = self.pos.z },
         weightOnWheels   = weightOnWheels,
         rpm              = maxRpm,
@@ -1570,8 +1575,14 @@ function Avionics:step(dt)
         local pidPitch = self.msPitchPID:compute(targetPitch, tel.pitch, dt)
         local pidRoll  = self.msRollPID:compute(targetRoll, tel.roll, dt)
 
-        pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -6.5, 6.5)
+        pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -8.5, 8.5)
         rollTrim  = clamp((self.rollBias  or 0.0) + pidRoll, -5.0, 5.0)
+
+        -- Direct angular velocity damping: stops nose pitch rate (wx) cold
+        if tel.wx and math.abs(tel.wx) > 0.005 then
+            local wxDamp = clamp(tel.wx * 4.5, -4.0, 4.0)
+            pitchTrim = clamp(pitchTrim - wxDamp, -10.0, 10.0)
+        end
 
         local u_yaw = 0
         if self.ap.hdgHold or self.ap.mode == "LNAV" or self.ap.mode == "AUTOLAND" then
@@ -1596,43 +1607,40 @@ function Avionics:step(dt)
             local diveFactor = math.max(0.0, 1.0 - ((absPitchDeg - 6.0) / 8.0))
             fwdSig = fwdSig * diveFactor
         end
-        if absPitchDeg > 14.0 then
+        if absPitchDeg > 12.0 then
             fwdSig = 0
             if (self.ap.mode == "CRUISE" or self.ap.mode == "LNAV") and self.ap.enabled then
                 self:setMode("HOVER", tel)
             end
-            -- Emergency pitch recovery torque scaling
-            local emergencyPitch = ((absPitchDeg - 14.0) / 10.0) * 4.0
+            -- Emergency pitch recovery: aggressively cut front power to force nose down
+            local emergencyPitch = ((absPitchDeg - 12.0) / 10.0) * 6.0
             if (tel.pitch or 0) > 0 then
-                pitchTrim = clamp(pitchTrim - emergencyPitch, -6.5, 6.5)
+                pitchTrim = clamp(pitchTrim - emergencyPitch, -12.0, 12.0)
             else
-                pitchTrim = clamp(pitchTrim + emergencyPitch, -6.5, 6.5)
+                pitchTrim = clamp(pitchTrim + emergencyPitch, -12.0, 12.0)
             end
         end
 
-        -- Base collective lift calculation (Hover center calibrated at 12.63)
+        -- Base collective lift calculation (Hover center calibrated at 15.0 for rear)
         local baseCenter = (self.ap.altHold or (self.ap.mode ~= "MANUAL" and self.ap.enabled))
-            and math.max(self.ap.baseThrottle, m.hoverBaseSig)
+            and math.max(self.ap.baseThrottle, m.hoverBaseSig or 15.0)
             or self.ap.baseThrottle
         local baseThrust = clamp(baseCenter + altCmd, 0.0, 15.0)
 
-        -- Front & Rear base power distribution with anti-saturation overflow
-        local frontBase = baseThrust * m.gammaFront
-        local rearBase  = baseThrust * m.gammaRear
-
-        if rearBase > 15.0 then
-            local overflow = rearBase - 15.0
-            rearBase  = 15.0
-            frontBase = math.min(15.0, frontBase + overflow * 0.90)
-        end
+        -- Front & Rear base power distribution based on true moment arm ratio
+        -- Lf = 36.5, Lr = 21.5, maxLiftFront = 88850, maxLiftRear = 90221.2
+        -- Static torque balance ratio: (90221.2 / 88850.0) * (21.5 / 36.5) = 0.5981
+        local rearBase  = clamp(baseThrust, 0.0, 15.0)
+        local frontBase = clamp(baseThrust * (m.gammaFront or 0.5981), 0.0, 10.5)
 
         -- 4-Channel Mixing Matrix
         -- G1: Front-Left (FL), G2: Rear-Left (RL), G3: Front-Right (FR), G4: Rear-Right (RR)
+        -- pitchTrim < 0 (nose pitched up): front throttles DOWN, rear throttles UP
         local rawFloat = {
-            frontBase + (pitchTrim * m.gammaFront) + rollTrim - (u_yaw * 0.5), -- G1: FL
-            rearBase  - (pitchTrim * m.gammaRear)  + rollTrim - (u_yaw * 0.5), -- G2: RL
-            frontBase + (pitchTrim * m.gammaFront) - rollTrim + (u_yaw * 0.5), -- G3: FR
-            rearBase  - (pitchTrim * m.gammaRear)  - rollTrim + (u_yaw * 0.5)  -- G4: RR
+            frontBase + pitchTrim + rollTrim - (u_yaw * 0.5), -- G1: FL
+            rearBase  - pitchTrim + rollTrim - (u_yaw * 0.5), -- G2: RL
+            frontBase + pitchTrim - rollTrim + (u_yaw * 0.5), -- G3: FR
+            rearBase  - pitchTrim - rollTrim + (u_yaw * 0.5)  -- G4: RR
         }
 
         -- Multirotor mixer desaturation: preserve roll torque when collective saturates
@@ -1650,10 +1658,10 @@ function Avionics:step(dt)
             return clamp(l, lo, hi), clamp(r, lo, hi)
         end
 
-        local minLift = (self.ap.altHold or baseThrust >= 5) and 3.5 or 0.0
+        local minLift = (self.ap.altHold or baseThrust >= 5) and 1.5 or 0.0
         local maxLift = 15.0
-        rawFloat[1], rawFloat[3] = desaturatePair(rawFloat[1], rawFloat[3], minLift, maxLift)
-        rawFloat[2], rawFloat[4] = desaturatePair(rawFloat[2], rawFloat[4], minLift, maxLift)
+        rawFloat[1], rawFloat[3] = desaturatePair(rawFloat[1], rawFloat[3], 0.0, maxLift)
+        rawFloat[2], rawFloat[4] = desaturatePair(rawFloat[2], rawFloat[4], 0.0, maxLift)
 
         -- 20 Hz Delta-Sigma fractional pulse modulation (PWM Dithering)
         local sig = {}
