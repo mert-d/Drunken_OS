@@ -15,9 +15,19 @@ Bu dosya, Poco F7 sunucusundaki "Skyfire" gemisinin autonomous Hover test sonuç
 ---
 
 ## 📌 Güncel Durum
-* **Gemi:** İskelede `(1116.70, 184.64, -242.80)`
-* **Donanım:** Controller 8 (FR) ve Controller 5 (RL) için yazılımsal `invert = true` şarttır.
-* **Geliştirici:** Artık `python3 bridge.py push` ve `python3 bridge.py test` komutlarıyla kendi testlerinizi doğrudan çalıştırabilirsiniz.
+* **Gemi:** Serbest Uçuşta `(1114.27, 211.50, -333.70)` — 🚀 AIRBORNE & ACTIVE!
+* **Donanım:** 
+  * Arka motorların (RL, RR) yelken (sail) sayısı artırıldı; ağırlık merkezi (CoM) geride olduğu için arka türbinlerin kaldırma kapasitesi yükseltildi.
+  * Tüm motorlar normal yönde (`invert = false`) çalışmakta olup aşağı üfleyerek saf dikey kaldırma üretmektedir.
+* **Yazılım:** CoM moment oranı ($0.5981$) + doğrudan $\omega_x$ açısal hız sönümleme + 20 Hz ANCHOR/HOVER otopilot döngüsü tam uyumla çalışıyor.
+
+### Flight Trial (2026-11-02 22:37:15) — Canlı Serbest Uçuş & Sky Anchor
+- **Result:** FULL AIRBORNE FLIGHT SUCCESS 🚀🎯
+- **Altitude:** $Y = 211.47\text{ m}$ (Serbest hava seyri)
+- **Pitch:** $+0.53^\circ$ (Mükemmele yakın yatay kilitlenme)
+- **Roll:** $-0.02^\circ$ (Tam dengeli kanatlar)
+- **Rotor Dağılımı:** Ön: ~130 RPM | Arka: 256 RPM (Maksimum arka itki desteği)
+- **Mod:** `ANCHOR` (3D İstasyon Koruma)
 
 ### Flight Trial (2026-11-02 21:30:46)
 - **Result:** STABLE HOVER 🎯
