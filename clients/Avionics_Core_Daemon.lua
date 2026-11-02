@@ -290,6 +290,32 @@ local function run(context)
     -- 1. Real-Time 20Hz Sensor Fusion & Actuator PID Loop
     local function controlLoop()
         while running do
+            -- File-based IPC command trigger (for autonomous bridge tests and external control)
+            if tick % 4 == 1 and fs and fs.exists and fs.exists("/fcc_cmd.txt") then
+                local okF, f = pcall(fs.open, "/fcc_cmd.txt", "r")
+                if okF and f then
+                    local rawCmd = f.readAll()
+                    f.close()
+                    pcall(fs.delete, "/fcc_cmd.txt")
+                    local cmd = (tostring(rawCmd or "")):gsub("%s+", ""):upper()
+                    if cmd == "HOVER" then
+                        fc:setMode("HOVER", lastTel)
+                        lastCmdName = "IPC:HOVER"
+                        broadcastState()
+                    elseif cmd == "MANUAL" then
+                        fc:setMode("MANUAL", lastTel)
+                        lastCmdName = "IPC:MANUAL"
+                        broadcastState()
+                    elseif cmd == "DISARM" then
+                        fc.ap.baseThrottle = 0
+                        fc.ap.parkingBrake = true
+                        fc:setMode("MANUAL", lastTel)
+                        lastCmdName = "IPC:DISARM"
+                        broadcastState()
+                    end
+                end
+            end
+
             lastTel = fc:step(0.05)
             tick = tick + 1
 

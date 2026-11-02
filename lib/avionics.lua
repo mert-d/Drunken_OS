@@ -363,6 +363,15 @@ function Avionics:loadIOMap()
             if type(parsed) == "table" then
                 if parsed.ioMap and type(parsed.ioMap) == "table" then
                     self.ioMap = parsed.ioMap
+                    -- Skyfire hardware mechanical reverse: Controller 8 (FR) and Controller 5 (RL) have reverse gearing
+                    for devName, cfg in pairs(self.ioMap) do
+                        if type(cfg) == "table" then
+                            local dLow = tostring(devName):lower()
+                            if dLow == "create_rotationspeedcontroller_8" or dLow == "create_rotationspeedcontroller_5" then
+                                cfg.invert = true
+                            end
+                        end
+                    end
                     if type(parsed.profile) == "string" then
                         self.profile = parsed.profile
                         self.hasSavedProfile = true
@@ -528,6 +537,10 @@ function Avionics:autoAssignMothershipRoles(forceOverwrite)
                 end
                 cfg.role = picked or "AUTO"
             end
+            local dLow = tostring(devName):lower()
+            if dLow == "create_rotationspeedcontroller_8" or dLow == "create_rotationspeedcontroller_5" then
+                cfg.invert = true
+            end
         end
     end
     self:saveIOMap()
@@ -588,10 +601,10 @@ function Avionics:scanPeripherals()
                 local found = { peripheral.find(t) }
                 for _, p in ipairs(found) do table.insert(res, p) end
             end
-            if doSort then
+            if doSort and peripheral and peripheral.getName then
                 table.sort(res, function(a, b)
-                    local na = (peripheral.getName and pcall(peripheral.getName, a) and peripheral.getName(a)) or ""
-                    local nb = (peripheral.getName and pcall(peripheral.getName, b) and peripheral.getName(b)) or ""
+                    local na = (pcall(peripheral.getName, a) and peripheral.getName(a)) or ""
+                    local nb = (pcall(peripheral.getName, b) and peripheral.getName(b)) or ""
                     return tostring(na) < tostring(nb)
                 end)
             end
