@@ -239,6 +239,8 @@ function Avionics.new(config)
     self.hasSavedProfile = false
     self.ioMap = {}
     self.ioDevices = {}
+    self.pitchBias = tonumber(self.config.pitchBias) or 0.0
+    self.rollBias  = tonumber(self.config.rollBias) or 0.0
     self.clutchPolarInvert = false -- Auto or manual [K] polarity inversion for clutches
     self.clutchSpinTicks = 0
     self.prevAlt = nil
@@ -280,7 +282,7 @@ function Avionics.new(config)
     self.rollPID  = createPID(0.8, 0.05, 0.4, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
 
     -- Mothership Quad-Lift Gimbal Horizon Stabilization PIDs (with bounded CoM offset auto-trim & strong pitch damping)
-    self.msPitchPID = createPID(12.5, 1.0, 8.0, -6.5, 6.5, 3.0)
+    self.msPitchPID = createPID(14.0, 2.5, 12.0, -6.5, 6.5, 6.0)
     self.msRollPID  = createPID(5.5, 0.4, 2.8, -2.5, 2.5, 1.0)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
@@ -350,8 +352,11 @@ function Avionics:loadIOMap()
                         self.profile = parsed.profile
                         self.hasSavedProfile = true
                     end
+                    if type(parsed.pitchBias) == "number" then self.pitchBias = parsed.pitchBias end
+                    if type(parsed.rollBias) == "number" then self.rollBias = parsed.rollBias end
                 else
                     self.ioMap = parsed
+                    if type(parsed.pitchBias) == "number" then self.pitchBias = parsed.pitchBias end
                 end
             end
         end
@@ -363,12 +368,24 @@ function Avionics:saveIOMap()
         local ok, f = pcall(fs.open, IO_CONFIG_PATH, "w")
         if ok and f then
             f.write(textutils.serialize({
-                profile = self.profile,
-                ioMap   = self.ioMap
+                profile   = self.profile,
+                ioMap     = self.ioMap,
+                pitchBias = self.pitchBias or 0.0,
+                rollBias  = self.rollBias or 0.0
             }))
             f.close()
         end
     end
+end
+
+function Avionics:setPitchBias(val)
+    self.pitchBias = clamp(tonumber(val) or 0.0, -6.0, 6.0)
+    self:saveIOMap()
+    return self.pitchBias
+end
+
+function Avionics:adjustPitchBias(delta)
+    return self:setPitchBias((self.pitchBias or 0.0) + (tonumber(delta) or 0.0))
 end
 
 function Avionics:getDeviceConfig(devName)
@@ -1000,6 +1017,8 @@ function Avionics:readTelemetry(dt)
         burnerActive     = burnerActive,
         balloonVolChange = balloonVolChange,
         mothership       = self.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
+        pitchBias        = self.pitchBias or 0.0,
+        rollBias         = self.rollBias or 0.0,
         gpwsWarning      = gpwsWarning,
         stallWarning     = stallWarning,
         pitchWarning     = pitchWarning,
@@ -1499,8 +1518,10 @@ function Avionics:step(dt)
         else
             if self.ap.sasEnabled or self.ap.enabled then
                 if self.ap.sasEnabled then
-                    pitchTrim = self.msPitchPID:compute(0, tel.pitch, dt)
-                    rollTrim  = self.msRollPID:compute(0, tel.roll, dt)
+                    local pidPitch = self.msPitchPID:compute(0, tel.pitch, dt)
+                    local pidRoll  = self.msRollPID:compute(0, tel.roll, dt)
+                    pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -6.5, 6.5)
+                    rollTrim  = clamp((self.rollBias or 0.0) + pidRoll, -2.5, 2.5)
                 end
                 local t = { pitch = pitchTrim, roll = rollTrim, surge = 0 }
                 self:hook("onMix", tel, t, dt)

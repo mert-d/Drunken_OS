@@ -792,6 +792,13 @@ local function runTests()
     assert(testFC.lastMothershipState.flRpm > 230 and testFC.lastMothershipState.flRpm >= testFC.lastMothershipState.rlRpm + 80,
            "Expected maximum emergency lift boost on front rotors in severe dive")
 
+    -- 6. Static Pitch Bias (CoM Weight Offset Trim)
+    testFC:setPitchBias(-3.5)
+    assert(testFC.pitchBias == -3.5, "Expected pitchBias set to -3.5")
+    testFC:adjustPitchBias(0.5)
+    assert(testFC.pitchBias == -3.0, "Expected pitchBias adjusted to -3.0")
+    testFC:setPitchBias(0.0)
+
     print("  PASS: Test 14: Peripheral Scan Filtering, Remote I/O Bus, Ground Lock, Anti-Dive Governor & Gimbal Auto-Polarity Guard")
 
     -- Test 15: Flight Data Recorder (Blackbox / Kara Kutu)

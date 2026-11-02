@@ -664,7 +664,7 @@ local function run(context)
             drawTerm.write("STRS: OVERSTRESS!")
         else
             drawTerm.setTextColor(theme.ok or colors.lime)
-            drawTerm.write("STRS: NOMINAL")
+            drawTerm.write(string.format("STRS: NOM | TRM:%+4.1f", lastTel.pitchBias or fc.pitchBias or 0))
         end
 
         -- Right Tape: Altitude, Target, VSI, Heading, Course, Radar AGL
@@ -799,7 +799,7 @@ local function run(context)
 
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
-        drawTerm.write("[Up/Dn]:Alt+-5 [Lt/Rt]:Hdg+-5 [W/S]:Thr [Z]:Capa [L]:Log [Q]:Cik")
+        drawTerm.write("[Up/Dn]:Alt [Lt/Rt]:Hdg [9/0]:Trim [W/S]:Thr [Z]:Capa [L]:Log [Q]:Cik")
         drawTerm = prevTerm
     end
 
@@ -936,6 +936,8 @@ local function run(context)
                                 fc:scanPeripherals()
                             elseif msg.cmd == "SET_PROFILE" and msg.profile then
                                 fc:setVehicleProfile(msg.profile, msg.autoAssign == true)
+                            elseif msg.cmd == "ADJUST_PITCH_BIAS" and msg.delta then
+                                fc:adjustPitchBias(msg.delta)
                             end
                         end
                     end
@@ -1157,6 +1159,24 @@ local function run(context)
                         if not fc.ap.enabled then
                             if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = -(fc.ap.manualYaw or 0) }) else fc.ap.manualYaw = 0 end
                             hotplugNotice = "DUMEN SIFIRLANDI"; hotplugTimer = 30
+                        end
+                    elseif key == keys.nine or key == keys.minus or key == keys.leftBracket then
+                        local d = -0.5
+                        if isRemoteFCC then
+                            sendAvionicsCmd("ADJUST_PITCH_BIAS", { delta = d })
+                        else
+                            local b = fc:adjustPitchBias(d)
+                            hotplugNotice = string.format("TRIM: %+.1f (BURUN ASAGI)", b)
+                            hotplugTimer = 40
+                        end
+                    elseif key == keys.zero or key == keys.equals or key == keys.rightBracket then
+                        local d = 0.5
+                        if isRemoteFCC then
+                            sendAvionicsCmd("ADJUST_PITCH_BIAS", { delta = d })
+                        else
+                            local b = fc:adjustPitchBias(d)
+                            hotplugNotice = string.format("TRIM: %+.1f (BURUN YUKARI)", b)
+                            hotplugTimer = 40
                         end
                     elseif key == keys.w or key == keys.s then
                         local wantRev = (key == keys.s)
