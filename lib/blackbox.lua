@@ -41,6 +41,8 @@ function Blackbox:record(tel, apState, msState, ctrl)
     local alt      = tel.altitude or 0
     local vy       = tel.vSpeed or 0
     local vz       = (tel.velocity and tel.velocity.z) or (tel.speed or 0)
+    local pressAtm = tonumber(tel.pressure) or 1.0
+    local pressHPa = tonumber(tel.pressureHPa) or (pressAtm * 1013.25)
     local dt       = ctrl.dt or 0.05
 
     -- Angular pitch velocity (deg/s)
@@ -90,6 +92,8 @@ function Blackbox:record(tel, apState, msState, ctrl)
         tSec        = tSec,
         mode        = tostring(apState.mode or "MANUAL"),
         alt         = alt,
+        pressure    = pressAtm,
+        pressureHPa = pressHPa,
         vy          = vy,
         vz          = vz,
         pitchDeg    = pitchDeg,
@@ -167,11 +171,11 @@ function Blackbox:writeCsvLog()
     local ok, f = pcall(fs.open, self.csvPath, "w")
     if not (ok and f) then return false end
 
-    f.writeLine("tick,time_s,mode,alt_m,vy_mps,vz_mps,pitch_deg,roll_deg,hdg_deg,wx_deg_s,rpm_fl,rpm_fr,rpm_rl,rpm_rr,rear_l,rear_c,rear_r,pitch_trim,dive_factor,anti_dive,status")
+    f.writeLine("tick,time_s,mode,alt_m,press_atm,press_hpa,vy_mps,vz_mps,pitch_deg,roll_deg,hdg_deg,wx_deg_s,rpm_fl,rpm_fr,rpm_rl,rpm_rr,rear_l,rear_c,rear_r,pitch_trim,dive_factor,anti_dive,status")
     for _, e in ipairs(self.entries) do
         f.writeLine(string.format(
-            "%d,%.2f,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%s,%s",
-            e.tick, e.tSec, e.mode, e.alt, e.vy, e.vz, e.pitchDeg, e.rollDeg, e.hdgDeg, e.wxDeg,
+            "%d,%.2f,%s,%.2f,%.3f,%.1f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%s,%s",
+            e.tick, e.tSec, e.mode, e.alt, e.pressure or 1.0, e.pressureHPa or 1013.25, e.vy, e.vz, e.pitchDeg, e.rollDeg, e.hdgDeg, e.wxDeg,
             e.flRpm, e.frRpm, e.rlRpm, e.rrRpm, e.rearL, e.rearC, e.rearR,
             e.pitchTrim, e.diveFactor, e.antiDive and "1" or "0", e.status
         ))

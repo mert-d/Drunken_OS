@@ -220,8 +220,11 @@ local function run(context)
         -- Sensors Health
         parentTerm.setTextColor(colors.white)
         parentTerm.setCursorPos(2, 6)
+        local pAtm = lastTel.pressure or 1.0
+        local pHpa = lastTel.pressureHPa or (pAtm * 1013.25)
+        local altStatus = fc.altSensor and string.format("OK(%3.0fhPa)", pHpa) or "--"
         parentTerm.write(string.format("SENSORS : ALT=%s GIMBAL=%s NAV=%s VEL=%s",
-            fc.altSensor and "OK" or "--",
+            altStatus,
             fc.gimbal and "OK" or "--",
             fc.nav and "OK" or "--",
             fc.velSensor and "OK" or "--"
@@ -351,6 +354,8 @@ local function run(context)
                     vehicleType  = lastTel.vehicleType or fc.vehicleType,
                     pos          = lastTel.pos,
                     altitude     = lastTel.altitude,
+                    pressure     = lastTel.pressure,
+                    pressureHPa  = lastTel.pressureHPa,
                     targetAlt    = fc.ap.targetAlt,
                     speed        = lastTel.speed,
                     heading      = math.deg(lastTel.heading) % 360,

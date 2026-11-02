@@ -255,6 +255,13 @@ local function renderTable()
     termObj.setCursorPos(2, 12)
     local hdgDeg = math.deg(lastTel.heading or 0) % 360
     termObj.write(string.format("PUS : %03.0f° | PARK:%s", hdgDeg, lastAp.parkingBrake and "EVET" or "HAYIR"))
+    if h >= 14 then
+        termObj.setCursorPos(2, 13)
+        local pAtm = lastTel.pressure or 1.0
+        local pHpa = lastTel.pressureHPa or (pAtm * 1013.25)
+        termObj.setTextColor(pAtm < 0.45 and (isColor and colors.orange or colors.white) or (isColor and colors.cyan or colors.white))
+        termObj.write(string.format("BAR : %4.0fhPa (%4.2fa)", pHpa, pAtm))
+    end
 
     -- 3. Center 360 Polar Tactical Radar
     local maxDist = radarRanges[currentRangeIdx] or 100

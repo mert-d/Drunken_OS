@@ -89,7 +89,8 @@ local function renderTacticalDisplay(mon, tel, ap)
     local alt = tel.altitude or 0
     local tgtAlt = ap.targetAlt or 0
     local agl = tel.agl and string.format("%.1fm", tel.agl) or "N/A"
-    mon.write(string.format("ALT : %5.1fm (TGT:%5.1fm) AGL:%s", alt, tgtAlt, agl))
+    local pStr = string.format(" %3.0fhPa", (tel.pressureHPa or (tel.pressure and tel.pressure * 1013.25) or 1013))
+    mon.write(string.format("ALT : %5.1fm (TGT:%5.1fm)%s", alt, tgtAlt, (w >= 44 and pStr or "")))
 
     -- Speed & Heading
     mon.setCursorPos(2, 6)
@@ -203,6 +204,12 @@ local function renderScadaDisplay(mon, tel, ap)
     end
 
     if h >= 8 then
+        mon.setCursorPos(2, h - 1)
+        mon.setTextColor(isCol and colors.cyan or colors.white)
+        local pAtm = tel.pressure or 1.0
+        local pHpa = tel.pressureHPa or (pAtm * 1013.25)
+        mon.write(string.format("BAROMETRE: %4.0f hPa (%4.2f atm)", pHpa, pAtm))
+
         mon.setCursorPos(2, h)
         mon.setTextColor(isCol and colors.gray or colors.white)
         mon.write("CAN BUS: 20Hz SENKRON TELEMETRI")
@@ -263,6 +270,13 @@ local function renderTacticalTable(mon, tel, ap, fcObj)
     mon.setCursorPos(2, 12)
     local hdg = math.deg(tel.heading or 0) % 360
     mon.write(string.format("PUS: %03.0f°", hdg))
+    if h >= 14 then
+        mon.setCursorPos(2, 13)
+        local pAtm = tel.pressure or 1.0
+        local pHpa = tel.pressureHPa or (pAtm * 1013.25)
+        mon.setTextColor(pAtm < 0.45 and (isCol and colors.orange or colors.white) or (isCol and colors.cyan or colors.white))
+        mon.write(string.format("BAR: %4.0fhPa", pHpa))
+    end
 
     -- 3. Center Polar Radar
     local rcx = math.floor(w * 0.58)
@@ -878,6 +892,20 @@ local function run(context)
         drawTerm.setCursorPos(rightCol, 9)
         drawTerm.setTextColor(theme.muted)
         drawTerm.write(string.format("P:%+4.0f R:%+4.0f", math.deg(lastTel.pitch), math.deg(lastTel.roll)))
+
+        drawTerm.setCursorPos(rightCol, 10)
+        local pAtm = lastTel.pressure or 1.0
+        local pHpa = lastTel.pressureHPa or (pAtm * 1013.25)
+        if pAtm < 0.45 then
+            drawTerm.setTextColor(theme.warn or colors.orange)
+        else
+            drawTerm.setTextColor(theme.accent or colors.cyan)
+        end
+        if w >= 52 then
+            drawTerm.write(string.format("BAR :%4.0fhPa %4.2fa", pHpa, pAtm))
+        else
+            drawTerm.write(string.format("BAR : %4.0f hPa", pHpa))
+        end
 
         -- Row 11: Hot-Plug Toast Notification OR ILS Status
         drawTerm.setCursorPos(2, 11)

@@ -624,7 +624,10 @@ local function runTests()
     local rpmOut = {}
     local wingDevs = {}
     for n, _ in pairs(wingH) do
-        wingDevs[n] = { getHeight = function() return wingH[n] end }
+        wingDevs[n] = {
+            getHeight = function() return wingH[n] end,
+            getAirPressure = function() return 0.75 end
+        }
     end
     for i = 0, 3 do
         local n = "rsc_" .. i
@@ -650,6 +653,7 @@ local function runTests()
     wFC.ap.baseThrottle = 8
     local wTel = wFC:step(0.05) or wFC:readTelemetry(0.05)
     assert(wFC.wingAlt and wFC.wingAlt.n == 4, "Expected 4 wing altimeters to be detected via LIFT_* roles")
+    assert(wTel.pressure == 0.75 and math.floor(wTel.pressureHPa + 0.5) == 760, "Expected quad-altimeter average pressure 0.75 atm and 760 hPa")
     assert(wFC.wingAlt.dR == -4, "Expected left-right altitude diff of -4 (left wing low)")
     assert(wFC.wingAlt.dP == 0, "Expected zero fore-aft altitude diff")
     local ms = wFC.lastMothershipState

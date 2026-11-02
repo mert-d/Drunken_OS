@@ -786,22 +786,26 @@ function Avionics:readTelemetry(dt)
     local pressure = 1.0
     if self.altSensors and #self.altSensors > 1 then
         local sumA, cntA, sumV, cntV = 0, 0, 0, 0
+        local sumP, cntP = 0, 0
         for _, as in ipairs(self.altSensors) do
             local a = tonumber(safeCall(as.getHeight)) or tonumber(safeCall(as.getAltitude))
             if a then sumA = sumA + a; cntA = cntA + 1 end
             local v = tonumber(safeCall(as.getVerticalSpeed))
             if v then sumV = sumV + v; cntV = cntV + 1 end
+            local p = tonumber(safeCall(as.getAirPressure)) or tonumber(safeCall(as.getPressure))
+            if p then sumP = sumP + p; cntP = cntP + 1 end
         end
         if cntA > 0 then alt = sumA / cntA end
         if cntV > 0 then sensorVsi = sumV / cntV end
-        pressure = tonumber(safeCall(self.altSensors[1].getAirPressure)) or 1.0
+        if cntP > 0 then pressure = sumP / cntP end
     elseif self.altSensor then
         alt = tonumber(safeCall(self.altSensor.getHeight))
            or tonumber(safeCall(self.altSensor.getAltitude))
            or 0
         sensorVsi = tonumber(safeCall(self.altSensor.getVerticalSpeed)) or 0
-        pressure = tonumber(safeCall(self.altSensor.getAirPressure)) or 1.0
+        pressure = tonumber(safeCall(self.altSensor.getAirPressure)) or tonumber(safeCall(self.altSensor.getPressure)) or 1.0
     end
+    local pressureHPa = pressure * 1013.25
     local vsi = sensorVsi
     if self.prevAlt ~= nil and dt > 0 then
         local rawDeltaVsi = clamp((alt - self.prevAlt) / dt, -20.0, 20.0)
@@ -1087,6 +1091,7 @@ function Avionics:readTelemetry(dt)
         agl              = agl,
         vSpeed           = vsi,
         pressure         = pressure,
+        pressureHPa      = pressureHPa,
         pitch            = pitch,
         roll             = roll,
         heading          = heading,
