@@ -1,0 +1,23 @@
+# Python & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Drunken OS <-> Poco Minecraft Server Bridge & Testing Tools (Local Only)
+bridge.py
+BRIDGE_README.md
+flight_trials.md
+fcc_cmd.txt
+*.tar.gz
+
+# Local Flight Logs & Blackbox Telemetry Dumps
+flight_log.txt
+flight_log.csv
+*.log
+
+# Temporary Files
+*.tmp
+*.swp
+*~
+.DS_Store
