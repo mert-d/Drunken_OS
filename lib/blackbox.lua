@@ -68,9 +68,9 @@ function Blackbox:record(tel, apState, msState, ctrl)
     if ctrl.antiDiveActive or tel.pitchWarning then
         status = "ANTI-DIVE"
     elseif math.abs(pitchDeg) > 18 then
-        status = (pitchDeg > 0) and "ASIRI-BURUN-ASAGI" or "ASIRI-BURUN-YUKARI"
+        status = (pitchDeg > 0) and "ASIRI-BURUN-YUKARI" or "ASIRI-BURUN-ASAGI"
     elseif math.abs(pitchDeg) > 8 then
-        status = (pitchDeg > 0) and "YUNUSLAMA-ASAGI" or "YUNUSLAMA-YUKARI"
+        status = (pitchDeg > 0) and "YUNUSLAMA-YUKARI" or "YUNUSLAMA-ASAGI"
     elseif math.abs(rollDeg) > 8 then
         status = "YATIS-ROLL"
     elseif vz > 10.0 then

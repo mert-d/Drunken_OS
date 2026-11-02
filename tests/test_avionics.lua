@@ -751,31 +751,31 @@ local function runTests()
            testFC.lastMothershipState.rl == 0 and testFC.lastMothershipState.rr == 0,
            "Expected zero-throttle manual mode to lock all lift rotors to 0 RPM regardless of tilt")
 
-    -- 4. Create: Avionics getAnglesRad() 3D right-handed Pitch (-rads[1]) & Roll (+rads[2]) convention
+    -- 4. Create: Avionics getAnglesRad() standard aviation Pitch (+up/-down) & Roll (+right/-left) convention
     testFC.spinTest = nil
     testFC.gpsTick = 1
     testFC:setMode("HOVER", { altitude = 100.0, heading = 0.0 })
     testFC.gimbal = {
-        getAnglesRad = function() return { math.rad(10.0), math.rad(15.2) } end -- Nose down (+10 deg xAngle) & rolled right (+15.2 deg zAngle)
+        getAnglesRad = function() return { math.rad(-10.0), math.rad(15.2) } end -- Nose down (-10 deg pitch) & rolled right (+15.2 deg roll)
     }
     testFC:step(0.05)
     assert(testFC.lastMothershipState.frRpm > testFC.lastMothershipState.flRpm,
            "Expected right lift RPM (FR) > left lift RPM (FL) when rolled right (+15.2 deg)")
     assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.rlRpm and testFC.lastMothershipState.frRpm > testFC.lastMothershipState.rrRpm,
-           "Expected front lift RPM (FL/FR) > rear lift RPM (RL/RR) when nose pitched down (+10.0 deg xAngle)")
+           "Expected front lift RPM (FL/FR) > rear lift RPM (RL/RR) when nose pitched down (-10.0 deg pitch)")
     assert(testFC.lastMothershipState.frRpm <= 256 and testFC.lastMothershipState.rlRpm >= 60,
            "Expected bounded hover lift RPM within 60..256 RPM band")
 
     testFC.msRollPID:reset()
     testFC.msPitchPID:reset()
     testFC.gimbal = {
-        getAnglesRad = function() return { math.rad(-10.0), math.rad(-15.2) } end -- Nose up (-10 deg xAngle) & rolled left (-15.2 deg zAngle)
+        getAnglesRad = function() return { math.rad(10.0), math.rad(-15.2) } end -- Nose up (+10 deg pitch) & rolled left (-15.2 deg roll)
     }
     testFC:step(0.05)
     assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.frRpm,
            "Expected left lift RPM (FL) > right lift RPM (FR) when rolled left (-15.2 deg)")
     assert(testFC.lastMothershipState.rlRpm > testFC.lastMothershipState.flRpm,
-           "Expected rear lift RPM (RL) > front lift RPM (FL) when nose pitched up (-10.0 deg xAngle)")
+           "Expected rear lift RPM (RL) > front lift RPM (FL) when nose pitched up (+10.0 deg pitch)")
 
     -- 5. Anti-Dive Envelope Protection: severe nose-down tilt (> 20 deg) forces rear thruster throttle to 0 and raises pitchWarning
     testFC.msRollPID:reset()
@@ -784,7 +784,7 @@ local function runTests()
     testFC.ap.baseThrottle = 12
     testFC.ap.parkingBrake = false
     testFC.gimbal = {
-        getAnglesRad = function() return { math.rad(24.0), 0 } end -- Severe nose down (+24 deg xAngle)
+        getAnglesRad = function() return { math.rad(-24.0), 0 } end -- Severe nose down (-24 deg pitch)
     }
     local diveTel = testFC:step(0.05) or testFC:readTelemetry(0.05)
     assert(diveTel.pitchWarning == true, "Expected pitchWarning active when pitched down > 14 deg")
