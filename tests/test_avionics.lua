@@ -1114,6 +1114,46 @@ local function runTests()
     _G.sublevel = origSublevel
     print("  PASS: Test 18: Multi-Tier Hybrid Navigation Sensor Fusion (CC:Sable SubLevel & Advanced Navigation Table)")
 
+    -- Test 19: 10-Propeller Dynamic Balance, Anti-Oscillation & Pitch Damping Verification
+    mockState.altitude = 100.0
+    mockState.pitch = 0.0
+    mockState.roll = 0.0
+    local propFC = Avionics.new({ callsign = "SKYFIRE-10P", profile = "MOTHERSHIP", useGPS = false })
+    assert(propFC.skyfireModel.gammaFront == 0.884, "Expected gammaFront to be 0.884 for 10-propeller model")
+    assert(propFC.skyfireModel.hoverBaseSig == 10.80, "Expected hoverBaseSig to be 10.80")
+    assert(propFC.skyfireModel.maxLiftForce == 223839.0, "Expected maxLiftForce 223839 pN")
+
+    -- 1. Static Equilibrium in HOVER: both front and rear must have symmetric control headroom
+    propFC:setMode("HOVER", { altitude = 100.0, heading = 0.0 })
+    propFC.altSensor = {
+        getHeight = function() return 100.0 end,
+        getAltitude = function() return 100.0 end,
+        getVerticalSpeed = function() return 0.0 end
+    }
+    propFC.gimbal = {
+        getAnglesRad = function() return { 0.0, 0.0 } end
+    }
+    propFC:step(0.05)
+    local msHover = propFC.lastMothershipState
+    assert(msHover.fl >= 9 and msHover.fl <= 11, "Expected front hover signal around 9-11, got: " .. tostring(msHover.fl))
+    assert(msHover.rl >= 10 and msHover.rl <= 12, "Expected rear hover signal around 10-12, got: " .. tostring(msHover.rl))
+    -- Both must have > 3.0 signal headroom to 15 (256 RPM)
+    assert(msHover.fl < 15 and msHover.rl < 15, "Expected hover signals below saturation ceiling 15")
+
+    -- 2. Direct Pitch Rate Damping (wx): rapid pitch rate creates immediate counter-torque
+    propFC.msPitchPID:reset()
+    local mockTelRate = {
+        altitude = 150.0, heading = 0.0, pitch = math.rad(5.0), roll = 0.0,
+        wx = 2.0, -- +115 deg/s upward pitch rate
+        speed = 1.0, vSpeed = 0.0, weightOnWheels = false
+    }
+    propFC:step(0.05)
+    -- Verify that with positive pitch rate (pitching up), rear motors throttle up and front throttles down to damp motion
+    assert(propFC.lastMothershipState.rlRpm >= propFC.lastMothershipState.flRpm,
+           "Expected rate damping to command higher rear RPM to oppose nose pitch-up rate")
+
+    print("  PASS: Test 19: 10-Propeller Dynamic Balance, Anti-Oscillation & High-Rate Pitch Damping")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

@@ -292,17 +292,19 @@ function Avionics.new(config)
     self.pos = { x = 0, y = 0, z = 0 }
     self.gpsTick = 0
 
-    -- Sable / Create: Simulated 8-Propeller Real Telemetry Calibrated Model (179,071 pN Lift / 150,766 pN Weight)
+    -- Sable / Create: Simulated 10-Propeller Real Telemetry Calibrated Model
+    -- Front nacelles: 2x propellers each (4 total, Lf = 36.5 blocks)
+    -- Rear nacelles:  3x propellers each (6 total, Lr = 21.5 blocks)
     self.skyfireModel = {
-        mass          = 13706.0,   -- Sable real mass
-        gravityForce  = 150766.0,  -- Downward gravity force in pN
-        maxLiftForce  = 179071.2,  -- 8-propeller maximum lift force in pN
+        mass          = 14187.0,   -- Sable live mass (14,187 kg)
+        gravityForce  = 141870.0,  -- Downward gravity force in pN (~142 kN)
+        maxLiftForce  = 223839.0,  -- 10-propeller maximum lift force in pN
         Lf            = 36.5,      -- Front turbine distance to CoM (blocks)
         Lr            = 21.5,      -- Rear turbine distance to CoM (blocks)
         W             = 37.0,      -- Lateral turbine arm (blocks)
-        gammaFront    = 0.5981,    -- Physical moment balance: (90221.2 / 88850.0) * (21.5 / 36.5) = 0.5981
-        gammaRear     = 1.0000,    -- Rear rotor reference
-        hoverBaseSig  = 15.00,     -- Full rear authority for static hover equilibrium
+        gammaFront    = 0.884,     -- Static moment balance: (3 props / 2 props) * (21.5 / 36.5) = 1.5 * 0.589 = 0.884
+        gammaRear     = 1.000,     -- Rear rotor reference
+        hoverBaseSig  = 10.80,     -- Symmetrical hover equilibrium base throttle
         ditherAcc     = { 0, 0, 0, 0 } -- 20 Hz Delta-Sigma fractional accumulator for 4 channels
     }
 
@@ -313,8 +315,8 @@ function Avionics.new(config)
     self.rollPID  = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.yawPID   = createPID(4.00, 0.25, 2.10, -4.5, 4.5) -- Pruva (Psi)
 
-    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (with Sable CoM offset & strong pitch damping)
-    self.msPitchPID = createPID(32.0, 1.80, 14.00, -10.0, 10.0, 4.0)
+    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Tuned for 10-Propeller configuration)
+    self.msPitchPID = createPID(15.0, 1.20, 18.00, -8.5, 8.5, 4.0)
     self.msRollPID  = createPID(5.50, 0.40, 2.80, -5.0, 5.0, 2.0)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
@@ -1678,18 +1680,18 @@ function Avionics:step(dt)
     local boostSignal = (not clutchCut and self.ap.baseThrottle >= 12) and 15 or 0
     local burnerSignal = mainThrottleSig
 
-    -- Compute Mothership / Gunship 8-Propeller Sable Lift Matrix (Lf=36.5, Lr=21.5, Delta-Sigma Modulation)
+    -- Compute Mothership / Gunship 10-Propeller Sable Lift Matrix (Lf=36.5, Lr=21.5, Delta-Sigma Modulation)
     local isMothershipOrGunship = (self.vehicleType == "MOTHERSHIP" or self.vehicleType == "GUNSHIP")
     local m = self.skyfireModel or {
-        mass          = 13706.0,
-        gravityForce  = 150766.0,
-        maxLiftForce  = 179071.2,
+        mass          = 14187.0,
+        gravityForce  = 141870.0,
+        maxLiftForce  = 223839.0,
         Lf            = 36.5,
         Lr            = 21.5,
         W             = 37.0,
-        gammaFront    = 0.785,
-        gammaRear     = 1.215,
-        hoverBaseSig  = 12.63,
+        gammaFront    = 0.884,
+        gammaRear     = 1.000,
+        hoverBaseSig  = 10.80,
         ditherAcc     = { 0, 0, 0, 0 }
     }
 
@@ -1723,8 +1725,8 @@ function Avionics:step(dt)
 
         -- Direct angular velocity damping: stops nose pitch rate (wx) cold
         if tel.wx and math.abs(tel.wx) > 0.005 then
-            local wxDamp = clamp(tel.wx * 4.5, -4.0, 4.0)
-            pitchTrim = clamp(pitchTrim - wxDamp, -10.0, 10.0)
+            local wxDamp = clamp(tel.wx * 7.5, -8.0, 8.0)
+            pitchTrim = clamp(pitchTrim - wxDamp, -10.5, 10.5)
         end
 
         local u_yaw = 0
@@ -1746,35 +1748,35 @@ function Avionics:step(dt)
         fwdSig = clutchCut and 0 or fwdBase
 
         local absPitchDeg = math.abs(math.deg(tel.pitch or 0))
-        if absPitchDeg > 6.0 and fwdSig > 0 then
-            local diveFactor = math.max(0.0, 1.0 - ((absPitchDeg - 6.0) / 8.0))
+        if absPitchDeg > 8.0 and fwdSig > 0 then
+            local diveFactor = math.max(0.0, 1.0 - ((absPitchDeg - 8.0) / 14.0))
             fwdSig = fwdSig * diveFactor
         end
-        if absPitchDeg > 12.0 then
+        if absPitchDeg > 20.0 then
             fwdSig = 0
             if (self.ap.mode == "CRUISE" or self.ap.mode == "LNAV") and self.ap.enabled then
                 self:setMode("HOVER", tel)
             end
-            -- Emergency pitch recovery: aggressively cut front power to force nose down
-            local emergencyPitch = ((absPitchDeg - 12.0) / 10.0) * 6.0
+            -- Emergency pitch recovery: progressive assist for severe upsets (> 20 deg)
+            local emergencyPitch = math.min(5.0, ((absPitchDeg - 20.0) / 10.0) * 5.0)
             if (tel.pitch or 0) > 0 then
-                pitchTrim = clamp(pitchTrim - emergencyPitch, -12.0, 12.0)
+                pitchTrim = clamp(pitchTrim - emergencyPitch, -10.5, 10.5)
             else
-                pitchTrim = clamp(pitchTrim + emergencyPitch, -12.0, 12.0)
+                pitchTrim = clamp(pitchTrim + emergencyPitch, -10.5, 10.5)
             end
         end
 
-        -- Base collective lift calculation (Hover center calibrated at 15.0 for rear)
+        -- Base collective lift calculation (Hover center calibrated at 10.8 for 10-propeller configuration)
         local baseCenter = (self.ap.altHold or (self.ap.mode ~= "MANUAL" and self.ap.enabled))
-            and math.max(self.ap.baseThrottle, m.hoverBaseSig or 15.0)
+            and math.max(self.ap.baseThrottle, m.hoverBaseSig or 10.8)
             or self.ap.baseThrottle
         local baseThrust = clamp(baseCenter + altCmd, 0.0, 15.0)
 
-        -- Front & Rear base power distribution based on true moment arm ratio
-        -- Lf = 36.5, Lr = 21.5, maxLiftFront = 88850, maxLiftRear = 90221.2
-        -- Static torque balance ratio: (90221.2 / 88850.0) * (21.5 / 36.5) = 0.5981
+        -- Front & Rear base power distribution based on moment arm and propeller count ratio
+        -- Lf = 36.5, Lr = 21.5, Front: 2 props/nacelle, Rear: 3 props/nacelle (1.5x rear lift)
+        -- Static torque balance ratio: (1.5) * (21.5 / 36.5) = 0.884
         local rearBase  = clamp(baseThrust, 0.0, 15.0)
-        local frontBase = clamp(baseThrust * (m.gammaFront or 0.5981), 0.0, 10.5)
+        local frontBase = clamp(baseThrust * (m.gammaFront or 0.884), 0.0, 15.0)
 
         -- 4-Channel Mixing Matrix
         -- G1: Front-Left (FL), G2: Rear-Left (RL), G3: Front-Right (FR), G4: Rear-Right (RR)
