@@ -309,7 +309,7 @@ function Avionics.new(config)
     }
 
     -- PID Controllers (Smooth proportional + derivative damping for equilibrium altitude hold)
-    self.altPID   = createPID(2.40, 0.65, 3.20, -6.5, 6.5) -- Dikey irtifa (Y)
+    self.altPID   = createPID(1.20, 0.20, 2.80, -3.0, 3.0, 1.5) -- Dikey irtifa (Y) - tuned to prevent vertical pumping
     self.hdgPID   = createPID(3.80, 0.10, 1.20, -6.0, 6.0)
     self.pitchPID = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
@@ -317,7 +317,7 @@ function Avionics.new(config)
 
     -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Tuned for 10-Propeller configuration)
     self.msPitchPID = createPID(15.0, 1.20, 18.00, -8.5, 8.5, 4.0)
-    self.msRollPID  = createPID(5.50, 0.40, 2.80, -5.0, 5.0, 2.0)
+    self.msRollPID  = createPID(2.80, 0.20, 3.80, -4.0, 4.0, 1.5) -- Softened roll gain with strong gyro rate damping
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
 
@@ -873,6 +873,8 @@ function Avionics:readTelemetry(dt)
             linAcc = { x = ax, y = ay, z = az, ax, ay, az }
         end
         local rates = safeCall(self.gimbal.getAngularRatesRad)
+                   or safeCall(self.gimbal.getAngularRates)
+                   or safeCall(self.gimbal.getAngularVelocity)
         local wx, wy, wz = 0, 0, 0
         if type(rates) == "table" then
             wx = tonumber(rates[1] or rates.x) or 0
@@ -883,6 +885,10 @@ function Avionics:readTelemetry(dt)
             if gMode == 4 or gMode == 5 then wx, wz = wz, wx end
             wx = wx * (self.gimbalPitchSign or 1)
             wz = wz * (self.gimbalRollSign or 1)
+        end
+        if (wx == 0 and wz == 0) and dt > 0 and self.prevPitch ~= nil and self.prevRoll ~= nil then
+            wx = clamp((pitch - self.prevPitch) / dt, -3.0, 3.0)
+            wz = clamp((roll - self.prevRoll) / dt, -3.0, 3.0)
         end
         angVel = { x = wx, y = wy, z = wz }
     end
@@ -1255,6 +1261,8 @@ function Avionics:setMode(modeName, currentTel)
     self.rollPID:reset()
     self.msPitchPID:reset()
     self.msRollPID:reset()
+    self.prevPitch = nil
+    self.prevRoll  = nil
 
     -- Preserve learned equilibrium integral when switching between autopilot modes; use gentle 1.0 (burner=9) from MANUAL
     local bumplessInt = wasAltHold and savedIntegral or clamp((self.lastBurnerSignal and self.lastBurnerSignal > 0) and (self.lastBurnerSignal - 8.0) or 1.0, 0.0, 3.0)
@@ -1697,7 +1705,11 @@ function Avionics:step(dt)
 
     local altCmd = 0
     if self.ap.altHold or self.ap.mode == "HOVER" or self.ap.mode == "AUTOLAND" then
-        altCmd = self.altPID:compute(self.ap.targetAlt, tel.altitude, dt)
+        local pidAlt = self.altPID:compute(self.ap.targetAlt, tel.altitude, dt)
+        -- Direct vertical velocity damping: oppose rapid climb/sink rates (vy) to eliminate pumping
+        local actualVsi = tel.vSpeed or 0
+        local vsiDamp = clamp(actualVsi * 1.25, -2.5, 2.5)
+        altCmd = clamp(pidAlt - vsiDamp, -3.5, 3.5)
     end
 
     local pitchTrim = 0
@@ -1712,6 +1724,8 @@ function Avionics:step(dt)
     if isZeroThrottleManual then
         self.msPitchPID:reset()
         self.msRollPID:reset()
+        self.prevPitch = nil
+        self.prevRoll  = nil
         self.lastMotorSignals = { 0, 0, 0, 0 }
         self.lastLiftForcePN = 0
     else
@@ -1721,12 +1735,19 @@ function Avionics:step(dt)
         local pidRoll  = self.msRollPID:compute(targetRoll, tel.roll, dt)
 
         pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -8.5, 8.5)
-        rollTrim  = clamp((self.rollBias  or 0.0) + pidRoll, -5.0, 5.0)
+        rollTrim  = clamp((self.rollBias  or 0.0) + pidRoll, -4.0, 4.0)
 
         -- Direct angular velocity damping: stops nose pitch rate (wx) cold
         if tel.wx and math.abs(tel.wx) > 0.005 then
             local wxDamp = clamp(tel.wx * 7.5, -8.0, 8.0)
             pitchTrim = clamp(pitchTrim - wxDamp, -10.5, 10.5)
+        end
+
+        -- Direct angular velocity damping: stops lateral roll rate (wz) cold to eliminate wobbling
+        local wzRate = tel.wz or 0
+        if math.abs(wzRate) > 0.005 then
+            local wzDamp = clamp(wzRate * 5.0, -3.5, 3.5)
+            rollTrim = clamp(rollTrim - wzDamp, -4.5, 4.5)
         end
 
         local u_yaw = 0
@@ -1803,10 +1824,10 @@ function Avionics:step(dt)
             return clamp(l, lo, hi), clamp(r, lo, hi)
         end
 
-        local minLift = (self.ap.altHold or baseThrust >= 5) and 1.5 or 0.0
+        local minLift = (self.ap.altHold or baseThrust >= 5) and 2.0 or 0.0
         local maxLift = 15.0
-        rawFloat[1], rawFloat[3] = desaturatePair(rawFloat[1], rawFloat[3], 0.0, maxLift)
-        rawFloat[2], rawFloat[4] = desaturatePair(rawFloat[2], rawFloat[4], 0.0, maxLift)
+        rawFloat[1], rawFloat[3] = desaturatePair(rawFloat[1], rawFloat[3], minLift, maxLift)
+        rawFloat[2], rawFloat[4] = desaturatePair(rawFloat[2], rawFloat[4], minLift, maxLift)
 
         -- 20 Hz Delta-Sigma fractional pulse modulation (PWM Dithering)
         local sig = {}

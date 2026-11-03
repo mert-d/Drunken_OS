@@ -55,6 +55,12 @@ local function run(context)
 
     local running = true
     local lastTel = fc:readTelemetry(0.05)
+    -- In-Flight Recovery Guard: if FCC boots up while ship is airborne (> 195m), auto-catch in HOVER
+    if lastTel and lastTel.altitude and lastTel.altitude > 195 and not lastTel.weightOnWheels then
+        fc:setMode("HOVER", lastTel)
+        fc.ap.parkingBrake = false
+        fc.ap.targetAlt = lastTel.altitude
+    end
     local tick = 0
     local lastCmdSender = nil
     local lastCmdName = "NONE"

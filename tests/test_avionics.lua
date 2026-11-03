@@ -806,6 +806,8 @@ local function runTests()
 
     testFC.msRollPID:reset()
     testFC.msPitchPID:reset()
+    testFC.prevRoll = nil
+    testFC.prevPitch = nil
     testFC.gimbal = {
         getAnglesRad = function() return { math.rad(-10.0), math.rad(-15.2) } end -- Gimbal xAngle -10 deg (nose up) & zAngle -15.2 deg (rolled left)
     }
@@ -818,6 +820,8 @@ local function runTests()
     -- 5. Anti-Dive Envelope Protection: severe nose-down tilt (> 20 deg) forces rear thruster throttle to 0 and raises pitchWarning
     testFC.msRollPID:reset()
     testFC.msPitchPID:reset()
+    testFC.prevRoll = nil
+    testFC.prevPitch = nil
     testFC.ap.mode = "CRUISE"
     testFC.ap.baseThrottle = 12
     testFC.ap.parkingBrake = false
@@ -1153,6 +1157,46 @@ local function runTests()
            "Expected rate damping to command higher rear RPM to oppose nose pitch-up rate")
 
     print("  PASS: Test 19: 10-Propeller Dynamic Balance, Anti-Oscillation & High-Rate Pitch Damping")
+
+    -- Test 20: Roll Rate Damping (wz), Vertical Velocity Damping (vy) & Anti-Stall Rotor Floor
+    local stabFC = Avionics.new({ callsign = "STAB-20", profile = "MOTHERSHIP", useGPS = false })
+    stabFC:setMode("HOVER", { altitude = 150.0, heading = 0.0 })
+
+    -- 1. Direct Roll Rate Damping: +1.2 rad/s (+68 deg/s roll rate right) creates strong negative rollTrim (right motors up)
+    stabFC.altSensor = { getHeight = function() return 150.0 end, getVerticalSpeed = function() return 0.0 end }
+    stabFC.gimbal = {
+        getAnglesRad = function() return { 0.0, 0.0 } end,
+        getAngularVelocity = function() return { 0.0, 0.0, 1.2 } end -- +1.2 rad/s roll rate
+    }
+    stabFC:step(0.05)
+    -- Right motors (FR, RR) must spin faster than Left motors (FL, RL) to oppose right roll rate
+    assert(stabFC.lastMothershipState.frRpm > stabFC.lastMothershipState.flRpm,
+           "Expected Right motors > Left motors to arrest rightward roll rate")
+    assert(stabFC.lastMothershipState.rrRpm > stabFC.lastMothershipState.rlRpm,
+           "Expected Right rear motor > Left rear motor to arrest rightward roll rate")
+
+    -- 2. Direct Vertical Velocity Damping (vy): rapid climb (+3.0 m/s) when near target throttles down to prevent overshoot
+    stabFC.altSensor = { getHeight = function() return 148.0 end, getVerticalSpeed = function() return 3.0 end } -- 2m below, climbing at 3 m/s
+    stabFC.gimbal = {
+        getAnglesRad = function() return { 0.0, 0.0 } end,
+        getAngularVelocity = function() return { 0.0, 0.0, 0.0 } end
+    }
+    stabFC:step(0.05)
+    -- At hover base 10.8, with +3 m/s climb rate, base thrust must be reduced below hover base to arrest climb
+    assert(stabFC.lastMothershipState.rl <= 11,
+           "Expected vertical velocity damping to throttle down rear motors during rapid climb")
+
+    -- 3. Anti-Stall Rotor Floor: during extreme roll or pitch, rotors never drop to 0 RPM in hover
+    stabFC.gimbal = {
+        getAnglesRad = function() return { math.rad(15.0), math.rad(15.0) } end,
+        getAngularVelocity = function() return { 0.0, 0.0, 0.0 } end
+    }
+    stabFC:step(0.05)
+    assert(stabFC.lastMothershipState.fl > 0 and stabFC.lastMothershipState.fr > 0 and
+           stabFC.lastMothershipState.rl > 0 and stabFC.lastMothershipState.rr > 0,
+           "Expected anti-stall rotor floor to prevent any lift rotor stalling to 0 in flight")
+
+    print("  PASS: Test 20: Roll Rate Damping (wz), Vertical Velocity Damping (vy) & Anti-Stall Rotor Floor")
 
     -- Restore globals
     _G.peripheral = origPeripheral
