@@ -825,8 +825,8 @@ local function runTests()
            "Expected right lift RPM (FR) > left lift RPM (FL) when rolled right (+15.2 deg)")
     assert(testFC.lastMothershipState.flRpm > testFC.lastMothershipState.rlRpm and testFC.lastMothershipState.frRpm > testFC.lastMothershipState.rrRpm,
            "Expected front lift RPM (FL/FR) > rear lift RPM (RL/RR) when nose pitched down (+10.0 deg gimbal xAngle)")
-    assert(testFC.lastMothershipState.frRpm <= 256 and testFC.lastMothershipState.rlRpm >= 60,
-           "Expected bounded hover lift RPM within 60..256 RPM band")
+    assert(testFC.lastMothershipState.frRpm <= 256 and testFC.lastMothershipState.rlRpm >= 50,
+           "Expected bounded hover lift RPM within 50..256 RPM band")
 
     testFC.msRollPID:reset()
     testFC.msPitchPID:reset()
@@ -855,7 +855,7 @@ local function runTests()
     local diveTel = testFC:step(0.05) or testFC:readTelemetry(0.05)
     assert(diveTel.pitchWarning == true, "Expected pitchWarning active when pitched down > 14 deg")
     assert(testFC.lastMothershipState.rearC == 0, "Expected rear propulsion to be completely cut to 0 RPM in severe dive (> 22 deg)")
-    assert(testFC.lastMothershipState.flRpm >= 180 and testFC.lastMothershipState.flRpm >= testFC.lastMothershipState.rlRpm + 80,
+    assert(testFC.lastMothershipState.flRpm >= 140 and testFC.lastMothershipState.flRpm >= testFC.lastMothershipState.rlRpm + 80,
            "Expected maximum emergency lift boost on front rotors in severe dive")
 
     -- 6. Static Pitch Bias (CoM Weight Offset Trim)
@@ -1148,7 +1148,7 @@ local function runTests()
     mockState.roll = 0.0
     local propFC = Avionics.new({ callsign = "SKYFIRE-12P", profile = "MOTHERSHIP", useGPS = false })
     assert(math.abs(propFC.skyfireModel.gammaFront - 0.762) < 0.01, "Expected gammaFront to be 0.762 for 12-propeller model")
-    assert(math.abs(propFC.skyfireModel.hoverBaseSig - 8.90) < 0.1, "Expected hoverBaseSig to be 8.90")
+    assert(math.abs(propFC.skyfireModel.hoverBaseSig - 10.80) < 0.1, "Expected hoverBaseSig to be 10.80")
     assert(propFC.skyfireModel.maxLiftForce == 268606.0, "Expected maxLiftForce 268606 pN")
 
     -- 1. Static Equilibrium in HOVER: both front and rear must have symmetric control headroom
@@ -1163,8 +1163,8 @@ local function runTests()
     }
     propFC:step(0.05)
     local msHover = propFC.lastMothershipState
-    assert(msHover.fl >= 6 and msHover.fl <= 8, "Expected front hover signal around 6-8, got: " .. tostring(msHover.fl))
-    assert(msHover.rl >= 8 and msHover.rl <= 10, "Expected rear hover signal around 8-10, got: " .. tostring(msHover.rl))
+    assert(msHover.fl >= 7 and msHover.fl <= 9, "Expected front hover signal around 7-9, got: " .. tostring(msHover.fl))
+    assert(msHover.rl >= 10 and msHover.rl <= 12, "Expected rear hover signal around 10-12, got: " .. tostring(msHover.rl))
     -- Both must have > 3.0 signal headroom to 15 (256 RPM)
     assert(msHover.fl < 15 and msHover.rl < 15, "Expected hover signals below saturation ceiling 15")
 

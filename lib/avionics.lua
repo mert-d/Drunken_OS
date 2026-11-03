@@ -304,20 +304,20 @@ function Avionics.new(config)
         W             = 37.0,      -- Lateral turbine arm (blocks)
         gammaFront    = 0.762,     -- Static moment balance: (8 props * 16.0) / (4 props * 42.0) = 128 / 168 = 0.762
         gammaRear     = 1.000,     -- Rear rotor reference
-        hoverBaseSig  = 8.90,      -- Symmetrical hover equilibrium base throttle (12-propeller)
+        hoverBaseSig  = 10.80,     -- Symmetrical hover equilibrium base throttle (12-propeller calibrated)
         ditherAcc     = { 0, 0, 0, 0 } -- 20 Hz Delta-Sigma fractional accumulator for 4 channels
     }
 
     -- PID Controllers (Smooth proportional + derivative damping for equilibrium altitude hold)
-    self.altPID   = createPID(1.20, 0.20, 2.80, -3.0, 3.0, 1.5) -- Dikey irtifa (Y) - tuned to prevent vertical pumping
+    self.altPID   = createPID(0.90, 0.10, 2.20, -2.5, 2.5, 1.0) -- Dikey irtifa (Y) - tuned to prevent vertical pumping
     self.hdgPID   = createPID(3.80, 0.10, 1.20, -6.0, 6.0)
     self.pitchPID = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.yawPID   = createPID(4.00, 0.25, 2.10, -4.5, 4.5) -- Pruva (Psi)
 
-    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Tuned for 12-Propeller configuration)
-    self.msPitchPID = createPID(16.0, 1.20, 0.00, -7.5, 7.5, 3.0)
-    self.msRollPID  = createPID(3.50, 0.20, 0.00, -3.5, 3.5, 1.2) -- Softened roll gain with direct gyro rate damping
+    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Calibrated critically damped for 12-Propeller configuration)
+    self.msPitchPID = createPID(10.0, 0.80, 6.00, -3.5, 3.5, 1.5)
+    self.msRollPID  = createPID(3.50, 0.20, 3.00, -3.0, 3.0, 0.8) -- Softened roll gain with direct gyro rate damping
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
 
@@ -1288,8 +1288,8 @@ function Avionics:setMode(modeName, currentTel)
     self.prevPitch = nil
     self.prevRoll  = nil
 
-    -- Preserve learned equilibrium integral when switching between autopilot modes; use gentle 1.0 (burner=9) from MANUAL
-    local bumplessInt = wasAltHold and savedIntegral or clamp((self.lastBurnerSignal and self.lastBurnerSignal > 0) and (self.lastBurnerSignal - 8.0) or 1.0, 0.0, 3.0)
+    -- Preserve learned equilibrium integral when switching between autopilot modes; default 0.0 from MANUAL to avoid climb surge
+    local bumplessInt = wasAltHold and savedIntegral or clamp((self.lastBurnerSignal and self.lastBurnerSignal > 0) and (self.lastBurnerSignal - (self.skyfireModel.hoverBaseSig or 10.8)) or 0.0, -1.0, 1.5)
 
     if modeName ~= "ANCHOR" then self.anchorPos = nil end
     if modeName == "MANUAL" then
@@ -1723,7 +1723,7 @@ function Avionics:step(dt)
         W             = 37.0,
         gammaFront    = 0.762,
         gammaRear     = 1.000,
-        hoverBaseSig  = 8.90,
+        hoverBaseSig  = 10.80,
         ditherAcc     = { 0, 0, 0, 0 }
     }
 
@@ -1732,8 +1732,8 @@ function Avionics:step(dt)
         local pidAlt = self.altPID:compute(self.ap.targetAlt, tel.altitude, dt)
         -- Direct vertical velocity damping: oppose rapid climb/sink rates (vy) to eliminate pumping
         local actualVsi = tel.vSpeed or 0
-        local vsiDamp = clamp(actualVsi * 1.25, -2.5, 2.5)
-        altCmd = clamp(pidAlt - vsiDamp, -5.0, 2.5)
+        local vsiDamp = clamp(actualVsi * 1.25, -3.0, 3.0)
+        altCmd = clamp(pidAlt - vsiDamp, -4.0, 4.5)
     end
 
     local pitchTrim = 0
@@ -1758,38 +1758,41 @@ function Avionics:step(dt)
         local pidPitch = self.msPitchPID:compute(targetPitch, tel.pitch, dt)
         local pidRoll  = self.msRollPID:compute(targetRoll, tel.roll, dt)
 
-        pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -6.5, 6.5)
-        rollTrim  = clamp((self.rollBias  or 0.0) + pidRoll, -3.5, 3.5)
+        pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -3.2, 3.2)
+        rollTrim  = clamp((self.rollBias  or 0.0) + pidRoll, -2.8, 2.8)
 
         -- Direct angular velocity damping: stops nose pitch rate (wx) cold
         if tel.wx and math.abs(tel.wx) > 0.005 then
-            local wxDamp = clamp(tel.wx * 3.5, -4.0, 4.0)
-            pitchTrim = clamp(pitchTrim - wxDamp, -7.5, 7.5)
+            local wxDamp = clamp(tel.wx * 4.0, -2.0, 2.0)
+            pitchTrim = clamp(pitchTrim - wxDamp, -3.5, 3.5)
         end
 
         -- Direct angular velocity damping: stops lateral roll rate (wz) cold to eliminate wobbling
         local wzRate = tel.wz or 0
         if math.abs(wzRate) > 0.005 then
-            local wzDamp = clamp(wzRate * 3.0, -2.5, 2.5)
-            rollTrim = clamp(rollTrim - wzDamp, -4.0, 4.0)
+            local wzDamp = clamp(wzRate * 3.5, -1.8, 1.8)
+            rollTrim = clamp(rollTrim - wzDamp, -3.0, 3.0)
         end
 
         -- Active horizontal drift braking in HOVER mode when pilot controls are centered
         if self.ap.mode == "HOVER" and (self.ap.baseThrottle or 0) == 0 then
-            local hdg = tel.heading or 0
-            local cosH = math.cos(hdg)
-            local sinH = math.sin(hdg)
-            local vx = (tel.velocity and tel.velocity.x) or 0
-            local vz = (tel.velocity and tel.velocity.z) or 0
-            local fwdSpeed = vx * (-sinH) + vz * cosH
-            local latSpeed = -(vx * cosH + vz * sinH)
-            if math.abs(fwdSpeed) > 0.05 then
-                local brakePitch = clamp(fwdSpeed * 0.40, -1.5, 1.5)
-                pitchTrim = clamp(pitchTrim + brakePitch, -7.5, 7.5)
-            end
-            if math.abs(latSpeed) > 0.05 then
-                local brakeRoll = clamp(-latSpeed * 0.35, -1.0, 1.0)
-                rollTrim = clamp(rollTrim + brakeRoll, -3.5, 3.5)
+            -- Only brake when horizon is nearly level (< 4.0 deg) so attitude control has absolute priority
+            if math.abs(math.deg(tel.pitch or 0)) < 4.0 and math.abs(math.deg(tel.roll or 0)) < 4.0 then
+                local hdg = tel.heading or 0
+                local cosH = math.cos(hdg)
+                local sinH = math.sin(hdg)
+                local vx = (tel.velocity and tel.velocity.x) or 0
+                local vz = (tel.velocity and tel.velocity.z) or 0
+                local fwdSpeed = vx * (-sinH) + vz * cosH
+                local latSpeed = -(vx * cosH + vz * sinH)
+                if math.abs(fwdSpeed) > 0.05 then
+                    local brakePitch = clamp(fwdSpeed * 0.30, -0.8, 0.8)
+                    pitchTrim = clamp(pitchTrim + brakePitch, -3.5, 3.5)
+                end
+                if math.abs(latSpeed) > 0.05 then
+                    local brakeRoll = clamp(-latSpeed * 0.25, -0.6, 0.6)
+                    rollTrim = clamp(rollTrim + brakeRoll, -3.0, 3.0)
+                end
             end
         end
 
@@ -1821,35 +1824,39 @@ function Avionics:step(dt)
             if (self.ap.mode == "CRUISE" or self.ap.mode == "LNAV") and self.ap.enabled then
                 self:setMode("HOVER", tel)
             end
-            -- Emergency pitch recovery: progressive assist for severe upsets (> 20 deg)
-            local emergencyPitch = math.min(5.0, ((absPitchDeg - 20.0) / 10.0) * 5.0)
-            if (tel.pitch or 0) > 0 then
-                pitchTrim = clamp(pitchTrim - emergencyPitch, -10.5, 10.5)
-            else
-                pitchTrim = clamp(pitchTrim + emergencyPitch, -10.5, 10.5)
+            -- Only apply emergency assist if ship is NOT already rotating back towards level horizon!
+            local wxDeg = math.deg(tel.wx or 0)
+            local isRecovering = ((tel.pitch or 0) > 0 and wxDeg < -5.0) or ((tel.pitch or 0) < 0 and wxDeg > 5.0)
+            if not isRecovering then
+                local emergencyPitch = math.min(2.0, ((absPitchDeg - 20.0) / 10.0) * 2.0)
+                if (tel.pitch or 0) > 0 then
+                    pitchTrim = clamp(pitchTrim - emergencyPitch, -4.8, 4.8)
+                else
+                    pitchTrim = clamp(pitchTrim + emergencyPitch, -4.8, 4.8)
+                end
             end
         end
 
-        -- Base collective lift calculation (Hover center calibrated at 10.8 for 10-propeller configuration)
+        -- Base collective lift calculation (Hover center calibrated at 10.80 for 12-propeller configuration)
         local baseCenter = (self.ap.altHold or (self.ap.mode ~= "MANUAL" and self.ap.enabled))
-            and math.max(self.ap.baseThrottle, m.hoverBaseSig or 10.8)
+            and math.max(self.ap.baseThrottle, m.hoverBaseSig or 10.80)
             or self.ap.baseThrottle
         local baseThrust = clamp(baseCenter + altCmd, 0.0, 15.0)
 
         -- Front & Rear base power distribution based on moment arm and propeller count ratio
-        -- Lf = 36.5, Lr = 21.5, Front: 2 props/nacelle, Rear: 3 props/nacelle (1.5x rear lift)
-        -- Static torque balance ratio: (1.5) * (21.5 / 36.5) = 0.884
+        -- Lf = 42.0, Lr = 16.0, Front: 2 props/nacelle (4 total), Rear: 4 props/nacelle (8 total)
+        -- Static torque balance ratio: (8 * 16.0) / (4 * 42.0) = 128 / 168 = 0.762
         local rearBase  = clamp(baseThrust, 0.0, 15.0)
-        local frontBase = clamp(baseThrust * (m.gammaFront or 0.884), 0.0, 15.0)
+        local frontBase = clamp(baseThrust * (m.gammaFront or 0.762), 0.0, 15.0)
 
         -- 4-Channel Mixing Matrix
         -- G1: Front-Left (FL), G2: Rear-Left (RL), G3: Front-Right (FR), G4: Rear-Right (RR)
         -- pitchTrim < 0 (nose pitched up): front throttles DOWN, rear throttles UP
         local rawFloat = {
-            frontBase + pitchTrim + rollTrim - (u_yaw * 0.5), -- G1: FL
-            rearBase  - pitchTrim + rollTrim - (u_yaw * 0.5), -- G2: RL
-            frontBase + pitchTrim - rollTrim + (u_yaw * 0.5), -- G3: FR
-            rearBase  - pitchTrim - rollTrim + (u_yaw * 0.5)  -- G4: RR
+            frontBase + pitchTrim + rollTrim, -- G1: FL
+            rearBase  - pitchTrim + rollTrim, -- G2: RL
+            frontBase + pitchTrim - rollTrim, -- G3: FR
+            rearBase  - pitchTrim - rollTrim  -- G4: RR
         }
 
         -- Multirotor mixer desaturation: preserve roll torque when collective saturates
