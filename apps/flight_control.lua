@@ -81,7 +81,8 @@ local function renderTacticalDisplay(mon, tel, ap)
     local px = tel.pos and math.floor(tel.pos.x + 0.5) or 0
     local py = tel.pos and math.floor(tel.pos.y + 0.5) or 0
     local pz = tel.pos and math.floor(tel.pos.z + 0.5) or 0
-    mon.write(string.format("POS : X:%d Y:%d Z:%d", px, py, pz))
+    local srcTag = tel.posSource or (tel.gpsLocked and "GPS" or "INS")
+    mon.write(string.format("POS : X:%d Y:%d Z:%d [%s]", px, py, pz, srcTag))
 
     -- Flight Dynamics
     mon.setCursorPos(2, 5)
@@ -791,7 +792,9 @@ local function run(context)
         local rName = r and r.name or "ROTA_YOK"
         local rLoop = (r and r.loop) and "[DONGU:ACIK]" or "[DONGU:KAPALI]"
         local rEnd  = r and r.endAction or "HOVER"
-        drawTerm.write(string.format("=== FMS ROTA: %s %s [SON:%s] ===", rName:sub(1, 14), rLoop, rEnd))
+        local srcTag = lastTel.posSource or (lastTel.gpsLocked and "GPS" or "INS")
+        local posStr = string.format("POS:(%d,%d)[%s]", math.floor(lastTel.pos.x + 0.5), math.floor(lastTel.pos.z + 0.5), srcTag)
+        drawTerm.write(string.format("=== FMS: %s %s [%s] %s ===", rName:sub(1, 10), rLoop, rEnd, posStr))
 
         -- Table header
         drawTerm.setCursorPos(2, 3)
@@ -1086,6 +1089,16 @@ local function run(context)
                 fc.ap.ilsDev.gs or 0,
                 fc.ap.ilsDev.dist or 0
             ))
+        elseif lastTel.navTarget and lastTel.navTarget.active then
+            drawTerm.setBackgroundColor(theme.bg)
+            drawTerm.setTextColor(isColor and colors.yellow or colors.white)
+            local nt = lastTel.navTarget
+            drawTerm.write(string.format(
+                "MASA HEDEF: %s (%4.0fm) BRG:%03.0f°",
+                tostring(nt.name or "HEDEF"):sub(1, 14),
+                nt.distance or 0,
+                math.deg(nt.bearing or 0) % 360
+            ):sub(1, w - 2))
         elseif fc.ap.homeBase then
             drawTerm.setBackgroundColor(theme.bg)
             drawTerm.setTextColor(colors.lightGray)
@@ -1127,14 +1140,16 @@ local function run(context)
             local clutchCut = (fc.ap.mode == "HOVER") or fc.ap.parkingBrake or (fc.ap.baseThrottle <= 0)
             drawTerm.setBackgroundColor(theme.bg)
             drawTerm.setTextColor(lastTel.weightOnWheels and (theme.ok or colors.lime) or colors.lightGray)
+            local srcTag = lastTel.posSource or (lastTel.gpsLocked and "GPS" or "INS")
             drawTerm.write(string.format(
-                "DMN:%+3.0fdg STR:%+4.2f | BRK:%s | WOW:%s | POS:(%d,%d)",
+                "DMN:%+3.0fdg STR:%+4.2f | BRK:%s | WOW:%s | POS:(%d,%d)[%s]",
                 lastTel.rudderDeflectionDeg or 0,
                 lastTel.steerCmd or 0,
                 fc.ap.parkingBrake and "PARK" or "OFF ",
                 lastTel.weightOnWheels and "EVET" or "HAYIR",
                 math.floor(lastTel.pos.x),
-                math.floor(lastTel.pos.z)
+                math.floor(lastTel.pos.z),
+                srcTag
             ):sub(1, w - 2))
         end
 

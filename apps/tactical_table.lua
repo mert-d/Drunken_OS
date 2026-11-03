@@ -210,6 +210,22 @@ local function drawRadar(cx, cy, radiusX, radiusY, maxDist)
         end
     end
 
+    -- Navigation Table Target Beacon
+    if lastTel.navTarget and lastTel.navTarget.active and lastTel.navTarget.distance and lastTel.navTarget.distance > 0 then
+        local dist = lastTel.navTarget.distance
+        if dist < maxDist * 1.5 then
+            local scale = math.min(1.0, dist / maxDist)
+            local brg = lastTel.navTarget.bearing or 0
+            local tx = math.floor(cx + math.sin(brg) * (scale * rx) + 0.5)
+            local ty = math.floor(cy - math.cos(brg) * (scale * ry) + 0.5)
+            if tx >= 1 and tx <= w and ty >= 2 and ty <= h - 2 then
+                termObj.setCursorPos(tx, ty)
+                termObj.setTextColor(isColor and colors.yellow or colors.white)
+                termObj.write("◈")
+            end
+        end
+    end
+
     -- Ship Symbol in Center with Heading Needle
     local hdgDeg = math.deg(lastTel.heading or 0) % 360
     local sym = "^"
@@ -346,6 +362,19 @@ local function renderTable()
             termObj.setCursorPos(rx, 16)
             termObj.setTextColor(colors.lightGray)
             termObj.write(string.format("XTK: %+5.1fm", lastTel.navRoute.xtk or 0))
+        elseif lastTel.navTarget and lastTel.navTarget.active then
+            termObj.setCursorPos(rx, 13)
+            termObj.setTextColor(isColor and colors.yellow or colors.white)
+            termObj.write("--- MASA HEDEF ---")
+            termObj.setCursorPos(rx, 14)
+            termObj.setTextColor(isColor and colors.lime or colors.white)
+            termObj.write(string.format("TGT: %s", tostring(lastTel.navTarget.name or "HEDEF"):sub(1, 12)))
+            termObj.setCursorPos(rx, 15)
+            termObj.setTextColor(colors.white)
+            termObj.write(string.format("DST: %4.0fm", lastTel.navTarget.distance or 0))
+            termObj.setCursorPos(rx, 16)
+            termObj.setTextColor(colors.lightGray)
+            termObj.write(string.format("BRG: %03.0f°", math.deg(lastTel.navTarget.bearing or 0) % 360))
         end
     end
 
@@ -356,8 +385,9 @@ local function renderTable()
         termObj.write(">> " .. tostring(toastNotice) .. " <<")
     else
         termObj.setTextColor(isColor and colors.gray or colors.white)
-        termObj.write(string.format("KONUM: X:%d Y:%d Z:%d | PUSULA: %03.0f°",
-            math.floor(lastTel.pos.x or 0), math.floor(lastTel.pos.y or 0), math.floor(lastTel.pos.z or 0), hdgDeg
+        local srcTag = lastTel.posSource or (lastTel.gpsLocked and "GPS" or "INS")
+        termObj.write(string.format("KONUM: X:%d Y:%d Z:%d [%s] | PUSULA: %03.0f°",
+            math.floor(lastTel.pos.x or 0), math.floor(lastTel.pos.y or 0), math.floor(lastTel.pos.z or 0), srcTag, hdgDeg
         ))
     end
 

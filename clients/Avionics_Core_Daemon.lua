@@ -347,6 +347,8 @@ local function run(context)
                 broadcastState()
             end
 
+
+
             -- Broadcast External ADS-B Telemetry (1 Hz) to Ground Radar Stations
             if tick % 20 == 0 and rednet and rednet.isOpen and rednet.isOpen() then
                 pcall(rednet.broadcast, {

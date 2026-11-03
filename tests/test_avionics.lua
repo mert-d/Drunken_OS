@@ -1059,6 +1059,61 @@ local function runTests()
     _G.fs = origFs2
     print("  PASS: Test 17: Autonomous Multi-Waypoint Navigation, Cross-Track Error (XTK) & Precision Docking")
 
+    -- -------------------------------------------------------------------------
+    -- Test 18: Multi-Tier Hybrid Navigation Sensor Fusion (SubLevel & NavTable)
+    -- -------------------------------------------------------------------------
+    -- 1. CC:Sable SubLevel Position Test:
+    local origSublevel = _G.sublevel
+    _G.sublevel = {
+        getLogicalPose = function()
+            return {
+                position = { x = 1116.70, y = 184.66, z = -242.80 },
+                rotationPoint = { x = 0, y = 0, z = 0 }
+            }
+        end
+    }
+    local fcSublevel = Avionics.new({ callsign = "SBL-TEST", profile = "MOTHERSHIP", useGPS = false })
+    local telSbl = fcSublevel:step(0.05) or fcSublevel:readTelemetry(0.05)
+    assert(telSbl.posSource == "SUBLEVEL", "Expected posSource to be SUBLEVEL")
+    assert(math.abs(telSbl.pos.x - 1116.70) < 0.01, "Expected SubLevel X to match 1116.70")
+    assert(math.abs(telSbl.pos.z - (-242.80)) < 0.01, "Expected SubLevel Z to match -242.80")
+
+    -- 2. Advanced Navigation Table Position & Target Test:
+    _G.sublevel = nil
+    local mockAdvNav = {
+        getTablePosition = function()
+            return { x = 1117.20, y = 193.72, z = -271.81 }
+        end,
+        hasTarget = function() return true end,
+        getTargetLabel = function() return "BASE_LODESTONE" end,
+        getTargetDistance = function() return 28.5 end,
+        getCurrentAngle = function() return 45.0 end,
+        getVerticalOffsetToTarget = function() return -9.0 end,
+        getTargetPosition = function() return { x = 1116.70, y = 184.66, z = -242.80 } end
+    }
+    local origFind = _G.peripheral.find
+    _G.peripheral.find = function(pType)
+        if pType == "navigation_table" then
+            return mockAdvNav
+        elseif pType == "altitude_sensor" then
+            return { getHeight = function() return 185 end, getVerticalSpeed = function() return 0 end }
+        else
+            return origFind(pType)
+        end
+    end
+
+    local fcNavTab = Avionics.new({ callsign = "NT-TEST", profile = "MOTHERSHIP", useGPS = false })
+    local telNavTab = fcNavTab:step(0.05) or fcNavTab:readTelemetry(0.05)
+    _G.peripheral.find = origFind
+    assert(telNavTab.posSource == "NAV_TABLE", "Expected posSource to be NAV_TABLE, got: " .. tostring(telNavTab.posSource))
+    assert(math.abs(telNavTab.pos.x - 1117.20) < 0.01, "Expected NavTable X to match 1117.20")
+    assert(telNavTab.navTarget ~= nil and telNavTab.navTarget.active == true, "Expected active navTarget")
+    assert(telNavTab.navTarget.name == "BASE_LODESTONE", "Expected navTarget name BASE_LODESTONE")
+    assert(math.abs(telNavTab.navTarget.distance - 28.5) < 0.01, "Expected distance 28.5m")
+
+    _G.sublevel = origSublevel
+    print("  PASS: Test 18: Multi-Tier Hybrid Navigation Sensor Fusion (CC:Sable SubLevel & Advanced Navigation Table)")
+
     -- Restore globals
     _G.peripheral = origPeripheral
     _G.parallel   = origParallel

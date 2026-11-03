@@ -898,23 +898,34 @@ function Avionics:readTelemetry(dt)
         end
 
         local hasTgt = safeCall(self.nav.hasTarget)
+        if hasTgt == nil and self.nav.getTarget then
+            local tgtTable = safeCall(self.nav.getTarget)
+            if type(tgtTable) == "table" and tgtTable.hasTarget == true then
+                hasTgt = true
+            end
+        end
         if hasTgt == true then
-            local tName = safeCall(self.nav.getTargetName) or safeCall(self.nav.getTargetDisplayName) or "WAYPOINT"
+            local tName = safeCall(self.nav.getTargetName) or safeCall(self.nav.getTargetDisplayName) or safeCall(self.nav.getTargetLabel) or "WAYPOINT"
             local brgRad = tonumber(safeCall(self.nav.getBearingRad))
             if brgRad == nil and self.nav.getBearing then
                 local bDeg = tonumber(safeCall(self.nav.getBearing))
                 if bDeg then brgRad = math.rad(bDeg) end
+            elseif brgRad == nil and self.nav.getCurrentAngle then
+                local aDeg = tonumber(safeCall(self.nav.getCurrentAngle))
+                if aDeg then brgRad = math.rad(aDeg) end
             end
-            local dist = tonumber(safeCall(self.nav.getDistanceToTarget))
+            local dist = tonumber(safeCall(self.nav.getDistanceToTarget)) or tonumber(safeCall(self.nav.getTargetDistance))
             local vOff = tonumber(safeCall(self.nav.getVerticalOffsetToTarget))
             local closure = tonumber(safeCall(self.nav.getClosureRate))
+            local tPos = safeCall(self.nav.getTargetPosition) or safeCall(self.nav.getTargetPos)
             navTarget = {
                 active   = true,
                 name     = tostring(tName),
                 bearing  = brgRad or 0,
-                distance = dist or 0,
+                distance = (dist and dist >= 0) and dist or 0,
                 vOffset  = vOff or 0,
-                closure  = closure or 0
+                closure  = closure or 0,
+                pos      = tPos
             }
         end
     end
@@ -962,12 +973,40 @@ function Avionics:readTelemetry(dt)
         end
     end
 
-    -- Update Position (INS Dead-Reckoning every tick + GPS sync when available)
-    self.pos.x = self.pos.x + vel.x * dt
-    self.pos.y = alt
-    self.pos.z = self.pos.z + vel.z * dt
+    -- Update Position (Multi-Tier Navigation Sensor Fusion)
+    -- Tier 1: CC:Sable SubLevel Physics Pose (Absolute Contraption Origin, 20Hz Real-Time)
+    -- Tier 2: Navigation Table (Advanced Navigation Table or Standard Nav Table)
+    -- Tier 3: GPS Constellation (Trilateration fallback if in open airspace)
+    -- Tier 4: INS Dead-Reckoning (Internal speed & altitude integration fallback)
+    local posSource = "INS"
+    if _G.sublevel and _G.sublevel.getLogicalPose then
+        local okPose, pose = pcall(_G.sublevel.getLogicalPose)
+        if okPose and pose and pose.position and type(pose.position.x) == "number" then
+            self.pos.x = pose.position.x
+            self.pos.y = pose.position.y
+            self.pos.z = pose.position.z
+            self.gpsLocked = true
+            posSource = "SUBLEVEL"
+        end
+    end
 
-    if self.config.useGPS and gps and gps.locate and (self.gpsTick % 40 == 1) then
+    if posSource == "INS" and self.nav then
+        local okTab, tabPos = nil, nil
+        if self.nav.getTablePosition then
+            okTab, tabPos = pcall(self.nav.getTablePosition)
+        elseif self.nav.getBlockPos then
+            okTab, tabPos = pcall(self.nav.getBlockPos)
+        end
+        if okTab and tabPos and type(tabPos.x) == "number" and type(tabPos.z) == "number" then
+            self.pos.x = tabPos.x
+            self.pos.y = tabPos.y or alt
+            self.pos.z = tabPos.z
+            self.gpsLocked = true
+            posSource = "NAV_TABLE"
+        end
+    end
+
+    if posSource == "INS" and self.config.useGPS and gps and gps.locate and (self.gpsTick % 40 == 1) then
         local okGps, gx, gy, gz = pcall(gps.locate, 0.05)
         if okGps and gx and gz then
             self.pos.x, self.pos.z = gx, gz
@@ -975,9 +1014,16 @@ function Avionics:readTelemetry(dt)
                 self.pos.y = gy
             end
             self.gpsLocked = true
+            posSource = "GPS"
         else
             self.gpsLocked = false
         end
+    end
+
+    if posSource == "INS" then
+        self.pos.x = self.pos.x + vel.x * dt
+        self.pos.y = alt
+        self.pos.z = self.pos.z + vel.z * dt
     end
 
     -- 5. Laser Radar Altimeter (AGL - Create: Avionics Laser Sensor)
@@ -1110,6 +1156,8 @@ function Avionics:readTelemetry(dt)
         wy               = angVel.y,
         wz               = angVel.z,
         pos              = { x = self.pos.x, y = self.pos.y, z = self.pos.z },
+        posSource        = posSource,
+        gpsLocked        = self.gpsLocked,
         weightOnWheels   = weightOnWheels,
         rpm              = maxRpm,
         clutchOutRpm     = clutchOutRpm,
