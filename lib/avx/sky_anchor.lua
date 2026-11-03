@@ -53,12 +53,12 @@ function M.onTelemetry(fc, tel, dt)
     local sinH = math.sin(hdg)
     local cosH = math.cos(hdg)
     local surge = dx * (-sinH) + dz * cosH
-    local sway  = dx * cosH    + dz * sinH
+    local sway  = -(dx * cosH  + dz * sinH)
 
     local vx = (tel.velocity and tel.velocity.x) or 0
     local vz = (tel.velocity and tel.velocity.z) or 0
     local velSurge = vx * (-sinH) + vz * cosH
-    local velSway  = vx * cosH    + vz * sinH
+    local velSway  = -(vx * cosH  + vz * sinH)
 
     tel.anchor = {
         active   = true,
@@ -88,17 +88,17 @@ function M.onMix(fc, tel, trim, dt)
     local vs = anc.velSurge or 0
     local vw = anc.velSway or 0
 
-    -- 1. Anti-Drift Pitch Trim with velocity damping (Tilt rotors forward/backward)
-    local pitchCorrection = clamp(-(anc.surge * 0.70 - vs * 0.35), -4.0, 4.0)
-    trim.pitch = clamp(trim.pitch + pitchCorrection, -6.0, 6.0)
+    -- 1. Anti-Drift Pitch Trim with velocity damping (Tilt rotors forward/backward gently)
+    local pitchCorrection = clamp(-(anc.surge * 0.25 - vs * 0.40), -1.2, 1.2)
+    trim.pitch = clamp(trim.pitch + pitchCorrection, -3.5, 3.5)
 
-    -- 2. Anti-Drift Roll Trim with velocity damping (Arrest left/right lateral sway)
-    local rollCorrection = clamp(anc.sway * 0.70 - vw * 0.35, -4.0, 4.0)
-    trim.roll = clamp(trim.roll + rollCorrection, -6.0, 6.0)
+    -- 2. Anti-Drift Roll Trim with velocity damping (Arrest left/right lateral sway, max 1.0 trim ~3 deg bank)
+    local rollCorrection = clamp(anc.sway * 0.25 - vw * 0.40, -1.0, 1.0)
+    trim.roll = clamp(trim.roll + rollCorrection, -2.5, 2.5)
 
     -- 3. Rear Propulsion Counter-Thrust (Surge > 0.5 block)
     if math.abs(anc.surge) > 0.5 then
-        local thrustCmd = clamp((anc.surge * 1.8 - vs * 0.5), -8.0, 8.0)
+        local thrustCmd = clamp((anc.surge * 1.0 - vs * 1.5), -4.0, 4.0)
         trim.surge = math.floor(thrustCmd + 0.5)
     end
 end

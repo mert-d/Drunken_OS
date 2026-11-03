@@ -19,7 +19,7 @@ function Blackbox.new(opts)
         isAirborne   = false,
         takeoffTick  = 0,
         currentTick  = 0,
-        prevPitch    = 0,
+        prevPitch    = nil,
         flushTimer   = 0,
         autoFlushSec = opts.autoFlushSec or 1.0,
         callsign     = opts.callsign or "SKYFIRE-01",

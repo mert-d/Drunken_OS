@@ -292,19 +292,19 @@ function Avionics.new(config)
     self.pos = { x = 0, y = 0, z = 0 }
     self.gpsTick = 0
 
-    -- Sable / Create: Simulated 10-Propeller Real Telemetry Calibrated Model
-    -- Front nacelles: 2x propellers each (4 total, Lf = 36.5 blocks)
-    -- Rear nacelles:  3x propellers each (6 total, Lr = 21.5 blocks)
+    -- Sable / Create: Simulated 12-Propeller Real Telemetry Calibrated Model
+    -- Front nacelles: 2x propellers each (4 total, Lf = 42.0 blocks)
+    -- Rear nacelles:  4x propellers each (8 total, Lr = 16.0 blocks)
     self.skyfireModel = {
-        mass          = 14187.0,   -- Sable live mass (14,187 kg)
-        gravityForce  = 141870.0,  -- Downward gravity force in pN (~142 kN)
-        maxLiftForce  = 223839.0,  -- 10-propeller maximum lift force in pN
-        Lf            = 36.5,      -- Front turbine distance to CoM (blocks)
-        Lr            = 21.5,      -- Rear turbine distance to CoM (blocks)
+        mass          = 14195.0,   -- Sable live mass (14,195 kg)
+        gravityForce  = 156145.0,  -- Downward gravity force in pN (~156 kN)
+        maxLiftForce  = 268606.0,  -- 12-propeller maximum lift force in pN
+        Lf            = 42.0,      -- Front turbine distance to CoM (blocks)
+        Lr            = 16.0,      -- Rear turbine distance to CoM (blocks)
         W             = 37.0,      -- Lateral turbine arm (blocks)
-        gammaFront    = 0.884,     -- Static moment balance: (3 props / 2 props) * (21.5 / 36.5) = 1.5 * 0.589 = 0.884
+        gammaFront    = 0.762,     -- Static moment balance: (8 props * 16.0) / (4 props * 42.0) = 128 / 168 = 0.762
         gammaRear     = 1.000,     -- Rear rotor reference
-        hoverBaseSig  = 10.80,     -- Symmetrical hover equilibrium base throttle
+        hoverBaseSig  = 8.90,      -- Symmetrical hover equilibrium base throttle (12-propeller)
         ditherAcc     = { 0, 0, 0, 0 } -- 20 Hz Delta-Sigma fractional accumulator for 4 channels
     }
 
@@ -315,9 +315,9 @@ function Avionics.new(config)
     self.rollPID  = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.yawPID   = createPID(4.00, 0.25, 2.10, -4.5, 4.5) -- Pruva (Psi)
 
-    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Tuned for 10-Propeller configuration)
-    self.msPitchPID = createPID(15.0, 1.20, 18.00, -8.5, 8.5, 4.0)
-    self.msRollPID  = createPID(2.80, 0.20, 3.80, -4.0, 4.0, 1.5) -- Softened roll gain with strong gyro rate damping
+    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Tuned for 12-Propeller configuration)
+    self.msPitchPID = createPID(16.0, 1.20, 0.00, -7.5, 7.5, 3.0)
+    self.msRollPID  = createPID(3.50, 0.20, 0.00, -3.5, 3.5, 1.2) -- Softened roll gain with direct gyro rate damping
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
 
@@ -893,15 +893,28 @@ function Avionics:readTelemetry(dt)
         angVel = { x = wx, y = wy, z = wz }
     end
 
-    -- 3. Heading & Navigation Target (Create: Avionics Navigation Table)
+    -- 3. Heading & Navigation Target (Create: Avionics Navigation Table or Sublevel Pose)
     local heading = 0
     local navTarget = nil
+    if _G.sublevel and _G.sublevel.getLogicalPose then
+        local okPose, pose = pcall(_G.sublevel.getLogicalPose)
+        if okPose and pose and pose.orientation then
+            local q = pose.orientation
+            local qw = tonumber(q.a) or 0
+            local qx = tonumber(q.v and q.v.x) or 0
+            local qy = tonumber(q.v and q.v.y) or 0
+            local qz = tonumber(q.v and q.v.z) or 0
+            local fx = -2 * (qx * qz + qy * qw)
+            local fz = 2 * (qx * qx + qy * qy) - 1
+            heading = math.atan2(-fx, fz)
+        end
+    end
     if self.nav then
         local hRad = tonumber(safeCall(self.nav.getHeadingRad))
         if hRad then
             heading = hRad
         else
-            local hDeg = tonumber(safeCall(self.nav.getHeading))
+            local hDeg = tonumber(safeCall(self.nav.getHeading)) or tonumber(safeCall(self.nav.getCurrentAngle))
             if hDeg then heading = math.rad(hDeg) end
         end
 
@@ -978,6 +991,17 @@ function Avionics:readTelemetry(dt)
                 vel.x = -horizSpeed * math.sin(heading) * dirSign
                 vel.z =  horizSpeed * math.cos(heading) * dirSign
             end
+        end
+    end
+
+    if (vel.x == 0 and vel.z == 0) and _G.sublevel and _G.sublevel.getLinearVelocity then
+        local okLv, lv = pcall(_G.sublevel.getLinearVelocity)
+        if okLv and type(lv) == "table" and (lv.x or lv.z) then
+            vel.x = tonumber(lv.x) or vel.x
+            vel.y = tonumber(lv.y) or vel.y
+            vel.z = tonumber(lv.z) or vel.z
+            speed = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
+            rawVel = speed
         end
     end
 
@@ -1688,18 +1712,18 @@ function Avionics:step(dt)
     local boostSignal = (not clutchCut and self.ap.baseThrottle >= 12) and 15 or 0
     local burnerSignal = mainThrottleSig
 
-    -- Compute Mothership / Gunship 10-Propeller Sable Lift Matrix (Lf=36.5, Lr=21.5, Delta-Sigma Modulation)
+    -- Compute Mothership / Gunship 12-Propeller Sable Lift Matrix (Lf=42.0, Lr=16.0, Delta-Sigma Modulation)
     local isMothershipOrGunship = (self.vehicleType == "MOTHERSHIP" or self.vehicleType == "GUNSHIP")
     local m = self.skyfireModel or {
-        mass          = 14187.0,
-        gravityForce  = 141870.0,
-        maxLiftForce  = 223839.0,
-        Lf            = 36.5,
-        Lr            = 21.5,
+        mass          = 14195.0,
+        gravityForce  = 156145.0,
+        maxLiftForce  = 268606.0,
+        Lf            = 42.0,
+        Lr            = 16.0,
         W             = 37.0,
-        gammaFront    = 0.884,
+        gammaFront    = 0.762,
         gammaRear     = 1.000,
-        hoverBaseSig  = 10.80,
+        hoverBaseSig  = 8.90,
         ditherAcc     = { 0, 0, 0, 0 }
     }
 
@@ -1709,7 +1733,7 @@ function Avionics:step(dt)
         -- Direct vertical velocity damping: oppose rapid climb/sink rates (vy) to eliminate pumping
         local actualVsi = tel.vSpeed or 0
         local vsiDamp = clamp(actualVsi * 1.25, -2.5, 2.5)
-        altCmd = clamp(pidAlt - vsiDamp, -3.5, 3.5)
+        altCmd = clamp(pidAlt - vsiDamp, -5.0, 2.5)
     end
 
     local pitchTrim = 0
@@ -1734,20 +1758,39 @@ function Avionics:step(dt)
         local pidPitch = self.msPitchPID:compute(targetPitch, tel.pitch, dt)
         local pidRoll  = self.msRollPID:compute(targetRoll, tel.roll, dt)
 
-        pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -8.5, 8.5)
-        rollTrim  = clamp((self.rollBias  or 0.0) + pidRoll, -4.0, 4.0)
+        pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -6.5, 6.5)
+        rollTrim  = clamp((self.rollBias  or 0.0) + pidRoll, -3.5, 3.5)
 
         -- Direct angular velocity damping: stops nose pitch rate (wx) cold
         if tel.wx and math.abs(tel.wx) > 0.005 then
-            local wxDamp = clamp(tel.wx * 7.5, -8.0, 8.0)
-            pitchTrim = clamp(pitchTrim - wxDamp, -10.5, 10.5)
+            local wxDamp = clamp(tel.wx * 3.5, -4.0, 4.0)
+            pitchTrim = clamp(pitchTrim - wxDamp, -7.5, 7.5)
         end
 
         -- Direct angular velocity damping: stops lateral roll rate (wz) cold to eliminate wobbling
         local wzRate = tel.wz or 0
         if math.abs(wzRate) > 0.005 then
-            local wzDamp = clamp(wzRate * 5.0, -3.5, 3.5)
-            rollTrim = clamp(rollTrim - wzDamp, -4.5, 4.5)
+            local wzDamp = clamp(wzRate * 3.0, -2.5, 2.5)
+            rollTrim = clamp(rollTrim - wzDamp, -4.0, 4.0)
+        end
+
+        -- Active horizontal drift braking in HOVER mode when pilot controls are centered
+        if self.ap.mode == "HOVER" and (self.ap.baseThrottle or 0) == 0 then
+            local hdg = tel.heading or 0
+            local cosH = math.cos(hdg)
+            local sinH = math.sin(hdg)
+            local vx = (tel.velocity and tel.velocity.x) or 0
+            local vz = (tel.velocity and tel.velocity.z) or 0
+            local fwdSpeed = vx * (-sinH) + vz * cosH
+            local latSpeed = -(vx * cosH + vz * sinH)
+            if math.abs(fwdSpeed) > 0.05 then
+                local brakePitch = clamp(fwdSpeed * 0.40, -1.5, 1.5)
+                pitchTrim = clamp(pitchTrim + brakePitch, -7.5, 7.5)
+            end
+            if math.abs(latSpeed) > 0.05 then
+                local brakeRoll = clamp(-latSpeed * 0.35, -1.0, 1.0)
+                rollTrim = clamp(rollTrim + brakeRoll, -3.5, 3.5)
+            end
         end
 
         local u_yaw = 0

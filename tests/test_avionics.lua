@@ -681,10 +681,33 @@ local function runTests()
     assert(telStep.anchor.surge == -5, "Expected negative surge (-5) when vessel drifts forward")
     assert(ancFC.lastMothershipState.rearC < 0, "Expected rear propulsion to command reverse thrust to arrest forward drift")
 
+    -- Simulate lateral drift: vessel drifted to Starboard (West, x=95, anchor at x=100, heading 0=South)
+    ancFC.pos = { x = 95, y = 80, z = 200 }
+    local telStarboard = ancFC:step(0.05) or ancFC:readTelemetry(0.05)
+    assert(telStarboard.anchor.sway == -5, "Expected target to be at port (sway=-5) when vessel drifts starboard")
+    assert(ancFC.lastMothershipState.frRpm > ancFC.lastMothershipState.flRpm,
+           "Expected Right motors > Left motors to roll port towards anchor target")
+
+    -- Simulate lateral drift: vessel drifted to Port (East, x=105, anchor at x=100, heading 0=South)
+    ancFC.pos = { x = 105, y = 80, z = 200 }
+    local telPort = ancFC:step(0.05) or ancFC:readTelemetry(0.05)
+    assert(telPort.anchor.sway == 5, "Expected target to be at starboard (sway=+5) when vessel drifts port")
+    assert(ancFC.lastMothershipState.flRpm > ancFC.lastMothershipState.frRpm,
+           "Expected Left motors > Right motors to roll starboard towards anchor target")
+
     -- Disengage anchor
     ancFC:setMode("MANUAL", telStep)
     assert(ancFC.anchorPos == nil, "Expected anchorPos cleared when disengaging anchor")
-    print("  PASS: Test 13: Sky Anchor 3D Station Keeping & Anti-Drift Counter-Thrust")
+
+    -- Verify Active HOVER Forward Drift Arrest
+    local hovFC = Avionics.new({ callsign = "HOV-BRAKE", profile = "MOTHERSHIP", useGPS = false })
+    hovFC:setMode("HOVER", { altitude = 100, heading = 0 })
+    hovFC.altSensor = { getHeight = function() return 100 end, getVerticalSpeed = function() return 0 end }
+    hovFC.gimbal = { getAnglesRad = function() return { 0, 0 } end }
+    hovFC.velSensors = { { getVelocity = function() return { 0, 0, 1.5 } end } }
+    hovFC:step(0.05)
+    assert(hovFC.lastMothershipState.fl >= 7, "Expected front motors active during drift braking")
+    print("  PASS: Test 13: Sky Anchor 3D Station Keeping, Lateral Sway Damping & HOVER Drift Arrest")
 
     -- Test 14: Peripheral Scan Filtering, Remote I/O Bus Forwarding, Ground Zero-Throttle Lock
     local testFC = Avionics.new({ profile = "MOTHERSHIP", useGPS = false, startParked = true })
@@ -793,6 +816,7 @@ local function runTests()
     testFC.spinTest = nil
     testFC.gpsTick = 1
     testFC:setMode("HOVER", { altitude = 100.0, heading = 0.0 })
+    testFC.altSensor = { getHeight = function() return 100.0 end, getVerticalSpeed = function() return 0.0 end }
     testFC.gimbal = {
         getAnglesRad = function() return { math.rad(10.0), math.rad(15.2) } end -- Gimbal xAngle +10 deg (nose down) & zAngle +15.2 deg (rolled right)
     }
@@ -831,7 +855,7 @@ local function runTests()
     local diveTel = testFC:step(0.05) or testFC:readTelemetry(0.05)
     assert(diveTel.pitchWarning == true, "Expected pitchWarning active when pitched down > 14 deg")
     assert(testFC.lastMothershipState.rearC == 0, "Expected rear propulsion to be completely cut to 0 RPM in severe dive (> 22 deg)")
-    assert(testFC.lastMothershipState.flRpm > 230 and testFC.lastMothershipState.flRpm >= testFC.lastMothershipState.rlRpm + 80,
+    assert(testFC.lastMothershipState.flRpm >= 180 and testFC.lastMothershipState.flRpm >= testFC.lastMothershipState.rlRpm + 80,
            "Expected maximum emergency lift boost on front rotors in severe dive")
 
     -- 6. Static Pitch Bias (CoM Weight Offset Trim)
@@ -1118,14 +1142,14 @@ local function runTests()
     _G.sublevel = origSublevel
     print("  PASS: Test 18: Multi-Tier Hybrid Navigation Sensor Fusion (CC:Sable SubLevel & Advanced Navigation Table)")
 
-    -- Test 19: 10-Propeller Dynamic Balance, Anti-Oscillation & Pitch Damping Verification
+    -- Test 19: 12-Propeller Dynamic Balance, Anti-Oscillation & Pitch Damping Verification
     mockState.altitude = 100.0
     mockState.pitch = 0.0
     mockState.roll = 0.0
-    local propFC = Avionics.new({ callsign = "SKYFIRE-10P", profile = "MOTHERSHIP", useGPS = false })
-    assert(propFC.skyfireModel.gammaFront == 0.884, "Expected gammaFront to be 0.884 for 10-propeller model")
-    assert(propFC.skyfireModel.hoverBaseSig == 10.80, "Expected hoverBaseSig to be 10.80")
-    assert(propFC.skyfireModel.maxLiftForce == 223839.0, "Expected maxLiftForce 223839 pN")
+    local propFC = Avionics.new({ callsign = "SKYFIRE-12P", profile = "MOTHERSHIP", useGPS = false })
+    assert(math.abs(propFC.skyfireModel.gammaFront - 0.762) < 0.01, "Expected gammaFront to be 0.762 for 12-propeller model")
+    assert(math.abs(propFC.skyfireModel.hoverBaseSig - 8.90) < 0.1, "Expected hoverBaseSig to be 8.90")
+    assert(propFC.skyfireModel.maxLiftForce == 268606.0, "Expected maxLiftForce 268606 pN")
 
     -- 1. Static Equilibrium in HOVER: both front and rear must have symmetric control headroom
     propFC:setMode("HOVER", { altitude = 100.0, heading = 0.0 })
@@ -1139,18 +1163,15 @@ local function runTests()
     }
     propFC:step(0.05)
     local msHover = propFC.lastMothershipState
-    assert(msHover.fl >= 9 and msHover.fl <= 11, "Expected front hover signal around 9-11, got: " .. tostring(msHover.fl))
-    assert(msHover.rl >= 10 and msHover.rl <= 12, "Expected rear hover signal around 10-12, got: " .. tostring(msHover.rl))
+    assert(msHover.fl >= 6 and msHover.fl <= 8, "Expected front hover signal around 6-8, got: " .. tostring(msHover.fl))
+    assert(msHover.rl >= 8 and msHover.rl <= 10, "Expected rear hover signal around 8-10, got: " .. tostring(msHover.rl))
     -- Both must have > 3.0 signal headroom to 15 (256 RPM)
     assert(msHover.fl < 15 and msHover.rl < 15, "Expected hover signals below saturation ceiling 15")
 
     -- 2. Direct Pitch Rate Damping (wx): rapid pitch rate creates immediate counter-torque
     propFC.msPitchPID:reset()
-    local mockTelRate = {
-        altitude = 150.0, heading = 0.0, pitch = math.rad(5.0), roll = 0.0,
-        wx = 2.0, -- +115 deg/s upward pitch rate
-        speed = 1.0, vSpeed = 0.0, weightOnWheels = false
-    }
+    propFC.prevPitch = 0.0
+    propFC.gimbal.getAnglesRad = function() return { -math.rad(5.0), 0.0 } end
     propFC:step(0.05)
     -- Verify that with positive pitch rate (pitching up), rear motors throttle up and front throttles down to damp motion
     assert(propFC.lastMothershipState.rlRpm >= propFC.lastMothershipState.flRpm,

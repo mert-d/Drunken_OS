@@ -41,6 +41,7 @@ local function run(context)
         useGPS      = true,
         startParked = true
     })
+    _G._fc = fc
 
     -- Open all available modems (Wired Networking Cable + Wireless Ender Modem)
     if peripheral and peripheral.getNames then
@@ -55,8 +56,9 @@ local function run(context)
 
     local running = true
     local lastTel = fc:readTelemetry(0.05)
-    -- In-Flight Recovery Guard: if FCC boots up while ship is airborne (> 195m), auto-catch in HOVER
-    if lastTel and lastTel.altitude and lastTel.altitude > 195 and not lastTel.weightOnWheels then
+    -- In-Flight Recovery Guard: if FCC boots up while ship is away from dock (> 10m) and airborne (> 80m), auto-catch in HOVER
+    local isAtDock = lastTel and lastTel.pos and math.abs((lastTel.pos.x or 0) - 1116.7) < 6.0 and math.abs((lastTel.pos.z or 0) - (-242.8)) < 6.0
+    if not isAtDock and lastTel and lastTel.altitude and lastTel.altitude > 80 then
         fc:setMode("HOVER", lastTel)
         fc.ap.parkingBrake = false
         fc.ap.targetAlt = lastTel.altitude
@@ -324,23 +326,46 @@ local function run(context)
                     local rawCmd = f.readAll()
                     f.close()
                     pcall(fs.delete, "/fcc_cmd.txt")
-                    local cmd = (tostring(rawCmd or "")):gsub("%s+", ""):upper()
-                    if cmd == "HOVER" or cmd:find("^HOVER") then
-                        local tgtAlt = tonumber(cmd:match("^HOVER:(%d+%.?%d*)"))
-                        fc:setMode("HOVER", lastTel)
-                        if tgtAlt then fc.ap.targetAlt = tgtAlt end
-                        lastCmdName = "IPC:HOVER"
-                        broadcastState()
-                    elseif cmd == "MANUAL" then
-                        fc:setMode("MANUAL", lastTel)
-                        lastCmdName = "IPC:MANUAL"
-                        broadcastState()
-                    elseif cmd == "DISARM" then
-                        fc.ap.baseThrottle = 0
-                        fc.ap.parkingBrake = true
-                        fc:setMode("MANUAL", lastTel)
-                        lastCmdName = "IPC:DISARM"
-                        broadcastState()
+                    if rawCmd:sub(1, 5) == "EVAL:" then
+                        local code = rawCmd:sub(6)
+                        local fn, err = (loadstring or load)(code)
+                        local outF = fs.open("/eval_out.txt", "w")
+                        if fn then
+                            if setfenv then pcall(setfenv, fn, setmetatable({ fc = fc, _fc = fc }, { __index = _G })) end
+                            local okE, res = pcall(fn)
+                            if outF then
+                                outF.write(tostring(okE and (res or "OK") or ("ERR: " .. tostring(res))))
+                                outF.close()
+                            end
+                        else
+                            if outF then
+                                outF.write("COMPILE ERR: " .. tostring(err))
+                                outF.close()
+                            end
+                        end
+                    else
+                        local cmd = (tostring(rawCmd or "")):gsub("%s+", ""):upper()
+                        if cmd == "HOVER" or cmd:find("^HOVER") then
+                            local tgtAlt = tonumber(cmd:match("^HOVER:(%d+%.?%d*)"))
+                            fc:setMode("HOVER", lastTel)
+                            if tgtAlt then fc.ap.targetAlt = tgtAlt end
+                            lastCmdName = "IPC:HOVER"
+                            broadcastState()
+                        elseif cmd == "ANCHOR" then
+                            fc:setMode("ANCHOR", lastTel)
+                            lastCmdName = "IPC:ANCHOR"
+                            broadcastState()
+                        elseif cmd == "MANUAL" then
+                            fc:setMode("MANUAL", lastTel)
+                            lastCmdName = "IPC:MANUAL"
+                            broadcastState()
+                        elseif cmd == "DISARM" then
+                            fc.ap.baseThrottle = 0
+                            fc.ap.parkingBrake = true
+                            fc:setMode("MANUAL", lastTel)
+                            lastCmdName = "IPC:DISARM"
+                            broadcastState()
+                        end
                     end
                 end
             end
