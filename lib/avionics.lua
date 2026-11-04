@@ -46,10 +46,13 @@ local function createPID(kp, ki, kd, minOut, maxOut, maxInt)
             integral = 0
             prevPV = nil
         end,
-        setGains = function(self, newKp, newKi, newKd)
+        setGains = function(self, newKp, newKi, newKd, newMin, newMax, newInt)
             if newKp then kp = tonumber(newKp) or kp end
             if newKi then ki = tonumber(newKi) or ki end
             if newKd then kd = tonumber(newKd) or kd end
+            if newMin then minOut = tonumber(newMin) or minOut end
+            if newMax then maxOut = tonumber(newMax) or maxOut end
+            if newInt then intLimit = tonumber(newInt) or intLimit end
         end,
         getGains = function(self)
             return kp, ki, kd, minOut, maxOut, intLimit
@@ -320,15 +323,15 @@ function Avionics.new(config)
     }
 
     -- PID Controllers (Smooth proportional + derivative damping for equilibrium altitude hold)
-    self.altPID   = createPID(0.85, 0.08, 2.50, -3.0, 3.0, 1.0) -- Dikey irtifa (Y) - tuned to prevent vertical pumping
+    self.altPID   = createPID(0.85, 0.04, 0.00, -2.5, 2.5, 0.8) -- Dikey irtifa (Y) - pure PI; velocity damping handled by vsiDamp
     self.hdgPID   = createPID(3.80, 0.10, 1.20, -6.0, 6.0)
     self.pitchPID = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.yawPID   = createPID(4.00, 0.25, 2.10, -4.5, 4.5) -- Pruva (Psi)
 
     -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Calibrated critically damped for Stern Levitite)
-    self.msPitchPID = createPID(14.0, 0.90, 9.00, -5.0, 5.0, 2.0) -- Calibrated critically damped anti-pitch oscillation
-    self.msRollPID  = createPID(3.80, 0.20, 3.50, -3.2, 3.2, 0.8) -- Softened, damped roll gain with direct gyro rate damping
+    self.msPitchPID = createPID(10.0, 0.40, 5.00, -2.5, 2.5, 1.0) -- Calibrated anti-pitch oscillation
+    self.msRollPID  = createPID(1.80, 0.02, 3.00, -1.0, 1.0, 0.2) -- Critically damped roll gain for narrow Izz (prevents limit cycles)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
 
@@ -339,9 +342,9 @@ function Avionics.new(config)
     -- Model-Independent Full Adaptive Cascade INDI Controller State
     self.adaptive = {
         -- Canlı öğrenilen ve diske kaydedilen denge hafızası
-        hoverBase      = 9.0,            -- 0.0 (Tam Levitation) .. 14.5 (Ağır Gemi) arası otomatik öğrenilir
-        trimPitch      = 0.0,            -- Ön/Arka kalıcı CoM ve Levitation farkı (-7.5 .. +7.5)
-        trimRoll       = 0.0,            -- Sol/Sağ kalıcı CoM ve Levitation farkı (-7.5 .. +7.5)
+        hoverBase      = 9.0,            -- 0.0 (Tam Levitation) .. 12.0 (Ağır Gemi) arası kalibre
+        trimPitch      = 0.0,            -- Ön/Arka kalıcı CoM ve Levitation farkı (-5.0 .. +5.0)
+        trimRoll       = 0.0,            -- Sol/Sağ kalıcı CoM ve Levitation farkı (-1.0 .. +1.0)
         pitchSign      = 1,              -- Sensör/Motor yönü (+1 veya -1)
         rollSign       = 1,
         yawSign        = 1,
@@ -352,7 +355,7 @@ function Avionics.new(config)
         maxRateCmd     = 0.16,           -- Maksimum dönüş hızı (~9.1 deg/sn -> Takla atmayı kilitler)
         rateKp         = 9.50,           -- İç Döngü: Açısal hız hatası -> Motor sinyali (Frenleme)
         accelKd        = 1.20,           -- Açısal ivme sönümlemesi
-        trimLearnRate  = 1.15,           -- CoM / Levitation değişimini canlı öğrenme hızı
+        trimLearnRate  = 1.15,           -- CoM / Levitation kalıcı ofset öğrenme hızı
         maxDiffTorque  = 4.50,           -- Anlık maksimum diferansiyel tork sınırı
 
         -- Dikey Hız (İrtifa) Kaskad Kazançları
@@ -1537,9 +1540,14 @@ function Avionics:loadAdaptiveState()
     local ok, data = pcall(textutils.unserialize, raw)
     if ok and type(data) == "table" and self.adaptive then
         local a = self.adaptive
-        a.hoverBase = tonumber(data.hoverBase) or a.hoverBase
-        a.trimPitch = tonumber(data.trimPitch) or a.trimPitch
-        a.trimRoll  = tonumber(data.trimRoll)  or a.trimRoll
+        local loadedHover = tonumber(data.hoverBase)
+        if loadedHover and loadedHover >= 0.0 and loadedHover <= 14.0 then
+            a.hoverBase = loadedHover
+        else
+            a.hoverBase = 8.90
+        end
+        a.trimPitch = clamp(tonumber(data.trimPitch) or a.trimPitch, -4.5, 4.5)
+        a.trimRoll  = clamp(tonumber(data.trimRoll)  or a.trimRoll,  -1.0, 1.0)
         a.pitchSign = tonumber(data.pitchSign) or a.pitchSign
         a.rollSign  = tonumber(data.rollSign)  or a.rollSign
         a.yawSign   = tonumber(data.yawSign)   or a.yawSign
@@ -1634,16 +1642,21 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
         local targetVSpeed = clamp(altErr * a.altVelKp, -a.maxClimbRate, a.maxClimbRate)
         local vSpeedErr    = targetVSpeed - a.fVSpeed
 
-        -- Canli Hover Gazi Ogrenimi: Levitation veya Antigravity yuzunden gemi yukari kaciyorsa hoverBase otomatik 0'a iner
-        a.hoverBase = clamp(a.hoverBase + vSpeedErr * a.hoverLearnRate * safeDt, 0.0, 14.5)
-        m.hoverBaseSig = a.hoverBase
-
+        -- Dikey İrtifa Regülasyonu: altPID (PI) + Doğrudan Dikey Hız (Vy) Sönümlemesi
         local pidAlt = self.altPID:compute(tgtAlt, tel.altitude, safeDt)
-        local vsiGain = self.dampVy or 1.50
-        local vsiDamp = clamp(a.fVSpeed * vsiGain, -3.5, 3.5)
-        local altCmd = clamp(pidAlt - vsiDamp, -4.0, 4.5)
+        local vsiGain = self.dampVy or 1.25
+        local vsiDamp = clamp(a.fVSpeed * vsiGain, -2.5, 2.5)
+        local altCmd = clamp(pidAlt - vsiDamp, -2.5, 3.5)
 
-        local baseCenter = math.max(ap.baseThrottle or 0, a.hoverBase)
+        -- Canlı Hover Taban Gazı: YALNIZCA hedef irtifaya yakın iken (|altErr| < 2.0m) adapte olur
+        -- Aktif tırmanış/alçalış manevralarında hoverBase dondurulur (Çift Entegratör Pompalama Koruması)
+        local isNearTargetAlt = (math.abs(altErr) < 2.0) and (math.abs(pitch) < 0.20) and (math.abs(roll) < 0.20)
+        if isNearTargetAlt and apMode == "HOVER" then
+            a.hoverBase = clamp(a.hoverBase + (vSpeedErr * (a.hoverLearnRate or 0.15)) * safeDt, 6.0, 11.5)
+            m.hoverBaseSig = a.hoverBase
+        end
+
+        local baseCenter = math.max(ap.baseThrottle or 0, a.hoverBase or m.hoverBaseSig or 8.90)
         local rawLiftCmd = baseCenter + altCmd
         baseLift = clamp(rawLiftCmd, 0.0, 15.0)
 
@@ -1668,10 +1681,19 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     local rateErrR  = -measRateR
 
     -- Canli 3-Eksen CoM & Asimetrik Levitation Auto-Trim
-    local isActive = (not isZeroThrottleManual) and ((apMode ~= "MANUAL") or (baseLift > 1.5) or (math.abs(a.fVSpeed) > 0.15))
+    -- Trim, YALNIZCA açısal hız ve sapma küçükken (durağan eksende) çok yavaş öğrenilir.
+    -- Dinamik yuvarlanma/yunuslama salınımında trim dondurulur (Limit Cycle Koruması).
+    local isCalmPitch = math.abs(pitch - tgtPitch) < 0.15 and math.abs(a.fPitchRate) < 0.08
+    local isCalmRoll  = math.abs(roll - tgtRoll)   < 0.12 and math.abs(a.fRollRate)  < 0.05
+    local isActive    = (not isZeroThrottleManual) and ((apMode ~= "MANUAL") or (baseLift > 1.5))
+
     if isActive then
-        a.trimPitch = clamp(a.trimPitch + (angleErrP * 1.4 + rateErrP * 0.4) * a.trimLearnRate * safeDt, -7.5, 7.5)
-        a.trimRoll  = clamp(a.trimRoll  + (angleErrR * 1.4 + rateErrR * 0.4) * a.trimLearnRate * safeDt, -7.5, 7.5)
+        if isCalmPitch then
+            a.trimPitch = clamp(a.trimPitch + (angleErrP * 1.4 + rateErrP * 0.4) * (a.trimLearnRate or 1.15) * safeDt, -4.5, 4.5)
+        end
+        if isCalmRoll then
+            a.trimRoll = clamp(a.trimRoll + (angleErrR * 0.35 + rateErrR * 0.10) * safeDt, -1.0, 1.0)
+        end
         self.pitchBias = a.trimPitch
         self.rollBias  = a.trimRoll
     end
@@ -1680,13 +1702,15 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     local pidRoll  = self.msRollPID:compute(tgtRoll, roll, safeDt)
 
     -- Dogrudan acisal hiz sonumlemesi: burun yunuslama hizini (wx) ve yalpalama hizini (wz) aninda frenler
-    local wxGain = self.dampWx or 6.0
-    local wxDamp = clamp(a.fPitchRate * wxGain, -3.5, 3.5)
-    local wzGain = self.dampWz or 4.5
-    local wzDamp = clamp(a.fRollRate  * wzGain, -2.5, 2.5)
+    local wxGain = self.dampWx or 2.5
+    local wxDamp = clamp(a.fPitchRate * wxGain, -1.8, 1.8)
+    local wzGain = self.dampWz or 3.0
+    local wzDamp = clamp(a.fRollRate  * wzGain, -1.0, 1.0)
 
-    local totalPitchTorque = clamp((a.trimPitch or 0.0) + (pidPitch * a.pitchSign) - (wxDamp * a.pitchSign), -6.5, 6.5)
-    local totalRollTorque  = clamp((a.trimRoll  or 0.0) + (pidRoll  * a.rollSign)  - (wzDamp * a.rollSign),  -3.5, 3.5)
+    -- Anti-Oscillation Tork Limitleri (Aktuator Doyum ve Salinim Korumasi)
+    local totalPitchTorque = clamp((a.trimPitch or 0.0) + (pidPitch * a.pitchSign) - (wxDamp * a.pitchSign), -3.0, 3.0)
+    -- YALPALAMA (ROLL) TORQUE KISITLAMASI: Dar gövde eylemsizliği (Izz=3.72e6) için aşırı tork üretilmez (+-1.2 maks)
+    local totalRollTorque  = clamp((a.trimRoll  or 0.0) + (pidRoll  * a.rollSign)  - (wzDamp * a.rollSign),  -1.2, 1.2)
 
     -- Anti-dive ve dik aci korumasi (Zarfta kalma kurali)
     local absPitchDeg = math.abs(math.deg(pitch))
@@ -1714,8 +1738,8 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
             totalPitchTorque = clamp(totalPitchTorque + brakePitch, -9.5, 9.5)
         end
         if math.abs(latSpeed) > 0.05 then
-            local brakeRoll = clamp(-latSpeed * 0.25, -0.6, 0.6)
-            totalRollTorque = clamp(totalRollTorque + brakeRoll, -6.0, 6.0)
+            local brakeRoll = clamp(-latSpeed * 0.15, -0.4, 0.4)
+            totalRollTorque = clamp(totalRollTorque + brakeRoll, -1.5, 1.5)
         end
     end
 
@@ -1724,7 +1748,7 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     if self.hook then
         self:hook("onMix", tel, tHook, safeDt)
         totalPitchTorque = clamp(tHook.pitch or totalPitchTorque, -10.5, 10.5)
-        totalRollTorque  = clamp(tHook.roll or totalRollTorque, -6.0, 6.0)
+        totalRollTorque  = clamp(tHook.roll or totalRollTorque, -1.8, 1.8)
         if tHook.alt then baseLift = clamp(tHook.alt, 0.0, 15.0) end
     end
 
@@ -1782,8 +1806,8 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     if isZeroThrottleManual then
         rawFloat = { 0.0, 0.0, 0.0, 0.0 }
     else
-        local minFront = (apMode == "HOVER" or baseLift >= 4.0) and 1.5 or 0.0
-        local minRear  = (apMode == "HOVER" or baseLift >= 4.0) and 1.0 or 0.0
+        local minFront = (apMode == "HOVER" or baseLift >= 4.0) and 3.5 or 0.0
+        local minRear  = (apMode == "HOVER" or baseLift >= 4.0) and 3.5 or 0.0
         rawFloat[1], rawFloat[3] = desaturatePair(rawFloat[1], rawFloat[3], minFront, 15.0)
         rawFloat[2], rawFloat[4] = desaturatePair(rawFloat[2], rawFloat[4], minRear,  15.0)
     end

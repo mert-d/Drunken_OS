@@ -115,17 +115,17 @@ function Autotune.calculate(fc, sublevelHandle)
     local kiPitch = clamp(round(0.85 * mRatio, 2), 0.20, 2.00)
     local dampWx  = clamp(round(6.00 * ixxRatio, 2), 2.5, 9.0)
 
-    -- 2. Roll Control Synthesis (Critically Damped omega_n ~ 1.8 rad/s)
-    local kpRoll  = clamp(round(3.80 * izzRatio, 2), 1.8, 8.0)
-    local kdRoll  = clamp(round(3.50 * izzRatio, 2), 1.5, 6.0)
-    local kiRoll  = clamp(round(0.20 * mRatio, 2), 0.05, 0.80)
-    local dampWz  = clamp(round(4.20 * izzRatio, 2), 1.8, 7.5)
+    -- 2. Roll Control Synthesis (Critically Damped for narrow hull Izz = 3.72e6)
+    local kpRoll  = clamp(round(1.90 * izzRatio, 2), 1.2, 3.2)
+    local kdRoll  = clamp(round(4.00 * izzRatio, 2), 2.0, 6.0)
+    local kiRoll  = clamp(round(0.02 * mRatio, 2), 0.01, 0.08)
+    local dampWz  = clamp(round(5.00 * izzRatio, 2), 2.5, 7.5)
 
-    -- 3. Altitude / Heave Control Synthesis
-    local kpAlt   = clamp(round(0.88 * mRatio, 2), 0.50, 2.00)
-    local kdAlt   = clamp(round(2.50 * mRatio, 2), 1.20, 4.50)
-    local kiAlt   = 0.08
-    local dampVy  = clamp(round(1.50 * mRatio, 2), 1.0, 3.5)
+    -- 3. Altitude / Heave Control Synthesis (Critically Damped, PI + Direct Vy Damping)
+    local kpAlt   = clamp(round(0.85 * mRatio, 2), 0.50, 1.80)
+    local kdAlt   = 0.00
+    local kiAlt   = 0.04
+    local dampVy  = clamp(round(1.25 * mRatio, 2), 0.8, 2.5)
 
     -- 4. Heading / Yaw Control Synthesis
     local kpYaw   = clamp(round(4.00 * iyyRatio, 2), 2.0, 8.0)
@@ -134,7 +134,7 @@ function Autotune.calculate(fc, sublevelHandle)
 
     -- 5. Hover Base Throttle Equilibrium
     -- Base signal ~ 8.9 for 15,120 kg. Scales smoothly with sqrt(mass).
-    local hoverBaseSig = clamp(round(8.90 * math.sqrt(mRatio), 1), 6.0, 13.0)
+    local hoverBaseSig = clamp(round(8.90 * math.sqrt(mRatio), 1), 6.5, 11.5)
 
     return {
         mass         = mass,
@@ -151,27 +151,27 @@ function Autotune.calculate(fc, sublevelHandle)
             ki      = kiPitch,
             kd      = kdPitch,
             dampWx  = dampWx,
-            minOut  = -5.0,
-            maxOut  = 5.0,
-            maxInt  = 2.0
+            minOut  = -3.0,
+            maxOut  = 3.0,
+            maxInt  = 1.0
         },
         roll = {
             kp      = kpRoll,
             ki      = kiRoll,
             kd      = kdRoll,
             dampWz  = dampWz,
-            minOut  = -3.5,
-            maxOut  = 3.5,
-            maxInt  = 0.8
+            minOut  = -1.2,
+            maxOut  = 1.2,
+            maxInt  = 0.25
         },
         alt = {
             kp      = kpAlt,
             ki      = kiAlt,
             kd      = kdAlt,
             dampVy  = dampVy,
-            minOut  = -3.0,
-            maxOut  = 3.0,
-            maxInt  = 1.0
+            minOut  = -2.5,
+            maxOut  = 2.5,
+            maxInt  = 0.8
         },
         yaw = {
             kp      = kpYaw,
@@ -196,7 +196,8 @@ function Autotune.apply(fc, params, persist)
 
     -- Apply PID Gains to live controllers (preserves integral if method exists)
     if fc.msPitchPID and fc.msPitchPID.setGains then
-        fc.msPitchPID:setGains(params.pitch.kp, params.pitch.ki, params.pitch.kd)
+        fc.msPitchPID:setGains(params.pitch.kp, params.pitch.ki, params.pitch.kd,
+                               params.pitch.minOut, params.pitch.maxOut, params.pitch.maxInt)
     else
         -- Recreate if setGains not yet available
         local createPID = fc.createPID or (package.loaded["lib.avionics"] and package.loaded["lib.avionics"].createPID)
@@ -207,7 +208,8 @@ function Autotune.apply(fc, params, persist)
     end
 
     if fc.msRollPID and fc.msRollPID.setGains then
-        fc.msRollPID:setGains(params.roll.kp, params.roll.ki, params.roll.kd)
+        fc.msRollPID:setGains(params.roll.kp, params.roll.ki, params.roll.kd,
+                              params.roll.minOut, params.roll.maxOut, params.roll.maxInt)
     else
         local createPID = fc.createPID or (package.loaded["lib.avionics"] and package.loaded["lib.avionics"].createPID)
         if createPID then
@@ -217,7 +219,8 @@ function Autotune.apply(fc, params, persist)
     end
 
     if fc.altPID and fc.altPID.setGains then
-        fc.altPID:setGains(params.alt.kp, params.alt.ki, params.alt.kd)
+        fc.altPID:setGains(params.alt.kp, params.alt.ki, params.alt.kd,
+                           params.alt.minOut, params.alt.maxOut, params.alt.maxInt)
     else
         local createPID = fc.createPID or (package.loaded["lib.avionics"] and package.loaded["lib.avionics"].createPID)
         if createPID then
@@ -227,7 +230,8 @@ function Autotune.apply(fc, params, persist)
     end
 
     if fc.yawPID and fc.yawPID.setGains then
-        fc.yawPID:setGains(params.yaw.kp, params.yaw.ki, params.yaw.kd)
+        fc.yawPID:setGains(params.yaw.kp, params.yaw.ki, params.yaw.kd,
+                           params.yaw.minOut, params.yaw.maxOut)
     end
 
     -- Store active autotune parameters on instance
@@ -236,6 +240,12 @@ function Autotune.apply(fc, params, persist)
     fc.dampWx         = params.pitch.dampWx
     fc.dampWz         = params.roll.dampWz
     fc.dampVy         = params.alt.dampVy
+
+    if fc.adaptive then
+        fc.adaptive.hoverBase = params.hoverBaseSig
+        fc.adaptive.trimRoll  = 0.0
+        if fc.saveAdaptiveState then pcall(fc.saveAdaptiveState, fc) end
+    end
 
     -- Optionally persist to config file
     if persist and fs and fs.open and textutils and textutils.serialize then

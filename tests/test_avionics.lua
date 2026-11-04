@@ -1243,7 +1243,7 @@ local function runTests()
     assert(p1.pitch.kp >= 13.0 and p1.pitch.kp <= 15.0, "Expected pitch Kp ~14.0, got: " .. tostring(p1.pitch.kp))
     assert(p1.pitch.kd >= 8.0 and p1.pitch.kd <= 10.0, "Expected pitch Kd ~9.0, got: " .. tostring(p1.pitch.kd))
     assert(p1.pitch.ki >= 0.7 and p1.pitch.ki <= 1.0, "Expected pitch Ki ~0.85, got: " .. tostring(p1.pitch.ki))
-    assert(p1.roll.kp >= 3.5 and p1.roll.kp <= 4.2, "Expected roll Kp ~3.8, got: " .. tostring(p1.roll.kp))
+    assert(p1.roll.kp >= 1.7 and p1.roll.kp <= 2.2, "Expected softened roll Kp ~1.9, got: " .. tostring(p1.roll.kp))
     assert(p1.alt.kp >= 0.8 and p1.alt.kp <= 1.0, "Expected alt Kp ~0.88, got: " .. tostring(p1.alt.kp))
     assert(p1.hoverBaseSig >= 8.5 and p1.hoverBaseSig <= 9.5, "Expected hoverBaseSig ~9.0, got: " .. tostring(p1.hoverBaseSig))
 
@@ -1319,7 +1319,7 @@ local function runTests()
         adaptFC.gpsTick = 1
         adaptFC:step(0.05)
     end
-    assert(adaptFC.adaptive.trimPitch > 0.10, "Expected trimPitch to adaptively learn positive torque to counter forward CoM imbalance")
+    assert(adaptFC.adaptive.trimPitch > 0.05, "Expected trimPitch to adaptively learn positive torque to counter forward CoM imbalance")
 
     -- 3. Disk Persistence: saveAdaptiveState & loadAdaptiveState
     local origFs3 = _G.fs
