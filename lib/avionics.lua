@@ -44,9 +44,19 @@ local function createPID(kp, ki, kd, minOut, maxOut, maxInt)
         reset = function(self)
             integral = 0
             prevPV = nil
+        end,
+        setGains = function(self, newKp, newKi, newKd)
+            if newKp then kp = tonumber(newKp) or kp end
+            if newKi then ki = tonumber(newKi) or ki end
+            if newKd then kd = tonumber(newKd) or kd end
+        end,
+        getGains = function(self)
+            return kp, ki, kd, minOut, maxOut, intLimit
         end
     }
 end
+
+Avionics.createPID = createPID
 
 -- Normalize angle difference to [-pi, pi]
 local function normalizeAngleRad(angle)
@@ -292,32 +302,32 @@ function Avionics.new(config)
     self.pos = { x = 0, y = 0, z = 0 }
     self.gpsTick = 0
 
-    -- Sable / Create: Simulated 12-Propeller Real Telemetry Calibrated Model
+    -- Sable / Create: Simulated 12-Propeller Telemetry Calibrated Model with Stern Levitite
     -- Front nacelles: 2x propellers each (4 total, Lf = 42.0 blocks)
-    -- Rear nacelles:  4x propellers each (8 total, Lr = 16.0 blocks)
+    -- Rear nacelles:  4x propellers each (8 total, Lr = 16.0 blocks) + Stern Levitite Buoyancy
     self.skyfireModel = {
-        mass          = 14195.0,   -- Sable live mass (14,195 kg)
-        gravityForce  = 156145.0,  -- Downward gravity force in pN (~156 kN)
+        mass          = 15120.0,   -- Live mass (15,120 kg with stern Levitite blocks)
+        gravityForce  = 166000.0,  -- Downward gravity force in pN (~166 kN)
         maxLiftForce  = 268606.0,  -- 12-propeller maximum lift force in pN
         Lf            = 42.0,      -- Front turbine distance to CoM (blocks)
         Lr            = 16.0,      -- Rear turbine distance to CoM (blocks)
         W             = 37.0,      -- Lateral turbine arm (blocks)
         gammaFront    = 0.762,     -- Static moment balance: (8 props * 16.0) / (4 props * 42.0) = 128 / 168 = 0.762
         gammaRear     = 1.000,     -- Rear rotor reference
-        hoverBaseSig  = 10.80,     -- Symmetrical hover equilibrium base throttle (12-propeller calibrated)
+        hoverBaseSig  = 8.90,      -- Symmetrical hover equilibrium base throttle (12-propeller calibrated)
         ditherAcc     = { 0, 0, 0, 0 } -- 20 Hz Delta-Sigma fractional accumulator for 4 channels
     }
 
     -- PID Controllers (Smooth proportional + derivative damping for equilibrium altitude hold)
-    self.altPID   = createPID(0.90, 0.10, 2.20, -2.5, 2.5, 1.0) -- Dikey irtifa (Y) - tuned to prevent vertical pumping
+    self.altPID   = createPID(0.85, 0.08, 2.50, -3.0, 3.0, 1.0) -- Dikey irtifa (Y) - tuned to prevent vertical pumping
     self.hdgPID   = createPID(3.80, 0.10, 1.20, -6.0, 6.0)
     self.pitchPID = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.yawPID   = createPID(4.00, 0.25, 2.10, -4.5, 4.5) -- Pruva (Psi)
 
-    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Calibrated critically damped for 12-Propeller configuration)
-    self.msPitchPID = createPID(10.0, 0.80, 6.00, -3.5, 3.5, 1.5)
-    self.msRollPID  = createPID(3.50, 0.20, 3.00, -3.0, 3.0, 0.8) -- Softened roll gain with direct gyro rate damping
+    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Calibrated critically damped for Stern Levitite)
+    self.msPitchPID = createPID(14.0, 0.90, 9.00, -5.0, 5.0, 2.0) -- Calibrated critically damped anti-pitch oscillation
+    self.msRollPID  = createPID(3.80, 0.20, 3.50, -3.2, 3.2, 0.8) -- Softened, damped roll gain with direct gyro rate damping
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
 
@@ -336,6 +346,16 @@ function Avionics.new(config)
     if not okRM or type(RMModule) ~= "table" then okRM, RMModule = pcall(require, "avx.route_manager") end
     if okRM and type(RMModule) == "table" and RMModule.RouteManager then
         self.routeManager = RMModule.RouteManager.new()
+    end
+
+    -- Apply saved autotune or initialize from live physics if requested
+    if self.autotuneParams then
+        local okAt, Autotune = pcall(require, "lib.avx.autotune")
+        if okAt and Autotune and Autotune.apply then
+            pcall(Autotune.apply, self, self.autotuneParams, false)
+        end
+    elseif self.config.autoTune == true then
+        pcall(self.autoTune, self, { persist = false })
     end
 
     return self
@@ -395,6 +415,9 @@ function Avionics:loadIOMap()
                     end
                     if type(parsed.pitchBias) == "number" then self.pitchBias = parsed.pitchBias end
                     if type(parsed.rollBias) == "number" then self.rollBias = parsed.rollBias end
+                    if parsed.autotune and type(parsed.autotune) == "table" then
+                        self.autotuneParams = parsed.autotune
+                    end
                 else
                     self.ioMap = parsed
                     if type(parsed.pitchBias) == "number" then self.pitchBias = parsed.pitchBias end
@@ -412,11 +435,35 @@ function Avionics:saveIOMap()
                 profile   = self.profile,
                 ioMap     = self.ioMap,
                 pitchBias = self.pitchBias or 0.0,
-                rollBias  = self.rollBias or 0.0
+                rollBias  = self.rollBias or 0.0,
+                autotune  = self.autotuneParams
             }))
             f.close()
         end
     end
+end
+
+function Avionics:autoTune(opts)
+    opts = opts or {}
+    local okAt, Autotune = pcall(require, "lib.avx.autotune")
+    if not okAt or type(Autotune) ~= "table" then
+        okAt, Autotune = pcall(require, "avx.autotune")
+    end
+    if not okAt or type(Autotune) ~= "table" then
+        if fs and fs.exists and (fs.exists("/lib/avx/autotune.lua") or fs.exists("lib/avx/autotune.lua")) then
+            local path = fs.exists("/lib/avx/autotune.lua") and "/lib/avx/autotune.lua" or "lib/avx/autotune.lua"
+            local okDf, resDf = pcall(dofile, path)
+            if okDf and type(resDf) == "table" then
+                Autotune = resDf
+                okAt = true
+            end
+        end
+    end
+    if okAt and Autotune and Autotune.autoCalibrate then
+        local ok, res = pcall(Autotune.autoCalibrate, self, opts.persist ~= false)
+        return ok and res or false
+    end
+    return false, "Autotune module not found"
 end
 
 function Avionics:setPitchBias(val)
@@ -832,12 +879,12 @@ function Avionics:readTelemetry(dt)
     if self.gimbal then
         local rads = safeCall(self.gimbal.getAnglesRad)
         if type(rads) == "table" and rads[1] and rads[2] then
-            pitch = -(tonumber(rads[1]) or 0)
+            pitch = tonumber(rads[1]) or 0
             roll  = tonumber(rads[2]) or 0
         else
             local degs = safeCall(self.gimbal.getAngles)
             if type(degs) == "table" and degs[1] and degs[2] then
-                pitch = -math.rad(tonumber(degs[1]) or 0)
+                pitch = math.rad(tonumber(degs[1]) or 0)
                 roll  = math.rad(tonumber(degs[2]) or 0)
             else
                 local p = tonumber(safeCall(self.gimbal.getPitchRad)) or tonumber(safeCall(self.gimbal.getPitch)) or 0
@@ -1287,6 +1334,10 @@ function Avionics:setMode(modeName, currentTel)
     self.msRollPID:reset()
     self.prevPitch = nil
     self.prevRoll  = nil
+    self.smoothVsi = 0.0
+    if currentTel and currentTel.altitude then
+        self.prevAlt = currentTel.altitude
+    end
 
     -- Preserve learned equilibrium integral when switching between autopilot modes; default 0.0 from MANUAL to avoid climb surge
     local bumplessInt = wasAltHold and savedIntegral or clamp((self.lastBurnerSignal and self.lastBurnerSignal > 0) and (self.lastBurnerSignal - (self.skyfireModel.hoverBaseSig or 10.8)) or 0.0, -1.0, 1.5)
@@ -1715,15 +1766,15 @@ function Avionics:step(dt)
     -- Compute Mothership / Gunship 12-Propeller Sable Lift Matrix (Lf=42.0, Lr=16.0, Delta-Sigma Modulation)
     local isMothershipOrGunship = (self.vehicleType == "MOTHERSHIP" or self.vehicleType == "GUNSHIP")
     local m = self.skyfireModel or {
-        mass          = 14195.0,
-        gravityForce  = 156145.0,
+        mass          = 15120.0,
+        gravityForce  = 166000.0,
         maxLiftForce  = 268606.0,
         Lf            = 42.0,
         Lr            = 16.0,
         W             = 37.0,
         gammaFront    = 0.762,
         gammaRear     = 1.000,
-        hoverBaseSig  = 10.80,
+        hoverBaseSig  = 8.90,
         ditherAcc     = { 0, 0, 0, 0 }
     }
 
@@ -1732,7 +1783,8 @@ function Avionics:step(dt)
         local pidAlt = self.altPID:compute(self.ap.targetAlt, tel.altitude, dt)
         -- Direct vertical velocity damping: oppose rapid climb/sink rates (vy) to eliminate pumping
         local actualVsi = tel.vSpeed or 0
-        local vsiDamp = clamp(actualVsi * 1.25, -3.0, 3.0)
+        local vsiGain = self.dampVy or 1.50
+        local vsiDamp = clamp(actualVsi * vsiGain, -3.5, 3.5)
         altCmd = clamp(pidAlt - vsiDamp, -4.0, 4.5)
     end
 
@@ -1758,20 +1810,22 @@ function Avionics:step(dt)
         local pidPitch = self.msPitchPID:compute(targetPitch, tel.pitch, dt)
         local pidRoll  = self.msRollPID:compute(targetRoll, tel.roll, dt)
 
-        pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -3.2, 3.2)
-        rollTrim  = clamp((self.rollBias  or 0.0) + pidRoll, -2.8, 2.8)
+        pitchTrim = clamp((self.pitchBias or 0.0) + pidPitch, -6.0, 6.0)
+        rollTrim  = clamp((self.rollBias  or 0.0) + pidRoll, -3.5, 3.5)
 
         -- Direct angular velocity damping: stops nose pitch rate (wx) cold
         if tel.wx and math.abs(tel.wx) > 0.005 then
-            local wxDamp = clamp(tel.wx * 4.0, -2.0, 2.0)
-            pitchTrim = clamp(pitchTrim - wxDamp, -3.5, 3.5)
+            local wxGain = self.dampWx or 6.0
+            local wxDamp = clamp(tel.wx * wxGain, -3.5, 3.5)
+            pitchTrim = clamp(pitchTrim - wxDamp, -6.5, 6.5)
         end
 
         -- Direct angular velocity damping: stops lateral roll rate (wz) cold to eliminate wobbling
         local wzRate = tel.wz or 0
         if math.abs(wzRate) > 0.005 then
-            local wzDamp = clamp(wzRate * 3.5, -1.8, 1.8)
-            rollTrim = clamp(rollTrim - wzDamp, -3.0, 3.0)
+            local wzGain = self.dampWz or 4.5
+            local wzDamp = clamp(wzRate * wzGain, -2.5, 2.5)
+            rollTrim = clamp(rollTrim - wzDamp, -3.5, 3.5)
         end
 
         -- Active horizontal drift braking in HOVER mode when pilot controls are centered
@@ -1837,17 +1891,24 @@ function Avionics:step(dt)
             end
         end
 
-        -- Base collective lift calculation (Hover center calibrated at 10.80 for 12-propeller configuration)
+        -- Base collective lift calculation (Hover center calibrated at 8.90 for symmetrical equilibrium)
         local baseCenter = (self.ap.altHold or (self.ap.mode ~= "MANUAL" and self.ap.enabled))
-            and math.max(self.ap.baseThrottle, m.hoverBaseSig or 10.80)
+            and math.max(self.ap.baseThrottle, m.hoverBaseSig or 8.90)
             or self.ap.baseThrottle
         local baseThrust = clamp(baseCenter + altCmd, 0.0, 15.0)
 
         -- Front & Rear base power distribution based on moment arm and propeller count ratio
-        -- Lf = 42.0, Lr = 16.0, Front: 2 props/nacelle (4 total), Rear: 4 props/nacelle (8 total)
+        -- Lf = 42.0, Lr = 16.0, Front: 2 props/nacelle (4 total), Rear: 4 props/nacelle (8-10 total)
         -- Static torque balance ratio: (8 * 16.0) / (4 * 42.0) = 128 / 168 = 0.762
         local rearBase  = clamp(baseThrust, 0.0, 15.0)
         local frontBase = clamp(baseThrust * (m.gammaFront or 0.762), 0.0, 15.0)
+
+        -- Attitude Authority Protection: Never starve front rotors during pitch recovery from steep dive
+        local pitchDeg = math.deg(tel.pitch or 0)
+        if pitchDeg < -6.0 and altCmd < 0 then
+            local unpenalizedFront = clamp(baseCenter * (m.gammaFront or 0.762), 0.0, 15.0)
+            frontBase = math.max(frontBase, unpenalizedFront)
+        end
 
         -- 4-Channel Mixing Matrix
         -- G1: Front-Left (FL), G2: Rear-Left (RL), G3: Front-Right (FR), G4: Rear-Right (RR)
@@ -1874,10 +1935,11 @@ function Avionics:step(dt)
             return clamp(l, lo, hi), clamp(r, lo, hi)
         end
 
-        local minLift = (self.ap.altHold or baseThrust >= 5) and 2.0 or 0.0
+        local minLiftFront = (self.ap.altHold or baseCenter >= 5) and 1.5 or 0.0
+        local minLiftRear  = (self.ap.altHold or baseCenter >= 5) and 1.0 or 0.0
         local maxLift = 15.0
-        rawFloat[1], rawFloat[3] = desaturatePair(rawFloat[1], rawFloat[3], minLift, maxLift)
-        rawFloat[2], rawFloat[4] = desaturatePair(rawFloat[2], rawFloat[4], minLift, maxLift)
+        rawFloat[1], rawFloat[3] = desaturatePair(rawFloat[1], rawFloat[3], minLiftFront, maxLift)
+        rawFloat[2], rawFloat[4] = desaturatePair(rawFloat[2], rawFloat[4], minLiftRear, maxLift)
 
         -- 20 Hz Delta-Sigma fractional pulse modulation (PWM Dithering)
         local sig = {}

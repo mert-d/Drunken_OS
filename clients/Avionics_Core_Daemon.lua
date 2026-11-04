@@ -365,6 +365,10 @@ local function run(context)
                             fc:setMode("MANUAL", lastTel)
                             lastCmdName = "IPC:DISARM"
                             broadcastState()
+                        elseif cmd == "AUTOTUNE" or cmd == "TUNE" then
+                            local okAt, resAt = pcall(fc.autoTune, fc, { persist = true })
+                            lastCmdName = okAt and "IPC:AUTOTUNE_OK" or "IPC:AUTOTUNE_ERR"
+                            broadcastState()
                         end
                     end
                 end
@@ -508,6 +512,17 @@ local function run(context)
                             fc.ap.manualYaw = math.max(-6, math.min(6, (fc.ap.manualYaw or 0) + (tonumber(msg.delta) or 0)))
                         elseif msg.cmd == "SET_WAYPOINT" and type(msg.waypoint) == "table" then
                             fc.ap.waypoint = msg.waypoint
+                        elseif msg.cmd == "AUTOTUNE" or msg.cmd == "TUNE" then
+                            local okAt, resAt = pcall(fc.autoTune, fc, { persist = true })
+                            lastCmdName = okAt and "AUTOTUNE_OK" or "AUTOTUNE_ERR"
+                            if rednet and rednet.isOpen and rednet.isOpen() then
+                                pcall(rednet.send, senderId, {
+                                    type    = "AVIONICS_AUTOTUNE_RES",
+                                    success = okAt,
+                                    params  = fc.autotuneParams
+                                }, BUS_PROTOCOL)
+                            end
+                            broadcastState()
                             fc:setMode("LNAV", lastTel)
                         elseif msg.cmd == "START_ROUTE" or msg.cmd == "LOAD_ROUTE" then
                             fc:startRoute(msg.name, lastTel)
