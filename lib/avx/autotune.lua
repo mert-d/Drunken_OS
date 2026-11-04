@@ -277,4 +277,72 @@ function Autotune.autoCalibrate(fc, persist)
     return Autotune.apply(fc, params, persist)
 end
 
+--- Gemiyi sallamayan, 2 saniyelik mikro-darbelerle motor/sensor yonlerini bulan Guvenli Kalibrator (Safe Mapper)
+function Autotune.runSafeCalibration(avionics, logFn)
+    local log = logFn or print
+    local a = avionics and avionics.adaptive
+    local gears = (avionics and (avionics.gears or avionics.gearboxes)) or {}
+    if not a or #gears < 4 then
+        log("[HATA] En az 4 adet analog_transmission / aktuator gerekli!")
+        return false
+    end
+
+    log("[1/2] Mevcut durustan baslangic Levitation/CoM trimi sifirlaniyor...")
+    local baseTel = avionics:readTelemetry()
+    local p0 = baseTel.pitch or 0
+    local r0 = baseTel.roll  or 0
+    if math.abs(p0) > 1.65 or math.abs(r0) > 1.65 then
+        p0 = math.rad(p0); r0 = math.rad(r0)
+    end
+
+    local sleepFn = sleep or (os and os.sleep) or function() end
+
+    -- 1. On motorlara (+1.5 sinyal) 0.35 sn mikro darbe verip Pitch yonunu dogrula
+    log("[2/2] Mikro-darbe ile Pitch ve Roll eksen yonu dogrulaniyor...")
+    for i = 1, 4 do
+        local sig = (i == 1 or i == 3) and math.min(15, math.floor(a.hoverBase + 2)) or math.max(0, math.floor(a.hoverBase - 1))
+        local gear = gears[i]
+        if gear then
+            if gear.setGearshift then pcall(gear.setGearshift, sig)
+            elseif gear.setSignal then pcall(gear.setSignal, sig)
+            elseif gear.setTargetSpeed then pcall(gear.setTargetSpeed, math.floor((sig / 15.0) * 256 + 0.5))
+            end
+        end
+    end
+    sleepFn(0.35)
+    local p1 = avionics:readTelemetry().pitch or 0
+    if math.abs(p1) > 1.65 then p1 = math.rad(p1) end
+    if (p1 - p0) < -0.005 then
+        a.pitchSign = -1
+        log(" -> Pitch ekseni ters algilandi, otomatik duzeltildi (pitchSign = -1)")
+    else
+        a.pitchSign = 1
+    end
+
+    -- 2. Sol motorlara (+1.5 sinyal) 0.35 sn mikro darbe verip Roll yonunu dogrula
+    for i = 1, 4 do
+        local sig = (i == 1 or i == 2) and math.min(15, math.floor(a.hoverBase + 2)) or math.max(0, math.floor(a.hoverBase - 1))
+        local gear = gears[i]
+        if gear then
+            if gear.setGearshift then pcall(gear.setGearshift, sig)
+            elseif gear.setSignal then pcall(gear.setSignal, sig)
+            elseif gear.setTargetSpeed then pcall(gear.setTargetSpeed, math.floor((sig / 15.0) * 256 + 0.5))
+            end
+        end
+    end
+    sleepFn(0.35)
+    local r1 = avionics:readTelemetry().roll or 0
+    if math.abs(r1) > 1.65 then r1 = math.rad(r1) end
+    if (r1 - r0) < -0.005 then
+        a.rollSign = -1
+        log(" -> Roll ekseni ters algilandi, otomatik duzeltildi (rollSign = -1)")
+    else
+        a.rollSign = 1
+    end
+
+    avionics:saveAdaptiveState()
+    log("[OK] Adaptif kalibrasyon tamamlandi ve /etc/avionics_adaptive.cfg kaydedildi!")
+    return true
+end
+
 return Autotune

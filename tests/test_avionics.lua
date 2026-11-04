@@ -1152,7 +1152,7 @@ local function runTests()
     assert(math.abs(propFC.skyfireModel.hoverBaseSig - 8.90) < 0.1, "Expected hoverBaseSig to be 8.90")
     assert(propFC.skyfireModel.maxLiftForce == 268606.0, "Expected maxLiftForce 268606 pN")
 
-    -- 1. Static Equilibrium in HOVER: both front and rear must have symmetric control headroom
+    -- 1. Static Equilibrium in HOVER: both front and rear must have symmetric control headroom (hoverBase ~9)
     propFC:setMode("HOVER", { altitude = 100.0, heading = 0.0 })
     propFC.altSensor = {
         getHeight = function() return 100.0 end,
@@ -1164,8 +1164,8 @@ local function runTests()
     }
     propFC:step(0.05)
     local msHover = propFC.lastMothershipState
-    assert(msHover.fl >= 6 and msHover.fl <= 8, "Expected front hover signal around 6-8, got: " .. tostring(msHover.fl))
-    assert(msHover.rl >= 8 and msHover.rl <= 10, "Expected rear hover signal around 8-10, got: " .. tostring(msHover.rl))
+    assert(msHover.fl >= 8 and msHover.fl <= 10, "Expected front hover signal around hoverBase 9, got: " .. tostring(msHover.fl))
+    assert(msHover.rl >= 8 and msHover.rl <= 10, "Expected rear hover signal around hoverBase 9, got: " .. tostring(msHover.rl))
     -- Both must have > 3.0 signal headroom to 15 (256 RPM)
     assert(msHover.fl < 15 and msHover.rl < 15, "Expected hover signals below saturation ceiling 15")
 
@@ -1276,6 +1276,130 @@ local function runTests()
 
     _G.sublevel = nil
     print("  PASS: Test 21: Rigid-Body Physics Autotuning & Pole-Placement PID Synthesis")
+
+    -- Test 22: Model-Independent Full Adaptive Cascade INDI Controller & Safe Calibration
+    local adaptFC = Avionics.new({ callsign = "ADAPT-TEST", profile = "GUNSHIP", useGPS = false })
+    assert(adaptFC.adaptive ~= nil, "Expected self.adaptive state table to exist")
+    assert(adaptFC.adaptive.hoverBase == 9.0, "Expected initial hoverBase to be 9.0")
+    assert(adaptFC.adaptive.trimPitch == 0.0, "Expected initial trimPitch to be 0.0")
+
+    -- 1. Full Levitation Adaptation: Vessel climbing at +2.5 m/s while at target alt -> hoverBase learns downwards
+    adaptFC:setMode("HOVER", { altitude = 100.0, heading = 0.0 })
+    adaptFC.altSensor = { getHeight = function() return 100.0 end, getVerticalSpeed = function() return 2.5 end }
+    adaptFC.gimbal = {
+        getAnglesRad = function() return { 0.0, 0.0 } end,
+        getAngularVelocity = function() return { 0.0, 0.0, 0.0 } end
+    }
+    local gyroBladeAngle = nil
+    adaptFC.gyros = {
+        { setManualTarget = function(a) gyroBladeAngle = a end },
+        { setManualTarget = function(a) end },
+        { setManualTarget = function(a) end },
+        { setManualTarget = function(a) end }
+    }
+    for _ = 1, 10 do
+        adaptFC:step(0.05)
+    end
+    assert(adaptFC.adaptive.hoverBase < 9.0, "Expected hoverBase to learn downward from 9.0 when climbing with levitation")
+
+    -- Simulate heavy levitation pushing ship upwards: target 100, current 106, climb rate 3.5 m/s -> active downforce
+    adaptFC.altSensor = { getHeight = function() return 106.0 end, getVerticalSpeed = function() return 3.5 end }
+    adaptFC:step(0.05)
+    assert(gyroBladeAngle ~= nil, "Expected gyro setManualTarget to be called")
+    local angleVal = type(gyroBladeAngle) == "table" and (gyroBladeAngle.z or gyroBladeAngle[1]) or gyroBladeAngle
+    assert(tonumber(angleVal) < 0, "Expected negative blade angle (Active Downforce) when ascending above target with excess levitation")
+
+    -- 2. Asymmetric CoM Live Auto-Trim Adaptation: sustained nose-down error (+5 deg) learns positive trimPitch
+    adaptFC.gpsTick = 1
+    adaptFC.gimbal = {
+        getAnglesRad = function() return { -math.rad(5.0), 0.0 } end,
+        getAngularVelocity = function() return { 0.0, 0.0, 0.0 } end
+    }
+    for _ = 1, 15 do
+        adaptFC.gpsTick = 1
+        adaptFC:step(0.05)
+    end
+    assert(adaptFC.adaptive.trimPitch > 0.10, "Expected trimPitch to adaptively learn positive torque to counter forward CoM imbalance")
+
+    -- 3. Disk Persistence: saveAdaptiveState & loadAdaptiveState
+    local origFs3 = _G.fs
+    local origTu3 = _G.textutils
+    local mockStorage = {}
+    _G.fs = {
+        exists = function(p) return mockStorage[p] ~= nil or p == "/etc" end,
+        makeDir = function(p) end,
+        open = function(p, mode)
+            if mode == "w" then
+                return {
+                    write = function(s) mockStorage[p] = s end,
+                    close = function() end
+                }
+            elseif mode == "r" then
+                if not mockStorage[p] then return nil end
+                return {
+                    readAll = function() return mockStorage[p] end,
+                    close = function() end
+                }
+            end
+            return nil
+        end
+    }
+    _G.textutils = _G.textutils or {}
+    local origSer = _G.textutils.serialize
+    local origUnser = _G.textutils.unserialize
+    _G.textutils.serialize = function(t)
+        local parts = {}
+        for k, v in pairs(t) do
+            if type(v) == "table" then
+                parts[#parts+1] = tostring(k) .. "={}"
+            else
+                parts[#parts+1] = tostring(k) .. "=" .. tostring(v)
+            end
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    _G.textutils.unserialize = function(s)
+        local t = {}
+        for k, v in s:gmatch("([%w_]+)=([%-%d%.]+)") do
+            t[k] = tonumber(v) or v
+        end
+        return t
+    end
+
+    adaptFC.adaptive.hoverBase = 4.25
+    adaptFC.adaptive.trimPitch = 1.85
+    adaptFC.adaptive.trimRoll  = -0.65
+    adaptFC:saveAdaptiveState()
+
+    local reloadFC = Avionics.new({ callsign = "RELOAD-TEST", profile = "GUNSHIP", useGPS = false })
+    assert(math.abs(reloadFC.adaptive.hoverBase - 4.25) < 0.01, "Expected loaded hoverBase to be 4.25")
+    assert(math.abs(reloadFC.adaptive.trimPitch - 1.85) < 0.01, "Expected loaded trimPitch to be 1.85")
+    assert(math.abs(reloadFC.adaptive.trimRoll - (-0.65)) < 0.01, "Expected loaded trimRoll to be -0.65")
+
+    _G.fs = origFs3
+    if origTu3 then
+        _G.textutils.serialize = origSer
+        _G.textutils.unserialize = origUnser
+    else
+        _G.textutils = nil
+    end
+
+    -- 4. Safe Micro-Pulse Calibration (Safe Mapper)
+    local calibLogs = {}
+    local gearSignals = { 0, 0, 0, 0 }
+    reloadFC.gears = {
+        { setSignal = function(s) gearSignals[1] = s end },
+        { setSignal = function(s) gearSignals[2] = s end },
+        { setSignal = function(s) gearSignals[3] = s end },
+        { setSignal = function(s) gearSignals[4] = s end }
+    }
+    local calibSuccess = Autotune.runSafeCalibration(reloadFC, function(msg) table.insert(calibLogs, msg) end)
+    assert(calibSuccess == true, "Expected Autotune.runSafeCalibration to succeed with 4 transmissions")
+    assert(reloadFC.adaptive.pitchSign == 1 or reloadFC.adaptive.pitchSign == -1, "Expected valid pitchSign")
+    assert(reloadFC.adaptive.rollSign == 1 or reloadFC.adaptive.rollSign == -1, "Expected valid rollSign")
+    assert(gearSignals[1] > 0, "Expected micro-pulse delivered to transmissions during calibration")
+
+    print("  PASS: Test 22: Model-Independent Full Adaptive Cascade INDI Controller & Safe Calibration")
 
     -- Restore globals
     _G.peripheral = origPeripheral

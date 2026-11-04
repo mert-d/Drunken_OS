@@ -41,9 +41,11 @@ local function run(args)
     args = args or {}
     local calcOnly = false
     local autoApply = false
+    local isSafeCalib = false
     for _, a in ipairs(args) do
         if a == "--calc-only" then calcOnly = true end
         if a == "--apply" or a == "-y" then autoApply = true end
+        if a == "--safe" or a == "--calibrate" then isSafeCalib = true end
     end
 
     drawHeader("DRUNKEN OS - AVIONICS PID AUTOTUNER")
@@ -64,6 +66,23 @@ local function run(args)
     end
 
     local fc = _G._fc
+
+    if isSafeCalib then
+        drawHeader("DRUNKEN OS - GUVENLI ADAPTIF KALIBRASYON")
+        print("\n [BILGI] 2 saniyelik mikro-darbeler ile eksen dogrulamasi baslatiliyor...")
+        if fc then
+            Autotune.runSafeCalibration(fc, print)
+        else
+            local okAv, Avionics = pcall(require, "lib.avionics")
+            if okAv and Avionics and Avionics.new then
+                local tempFc = Avionics.new({ callsign = "CALIB-CLI", profile = "GUNSHIP", useGPS = false })
+                Autotune.runSafeCalibration(tempFc, print)
+            else
+                print(" [HATA] Ucus bilgisayari (FC) bulunamadi!")
+            end
+        end
+        return
+    end
     local params = nil
 
     if fc then
@@ -174,7 +193,7 @@ local function run(args)
 
     term.setCursorPos(2, 17)
     term.setTextColor(isColor and colors.yellow or colors.white)
-    term.write("[ENTER / C] Uygula ve Kaydet     [S] Sadece Kaydet     [Q] Cikis")
+    term.write("[ENTER/C] Uygula   [P] Guvenli Kalibrasyon   [S] Kaydet   [Q] Cikis")
 
     while true do
         local _, key = os.pullEvent("key")
@@ -196,6 +215,21 @@ local function run(args)
                     term.setTextColor(colors.orange or colors.white)
                     term.write(">> Yerel FC bulunamadi, sadece config'e kaydedildi. <<")
                     Autotune.apply(nil, params, true)
+                end
+            end
+            sleep(1.5)
+            break
+        elseif key == keys.p then
+            term.setCursorPos(2, 18)
+            term.setTextColor(cGood)
+            term.write(">> GUVENLI ADAPTIF KALIBRASYON CALISTIRILIYOR... <<    ")
+            if fc then
+                Autotune.runSafeCalibration(fc, print)
+            else
+                local okAv, Avionics = pcall(require, "lib.avionics")
+                if okAv and Avionics and Avionics.new then
+                    local tempFc = Avionics.new({ callsign = "CALIB-CLI", profile = "GUNSHIP", useGPS = false })
+                    Autotune.runSafeCalibration(tempFc, print)
                 end
             end
             sleep(1.5)
