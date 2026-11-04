@@ -1164,8 +1164,8 @@ local function runTests()
     }
     propFC:step(0.05)
     local msHover = propFC.lastMothershipState
-    assert(msHover.fl >= 8 and msHover.fl <= 10, "Expected front hover signal around hoverBase 9, got: " .. tostring(msHover.fl))
-    assert(msHover.rl >= 8 and msHover.rl <= 10, "Expected rear hover signal around hoverBase 9, got: " .. tostring(msHover.rl))
+    assert(msHover.fl >= 6 and msHover.fl <= 8, "Expected front hover signal around 6-8, got: " .. tostring(msHover.fl))
+    assert(msHover.rl >= 8 and msHover.rl <= 10, "Expected rear hover signal around 8-10, got: " .. tostring(msHover.rl))
     -- Both must have > 3.0 signal headroom to 15 (256 RPM)
     assert(msHover.fl < 15 and msHover.rl < 15, "Expected hover signals below saturation ceiling 15")
 

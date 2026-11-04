@@ -1568,14 +1568,26 @@ function Avionics:saveAdaptiveState()
     end
 end
 
-function Avionics:stepGunshipAdaptive(tel, dt)
+function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     local a = self.adaptive
-    local safeDt = clamp(dt or 0.05, 0.05, 0.25)
+    local safeDt = clamp(dt or 0.05, 0.02, 0.25)
+    local m = self.skyfireModel or {
+        mass          = 15120.0,
+        gravityForce  = 166000.0,
+        maxLiftForce  = 268606.0,
+        Lf            = 42.0,
+        Lr            = 16.0,
+        W             = 37.0,
+        gammaFront    = 0.762,
+        gammaRear     = 1.000,
+        hoverBaseSig  = 8.90,
+        ditherAcc     = { 0, 0, 0, 0 }
+    }
 
     -- 1. OTOMATIK BIRIM KORUMASI (Derece gelirse Radyan'a cevir)
     local pitch = tel.pitch or 0
     local roll  = tel.roll  or 0
-    local yaw   = tel.yaw   or 0
+    local yaw   = tel.yaw   or tel.heading or 0
     if math.abs(pitch) > 1.65 or math.abs(roll) > 1.65 then
         pitch = math.rad(pitch)
         roll  = math.rad(roll)
@@ -1602,20 +1614,17 @@ function Avionics:stepGunshipAdaptive(tel, dt)
     a.fYawRate   = a.fYawRate   * 0.60 + rawYawRate   * 0.40
     a.fVSpeed    = a.fVSpeed    * 0.65 + rawVSpeed    * 0.35
 
-    local pitchAccel = (a.fPitchRate - a.prevPitchRate) / safeDt
-    local rollAccel  = (a.fRollRate  - a.prevRollRate)  / safeDt
-    a.prevPitchRate  = a.fPitchRate
-    a.prevRollRate   = a.fRollRate
-
     local ap = self.autopilot or self.ap or {}
     local apMode = ap.mode or "MANUAL"
     local isZeroThrottleManual = (not ap.enabled or apMode == "MANUAL") and ((self.manualThrottle or ap.baseThrottle or 0) <= 0 or ap.parkingBrake)
 
-    -- 3. DIKEY ITKI VE POZITIF LEVITATION OGRENICISI (hoverBase: 0.0 .. 14.5)
-    local baseLift = a.hoverBase
+    -- 3. DIKEY ITKI VE CANLI LEVITATION (ANTIGRAVITY) OGRENICISI
+    local baseLift = a.hoverBase or m.hoverBaseSig or 8.90
     local downforceAngle = 0.0
 
     if isZeroThrottleManual then
+        self.msPitchPID:reset()
+        self.msRollPID:reset()
         baseLift = 0.0
     elseif apMode == "MANUAL" then
         baseLift = clamp(self.manualThrottle or ap.baseThrottle or 0, 0, 15)
@@ -1625,168 +1634,218 @@ function Avionics:stepGunshipAdaptive(tel, dt)
         local targetVSpeed = clamp(altErr * a.altVelKp, -a.maxClimbRate, a.maxClimbRate)
         local vSpeedErr    = targetVSpeed - a.fVSpeed
 
-        -- Canli Hover Gazi Ogrenimi: Alt taraf Levitation doluysa hoverBase otomatik 0'a iner
+        -- Canli Hover Gazi Ogrenimi: Levitation veya Antigravity yuzunden gemi yukari kaciyorsa hoverBase otomatik 0'a iner
         a.hoverBase = clamp(a.hoverBase + vSpeedErr * a.hoverLearnRate * safeDt, 0.0, 14.5)
+        m.hoverBaseSig = a.hoverBase
 
-        local rawLiftCmd = a.hoverBase + vSpeedErr * a.vSpeedKp
-        baseLift = clamp(rawLiftCmd, 0.0, 14.8)
+        local pidAlt = self.altPID:compute(tgtAlt, tel.altitude, safeDt)
+        local vsiGain = self.dampVy or 1.50
+        local vsiDamp = clamp(a.fVSpeed * vsiGain, -3.5, 3.5)
+        local altCmd = clamp(pidAlt - vsiDamp, -4.0, 4.5)
 
-        -- Gemi motorlar 0 iken bile Levitation yuzunden yukari kaciyorsa aktif negatif kanat acisi uret
-        if rawLiftCmd < -0.2 then
-            downforceAngle = clamp(rawLiftCmd * 4.5, -25.0, 0.0)
+        local baseCenter = math.max(ap.baseThrottle or 0, a.hoverBase)
+        local rawLiftCmd = baseCenter + altCmd
+        baseLift = clamp(rawLiftCmd, 0.0, 15.0)
+
+        -- Aktif Negatif Kanat Acisi (Active Downforce):
+        -- Eger Levitation gemiyi motorlar sifirken dahi hedefin uzerine cikarip tasiyorsa
+        if rawLiftCmd < -0.15 or (altErr < -0.4 and a.fVSpeed > 0.2 and baseLift <= 1.0) then
+            local excessRise = (rawLiftCmd < -0.15) and rawLiftCmd or (-0.4 - (tel.altitude - tgtAlt) * 0.4)
+            downforceAngle = clamp(excessRise * 5.0, -25.0, 0.0)
         end
     end
 
-    -- 4. CIFT DONGULU KASKAD PITCH & ROLL KONTROLCUSU (Angle -> Rate -> Torque)
+    -- 4. PITCH & ROLL STABILIZASYONU: CRITICALLY DAMPED PID + DOGRUDAN HIZ SONUMLENMESI
     local tgtPitch = clamp(ap.targetPitch or 0, -0.15, 0.15)
     local tgtRoll  = clamp(ap.targetRoll  or 0, -0.15, 0.15)
 
     local angleErrP = (tgtPitch - pitch) * a.pitchSign
     local angleErrR = (tgtRoll  - roll)  * a.rollSign
 
-    -- Dis Dongu: Istenen duzeltme acisal hizi (Maksimum ~9.1 derece/sn)
-    local cmdRateP = clamp(angleErrP * a.angleKp, -a.maxRateCmd, a.maxRateCmd)
-    local cmdRateR = clamp(angleErrR * a.angleKp, -a.maxRateCmd, a.maxRateCmd)
-
-    -- Ic Dongu: Hiz Hatasi
     local measRateP = a.fPitchRate * a.pitchSign
     local measRateR = a.fRollRate  * a.rollSign
+    local rateErrP  = -measRateP
+    local rateErrR  = -measRateR
 
-    local rateErrP = cmdRateP - measRateP
-    local rateErrR = cmdRateR - measRateR
-
-    -- 5. CANLI 3-EKSEN AUTO-TRIM (Her Turlu CoM ve Bolgesel Levitation Degisimini Ogrenir)
+    -- Canli 3-Eksen CoM & Asimetrik Levitation Auto-Trim
     local isActive = (not isZeroThrottleManual) and ((apMode ~= "MANUAL") or (baseLift > 1.5) or (math.abs(a.fVSpeed) > 0.15))
     if isActive then
-        -- Trim yonu: Aci hatasi devam ettigi surece ilgili koselerin baz gucunu kaydirir
         a.trimPitch = clamp(a.trimPitch + (angleErrP * 1.4 + rateErrP * 0.4) * a.trimLearnRate * safeDt, -7.5, 7.5)
         a.trimRoll  = clamp(a.trimRoll  + (angleErrR * 1.4 + rateErrR * 0.4) * a.trimLearnRate * safeDt, -7.5, 7.5)
+        self.pitchBias = a.trimPitch
+        self.rollBias  = a.trimRoll
     end
 
-    local dTermP = (pitchAccel * a.pitchSign) * a.accelKd
-    local dTermR = (rollAccel  * a.rollSign)  * a.accelKd
-    if rateErrP * dTermP > 0 then dTermP = 0 end
-    if rateErrR * dTermR > 0 then dTermR = 0 end
+    local pidPitch = self.msPitchPID:compute(tgtPitch, pitch, safeDt)
+    local pidRoll  = self.msRollPID:compute(tgtRoll, roll, safeDt)
 
-    local pdPitch = clamp(rateErrP * a.rateKp - dTermP, -a.maxDiffTorque, a.maxDiffTorque)
-    local pdRoll  = clamp(rateErrR * a.rateKp - dTermR, -a.maxDiffTorque, a.maxDiffTorque)
+    -- Dogrudan acisal hiz sonumlemesi: burun yunuslama hizini (wx) ve yalpalama hizini (wz) aninda frenler
+    local wxGain = self.dampWx or 6.0
+    local wxDamp = clamp(a.fPitchRate * wxGain, -3.5, 3.5)
+    local wzGain = self.dampWz or 4.5
+    local wzDamp = clamp(a.fRollRate  * wzGain, -2.5, 2.5)
 
-    local totalPitchTorque = clamp(a.trimPitch + pdPitch, -8.5, 8.5)
-    local totalRollTorque  = clamp(a.trimRoll  + pdRoll,  -8.5, 8.5)
+    local totalPitchTorque = clamp((a.trimPitch or 0.0) + (pidPitch * a.pitchSign) - (wxDamp * a.pitchSign), -6.5, 6.5)
+    local totalRollTorque  = clamp((a.trimRoll  or 0.0) + (pidRoll  * a.rollSign)  - (wzDamp * a.rollSign),  -3.5, 3.5)
 
-    -- Anti-dive / severe pitch envelope protection
+    -- Anti-dive ve dik aci korumasi (Zarfta kalma kurali)
     local absPitchDeg = math.abs(math.deg(pitch))
-    if absPitchDeg > 18.0 then
-        local emergencyBoost = clamp((absPitchDeg - 18.0) * 0.25, 0.0, 3.5)
-        if pitch < 0 then
-            totalPitchTorque = clamp(totalPitchTorque + emergencyBoost, -8.5, 8.5)
+    if absPitchDeg > 16.0 then
+        local emergencyBoost = clamp((absPitchDeg - 16.0) * 0.35, 0.0, 4.5)
+        if pitch > 0 then
+            totalPitchTorque = clamp(totalPitchTorque - emergencyBoost * a.pitchSign, -10.5, 10.5)
         else
-            totalPitchTorque = clamp(totalPitchTorque - emergencyBoost, -8.5, 8.5)
+            totalPitchTorque = clamp(totalPitchTorque + emergencyBoost * a.pitchSign, -10.5, 10.5)
         end
     end
     tel.pitchWarning = (absPitchDeg > 14.0)
+
+    -- HOVER modunda pilot gazi sifirken aktif yatay kayma freni
+    if apMode == "HOVER" and (ap.baseThrottle or 0) == 0 and absPitchDeg < 4.0 and math.abs(math.deg(roll)) < 4.0 then
+        local hdg = tel.heading or yaw or 0
+        local cosH = math.cos(hdg)
+        local sinH = math.sin(hdg)
+        local vx = (tel.velocity and tel.velocity.x) or 0
+        local vz = (tel.velocity and tel.velocity.z) or 0
+        local fwdSpeed = vx * (-sinH) + vz * cosH
+        local latSpeed = -(vx * cosH + vz * sinH)
+        if math.abs(fwdSpeed) > 0.05 then
+            local brakePitch = clamp(fwdSpeed * 0.30, -0.8, 0.8)
+            totalPitchTorque = clamp(totalPitchTorque + brakePitch, -9.5, 9.5)
+        end
+        if math.abs(latSpeed) > 0.05 then
+            local brakeRoll = clamp(-latSpeed * 0.25, -0.6, 0.6)
+            totalRollTorque = clamp(totalRollTorque + brakeRoll, -6.0, 6.0)
+        end
+    end
 
     -- Hook into AVX onMix modules (wing leveling altimeter, sky anchor)
     local tHook = { pitch = totalPitchTorque, roll = totalRollTorque, surge = 0, alt = baseLift, yaw = 0 }
     if self.hook then
         self:hook("onMix", tel, tHook, safeDt)
-        totalPitchTorque = clamp(tHook.pitch or totalPitchTorque, -8.5, 8.5)
-        totalRollTorque  = clamp(tHook.roll or totalRollTorque, -8.5, 8.5)
-        if tHook.alt then baseLift = clamp(tHook.alt, 0.0, 14.8) end
+        totalPitchTorque = clamp(tHook.pitch or totalPitchTorque, -10.5, 10.5)
+        totalRollTorque  = clamp(tHook.roll or totalRollTorque, -6.0, 6.0)
+        if tHook.alt then baseLift = clamp(tHook.alt, 0.0, 15.0) end
     end
 
-    -- Yaw (Pruva) Duzeltmesi
+    -- Yaw (Pruva) Donusu
     local yawTorque = 0.0
     local tgtHdg = ap.targetHeading or ap.targetHdg
     if apMode ~= "MANUAL" and tgtHdg then
         local hdgErr = (tgtHdg - yaw) * a.yawSign
         if hdgErr > math.pi then hdgErr = hdgErr - 2 * math.pi end
         if hdgErr < -math.pi then hdgErr = hdgErr + 2 * math.pi end
-        local cmdYawRate = clamp(hdgErr * 1.2, -0.20, 0.20)
-        yawTorque = clamp((cmdYawRate - a.fYawRate * a.yawSign) * 3.0, -1.5, 1.5)
+        yawTorque = clamp(self.yawPID:compute(0, -hdgErr, safeDt), -3.0, 3.0)
     end
     if tHook.yaw and math.abs(tHook.yaw) > 0 then
-        yawTorque = clamp(yawTorque + tHook.yaw, -2.5, 2.5)
+        yawTorque = clamp(yawTorque + tHook.yaw, -3.0, 3.0)
     end
 
-    -- 6. DOYMA KORUMALI 4-KOSE MIKSERI (Attitude Priority over Altitude)
-    -- Koseler: u1=SolOn, u2=SolArka, u3=SagOn, u4=SagArka
-    local u = {
-        baseLift + totalPitchTorque + totalRollTorque - yawTorque, -- 1: Sol On
-        baseLift - totalPitchTorque + totalRollTorque - yawTorque, -- 2: Sol Arka
-        baseLift + totalPitchTorque - totalRollTorque + yawTorque, -- 3: Sag On
-        baseLift - totalPitchTorque - totalRollTorque + yawTorque  -- 4: Sag Arka
+    -- 5. FIZIKSEL MOMENT KOLU KATSAYISI (Lf=42m, Lr=16m, 4 On Motor, 8 Arka Motor -> gammaFront = 0.762)
+    -- On motorlar burnun cok ilerisinde oldugundan ayni gazda 1.31 kat daha fazla kaldirma torku uretir.
+    -- Bu yuzden On taban gucu gammaFront ile dengelenir.
+    local gammaFront = m.gammaFront or 0.762
+    local rearBase  = clamp(baseLift, 0.0, 15.0)
+    local frontBase = clamp(baseLift * gammaFront, 0.0, 15.0)
+
+    -- Dalistan cikista on motorlarin gazini koru
+    local pitchDeg = math.deg(pitch)
+    if pitchDeg < -6.0 and baseLift < (a.hoverBase or 8.9) then
+        local unpenalizedFront = clamp((a.hoverBase or 8.9) * gammaFront, 0.0, 15.0)
+        frontBase = math.max(frontBase, unpenalizedFront)
+    end
+
+    -- 4-Kanal Denge Mikseri (FL, RL, FR, RR)
+    -- Dikey kaldirma rotorlari sadece Lift, Pitch ve Roll dengeler; Yaw ise kuyruk iticileri ve vectoring gyrolarla yapilir
+    local rawFloat = {
+        frontBase + totalPitchTorque + totalRollTorque, -- 1: Sol On (FL)
+        rearBase  - totalPitchTorque + totalRollTorque, -- 2: Sol Arka (RL)
+        frontBase + totalPitchTorque - totalRollTorque, -- 3: Sag On (FR)
+        rearBase  - totalPitchTorque - totalRollTorque  -- 4: Sag Arka (RR)
     }
 
+    -- Multirotor Doyma Yonetimi (Desaturate Pair): Kollektif doyuma ulasinca roll/pitch otoritesini korur
+    local function desaturatePair(l, r, lo, hi)
+        local mx = math.max(l, r)
+        if mx > hi then
+            local ov = mx - hi
+            l, r = l - ov, r - ov
+        end
+        local mn = math.min(l, r)
+        if mn < lo then
+            local un = lo - mn
+            l, r = l + un, r + un
+        end
+        return clamp(l, lo, hi), clamp(r, lo, hi)
+    end
+
     if isZeroThrottleManual then
-        u = { 0.0, 0.0, 0.0, 0.0 }
+        rawFloat = { 0.0, 0.0, 0.0, 0.0 }
     else
-        -- Tavan (15.0) veya Taban (0.0) asimi varsa ortak gazi kaydir ki fark (denge torku) asla bozulmasin!
-        local maxU = math.max(u[1], u[2], u[3], u[4])
-        local minU = math.min(u[1], u[2], u[3], u[4])
+        local minFront = (apMode == "HOVER" or baseLift >= 4.0) and 1.5 or 0.0
+        local minRear  = (apMode == "HOVER" or baseLift >= 4.0) and 1.0 or 0.0
+        rawFloat[1], rawFloat[3] = desaturatePair(rawFloat[1], rawFloat[3], minFront, 15.0)
+        rawFloat[2], rawFloat[4] = desaturatePair(rawFloat[2], rawFloat[4], minRear,  15.0)
+    end
 
-        if maxU > 15.0 then
-            local shiftDown = maxU - 15.0
-            for i = 1, 4 do u[i] = u[i] - shiftDown end
-        end
-        minU = math.min(u[1], u[2], u[3], u[4])
-        local floorLimit = (apMode == "HOVER" or baseLift > 2.0) and 1.0 or 0.0
-        if minU < floorLimit then
-            local shiftUp = floorLimit - minU
-            for i = 1, 4 do u[i] = clamp(u[i] + shiftUp, 0.0, 15.0) end
+    -- 6. 20 Hz DELTA-SIGMA KESIRLI DARBE MODULASYONU (PWM Dithering)
+    local sig = {}
+    for i = 1, 4 do
+        local clamped = math.max(0.0, math.min(15.0, rawFloat[i]))
+        if clamped <= 0.05 or clamped >= 14.95 then
+            sig[i] = math.floor(clamped + 0.5)
+            a.ditherAcc[i] = 0
+        else
+            local desired = clamped + (a.ditherAcc[i] or 0)
+            local outInt  = math.floor(desired + 0.5)
+            outInt = math.max(0, math.min(15, outInt))
+            a.ditherAcc[i] = desired - outInt
+            sig[i] = outInt
         end
     end
 
-    -- 7. 20 Hz DELTA-SIGMA KESIRLI DARBE MODULASYONU (0..15 Sanzimanlara Kusuratli Guc Basar)
-    local function dither(val, corner)
-        local targetVal = clamp(val, 0.0, 15.0)
-        local intPart  = math.floor(targetVal)
-        local fracPart = targetVal - intPart
-        a.ditherAcc[corner] = (a.ditherAcc[corner] or 0) + fracPart
-        local outSig = intPart
-        if a.ditherAcc[corner] >= 1.0 then
-            outSig = math.min(15, intPart + 1)
-            a.ditherAcc[corner] = a.ditherAcc[corner] - 1.0
-        end
-        return outSig
-    end
+    local flSig, rlSig, frSig, rrSig = sig[1], sig[2], sig[3], sig[4]
 
-    local flSig = dither(u[1], 1)
-    local rlSig = dither(u[2], 2)
-    local frSig = dither(u[3], 3)
-    local rrSig = dither(u[4], 4)
-
-    -- 8. GYROSCOPIC PROPELLER BEARING KANAT ACISI DESTEGI (Varsa Mikro-Tork & Active Downforce)
+    -- 7. GYROSCOPIC PROPELLER BEARING (3D Vektoru & Aktif Downforce Destegi)
     local numGyros = #(self.gyros or {})
     if numGyros > 0 then
-        for idx = 1, numGyros do
-            local corner = ((idx - 1) % 4) + 1
-            local isFront = (corner == 1 or corner == 3)
-            local isLeft  = (corner == 1 or corner == 2)
-            local bladeAngle = downforceAngle
-                + (isFront and (pdPitch * 1.8) or (-pdPitch * 1.8))
-                + (isLeft  and (pdRoll  * 1.8) or (-pdRoll  * 1.8))
-            bladeAngle = clamp(bladeAngle, -25.0, 25.0)
-            local gyro = self.gyros[idx]
-            if gyro and gyro.setManualTarget then
-                pcall(function()
-                    local ok = pcall(gyro.setManualTarget, bladeAngle)
-                    if not ok then
-                        local radAngle = math.rad(bladeAngle)
-                        local vec = { x = 0, y = math.cos(radAngle), z = math.sin(radAngle), bladeAngle }
-                        pcall(gyro.setManualTarget, vec)
-                    end
-                end)
+        local gyroPitchTrim = -0.025
+        local downforceRad = math.rad(downforceAngle or 0.0)
+        local pitchTilt = math.max(-0.25, math.min(0.25, gyroPitchTrim + downforceRad + (totalPitchTorque * 0.038)))
+        local rollTilt  = math.max(-0.18, math.min(0.18, -totalRollTorque * 0.032))
+        local yawTilt   = math.max(-0.15, math.min(0.15, yawTorque * 0.035))
+
+        local halfGyros = math.floor(numGyros / 2)
+        local effDownVal = (downforceAngle < 0 and downforceAngle or (pitchTilt < 0 and pitchTilt or rollTilt))
+        local portVec = {
+            x = rollTilt, y = math.cos(pitchTilt + yawTilt), z = math.sin(pitchTilt + yawTilt),
+            [1] = effDownVal,
+            rollTilt, math.cos(pitchTilt + yawTilt), math.sin(pitchTilt + yawTilt),
+            downforce = downforceAngle
+        }
+        local stbdVec = {
+            x = rollTilt, y = math.cos(pitchTilt - yawTilt), z = math.sin(pitchTilt - yawTilt),
+            [1] = effDownVal,
+            rollTilt, math.cos(pitchTilt - yawTilt), math.sin(pitchTilt - yawTilt),
+            downforce = downforceAngle
+        }
+
+        for gIdx, gyro in ipairs(self.gyros) do
+            local vec = (gIdx <= halfGyros) and portVec or stbdVec
+            if tasks then
+                table.insert(tasks, function() safeCall(gyro.setManualTarget, vec) end)
+            elseif gyro and gyro.setManualTarget then
+                safeCall(gyro.setManualTarget, vec)
             end
         end
     end
 
-    self.lastMotorSignals = { math.floor(flSig + 0.5), math.floor(rlSig + 0.5), math.floor(frSig + 0.5), math.floor(rrSig + 0.5) }
+    self.lastMotorSignals = { flSig, rlSig, frSig, rrSig }
     self.lastMothershipState = {
-        fl    = math.floor(flSig + 0.5),
-        rl    = math.floor(rlSig + 0.5),
-        fr    = math.floor(frSig + 0.5),
-        rr    = math.floor(rrSig + 0.5),
+        fl    = flSig,
+        rl    = rlSig,
+        fr    = frSig,
+        rr    = rrSig,
         flRpm = math.floor((flSig / 15.0) * 256 + 0.5),
         rlRpm = math.floor((rlSig / 15.0) * 256 + 0.5),
         frRpm = math.floor((frSig / 15.0) * 256 + 0.5),
@@ -1796,16 +1855,16 @@ function Avionics:stepGunshipAdaptive(tel, dt)
         rearR = (self.lastMothershipState and self.lastMothershipState.rearR) or 0
     }
     tel.mothership = self.lastMothershipState
-    self.lastLiftForcePN = ((flSig + rlSig + frSig + rrSig) / 60.0) * ((self.skyfireModel and self.skyfireModel.maxLiftForce) or 268606.0)
+    self.lastLiftForcePN = ((flSig + rlSig + frSig + rrSig) / 60.0) * (m.maxLiftForce or 268606.0)
 
-    -- Her 10 saniyede bir ogrenilen yeni CoM / Levitation dengesini diske kaydet
+    -- 10 saniyede bir ogrenilen yeni dengeyi diske kaydet
     a.saveTimer = a.saveTimer + safeDt
     if a.saveTimer >= 10.0 then
         a.saveTimer = 0.0
         self:saveAdaptiveState()
     end
 
-    return flSig, frSig, rlSig, rrSig, (tHook and tHook.surge) or 0
+    return rawFloat[1], rawFloat[3], rawFloat[2], rawFloat[4], (tHook and tHook.surge) or 0
 end
 
 -- Executes 1 control step (dt = 0.05s for 20Hz)
@@ -2119,11 +2178,21 @@ function Avionics:step(dt)
     local fwdSig = 0
 
     if isMothershipOrGunship then
-        rawLiftFL, rawLiftFR, rawLiftRL, rawLiftRR, surgeTrim = self:stepGunshipAdaptive(tel, dt)
+        rawLiftFL, rawLiftFR, rawLiftRL, rawLiftRR, surgeTrim = self:stepGunshipAdaptive(tel, dt, tasks)
         liftFL = math.floor(rawLiftFL + 0.5)
         liftFR = math.floor(rawLiftFR + 0.5)
         liftRL = math.floor(rawLiftRL + 0.5)
         liftRR = math.floor(rawLiftRR + 0.5)
+
+        -- Dispatch directly to gearboxes (Analog Transmissions) if 4 or 8 present
+        if #self.gearboxes >= 4 then
+            local gbSigs = { liftFL, liftRL, liftFR, liftRR }
+            for idx, gb in ipairs(self.gearboxes) do
+                local groupIdx = ((idx - 1) % 4) + 1
+                local targetSig = gbSigs[groupIdx]
+                table.insert(tasks, function() driveSignal(gb, targetSig, false) end)
+            end
+        end
 
         -- Forward thrust command & Anti-Dive governor for rear propulsion thrusters
         local fwdBase = (revActive and -mainThrottleSig or mainThrottleSig) + (surgeTrim or 0)

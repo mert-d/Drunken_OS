@@ -84,9 +84,9 @@ function Autotune.calculate(fc, sublevelHandle)
     local Lr = tonumber(m.Lr) or 16.0
     local W  = tonumber(m.W)  or 37.0
 
-    -- Propeller distribution: 2 nacelles front (4 props), 2 nacelles rear (8 to 10 props)
+    -- Propeller distribution: 2 nacelles front (4 props), 2 nacelles rear (8 props)
     local propsFront = 4
-    local propsRear  = 10 -- Skyfire upgraded 10-prop rear lift
+    local propsRear  = 8 -- Skyfire 4 front (2x2), 8 rear (2x4)
     if fc and fc.ioMap then
         -- Count physical actuators if mapped
         local liftCount = 0
@@ -110,8 +110,8 @@ function Autotune.calculate(fc, sublevelHandle)
     local iyyRatio = Iyy / 20220000.0
 
     -- 1. Pitch Control Synthesis (Critically Damped omega_n ~ 1.4 rad/s)
-    local kpPitch = clamp(round(14.0 * ixxRatio * (160.0 / torqueRear), 2), 6.0, 24.0)
-    local kdPitch = clamp(round(9.00 * ixxRatio * (160.0 / torqueRear), 2), 4.0, 16.0)
+    local kpPitch = clamp(round(14.0 * ixxRatio * (128.0 / torqueRear), 2), 6.0, 24.0)
+    local kdPitch = clamp(round(9.00 * ixxRatio * (128.0 / torqueRear), 2), 4.0, 16.0)
     local kiPitch = clamp(round(0.85 * mRatio, 2), 0.20, 2.00)
     local dampWx  = clamp(round(6.00 * ixxRatio, 2), 2.5, 9.0)
 
