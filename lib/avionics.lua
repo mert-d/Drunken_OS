@@ -1737,40 +1737,24 @@ function Avionics:stepGunshipAdaptive(tel, dt)
         end
     end
 
-    -- 7. 20 Hz DELTA-SIGMA KESIRLI DARBE SURUCUSU (0..15 Tam Sayi Sanzimanlara Kusuratli Guc Basar)
-    local activeGears = (self.gears and #self.gears >= 4) and self.gears
-        or ((self.gearboxes and #self.gearboxes >= 4) and self.gearboxes
-        or ((self.speedControllers and #self.speedControllers >= 4) and self.speedControllers or (self.gears or self.gearboxes or {})))
-    local numGears = #activeGears
-    if numGears >= 4 then
-        for idx = 1, numGears do
-            local corner = ((idx - 1) % 4) + 1
-            local mappedCorner = a.motorMap[corner] or corner
-            local targetVal = clamp(u[mappedCorner], 0.0, 15.0)
-
-            local intPart  = math.floor(targetVal)
-            local fracPart = targetVal - intPart
-            a.ditherAcc[corner] = (a.ditherAcc[corner] or 0) + fracPart
-
-            local outSig = intPart
-            if a.ditherAcc[corner] >= 1.0 then
-                outSig = math.min(15, intPart + 1)
-                a.ditherAcc[corner] = a.ditherAcc[corner] - 1.0
-            end
-
-            local gear = activeGears[idx]
-            if gear then
-                if gear.setGearshift then
-                    pcall(function() gear.setGearshift(outSig) end)
-                elseif gear.setSignal then
-                    pcall(function() gear.setSignal(outSig) end)
-                elseif gear.setTargetSpeed then
-                    local rpm = math.floor((outSig / 15.0) * 256 + 0.5)
-                    pcall(function() gear.setTargetSpeed(rpm) end)
-                end
-            end
+    -- 7. 20 Hz DELTA-SIGMA KESIRLI DARBE MODULASYONU (0..15 Sanzimanlara Kusuratli Guc Basar)
+    local function dither(val, corner)
+        local targetVal = clamp(val, 0.0, 15.0)
+        local intPart  = math.floor(targetVal)
+        local fracPart = targetVal - intPart
+        a.ditherAcc[corner] = (a.ditherAcc[corner] or 0) + fracPart
+        local outSig = intPart
+        if a.ditherAcc[corner] >= 1.0 then
+            outSig = math.min(15, intPart + 1)
+            a.ditherAcc[corner] = a.ditherAcc[corner] - 1.0
         end
+        return outSig
     end
+
+    local flSig = dither(u[1], 1)
+    local rlSig = dither(u[2], 2)
+    local frSig = dither(u[3], 3)
+    local rrSig = dither(u[4], 4)
 
     -- 8. GYROSCOPIC PROPELLER BEARING KANAT ACISI DESTEGI (Varsa Mikro-Tork & Active Downforce)
     local numGyros = #(self.gyros or {})
@@ -1796,11 +1780,6 @@ function Avionics:stepGunshipAdaptive(tel, dt)
             end
         end
     end
-
-    local flSig = clamp(u[1], 0.0, 15.0)
-    local rlSig = clamp(u[2], 0.0, 15.0)
-    local frSig = clamp(u[3], 0.0, 15.0)
-    local rrSig = clamp(u[4], 0.0, 15.0)
 
     self.lastMotorSignals = { math.floor(flSig + 0.5), math.floor(rlSig + 0.5), math.floor(frSig + 0.5), math.floor(rrSig + 0.5) }
     self.lastMothershipState = {

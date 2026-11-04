@@ -512,18 +512,35 @@ local function run(context)
                             fc.ap.manualYaw = math.max(-6, math.min(6, (fc.ap.manualYaw or 0) + (tonumber(msg.delta) or 0)))
                         elseif msg.cmd == "SET_WAYPOINT" and type(msg.waypoint) == "table" then
                             fc.ap.waypoint = msg.waypoint
+                        elseif msg.cmd == "GET_AUTOTUNE_PARAMS" or msg.cmd == "GET_PARAMS" then
+                            local okAt, Autotune = pcall(require, "lib.avx.autotune")
+                            if not okAt or type(Autotune) ~= "table" then
+                                okAt, Autotune = pcall(require, "avx.autotune")
+                            end
+                            local params = fc.autotuneParams
+                            if not params and okAt and Autotune and Autotune.calculate then
+                                params = Autotune.calculate(fc)
+                            end
+                            if rednet and rednet.isOpen and rednet.isOpen() and senderId then
+                                pcall(rednet.send, senderId, {
+                                    type     = "AVIONICS_AUTOTUNE_RES",
+                                    success  = (params ~= nil),
+                                    params   = params,
+                                    adaptive = fc.adaptive
+                                }, BUS_PROTOCOL)
+                            end
                         elseif msg.cmd == "AUTOTUNE" or msg.cmd == "TUNE" then
                             local okAt, resAt = pcall(fc.autoTune, fc, { persist = true })
                             lastCmdName = okAt and "AUTOTUNE_OK" or "AUTOTUNE_ERR"
-                            if rednet and rednet.isOpen and rednet.isOpen() then
+                            if rednet and rednet.isOpen and rednet.isOpen() and senderId then
                                 pcall(rednet.send, senderId, {
-                                    type    = "AVIONICS_AUTOTUNE_RES",
-                                    success = okAt,
-                                    params  = fc.autotuneParams
+                                    type     = "AVIONICS_AUTOTUNE_RES",
+                                    success  = okAt,
+                                    params   = fc.autotuneParams,
+                                    adaptive = fc.adaptive
                                 }, BUS_PROTOCOL)
                             end
                             broadcastState()
-                            fc:setMode("LNAV", lastTel)
                         elseif msg.cmd == "SAFE_CALIBRATE" or msg.cmd == "AUTOTUNE_SAFE" then
                             lastCmdName = "SAFE_CAL"
                             local okAt, Autotune = pcall(require, "lib.avx.autotune")

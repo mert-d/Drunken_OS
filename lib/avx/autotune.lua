@@ -341,8 +341,8 @@ function Autotune.runSafeCalibration(avionics, logFn)
 
     local sleepFn = sleep or (os and os.sleep) or function() end
 
-    log("[1/4] Levitation ve Trim sifirlaniyor...")
-    setAllMotors(a.hoverBase or 9.0)
+    log("[1/4] Levitation ve Trim sifirlaniyor (Motorlar idle)...")
+    setAllMotors(0)
     sleepFn(0.2)
 
     local baseTel = (avionics.readTelemetry and avionics:readTelemetry()) or {}
@@ -353,21 +353,19 @@ function Autotune.runSafeCalibration(avionics, logFn)
     end
 
     -- 1. On motorlara (FL, FR) 0.35 sn mikro darbe verip Pitch yonunu dogrula
-    log("[2/4] On motorlara (+1.5 sinyal) 0.35s mikro-darbe veriliyor (Pitch testi)...")
-    local highSig = math.min(15, math.floor((a.hoverBase or 9.0) + 2.5))
-    local lowSig  = math.max(0,  math.floor((a.hoverBase or 9.0) - 1.5))
-    setActuator(liftDevs[1], highSig)
-    setActuator(liftDevs[2], highSig)
-    setActuator(liftDevs[3], lowSig)
-    setActuator(liftDevs[4], lowSig)
+    log("[2/4] On motorlara 0.35s mikro-darbe veriliyor (Pitch testi)...")
+    setActuator(liftDevs[1], 5)
+    setActuator(liftDevs[2], 5)
+    setActuator(liftDevs[3], 0)
+    setActuator(liftDevs[4], 0)
     sleepFn(0.35)
 
     local p1 = (avionics.readTelemetry and avionics:readTelemetry().pitch) or 0
     if math.abs(p1) > 1.65 then p1 = math.rad(p1) end
 
-    -- Motorlari derhal taban seviyeye dondur
-    setAllMotors(a.hoverBase or 9.0)
-    sleepFn(0.2)
+    -- Motorlari derhal taban seviyeye dondur (0)
+    setAllMotors(0)
+    sleepFn(0.25)
 
     if (p1 - p0) < -0.003 then
         a.pitchSign = -1
@@ -378,19 +376,19 @@ function Autotune.runSafeCalibration(avionics, logFn)
     end
 
     -- 2. Sol motorlara (FL, RL) 0.35 sn mikro darbe verip Roll yonunu dogrula
-    log("[3/4] Sol motorlara (+1.5 sinyal) 0.35s mikro-darbe veriliyor (Roll testi)...")
-    setActuator(liftDevs[1], highSig)
-    setActuator(liftDevs[3], highSig)
-    setActuator(liftDevs[2], lowSig)
-    setActuator(liftDevs[4], lowSig)
+    log("[3/4] Sol motorlara 0.35s mikro-darbe veriliyor (Roll testi)...")
+    setActuator(liftDevs[1], 5)
+    setActuator(liftDevs[3], 5)
+    setActuator(liftDevs[2], 0)
+    setActuator(liftDevs[4], 0)
     sleepFn(0.35)
 
     local r1 = (avionics.readTelemetry and avionics:readTelemetry().roll) or 0
     if math.abs(r1) > 1.65 then r1 = math.rad(r1) end
 
-    -- Motorlari derhal taban seviyeye dondur
-    setAllMotors(a.hoverBase or 9.0)
-    sleepFn(0.15)
+    -- Motorlari derhal taban seviyeye dondur (0)
+    setAllMotors(0)
+    sleepFn(0.2)
 
     if (r1 - r0) < -0.003 then
         a.rollSign = -1

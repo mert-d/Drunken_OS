@@ -80,7 +80,7 @@ local function run(args)
                 end
             end
             print("\n [AG] Ucus Bilgisayari (FCC) araniyor...")
-            rednet.broadcast({ type = "AVIONICS_CMD", cmd = "AUTOTUNE" }, BUS_PROTOCOL)
+            rednet.broadcast({ type = "AVIONICS_CMD", cmd = "GET_AUTOTUNE_PARAMS" }, BUS_PROTOCOL)
             local sender, msg = rednet.receive(BUS_PROTOCOL, 2.0)
             if msg and type(msg) == "table" and msg.type == "AVIONICS_AUTOTUNE_RES" and msg.params then
                 params = msg.params

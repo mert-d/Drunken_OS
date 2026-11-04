@@ -1386,18 +1386,18 @@ local function runTests()
 
     -- 4. Safe Micro-Pulse Calibration (Safe Mapper)
     local calibLogs = {}
-    local gearSignals = { 0, 0, 0, 0 }
+    local maxGearSignals = { 0, 0, 0, 0 }
     reloadFC.gears = {
-        { setSignal = function(s) gearSignals[1] = s end },
-        { setSignal = function(s) gearSignals[2] = s end },
-        { setSignal = function(s) gearSignals[3] = s end },
-        { setSignal = function(s) gearSignals[4] = s end }
+        { setSignal = function(s) maxGearSignals[1] = math.max(maxGearSignals[1], s) end },
+        { setSignal = function(s) maxGearSignals[2] = math.max(maxGearSignals[2], s) end },
+        { setSignal = function(s) maxGearSignals[3] = math.max(maxGearSignals[3], s) end },
+        { setSignal = function(s) maxGearSignals[4] = math.max(maxGearSignals[4], s) end }
     }
     local calibSuccess = Autotune.runSafeCalibration(reloadFC, function(msg) table.insert(calibLogs, msg) end)
     assert(calibSuccess == true, "Expected Autotune.runSafeCalibration to succeed with 4 transmissions")
     assert(reloadFC.adaptive.pitchSign == 1 or reloadFC.adaptive.pitchSign == -1, "Expected valid pitchSign")
     assert(reloadFC.adaptive.rollSign == 1 or reloadFC.adaptive.rollSign == -1, "Expected valid rollSign")
-    assert(gearSignals[1] > 0, "Expected micro-pulse delivered to transmissions during calibration")
+    assert(maxGearSignals[1] > 0, "Expected micro-pulse delivered to transmissions during calibration")
 
     print("  PASS: Test 22: Model-Independent Full Adaptive Cascade INDI Controller & Safe Calibration")
 
