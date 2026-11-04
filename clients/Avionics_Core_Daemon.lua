@@ -524,6 +524,41 @@ local function run(context)
                             end
                             broadcastState()
                             fc:setMode("LNAV", lastTel)
+                        elseif msg.cmd == "SAFE_CALIBRATE" or msg.cmd == "AUTOTUNE_SAFE" then
+                            lastCmdName = "SAFE_CAL"
+                            local okAt, Autotune = pcall(require, "lib.avx.autotune")
+                            if not okAt or type(Autotune) ~= "table" then
+                                okAt, Autotune = pcall(require, "avx.autotune")
+                            end
+                            local logs = {}
+                            local function logCollector(str)
+                                table.insert(logs, tostring(str))
+                                if rednet and rednet.isOpen and rednet.isOpen() and senderId then
+                                    pcall(rednet.send, senderId, {
+                                        type = "AVIONICS_CALIBRATE_PROGRESS",
+                                        msg  = tostring(str)
+                                    }, BUS_PROTOCOL)
+                                end
+                            end
+                            local success = false
+                            if okAt and Autotune and Autotune.runSafeCalibration then
+                                local okRun, resRun = pcall(Autotune.runSafeCalibration, fc, logCollector)
+                                success = (okRun and resRun == true)
+                            elseif fc.runSafeCalibration then
+                                local okRun, resRun = pcall(fc.runSafeCalibration, fc, logCollector)
+                                success = (okRun and resRun == true)
+                            end
+                            lastCmdName = success and "SAFE_CAL_OK" or "SAFE_CAL_ERR"
+                            if rednet and rednet.isOpen and rednet.isOpen() and senderId then
+                                pcall(rednet.send, senderId, {
+                                    type     = "AVIONICS_SAFE_CALIBRATE_RES",
+                                    success  = success,
+                                    adaptive = fc.adaptive,
+                                    params   = fc.autotuneParams,
+                                    logs     = logs
+                                }, BUS_PROTOCOL)
+                            end
+                            broadcastState()
                         elseif msg.cmd == "START_ROUTE" or msg.cmd == "LOAD_ROUTE" then
                             fc:startRoute(msg.name, lastTel)
                             lastCmdName = "NAV:" .. tostring(msg.name or "ROTA")

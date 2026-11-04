@@ -281,67 +281,132 @@ end
 function Autotune.runSafeCalibration(avionics, logFn)
     local log = logFn or print
     local a = avionics and avionics.adaptive
-    local gears = (avionics and (avionics.gears or avionics.gearboxes)) or {}
-    if not a or #gears < 4 then
-        log("[HATA] En az 4 adet analog_transmission / aktuator gerekli!")
+    if not a then
+        log("[HATA] Adaptif avionics kontrolcusu bulunamadi!")
         return false
     end
 
-    log("[1/2] Mevcut durustan baslangic Levitation/CoM trimi sifirlaniyor...")
-    local baseTel = avionics:readTelemetry()
+    -- 1. Lift motorlarini topla: Once IO rollerinden (LIFT_FL, FR, RL, RR), yoksa gears / speedControllers / gearboxes listesinden
+    local liftDevs = {}
+    if avionics and avionics.ioDevices then
+        for _, it in ipairs(avionics.ioDevices) do
+            local cfg = avionics.getDeviceConfig and avionics:getDeviceConfig(it.name)
+            local r = cfg and cfg.role
+            if r == "LIFT_FL" and not liftDevs[1] then liftDevs[1] = { handle = it.handle, inv = cfg.invert }
+            elseif r == "LIFT_FR" and not liftDevs[2] then liftDevs[2] = { handle = it.handle, inv = cfg.invert }
+            elseif r == "LIFT_RL" and not liftDevs[3] then liftDevs[3] = { handle = it.handle, inv = cfg.invert }
+            elseif r == "LIFT_RR" and not liftDevs[4] then liftDevs[4] = { handle = it.handle, inv = cfg.invert }
+            end
+        end
+    end
+
+    local rawGears = (avionics and (avionics.gears or avionics.gearboxes or avionics.speedControllers)) or {}
+    for i = 1, 4 do
+        if not liftDevs[i] and rawGears[i] then
+            local h = rawGears[i]
+            local inv = (type(h) == "table" and h.inv) or false
+            liftDevs[i] = { handle = h, inv = inv }
+        end
+    end
+
+    if not (liftDevs[1] and liftDevs[2] and liftDevs[3] and liftDevs[4]) then
+        log("[HATA] En az 4 adet kaldirma motoru / aktuator gerekli!")
+        return false
+    end
+
+    local function setActuator(devInfo, sig)
+        if not devInfo or not devInfo.handle then return end
+        local h = devInfo.handle
+        local inv = devInfo.inv
+        if h.setTargetSpeed then
+            local rpm = math.floor((sig / 15.0) * 256 + 0.5)
+            if inv then rpm = -rpm end
+            pcall(h.setTargetSpeed, rpm)
+        elseif h.setGearshift then
+            local outSig = inv and (15 - sig) or sig
+            pcall(h.setGearshift, outSig)
+        elseif h.setSignal then
+            local outSig = inv and (15 - sig) or sig
+            pcall(h.setSignal, outSig)
+        elseif h.setSpeed then
+            pcall(h.setSpeed, sig)
+        end
+    end
+
+    local function setAllMotors(sig)
+        for i = 1, 4 do
+            setActuator(liftDevs[i], sig)
+        end
+    end
+
+    local sleepFn = sleep or (os and os.sleep) or function() end
+
+    log("[1/4] Levitation ve Trim sifirlaniyor...")
+    setAllMotors(a.hoverBase or 9.0)
+    sleepFn(0.2)
+
+    local baseTel = (avionics.readTelemetry and avionics:readTelemetry()) or {}
     local p0 = baseTel.pitch or 0
     local r0 = baseTel.roll  or 0
     if math.abs(p0) > 1.65 or math.abs(r0) > 1.65 then
         p0 = math.rad(p0); r0 = math.rad(r0)
     end
 
-    local sleepFn = sleep or (os and os.sleep) or function() end
-
-    -- 1. On motorlara (+1.5 sinyal) 0.35 sn mikro darbe verip Pitch yonunu dogrula
-    log("[2/2] Mikro-darbe ile Pitch ve Roll eksen yonu dogrulaniyor...")
-    for i = 1, 4 do
-        local sig = (i == 1 or i == 3) and math.min(15, math.floor(a.hoverBase + 2)) or math.max(0, math.floor(a.hoverBase - 1))
-        local gear = gears[i]
-        if gear then
-            if gear.setGearshift then pcall(gear.setGearshift, sig)
-            elseif gear.setSignal then pcall(gear.setSignal, sig)
-            elseif gear.setTargetSpeed then pcall(gear.setTargetSpeed, math.floor((sig / 15.0) * 256 + 0.5))
-            end
-        end
-    end
+    -- 1. On motorlara (FL, FR) 0.35 sn mikro darbe verip Pitch yonunu dogrula
+    log("[2/4] On motorlara (+1.5 sinyal) 0.35s mikro-darbe veriliyor (Pitch testi)...")
+    local highSig = math.min(15, math.floor((a.hoverBase or 9.0) + 2.5))
+    local lowSig  = math.max(0,  math.floor((a.hoverBase or 9.0) - 1.5))
+    setActuator(liftDevs[1], highSig)
+    setActuator(liftDevs[2], highSig)
+    setActuator(liftDevs[3], lowSig)
+    setActuator(liftDevs[4], lowSig)
     sleepFn(0.35)
-    local p1 = avionics:readTelemetry().pitch or 0
+
+    local p1 = (avionics.readTelemetry and avionics:readTelemetry().pitch) or 0
     if math.abs(p1) > 1.65 then p1 = math.rad(p1) end
-    if (p1 - p0) < -0.005 then
+
+    -- Motorlari derhal taban seviyeye dondur
+    setAllMotors(a.hoverBase or 9.0)
+    sleepFn(0.2)
+
+    if (p1 - p0) < -0.003 then
         a.pitchSign = -1
-        log(" -> Pitch ekseni ters algilandi, otomatik duzeltildi (pitchSign = -1)")
+        log(" -> Pitch ekseni TERS algilandi (pitchSign = -1)")
     else
         a.pitchSign = 1
+        log(" -> Pitch ekseni NORMAL algilandi (pitchSign = +1)")
     end
 
-    -- 2. Sol motorlara (+1.5 sinyal) 0.35 sn mikro darbe verip Roll yonunu dogrula
-    for i = 1, 4 do
-        local sig = (i == 1 or i == 2) and math.min(15, math.floor(a.hoverBase + 2)) or math.max(0, math.floor(a.hoverBase - 1))
-        local gear = gears[i]
-        if gear then
-            if gear.setGearshift then pcall(gear.setGearshift, sig)
-            elseif gear.setSignal then pcall(gear.setSignal, sig)
-            elseif gear.setTargetSpeed then pcall(gear.setTargetSpeed, math.floor((sig / 15.0) * 256 + 0.5))
-            end
-        end
-    end
+    -- 2. Sol motorlara (FL, RL) 0.35 sn mikro darbe verip Roll yonunu dogrula
+    log("[3/4] Sol motorlara (+1.5 sinyal) 0.35s mikro-darbe veriliyor (Roll testi)...")
+    setActuator(liftDevs[1], highSig)
+    setActuator(liftDevs[3], highSig)
+    setActuator(liftDevs[2], lowSig)
+    setActuator(liftDevs[4], lowSig)
     sleepFn(0.35)
-    local r1 = avionics:readTelemetry().roll or 0
+
+    local r1 = (avionics.readTelemetry and avionics:readTelemetry().roll) or 0
     if math.abs(r1) > 1.65 then r1 = math.rad(r1) end
-    if (r1 - r0) < -0.005 then
+
+    -- Motorlari derhal taban seviyeye dondur
+    setAllMotors(a.hoverBase or 9.0)
+    sleepFn(0.15)
+
+    if (r1 - r0) < -0.003 then
         a.rollSign = -1
-        log(" -> Roll ekseni ters algilandi, otomatik duzeltildi (rollSign = -1)")
+        log(" -> Roll ekseni TERS algilandi (rollSign = -1)")
     else
         a.rollSign = 1
+        log(" -> Roll ekseni NORMAL algilandi (rollSign = +1)")
     end
 
-    avionics:saveAdaptiveState()
-    log("[OK] Adaptif kalibrasyon tamamlandi ve /etc/avionics_adaptive.cfg kaydedildi!")
+    -- 3. Adaptif durum diske kaydedilir
+    log("[4/4] Kalibrasyon verileri diske kaydediliyor...")
+    if avionics.saveAdaptiveState then
+        avionics:saveAdaptiveState()
+    end
+    log(string.format("[TAMAMLANDI] Pitch:%+d, Roll:%+d, Hover:%.1f",
+        a.pitchSign, a.rollSign, a.hoverBase or 9.0))
     return true
 end
 

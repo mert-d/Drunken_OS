@@ -66,23 +66,6 @@ local function run(args)
     end
 
     local fc = _G._fc
-
-    if isSafeCalib then
-        drawHeader("DRUNKEN OS - GUVENLI ADAPTIF KALIBRASYON")
-        print("\n [BILGI] 2 saniyelik mikro-darbeler ile eksen dogrulamasi baslatiliyor...")
-        if fc then
-            Autotune.runSafeCalibration(fc, print)
-        else
-            local okAv, Avionics = pcall(require, "lib.avionics")
-            if okAv and Avionics and Avionics.new then
-                local tempFc = Avionics.new({ callsign = "CALIB-CLI", profile = "GUNSHIP", useGPS = false })
-                Autotune.runSafeCalibration(tempFc, print)
-            else
-                print(" [HATA] Ucus bilgisayari (FC) bulunamadi!")
-            end
-        end
-        return
-    end
     local params = nil
 
     if fc then
@@ -116,67 +99,180 @@ local function run(args)
         return
     end
 
-    -- Display Physics & Computed Gains
     local isColor = term.isColor and term.isColor()
     local cTitle = isColor and colors.yellow or colors.white
     local cVal   = isColor and colors.cyan or colors.white
     local cLabel = isColor and colors.lightGray or colors.white
     local cGood  = isColor and colors.green or colors.white
 
-    term.setCursorPos(2, 3)
-    term.setTextColor(cTitle)
-    term.write("1. GEMI FIZIKSEL VERILERI:")
+    local function renderScreen()
+        drawHeader("DRUNKEN OS - AVIONICS PID AUTOTUNER")
 
-    term.setCursorPos(4, 4)
-    term.setTextColor(cLabel); term.write("Kutle (Mass): "); term.setTextColor(cVal); term.write(string.format("%.1f kg", params.mass))
-    if params.hasRealSublevel then
-        term.setTextColor(cGood); term.write(" [Sable Canli]")
-    else
-        term.setTextColor(colors.gray or colors.white); term.write(" [Model Fallback]")
+        term.setCursorPos(2, 3)
+        term.setTextColor(cTitle)
+        term.write("1. GEMI FIZIKSEL VERILERI:")
+
+        term.setCursorPos(4, 4)
+        term.setTextColor(cLabel); term.write("Kutle (Mass): "); term.setTextColor(cVal); term.write(string.format("%.1f kg", params.mass))
+        if params.hasRealSublevel then
+            term.setTextColor(cGood); term.write(" [Sable Canli]")
+        else
+            term.setTextColor(colors.gray or colors.white); term.write(" [Model Fallback]")
+        end
+
+        term.setCursorPos(4, 5)
+        term.setTextColor(cLabel); term.write("Eylemsizlik (Ixx Pitch): "); term.setTextColor(cVal); term.write(string.format("%.2e kg*m2", params.Ixx))
+
+        term.setCursorPos(4, 6)
+        term.setTextColor(cLabel); term.write("Eylemsizlik (Izz Roll) : "); term.setTextColor(cVal); term.write(string.format("%.2e kg*m2", params.Izz))
+
+        term.setCursorPos(2, 8)
+        term.setTextColor(cTitle)
+        term.write("2. HESAPLANAN DOLDURMA & STABILITE (POLE-PLACEMENT PID):")
+
+        term.setCursorPos(4, 9)
+        term.setTextColor(cLabel); term.write("YUNUSLAMA (PITCH): ")
+        term.setTextColor(cVal)
+        term.write(string.format("Kp: %-5.2f  Ki: %-4.2f  Kd: %-5.2f  (w_x Damp: %-4.2f)",
+                   params.pitch.kp, params.pitch.ki, params.pitch.kd, params.pitch.dampWx or 6.0))
+
+        term.setCursorPos(4, 10)
+        term.setTextColor(cLabel); term.write("YALPALAMA (ROLL) : ")
+        term.setTextColor(cVal)
+        term.write(string.format("Kp: %-5.2f  Ki: %-4.2f  Kd: %-5.2f  (w_z Damp: %-4.2f)",
+                   params.roll.kp, params.roll.ki, params.roll.kd, params.roll.dampWz or 4.2))
+
+        term.setCursorPos(4, 11)
+        term.setTextColor(cLabel); term.write("IRTIFA    (ALT)  : ")
+        term.setTextColor(cVal)
+        term.write(string.format("Kp: %-5.2f  Ki: %-4.2f  Kd: %-5.2f  (v_y Damp: %-4.2f)",
+                   params.alt.kp, params.alt.ki, params.alt.kd, params.alt.dampVy or 1.5))
+
+        term.setCursorPos(2, 13)
+        term.setTextColor(cTitle)
+        term.write("3. MOTOR TORK & HOVER DENGE GUCU:")
+
+        term.setCursorPos(4, 14)
+        term.setTextColor(cLabel); term.write("On/Arka Tork Orani (gammaFront): "); term.setTextColor(cVal); term.write(string.format("%.3f", params.gammaFront))
+
+        term.setCursorPos(4, 15)
+        term.setTextColor(cLabel); term.write("Hover Taban Sinyali (hoverBase): "); term.setTextColor(cVal); term.write(string.format("%.1f / 15", params.hoverBaseSig))
+        if params.pitchSign or params.rollSign then
+            term.setTextColor(cGood)
+            term.write(string.format("  [Pitch:%+d Roll:%+d]", params.pitchSign or 1, params.rollSign or 1))
+        end
+
+        term.setCursorPos(2, 17)
+        term.setTextColor(isColor and colors.yellow or colors.white)
+        term.write("[ENTER/C] Uygula   [P] Guvenli Kalibrasyon   [S] Kaydet   [Q] Cikis")
     end
 
-    term.setCursorPos(4, 5)
-    term.setTextColor(cLabel); term.write("Eylemsizlik (Ixx Pitch): "); term.setTextColor(cVal); term.write(string.format("%.2e kg*m2", params.Ixx))
+    local function doSafeCalibration()
+        term.setCursorPos(1, 18)
+        term.clearLine()
+        term.setCursorPos(1, 19)
+        term.clearLine()
 
-    term.setCursorPos(4, 6)
-    term.setTextColor(cLabel); term.write("Eylemsizlik (Izz Roll) : "); term.setTextColor(cVal); term.write(string.format("%.2e kg*m2", params.Izz))
+        term.setCursorPos(2, 18)
+        term.setTextColor(isColor and colors.yellow or colors.white)
+        term.write(">> GUVENLI KALIBRASYON BASLATILIYOR... <<")
 
-    term.setCursorPos(2, 8)
-    term.setTextColor(cTitle)
-    term.write("2. HESAPLANAN DOLDURMA & STABILITE (POLE-PLACEMENT PID):")
+        if fc then
+            -- Yerel FCC uzerinde calisiyor
+            local success = Autotune.runSafeCalibration(fc, function(logText)
+                term.setCursorPos(2, 18)
+                term.clearLine()
+                term.setTextColor(cVal)
+                term.write(tostring(logText):sub(1, 48))
+            end)
+            term.setCursorPos(2, 18)
+            term.clearLine()
+            if success then
+                local a = fc.adaptive or {}
+                params.pitchSign = a.pitchSign
+                params.rollSign  = a.rollSign
+                params.hoverBaseSig = a.hoverBase or params.hoverBaseSig
+                term.setTextColor(cGood)
+                term.write(string.format("[BASARILI] Pitch:%+d Roll:%+d Hover:%.1f", a.pitchSign or 1, a.rollSign or 1, a.hoverBase or 9.0))
+            else
+                term.setTextColor(colors.red or colors.white)
+                term.write("[HATA] Kalibrasyon basarisiz! 4 motor baglantisini kontrol edin.")
+            end
+        else
+            -- Uzak FCC (Computer #15) Rednet Uzerinden
+            local modem = peripheral.find("modem")
+            if not modem or not rednet or not rednet.isOpen() then
+                term.setCursorPos(2, 18)
+                term.setTextColor(colors.red or colors.white)
+                term.write("[HATA] Modem bulunamadi veya Rednet acik degil!")
+            else
+                term.setCursorPos(2, 18)
+                term.clearLine()
+                term.setTextColor(cLabel)
+                term.write("FCC'ye baglaniliyor, mikro-darbe baslatildi...")
+                rednet.broadcast({ type = "AVIONICS_CMD", cmd = "SAFE_CALIBRATE" }, BUS_PROTOCOL)
 
-    term.setCursorPos(4, 9)
-    term.setTextColor(cLabel); term.write("YUNUSLAMA (PITCH): ")
-    term.setTextColor(cVal)
-    term.write(string.format("Kp: %-5.2f  Ki: %-4.2f  Kd: %-5.2f  (w_x Damp: %-4.2f)",
-               params.pitch.kp, params.pitch.ki, params.pitch.kd, params.pitch.dampWx or 6.0))
+                local startTime = os.clock()
+                local completed = false
+                local lastRes = nil
 
-    term.setCursorPos(4, 10)
-    term.setTextColor(cLabel); term.write("YALPALAMA (ROLL) : ")
-    term.setTextColor(cVal)
-    term.write(string.format("Kp: %-5.2f  Ki: %-4.2f  Kd: %-5.2f  (w_z Damp: %-4.2f)",
-               params.roll.kp, params.roll.ki, params.roll.kd, params.roll.dampWz or 4.2))
+                while (os.clock() - startTime) < 8.0 do
+                    local sender, msg, proto = rednet.receive(BUS_PROTOCOL, 0.4)
+                    if proto == BUS_PROTOCOL and type(msg) == "table" then
+                        if msg.type == "AVIONICS_CALIBRATE_PROGRESS" then
+                            term.setCursorPos(2, 18)
+                            term.clearLine()
+                            term.setTextColor(cVal)
+                            term.write(tostring(msg.msg or ""):sub(1, 48))
+                        elseif msg.type == "AVIONICS_SAFE_CALIBRATE_RES" then
+                            completed = true
+                            lastRes = msg
+                            break
+                        end
+                    end
+                end
 
-    term.setCursorPos(4, 11)
-    term.setTextColor(cLabel); term.write("IRTIFA    (ALT)  : ")
-    term.setTextColor(cVal)
-    term.write(string.format("Kp: %-5.2f  Ki: %-4.2f  Kd: %-5.2f  (v_y Damp: %-4.2f)",
-               params.alt.kp, params.alt.ki, params.alt.kd, params.alt.dampVy or 1.5))
+                term.setCursorPos(2, 18)
+                term.clearLine()
+                if completed and lastRes then
+                    if lastRes.success then
+                        term.setTextColor(cGood)
+                        local a = lastRes.adaptive or {}
+                        params.pitchSign = a.pitchSign
+                        params.rollSign  = a.rollSign
+                        params.hoverBaseSig = a.hoverBase or params.hoverBaseSig
+                        term.write(string.format("[BASARILI] Pitch:%+d Roll:%+d Hover:%.1f",
+                            a.pitchSign or 1, a.rollSign or 1, a.hoverBase or 9.0))
+                    else
+                        term.setTextColor(colors.red or colors.white)
+                        term.write("[HATA] FCC kalibrasyonu basarisiz bildirdi!")
+                    end
+                else
+                    term.setTextColor(colors.red or colors.white)
+                    term.write("[ZAMAN ASIMI] FCC'den yanit alinamadi (Computer #15)!")
+                end
+            end
+        end
 
-    term.setCursorPos(2, 13)
-    term.setTextColor(cTitle)
-    term.write("3. MOTOR TORK & HOVER DENGE GUCU:")
+        term.setCursorPos(2, 19)
+        term.setTextColor(cTitle)
+        term.write("Devam etmek icin bir tusa basin...")
+        os.pullEvent("key")
+        renderScreen()
+    end
 
-    term.setCursorPos(4, 14)
-    term.setTextColor(cLabel); term.write("On/Arka Tork Orani (gammaFront): "); term.setTextColor(cVal); term.write(string.format("%.3f", params.gammaFront))
+    if isSafeCalib then
+        renderScreen()
+        doSafeCalibration()
+        return
+    end
 
-    term.setCursorPos(4, 15)
-    term.setTextColor(cLabel); term.write("Hover Taban Sinyali (hoverBase): "); term.setTextColor(cVal); term.write(string.format("%.1f / 15", params.hoverBaseSig))
+    renderScreen()
 
     if autoApply then
         if fc then
             Autotune.apply(fc, params, true)
-            term.setCursorPos(2, 17)
+            term.setCursorPos(2, 18)
             term.setTextColor(cGood)
             term.write("[BASARILI] Yeni PID ve denge degerleri FC uzerine uygulandi ve kaydedildi!")
         end
@@ -184,16 +280,12 @@ local function run(args)
     end
 
     if calcOnly then
-        term.setCursorPos(2, 17)
+        term.setCursorPos(2, 18)
         term.setTextColor(cLabel)
         term.write("Hesaplama tamamlandi (--calc-only). Cikmak icin bir tusa basin...")
         os.pullEvent("key")
         return
     end
-
-    term.setCursorPos(2, 17)
-    term.setTextColor(isColor and colors.yellow or colors.white)
-    term.write("[ENTER/C] Uygula   [P] Guvenli Kalibrasyon   [S] Kaydet   [Q] Cikis")
 
     while true do
         local _, key = os.pullEvent("key")
@@ -201,6 +293,7 @@ local function run(args)
             if fc then
                 Autotune.apply(fc, params, true)
                 term.setCursorPos(2, 18)
+                term.clearLine()
                 term.setTextColor(cGood)
                 term.write(">> PID VE STATIK DENGE UYGULANDI VE KAYDEDILDI! <<   ")
             else
@@ -208,39 +301,35 @@ local function run(args)
                 if modem and rednet and rednet.isOpen() then
                     rednet.broadcast({ type = "AVIONICS_CMD", cmd = "AUTOTUNE" }, BUS_PROTOCOL)
                     term.setCursorPos(2, 18)
+                    term.clearLine()
                     term.setTextColor(cGood)
                     term.write(">> AG UZERINDEN FCC'YE UYGULAMA KOMUTU GONDERILDI! <<")
                 else
                     term.setCursorPos(2, 18)
+                    term.clearLine()
                     term.setTextColor(colors.orange or colors.white)
                     term.write(">> Yerel FC bulunamadi, sadece config'e kaydedildi. <<")
                     Autotune.apply(nil, params, true)
                 end
             end
-            sleep(1.5)
-            break
+            term.setCursorPos(2, 19)
+            term.setTextColor(cTitle)
+            term.write("Devam etmek icin bir tusa basin...")
+            os.pullEvent("key")
+            renderScreen()
         elseif key == keys.p then
-            term.setCursorPos(2, 18)
-            term.setTextColor(cGood)
-            term.write(">> GUVENLI ADAPTIF KALIBRASYON CALISTIRILIYOR... <<    ")
-            if fc then
-                Autotune.runSafeCalibration(fc, print)
-            else
-                local okAv, Avionics = pcall(require, "lib.avionics")
-                if okAv and Avionics and Avionics.new then
-                    local tempFc = Avionics.new({ callsign = "CALIB-CLI", profile = "GUNSHIP", useGPS = false })
-                    Autotune.runSafeCalibration(tempFc, print)
-                end
-            end
-            sleep(1.5)
-            break
+            doSafeCalibration()
         elseif key == keys.s then
             Autotune.apply(fc, params, true)
             term.setCursorPos(2, 18)
+            term.clearLine()
             term.setTextColor(cGood)
             term.write(">> DEGERLER /avionics_iomap.cfg DOSYASINA KAYDEDILDI! <<")
-            sleep(1.2)
-            break
+            term.setCursorPos(2, 19)
+            term.setTextColor(cTitle)
+            term.write("Devam etmek icin bir tusa basin...")
+            os.pullEvent("key")
+            renderScreen()
         elseif key == keys.q then
             break
         end

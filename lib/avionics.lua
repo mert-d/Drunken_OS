@@ -509,6 +509,27 @@ function Avionics:autoTune(opts)
     return false, "Autotune module not found"
 end
 
+function Avionics:runSafeCalibration(logFn)
+    local okAt, Autotune = pcall(require, "lib.avx.autotune")
+    if not okAt or type(Autotune) ~= "table" then
+        okAt, Autotune = pcall(require, "avx.autotune")
+    end
+    if not okAt or type(Autotune) ~= "table" then
+        if fs and fs.exists and (fs.exists("/lib/avx/autotune.lua") or fs.exists("lib/avx/autotune.lua")) then
+            local path = fs.exists("/lib/avx/autotune.lua") and "/lib/avx/autotune.lua" or "lib/avx/autotune.lua"
+            local okDf, resDf = pcall(dofile, path)
+            if okDf and type(resDf) == "table" then
+                Autotune = resDf
+                okAt = true
+            end
+        end
+    end
+    if okAt and Autotune and Autotune.runSafeCalibration then
+        return Autotune.runSafeCalibration(self, logFn)
+    end
+    return false, "Autotune module not found"
+end
+
 function Avionics:setPitchBias(val)
     self.pitchBias = clamp(tonumber(val) or 0.0, -6.0, 6.0)
     self:saveIOMap()
