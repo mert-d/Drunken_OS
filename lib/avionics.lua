@@ -1644,9 +1644,9 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
 
         -- Dikey İrtifa Regülasyonu: altPID (PI) + Doğrudan Dikey Hız (Vy) Sönümlemesi
         local pidAlt = self.altPID:compute(tgtAlt, tel.altitude, safeDt)
-        local vsiGain = self.dampVy or 1.25
-        local vsiDamp = clamp(a.fVSpeed * vsiGain, -2.5, 2.5)
-        local altCmd = clamp(pidAlt - vsiDamp, -2.5, 3.5)
+        local vsiGain = self.dampVy or 1.60
+        local vsiDamp = clamp(a.fVSpeed * vsiGain, -4.5, 4.5)
+        local altCmd = clamp(pidAlt - vsiDamp, -4.5, 4.5)
 
         -- Canlı Hover Taban Gazı: YALNIZCA hedef irtifaya yakın iken (|altErr| < 2.0m) adapte olur
         -- Aktif tırmanış/alçalış manevralarında hoverBase dondurulur (Çift Entegratör Pompalama Koruması)
@@ -1689,10 +1689,29 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
 
     if isActive then
         if isCalmPitch then
-            a.trimPitch = clamp(a.trimPitch + (angleErrP * 1.4 + rateErrP * 0.4) * (a.trimLearnRate or 1.15) * safeDt, -4.5, 4.5)
+            a.trimPitch = clamp(a.trimPitch + (angleErrP * 1.10 + rateErrP * 0.25) * (a.trimLearnRate or 1.0) * safeDt, -1.0, 1.0)
+        else
+            -- If pitch is tilted, bleed off any trim pushing in the direction of the error
+            if (pitch > tgtPitch and a.trimPitch > 0) or (pitch < tgtPitch and a.trimPitch < 0) then
+                local decay = safeDt * 0.6
+                if a.trimPitch > 0 then
+                    a.trimPitch = math.max(0.0, a.trimPitch - decay)
+                else
+                    a.trimPitch = math.min(0.0, a.trimPitch + decay)
+                end
+            end
         end
         if isCalmRoll then
-            a.trimRoll = clamp(a.trimRoll + (angleErrR * 0.35 + rateErrR * 0.10) * safeDt, -1.0, 1.0)
+            a.trimRoll = clamp(a.trimRoll + (angleErrR * 0.25 + rateErrR * 0.08) * safeDt, -0.6, 0.6)
+        else
+            if (roll > tgtRoll and a.trimRoll > 0) or (roll < tgtRoll and a.trimRoll < 0) then
+                local decay = safeDt * 0.4
+                if a.trimRoll > 0 then
+                    a.trimRoll = math.max(0.0, a.trimRoll - decay)
+                else
+                    a.trimRoll = math.min(0.0, a.trimRoll + decay)
+                end
+            end
         end
         self.pitchBias = a.trimPitch
         self.rollBias  = a.trimRoll
