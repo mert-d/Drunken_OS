@@ -329,9 +329,9 @@ function Avionics.new(config)
     self.rollPID  = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.yawPID   = createPID(4.00, 0.25, 2.10, -4.5, 4.5) -- Pruva (Psi)
 
-    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Calibrated critically damped for Stern Levitite)
-    self.msPitchPID = createPID(10.0, 0.40, 5.00, -2.5, 2.5, 1.0) -- Calibrated anti-pitch oscillation
-    self.msRollPID  = createPID(1.80, 0.02, 3.00, -1.0, 1.0, 0.2) -- Critically damped roll gain for narrow Izz (prevents limit cycles)
+    -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Critically damped for smooth flight, no derivative noise)
+    self.msPitchPID = createPID(8.50, 0.30, 1.20, -2.2, 2.2, 0.8) -- Calibrated anti-pitch oscillation
+    self.msRollPID  = createPID(1.80, 0.02, 1.00, -1.0, 1.0, 0.2) -- Critically damped roll gain for narrow Izz (prevents limit cycles)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
 
@@ -1639,18 +1639,27 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     else
         local tgtAlt = ap.targetAltitude or ap.targetAlt or tel.altitude or 0
         local altErr = tgtAlt - (tel.altitude or 0)
-        local targetVSpeed = clamp(altErr * a.altVelKp, -a.maxClimbRate, a.maxClimbRate)
+
+        -- Kademeli Dikey Hiz Regülasyonu (Cascaded Vertical Velocity Control):
+        -- Dis Cevrim: Irtifa hatasindan yumusak, kontrollu hedef dikey hiz (maks +-1.8 m/s)
+        local maxTargetVy = math.min(a.maxClimbRate or 2.5, 1.8)
+        local velKp = a.altVelKp or 0.45
+        local targetVSpeed = clamp(altErr * velKp, -maxTargetVy, maxTargetVy)
         local vSpeedErr    = targetVSpeed - a.fVSpeed
 
-        -- Dikey İrtifa Regülasyonu: altPID (PI) + Doğrudan Dikey Hız (Vy) Sönümlemesi
-        local pidAlt = self.altPID:compute(tgtAlt, tel.altitude, safeDt)
-        local vsiGain = self.dampVy or 1.60
-        local vsiDamp = clamp(a.fVSpeed * vsiGain, -4.5, 4.5)
-        local altCmd = clamp(pidAlt - vsiDamp, -4.5, 4.5)
+        -- Ic Cevrim: Dikey hiz takip hatasi oransal duzeltmesi + cok yavas hassas integral trim
+        local pidAltInt = 0
+        if math.abs(altErr) < 2.5 then
+            pidAltInt = self.altPID:compute(0, -altErr, safeDt)
+        else
+            self.altPID:reset()
+        end
+        local vSpeedGain = self.dampVy or a.vSpeedKp or 1.25
+        local altCmd = clamp(vSpeedErr * vSpeedGain + (pidAltInt * 0.20), -2.2, 2.2)
 
-        -- Canlı Hover Taban Gazı: YALNIZCA hedef irtifaya yakın iken (|altErr| < 2.0m) adapte olur
+        -- Canlı Hover Taban Gazı: YALNIZCA hedef irtifaya yakın iken (|altErr| < 1.5m) adapte olur
         -- Aktif tırmanış/alçalış manevralarında hoverBase dondurulur (Çift Entegratör Pompalama Koruması)
-        local isNearTargetAlt = (math.abs(altErr) < 2.0) and (math.abs(pitch) < 0.20) and (math.abs(roll) < 0.20)
+        local isNearTargetAlt = (math.abs(altErr) < 1.5) and (math.abs(pitch) < 0.15) and (math.abs(roll) < 0.15)
         if isNearTargetAlt and apMode == "HOVER" then
             a.hoverBase = clamp(a.hoverBase + (vSpeedErr * (a.hoverLearnRate or 0.15)) * safeDt, 6.0, 11.5)
             m.hoverBaseSig = a.hoverBase
@@ -1659,6 +1668,14 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
         local baseCenter = math.max(ap.baseThrottle or 0, a.hoverBase or m.hoverBaseSig or 8.90)
         local rawLiftCmd = baseCenter + altCmd
         baseLift = clamp(rawLiftCmd, 0.0, 15.0)
+
+        -- Yumusak Gaz Hiz Sinirlayici (Slew Rate Limiter):
+        -- Motor devrinin ani sicramalarini onler, mekanik darbeyi ve on/arka moment asimetrisini engeller
+        if self.lastBaseLift and apMode == "HOVER" then
+            local maxStep = 4.5 * safeDt -- Maksimum saniyede 4.5 gaz birimi (~75 RPM/saniye)
+            baseLift = clamp(baseLift, self.lastBaseLift - maxStep, self.lastBaseLift + maxStep)
+        end
+        self.lastBaseLift = baseLift
 
         -- Aktif Negatif Kanat Acisi (Active Downforce):
         -- Eger Levitation gemiyi motorlar sifirken dahi hedefin uzerine cikarip tasiyorsa
@@ -1721,24 +1738,33 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     local pidRoll  = self.msRollPID:compute(tgtRoll, roll, safeDt)
 
     -- Dogrudan acisal hiz sonumlemesi: burun yunuslama hizini (wx) ve yalpalama hizini (wz) aninda frenler
-    local wxGain = self.dampWx or 2.5
-    local wxDamp = clamp(a.fPitchRate * wxGain, -1.8, 1.8)
-    local wzGain = self.dampWz or 3.0
-    local wzDamp = clamp(a.fRollRate  * wzGain, -1.0, 1.0)
+    local absPitchDeg = math.abs(math.deg(pitch))
+    local wxGain = self.dampWx or 2.20
+    local wxMaxLimit = (absPitchDeg > 14.0) and 3.5 or 2.2
+    local wxDamp = clamp(a.fPitchRate * wxGain, -wxMaxLimit, wxMaxLimit)
+
+    local wzGain = self.dampWz or 1.80
+    local wzDamp = clamp(a.fRollRate  * wzGain, -1.2, 1.2)
 
     -- Anti-Oscillation Tork Limitleri (Aktuator Doyum ve Salinim Korumasi)
-    local totalPitchTorque = clamp((a.trimPitch or 0.0) + (pidPitch * a.pitchSign) - (wxDamp * a.pitchSign), -3.0, 3.0)
+    local maxTorqueLimit = (absPitchDeg > 16.0) and 4.2 or 2.8
+    local totalPitchTorque = clamp((a.trimPitch or 0.0) + (pidPitch * a.pitchSign) - (wxDamp * a.pitchSign), -maxTorqueLimit, maxTorqueLimit)
     -- YALPALAMA (ROLL) TORQUE KISITLAMASI: Dar gövde eylemsizliği (Izz=3.72e6) için aşırı tork üretilmez (+-1.2 maks)
     local totalRollTorque  = clamp((a.trimRoll  or 0.0) + (pidRoll  * a.rollSign)  - (wzDamp * a.rollSign),  -1.2, 1.2)
 
-    -- Anti-dive ve dik aci korumasi (Zarfta kalma kurali)
-    local absPitchDeg = math.abs(math.deg(pitch))
+    -- Faz-Duzlemi Anti-Dive ve Asiri Aci Korumasi:
+    -- YALNIZCA gemi duzlukten uzaklasiyorsa (diverging) aktif kurtarma torku uygular.
+    -- Eger gemi zaten duz konuma dogru donuyorsa (returning), kurtarma torku eklenmez; frenleme (wxDamp) devreye girer.
     if absPitchDeg > 16.0 then
-        local emergencyBoost = clamp((absPitchDeg - 16.0) * 0.35, 0.0, 4.5)
-        if pitch > 0 then
-            totalPitchTorque = clamp(totalPitchTorque - emergencyBoost * a.pitchSign, -10.5, 10.5)
-        else
-            totalPitchTorque = clamp(totalPitchTorque + emergencyBoost * a.pitchSign, -10.5, 10.5)
+        local pRate = a.fPitchRate * a.pitchSign
+        local isDiverging = (pitch > 0 and pRate > -0.08) or (pitch < 0 and pRate < 0.08)
+        if isDiverging then
+            local emergencyBoost = clamp((absPitchDeg - 16.0) * 0.25, 0.0, 2.0)
+            if pitch > 0 then
+                totalPitchTorque = clamp(totalPitchTorque - emergencyBoost * a.pitchSign, -4.5, 4.5)
+            else
+                totalPitchTorque = clamp(totalPitchTorque + emergencyBoost * a.pitchSign, -4.5, 4.5)
+            end
         end
     end
     tel.pitchWarning = (absPitchDeg > 14.0)
@@ -1889,10 +1915,10 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
         rl    = rlSig,
         fr    = frSig,
         rr    = rrSig,
-        flRpm = math.floor((flSig / 15.0) * 256 + 0.5),
-        rlRpm = math.floor((rlSig / 15.0) * 256 + 0.5),
-        frRpm = math.floor((frSig / 15.0) * 256 + 0.5),
-        rrRpm = math.floor((rrSig / 15.0) * 256 + 0.5),
+        flRpm = math.floor((clamp(rawFloat[1], 0, 15) / 15.0) * 256 + 0.5),
+        rlRpm = math.floor((clamp(rawFloat[2], 0, 15) / 15.0) * 256 + 0.5),
+        frRpm = math.floor((clamp(rawFloat[3], 0, 15) / 15.0) * 256 + 0.5),
+        rrRpm = math.floor((clamp(rawFloat[4], 0, 15) / 15.0) * 256 + 0.5),
         rearL = (self.lastMothershipState and self.lastMothershipState.rearL) or 0,
         rearC = (self.lastMothershipState and self.lastMothershipState.rearC) or 0,
         rearR = (self.lastMothershipState and self.lastMothershipState.rearR) or 0
