@@ -1640,21 +1640,30 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
         local tgtAlt = ap.targetAltitude or ap.targetAlt or tel.altitude or 0
         local altErr = tgtAlt - (tel.altitude or 0)
 
-        -- Kademeli Dikey Hiz Regülasyonu (Cascaded Vertical Velocity Control):
-        -- 1. Dis Cevrim: Irtifa hatasindan yumusak, kontrollu hedef dikey hiz (hata buyukken maks 3.5 m/s)
-        local maxVy = a.maxClimbRate or 3.2
-        local targetVSpeed = clamp(altErr * 0.55, -maxVy, maxVy)
-        local vSpeedErr    = targetVSpeed - a.fVSpeed
+        -- Kademeli Dikey Hiz Regülasyonu (Cascaded Vertical Velocity & S-Curve Flare Governor):
+        -- 1. Dis Cevrim: Guvenli dikey hiz zarfi (Maks +-1.8 m/s). 10-20 blok uzakta olsa dahi
+        -- geminin roket gibi 10 m/s'ye firlamasini veya serbest dususe gecmesini kesin olarak engeller.
+        local maxClimb = math.min(a.maxClimbRate or 2.5, 1.80)
+        local maxDescent = 1.80
+        local targetVSpeed = 0.0
+        if altErr > 0 then
+            targetVSpeed = math.min(maxClimb, altErr * 0.65)
+        else
+            targetVSpeed = math.max(-maxDescent, altErr * 0.65)
+        end
 
-        -- 2. Ic Cevrim: Dikey hiz takip hatasi (PD) + hedefe yakinken hassas integral (I) trim
-        local altInt = 0
-        if math.abs(altErr) < 4.0 then
-            altInt = self.altPID:compute(0, -altErr, safeDt)
+        -- 2. Ic Cevrim: Dikey hiz takip hatasi regülatörü
+        local vSpeedErr = targetVSpeed - a.fVSpeed
+        local vGain = 1.60
+        local altCmd = clamp(vSpeedErr * vGain, -3.5, 3.5)
+
+        -- 3. Milimetrik Duraklama Irtifa Integratörü (|altErr| < 2.5m iken kalici yukseklik hatasini sifirlar)
+        if math.abs(altErr) < 2.5 then
+            local intVal = self.altPID:compute(0, -altErr, safeDt)
+            altCmd = clamp(altCmd + intVal, -3.5, 3.5)
         else
             self.altPID:reset()
         end
-        local vSpeedGain = a.vSpeedKp or 1.15
-        local altCmd = clamp(vSpeedErr * vSpeedGain + altInt, -3.2, 3.2)
 
         -- Canlı Hover Taban Gazı: YALNIZCA hedef irtifaya yakın iken (|altErr| < 2.0m) adapte olur
         local isNearTargetAlt = (math.abs(altErr) < 2.0) and (math.abs(pitch) < 0.20) and (math.abs(roll) < 0.20)
@@ -1670,7 +1679,7 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
         -- Yumusak Gaz Hiz Sinirlayici (Slew Rate Limiter):
         -- Motor devrinin ani sicramalarini onler, mekanik darbeyi ve on/arka moment asimetrisini engeller
         if self.lastBaseLift and apMode == "HOVER" then
-            local maxStep = 6.0 * safeDt -- Maksimum saniyede 6.0 gaz birimi (~100 RPM/saniye)
+            local maxStep = 4.5 * safeDt -- Maksimum saniyede 4.5 gaz birimi (~75 RPM/saniye)
             baseLift = clamp(baseLift, self.lastBaseLift - maxStep, self.lastBaseLift + maxStep)
         end
         self.lastBaseLift = baseLift
