@@ -477,14 +477,14 @@ function Avionics:saveIOMap()
     if fs and fs.open and textutils and textutils.serialize then
         local ok, f = pcall(fs.open, IO_CONFIG_PATH, "w")
         if ok and f then
-            f.write(textutils.serialize({
+            pcall(f.write, textutils.serialize({
                 profile   = self.profile,
                 ioMap     = self.ioMap,
                 pitchBias = self.pitchBias or 0.0,
                 rollBias  = self.rollBias or 0.0,
                 autotune  = self.autotuneParams
             }))
-            f.close()
+            pcall(f.close)
         end
     end
 end
@@ -1561,9 +1561,9 @@ function Avionics:saveAdaptiveState()
     if not (self.adaptive and fs and fs.open and textutils and textutils.serialize) then return end
     local a = self.adaptive
     if fs.makeDir and not fs.exists("/etc") then pcall(fs.makeDir, "/etc") end
-    local f = fs.open(ADAPTIVE_CFG_PATH, "w")
-    if f then
-        f.write(textutils.serialize({
+    local ok, f = pcall(fs.open, ADAPTIVE_CFG_PATH, "w")
+    if ok and f then
+        pcall(f.write, textutils.serialize({
             hoverBase = tonumber(string.format("%.3f", a.hoverBase)),
             trimPitch = tonumber(string.format("%.3f", a.trimPitch)),
             trimRoll  = tonumber(string.format("%.3f", a.trimRoll)),
@@ -1572,7 +1572,7 @@ function Avionics:saveAdaptiveState()
             yawSign   = a.yawSign,
             motorMap  = a.motorMap
         }))
-        f.close()
+        pcall(f.close)
     end
 end
 

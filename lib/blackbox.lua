@@ -7,7 +7,7 @@ Blackbox.__index = Blackbox
 
 local DEFAULT_LOG_TXT = "/flight_log.txt"
 local DEFAULT_LOG_CSV = "/flight_log.csv"
-local MAX_ENTRIES     = 1200 -- 60 seconds at 20Hz or 240 seconds at 5Hz
+local MAX_ENTRIES     = 250 -- ~25KB ring-buffer to protect CC virtual disk quota
 
 function Blackbox.new(opts)
     opts = opts or {}
@@ -139,15 +139,15 @@ function Blackbox:writeTextLog()
     local ok, f = pcall(fs.open, self.txtPath, "w")
     if not (ok and f) then return false end
 
-    f.writeLine("==========================================================================================================")
-    f.writeLine(string.format("DRUNKEN OS - UCUS TELEMETRI & KARA KUTU KAYDI (FLIGHT DATA RECORDER)"))
-    f.writeLine(string.format("Hava Araci : %s | Tip: %s | Toplam Kayit: %d", self.callsign, self.vehicleType, #self.entries))
-    f.writeLine("==========================================================================================================")
-    f.writeLine(string.format(
+    pcall(f.writeLine, "==========================================================================================================")
+    pcall(f.writeLine, string.format("DRUNKEN OS - UCUS TELEMETRI & KARA KUTU KAYDI (FLIGHT DATA RECORDER)"))
+    pcall(f.writeLine, string.format("Hava Araci : %s | Tip: %s | Toplam Kayit: %d", self.callsign, self.vehicleType, #self.entries))
+    pcall(f.writeLine, "==========================================================================================================")
+    pcall(f.writeLine, string.format(
         "%-6s | %-6s | %-7s | %-8s | %-8s | %-6s | %-6s | %-8s | %-15s | %-9s | %s",
         "Zaman", "Mod", "Irtifa", "Vy(m/s)", "Vz(m/s)", "Pitch", "Roll", "wx(dg/s)", "FL/FR/RL/RR", "Arka(L/C/R)", "Durum"
     ))
-    f.writeLine("-------+--------+---------+----------+----------+--------+--------+----------+-----------------+-----------+-------------------------")
+    pcall(f.writeLine, "-------+--------+---------+----------+----------+--------+--------+----------+-----------------+-----------+-------------------------")
 
     -- Write entries with stride if buffer is large, always keeping first, events, and last 40
     local total = #self.entries
@@ -160,10 +160,10 @@ function Blackbox:writeTextLog()
             "T%+4.1fs | %-6s | %6.1fm | %+7.2f | %+7.2f | %+5.1f° | %+5.1f° | %+7.1f° | %-15s | %-9s | %s",
             e.tSec, e.mode:sub(1, 6), e.alt, e.vy, e.vz, e.pitchDeg, e.rollDeg, e.wxDeg, liftStr, rearStr, e.status
         )
-        f.writeLine(line)
+        pcall(f.writeLine, line)
     end
-    f.writeLine("==========================================================================================================")
-    f.close()
+    pcall(f.writeLine, "==========================================================================================================")
+    pcall(f.close)
     return true
 end
 
@@ -171,16 +171,17 @@ function Blackbox:writeCsvLog()
     local ok, f = pcall(fs.open, self.csvPath, "w")
     if not (ok and f) then return false end
 
-    f.writeLine("tick,time_s,mode,alt_m,press_atm,press_hpa,vy_mps,vz_mps,pitch_deg,roll_deg,hdg_deg,wx_deg_s,rpm_fl,rpm_fr,rpm_rl,rpm_rr,rear_l,rear_c,rear_r,pitch_trim,dive_factor,anti_dive,status")
+    pcall(f.writeLine, "tick,time_s,mode,alt_m,press_atm,press_hpa,vy_mps,vz_mps,pitch_deg,roll_deg,hdg_deg,wx_deg_s,rpm_fl,rpm_fr,rpm_rl,rpm_rr,rear_l,rear_c,rear_r,pitch_trim,dive_factor,anti_dive,status")
     for _, e in ipairs(self.entries) do
-        f.writeLine(string.format(
+        local okW = pcall(f.writeLine, string.format(
             "%d,%.2f,%s,%.2f,%.3f,%.1f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%s,%s",
             e.tick, e.tSec, e.mode, e.alt, e.pressure or 1.0, e.pressureHPa or 1013.25, e.vy, e.vz, e.pitchDeg, e.rollDeg, e.hdgDeg, e.wxDeg,
             e.flRpm, e.frRpm, e.rlRpm, e.rrRpm, e.rearL, e.rearC, e.rearR,
             e.pitchTrim, e.diveFactor, e.antiDive and "1" or "0", e.status
         ))
+        if not okW then break end
     end
-    f.close()
+    pcall(f.close)
     return true
 end
 
