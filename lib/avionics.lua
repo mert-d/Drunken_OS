@@ -330,7 +330,7 @@ function Avionics.new(config)
     self.yawPID   = createPID(4.00, 0.25, 2.10, -4.5, 4.5) -- Pruva (Psi)
 
     -- Mothership Quad/Octo Lift Gimbal Horizon Stabilization PIDs (Critically damped for smooth flight, no derivative noise)
-    self.msPitchPID = createPID(8.50, 0.30, 1.20, -2.2, 2.2, 0.8) -- Calibrated anti-pitch oscillation
+    self.msPitchPID = createPID(10.0, 0.35, 1.80, -2.8, 2.8, 1.0) -- Calibrated anti-pitch oscillation
     self.msRollPID  = createPID(1.80, 0.02, 1.00, -1.0, 1.0, 0.2) -- Critically damped roll gain for narrow Izz (prevents limit cycles)
     self.gimbalPitchSign   = 1
     self.gimbalRollSign    = 1
@@ -1641,25 +1641,23 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
         local altErr = tgtAlt - (tel.altitude or 0)
 
         -- Kademeli Dikey Hiz Regülasyonu (Cascaded Vertical Velocity Control):
-        -- Dis Cevrim: Irtifa hatasindan yumusak, kontrollu hedef dikey hiz (maks +-1.8 m/s)
-        local maxTargetVy = math.min(a.maxClimbRate or 2.5, 1.8)
-        local velKp = a.altVelKp or 0.45
-        local targetVSpeed = clamp(altErr * velKp, -maxTargetVy, maxTargetVy)
+        -- 1. Dis Cevrim: Irtifa hatasindan yumusak, kontrollu hedef dikey hiz (hata buyukken maks 3.5 m/s)
+        local maxVy = a.maxClimbRate or 3.2
+        local targetVSpeed = clamp(altErr * 0.55, -maxVy, maxVy)
         local vSpeedErr    = targetVSpeed - a.fVSpeed
 
-        -- Ic Cevrim: Dikey hiz takip hatasi oransal duzeltmesi + cok yavas hassas integral trim
-        local pidAltInt = 0
-        if math.abs(altErr) < 2.5 then
-            pidAltInt = self.altPID:compute(0, -altErr, safeDt)
+        -- 2. Ic Cevrim: Dikey hiz takip hatasi (PD) + hedefe yakinken hassas integral (I) trim
+        local altInt = 0
+        if math.abs(altErr) < 4.0 then
+            altInt = self.altPID:compute(0, -altErr, safeDt)
         else
             self.altPID:reset()
         end
-        local vSpeedGain = self.dampVy or a.vSpeedKp or 1.25
-        local altCmd = clamp(vSpeedErr * vSpeedGain + (pidAltInt * 0.20), -2.2, 2.2)
+        local vSpeedGain = a.vSpeedKp or 1.15
+        local altCmd = clamp(vSpeedErr * vSpeedGain + altInt, -3.2, 3.2)
 
-        -- Canlı Hover Taban Gazı: YALNIZCA hedef irtifaya yakın iken (|altErr| < 1.5m) adapte olur
-        -- Aktif tırmanış/alçalış manevralarında hoverBase dondurulur (Çift Entegratör Pompalama Koruması)
-        local isNearTargetAlt = (math.abs(altErr) < 1.5) and (math.abs(pitch) < 0.15) and (math.abs(roll) < 0.15)
+        -- Canlı Hover Taban Gazı: YALNIZCA hedef irtifaya yakın iken (|altErr| < 2.0m) adapte olur
+        local isNearTargetAlt = (math.abs(altErr) < 2.0) and (math.abs(pitch) < 0.20) and (math.abs(roll) < 0.20)
         if isNearTargetAlt and apMode == "HOVER" then
             a.hoverBase = clamp(a.hoverBase + (vSpeedErr * (a.hoverLearnRate or 0.15)) * safeDt, 6.0, 11.5)
             m.hoverBaseSig = a.hoverBase
@@ -1672,7 +1670,7 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
         -- Yumusak Gaz Hiz Sinirlayici (Slew Rate Limiter):
         -- Motor devrinin ani sicramalarini onler, mekanik darbeyi ve on/arka moment asimetrisini engeller
         if self.lastBaseLift and apMode == "HOVER" then
-            local maxStep = 4.5 * safeDt -- Maksimum saniyede 4.5 gaz birimi (~75 RPM/saniye)
+            local maxStep = 6.0 * safeDt -- Maksimum saniyede 6.0 gaz birimi (~100 RPM/saniye)
             baseLift = clamp(baseLift, self.lastBaseLift - maxStep, self.lastBaseLift + maxStep)
         end
         self.lastBaseLift = baseLift
@@ -1816,13 +1814,6 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     local gammaFront = m.gammaFront or 0.762
     local rearBase  = clamp(baseLift, 0.0, 15.0)
     local frontBase = clamp(baseLift * gammaFront, 0.0, 15.0)
-
-    -- Dalistan cikista on motorlarin gazini koru
-    local pitchDeg = math.deg(pitch)
-    if pitchDeg < -6.0 and baseLift < (a.hoverBase or 8.9) then
-        local unpenalizedFront = clamp((a.hoverBase or 8.9) * gammaFront, 0.0, 15.0)
-        frontBase = math.max(frontBase, unpenalizedFront)
-    end
 
     -- 4-Kanal Denge Mikseri (FL, RL, FR, RR)
     -- Dikey kaldirma rotorlari sadece Lift, Pitch ve Roll dengeler; Yaw ise kuyruk iticileri ve vectoring gyrolarla yapilir
