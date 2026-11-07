@@ -1009,7 +1009,7 @@ function Avionics:readTelemetry(dt)
     end
 
     -- 3. Heading & Navigation Target (Create: Avionics Navigation Table or Sublevel Pose)
-    local heading = 0
+    local heading = nil
     local navTarget = nil
     if _G.sublevel and _G.sublevel.getLogicalPose then
         local okPose, pose = pcall(_G.sublevel.getLogicalPose)
@@ -1021,16 +1021,18 @@ function Avionics:readTelemetry(dt)
             local qz = tonumber(q.v and q.v.z) or 0
             local fx = -2 * (qx * qz + qy * qw)
             local fz = 2 * (qx * qx + qy * qy) - 1
-            heading = math.atan2(-fx, fz)
+            heading = (math.atan2(fx, -fz) + 2 * math.pi) % (2 * math.pi)
         end
     end
     if self.nav then
-        local hRad = tonumber(safeCall(self.nav.getHeadingRad))
-        if hRad then
-            heading = hRad
-        else
-            local hDeg = tonumber(safeCall(self.nav.getHeading)) or tonumber(safeCall(self.nav.getCurrentAngle))
-            if hDeg then heading = math.rad(hDeg) end
+        if heading == nil then
+            local hRad = tonumber(safeCall(self.nav.getHeadingRad))
+            if hRad then
+                heading = (hRad + 2 * math.pi) % (2 * math.pi)
+            else
+                local hDeg = tonumber(safeCall(self.nav.getHeading))
+                if hDeg then heading = (math.rad(hDeg) + 2 * math.pi) % (2 * math.pi) end
+            end
         end
 
         local hasTgt = safeCall(self.nav.hasTarget)
@@ -1103,8 +1105,9 @@ function Avionics:readTelemetry(dt)
                 speed = math.abs(v)
                 local horizSpeed = math.sqrt(math.max(0, speed * speed - vsi * vsi))
                 local dirSign = (self.ap and self.ap.reverseGear) and -1 or 1
-                vel.x = -horizSpeed * math.sin(heading) * dirSign
-                vel.z =  horizSpeed * math.cos(heading) * dirSign
+                local h = heading or self.prevHeading or 0
+                vel.x =  horizSpeed * math.sin(h) * dirSign
+                vel.z = -horizSpeed * math.cos(h) * dirSign
             end
         end
     end
@@ -1118,6 +1121,15 @@ function Avionics:readTelemetry(dt)
             speed = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
             rawVel = speed
         end
+    end
+
+    if heading == nil and (math.abs(vel.x) > 0.3 or math.abs(vel.z) > 0.3) then
+        heading = (math.atan2(vel.x, -vel.z) + 2 * math.pi) % (2 * math.pi)
+    end
+    if heading == nil then
+        heading = self.prevHeading or 0
+    else
+        self.prevHeading = heading
     end
 
     -- Update Position (Multi-Tier Navigation Sensor Fusion)

@@ -1798,7 +1798,14 @@ local function run(context)
                             hotplugNotice = "DUMEN: " .. (d > 0 and "SAG " or "SOL ") .. tostring(fc.ap.manualYaw); hotplugTimer = 30
                         else
                             local hdgDelta = (key == keys.right) and 5 or -5
-                            if isRemoteFCC then sendAvionicsCmd("HDG_DELTA", { deltaDeg = hdgDelta }) else fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(hdgDelta)) % (2 * math.pi) end
+                            local currentTarget = fc.ap.targetHdg or (lastTel and lastTel.heading) or 0
+                            local newHdg = (currentTarget + math.rad(hdgDelta)) % (2 * math.pi)
+                            fc.ap.targetHdg = newHdg
+                            if isRemoteFCC then
+                                sendAvionicsCmd("HDG_DELTA", { deltaDeg = hdgDelta })
+                            end
+                            hotplugNotice = string.format("HEDEF ROTASI: %03.0f deg (%+d deg)", math.deg(newHdg), hdgDelta)
+                            hotplugTimer = 40
                         end
                     elseif key == keys.x then
                         if not fc.ap.enabled then
