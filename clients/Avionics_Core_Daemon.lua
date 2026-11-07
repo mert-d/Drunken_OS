@@ -300,6 +300,7 @@ local function run(context)
                 hdgHold      = fc.ap.hdgHold,
                 targetAlt    = fc.ap.targetAlt,
                 targetHdg    = fc.ap.targetHdg,
+                manualLift   = fc.manualLift,
                 baseThrottle = fc.ap.baseThrottle,
                 parkingBrake = fc.ap.parkingBrake,
                 reverseGear  = fc.ap.reverseGear,
@@ -480,6 +481,7 @@ local function run(context)
                         elseif msg.cmd == "TOGGLE_AP" then
                             if fc.ap.enabled then
                                 fc:setMode("MANUAL", lastTel)
+                                fc.ap.parkingBrake = false
                             else
                                 local isHoverable = (fc.vehicleType == "ZEPPELIN" or fc.vehicleType == "MOTHERSHIP" or fc.vehicleType == "GUNSHIP")
                                 fc:setMode(isHoverable and "HOVER" or "CRUISE", lastTel)
@@ -490,6 +492,18 @@ local function run(context)
                             fc.ap.targetAlt = math.max(0, fc.ap.targetAlt + (tonumber(msg.delta) or 0))
                         elseif msg.cmd == "SET_ALT" then
                             fc.ap.targetAlt = math.max(0, tonumber(msg.alt) or fc.ap.targetAlt)
+                        elseif msg.cmd == "LIFT_DELTA" then
+                            if fc.adjustManualLift then
+                                fc:adjustManualLift(tonumber(msg.delta) or 0)
+                            else
+                                fc.manualLift = math.max(0, math.min(15, (fc.manualLift or 9) + (tonumber(msg.delta) or 0)))
+                            end
+                        elseif msg.cmd == "SET_LIFT" then
+                            if fc.setManualLift then
+                                fc:setManualLift(tonumber(msg.lift) or 0)
+                            else
+                                fc.manualLift = math.max(0, math.min(15, tonumber(msg.lift) or 0))
+                            end
                         elseif msg.cmd == "HDG_DELTA" then
                             fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(tonumber(msg.deltaDeg) or 0)) % (2 * math.pi)
                         elseif msg.cmd == "SET_HDG" then

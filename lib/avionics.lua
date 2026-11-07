@@ -543,6 +543,20 @@ function Avionics:adjustPitchBias(delta)
     return self:setPitchBias((self.pitchBias or 0.0) + (tonumber(delta) or 0.0))
 end
 
+function Avionics:adjustManualLift(delta)
+    local cur = self.manualLift
+    if cur == nil then
+        cur = (self.adaptive and self.adaptive.hoverBase) or (self.skyfireModel and self.skyfireModel.hoverBaseSig) or 8.90
+    end
+    self.manualLift = clamp(cur + (tonumber(delta) or 0.0), 0.0, 15.0)
+    return self.manualLift
+end
+
+function Avionics:setManualLift(val)
+    self.manualLift = clamp(tonumber(val) or 0.0, 0.0, 15.0)
+    return self.manualLift
+end
+
 function Avionics:setAlertLevel(lvl)
     local l = tostring(lvl or "NORMAL"):upper()
     if l == "RED" or l == "YELLOW" or l == "CLEAR" or l == "NORMAL" then
@@ -1328,6 +1342,7 @@ function Avionics:readTelemetry(dt)
         balloonVolChange = balloonVolChange,
         mothership       = self.lastMothershipState or { fl = 0, fr = 0, rl = 0, rr = 0, rearL = 0, rearC = 0, rearR = 0 },
         liftForcePN      = self.lastLiftForcePN or 0,
+        manualLift       = self.manualLift or math.floor(((self.adaptive and self.adaptive.hoverBase) or (self.skyfireModel and self.skyfireModel.hoverBaseSig) or 8.90) + 0.5),
         twr              = (self.skyfireModel and self.skyfireModel.gravityForce and self.skyfireModel.gravityForce > 0)
             and ((self.lastLiftForcePN or 0) / self.skyfireModel.gravityForce) or 0.0,
         pitchBias        = self.pitchBias or 0.0,
@@ -1403,6 +1418,7 @@ function Avionics:engageRTB(currentTel)
 end
 
 function Avionics:setMode(modeName, currentTel)
+    local wasMode = self.ap.mode
     local wasAltHold = self.ap.altHold
     local savedIntegral = self.altPID:getIntegral()
     self.ap.mode = modeName
@@ -1428,6 +1444,14 @@ function Avionics:setMode(modeName, currentTel)
         self.ap.altHold = false
         self.ap.hdgHold = false
         self.ap.rtbPhase = "NONE"
+        local isGrounded = (currentTel and (currentTel.weightOnWheels == true or (currentTel.agl and currentTel.agl <= 2.5) or (currentTel.altitude and currentTel.altitude <= 2.0))) or (self.prevAlt and self.prevAlt <= 2.0)
+        local isAirborne = not isGrounded
+        if isAirborne then
+            local eq = (self.adaptive and self.adaptive.hoverBase) or (self.skyfireModel and self.skyfireModel.hoverBaseSig) or 8.90
+            self.manualLift = math.floor(eq + 0.5)
+        else
+            self.manualLift = 0.0
+        end
     elseif modeName == "CRUISE" then
         self.ap.enabled = true
         self.ap.altHold = true
@@ -1509,9 +1533,10 @@ function Avionics:executeAtcCommand(msg, currentTel)
         self:setMode("AUTOLAND", currentTel)
         return true, "ATC KULE EMRI: OTONOM INIS (AUTOLAND)"
     elseif cmd == "PARK" then
+        self:setMode("MANUAL", currentTel)
         self.ap.baseThrottle = 0
         self.ap.parkingBrake = true
-        self:setMode("MANUAL", currentTel)
+        self.manualLift = 0
         return true, "ATC KULE EMRI: ACIL PARK & MOTOR KESME"
     elseif cmd == "ALT_DELTA" then
         local delta = tonumber(msg.delta) or 0
@@ -1636,7 +1661,13 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
 
     local ap = self.autopilot or self.ap or {}
     local apMode = ap.mode or "MANUAL"
-    local isZeroThrottleManual = (not ap.enabled or apMode == "MANUAL") and ((self.manualThrottle or ap.baseThrottle or 0) <= 0 or ap.parkingBrake)
+    local isGrounded = (tel and (tel.weightOnWheels == true or (tel.agl and tel.agl <= 2.5) or (tel.altitude and tel.altitude <= 2.0))) or (self.prevAlt and self.prevAlt <= 2.0)
+    local isAirborne = not isGrounded
+    local manualLift = self.manualLift or self.manualThrottle
+
+    local isZeroThrottleManual = (not ap.enabled or apMode == "MANUAL") and
+        (((manualLift or ap.baseThrottle or 0) <= 0) or
+         (ap.parkingBrake and (not isAirborne or (manualLift or 0) <= 0)))
 
     -- 3. DIKEY ITKI VE CANLI LEVITATION (ANTIGRAVITY) OGRENICISI
     local baseLift = a.hoverBase or m.hoverBaseSig or 8.90
@@ -1647,7 +1678,7 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
         self.msRollPID:reset()
         baseLift = 0.0
     elseif apMode == "MANUAL" then
-        baseLift = clamp(self.manualThrottle or ap.baseThrottle or 0, 0, 15)
+        baseLift = clamp(manualLift or a.hoverBase or m.hoverBaseSig or 8.90, 0, 15)
     else
         local tgtAlt = ap.targetAltitude or ap.targetAlt or tel.altitude or 0
         local altErr = tgtAlt - (tel.altitude or 0)

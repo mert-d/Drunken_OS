@@ -276,6 +276,18 @@ local function runTests()
     -- Rear thrusters (5:Left, 6:Center, 7:Right) should show differential yaw during turn
     assert(scRPMs[6] > 0, "Expected Rear-Center Thruster to produce forward RPM")
     assert(scRPMs[5] ~= scRPMs[7], "Expected Rear-Left and Rear-Right Thrusters to produce differential yaw RPM")
+
+    -- Test 7b: Mothership Airborne MANUAL Mode (Independent Vertical Collective & Forward Thrust)
+    msFC:setMode("MANUAL", msFC:readTelemetry(0.05))
+    assert(msFC.ap.enabled == false, "Expected AP to be disabled in MANUAL mode")
+    assert(msFC.manualLift >= 8, "Expected manualLift to initialize to equilibrium hover base when airborne")
+    msFC.ap.baseThrottle = 0 -- cut rear thrusters
+    msFC:step(0.05)
+    assert(scRPMs[1] > 0 and scRPMs[4] > 0, "Expected lift rotors to remain powered in airborne MANUAL mode with baseThrottle=0")
+    assert(scRPMs[6] == 0, "Expected rear thruster to be disengaged when baseThrottle=0")
+    msFC:adjustManualLift(2)
+    msFC:step(0.05)
+    assert(msFC.manualLift >= 10, "Expected adjustManualLift to increase collective lift")
     print("  PASS: Test 7: Mothership 4x Quad-Lift Gimbal Stabilization & 3x Rear Thruster Differential Yaw")
 
     -- Test 8: Zeppelin HOVER Equilibrium, Steady-State Inverted Clutch (No Oscillation) & Shared Network Gearshift

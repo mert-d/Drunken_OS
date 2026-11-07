@@ -953,13 +953,19 @@ local function run(context)
         drawTerm.write(string.format("THR : %s %2d", makeBar(fc.ap.baseThrottle, 15, 5), fc.ap.baseThrottle))
 
         drawTerm.setCursorPos(2, 5)
-        local isClutchCut = (fc.ap.mode == "HOVER") or fc.ap.parkingBrake or (fc.ap.baseThrottle <= 0)
-        if fc.ap.reverseGear then
-            drawTerm.setTextColor(isClutchCut and theme.muted or (theme.warn or colors.orange))
-            drawTerm.write(isClutchCut and "VTS : GERI [CUT]" or "VTS : GERI  [ON]")
+        if not fc.ap.enabled then
+            local mLift = fc.manualLift or (lastTel and lastTel.manualLift) or 9
+            drawTerm.setTextColor(mLift > 0 and (theme.ok or colors.lime) or theme.muted)
+            drawTerm.write(string.format("LFT : %s %2d", makeBar(mLift, 15, 5), mLift))
         else
-            drawTerm.setTextColor(isClutchCut and theme.muted or (theme.ok or colors.lime))
-            drawTerm.write(isClutchCut and "VTS : ILERI[CUT]" or "VTS : ILERI [ON]")
+            local isClutchCut = (fc.ap.mode == "HOVER") or fc.ap.parkingBrake or (fc.ap.baseThrottle <= 0)
+            if fc.ap.reverseGear then
+                drawTerm.setTextColor(isClutchCut and theme.muted or (theme.warn or colors.orange))
+                drawTerm.write(isClutchCut and "VTS : GERI [CUT]" or "VTS : GERI  [ON]")
+            else
+                drawTerm.setTextColor(isClutchCut and theme.muted or (theme.ok or colors.lime))
+                drawTerm.write(isClutchCut and "VTS : ILERI[CUT]" or "VTS : ILERI [ON]")
+            end
         end
 
         if lastTel.vehicleType == "MOTHERSHIP" or lastTel.vehicleType == "GUNSHIP" then
@@ -1174,7 +1180,7 @@ local function run(context)
 
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
-        drawTerm.write("[Up/Dn]:Alt [Lt/Rt]:Hdg [9/0]:Trim [W/S]:Thr [Z]:Capa [K]:Alarm [Q]:Cik")
+        drawTerm.write("[Up/Dn]:Alt/Lift [Lt/Rt]:Hdg/Dmn [W/S]:Thr [9/0]:Trim [Z]:Capa [A]:AP")
         drawTerm = prevTerm
     end
 
@@ -1353,6 +1359,9 @@ local function run(context)
                         if msg.ap then
                             for k, v in pairs(msg.ap) do
                                 fc.ap[k] = v
+                            end
+                            if msg.ap.manualLift ~= nil then
+                                fc.manualLift = msg.ap.manualLift
                             end
                         end
                         if msg.ioMap then
@@ -1717,7 +1726,7 @@ local function run(context)
                         running = false
                     elseif key == keys.a then
                         if isRemoteFCC then sendAvionicsCmd("TOGGLE_AP")
-                        elseif fc.ap.enabled then fc:setMode("MANUAL", lastTel)
+                        elseif fc.ap.enabled then fc:setMode("MANUAL", lastTel); fc.ap.parkingBrake = false
                         else fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel) end
                     elseif key == keys.c then
                         if isRemoteFCC then sendAvionicsCmd("SET_MODE", { mode = "CRUISE" }) else fc:setMode("CRUISE", lastTel) end
@@ -1784,13 +1793,28 @@ local function run(context)
                             hotplugTimer = 70
                         end
                     elseif key == keys.up or key == keys.down then
-                        local d = (key == keys.up) and 5 or -5
-                        if isRemoteFCC then sendAvionicsCmd("ALT_DELTA", { delta = d })
+                        if not fc.ap.enabled then
+                            local d = (key == keys.up) and 1 or -1
+                            local curLift = fc.manualLift or (lastTel and lastTel.manualLift) or 9
+                            local newLift = math.max(0, math.min(15, curLift + d))
+                            fc.manualLift = newLift
+                            if isRemoteFCC then
+                                sendAvionicsCmd("LIFT_DELTA", { delta = d })
+                            else
+                                if fc.adjustManualLift then fc:adjustManualLift(d) else fc.manualLift = newLift end
+                            end
+                            local eq = 9
+                            local stateStr = (newLift > eq and "TIRMANIS" or (newLift < eq and (newLift == 0 and "MOTOR KESILDI" or "ALCALIS") or "DENGE"))
+                            hotplugNotice = string.format("DIKEY GAZ (LIFT): %d/15 [%s]", newLift, stateStr)
+                            hotplugTimer = 40
                         else
-                            if not fc.ap.enabled then fc:setMode(isAirshipOrMothership and "HOVER" or "CRUISE", lastTel) end
-                            fc.ap.targetAlt = math.max(0, fc.ap.targetAlt + d)
+                            local d = (key == keys.up) and 5 or -5
+                            if isRemoteFCC then sendAvionicsCmd("ALT_DELTA", { delta = d })
+                            else
+                                fc.ap.targetAlt = math.max(0, fc.ap.targetAlt + d)
+                            end
+                            hotplugNotice = "HEDEF IRTIFA " .. (d > 0 and "+5m" or "-5m"); hotplugTimer = 30
                         end
-                        hotplugNotice = "IRTIFA " .. (d > 0 and "+5m" or "-5m"); hotplugTimer = 30
                     elseif key == keys.left or key == keys.right then
                         local d = (key == keys.right) and 2 or -2
                         if not fc.ap.enabled then
@@ -1832,7 +1856,13 @@ local function run(context)
                         end
                     elseif key == keys.w or key == keys.s then
                         local wantRev = (key == keys.s)
-                        if isRemoteFCC then sendAvionicsCmd("THR_DELTA", { delta = wantRev and -1 or 1 })
+                        if isRemoteFCC then
+                            local d = wantRev and -1 or 1
+                            local newThr = math.max(0, math.min(15, (fc.ap.baseThrottle or 0) + d))
+                            fc.ap.baseThrottle = newThr
+                            sendAvionicsCmd("THR_DELTA", { delta = d })
+                            hotplugNotice = string.format("ILERI ITKI (THR): %d/15", newThr)
+                            hotplugTimer = 35
                         else
                             if fc.ap.reverseGear ~= wantRev and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
                                 fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
@@ -1842,7 +1872,8 @@ local function run(context)
                                 if fc.ap.mode == "HOVER" then fc:setMode("CRUISE", lastTel) end
                                 fc.ap.parkingBrake = false
                                 fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
-                                hotplugNotice = wantRev and "GERI ITKI (REV)" or "ILERI ITKI"; hotplugTimer = 40
+                                hotplugNotice = string.format("ILERI ITKI (THR): %d/15", fc.ap.baseThrottle)
+                                hotplugTimer = 35
                             end
                         end
                     end
