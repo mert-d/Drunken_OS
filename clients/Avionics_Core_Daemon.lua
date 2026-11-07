@@ -508,8 +508,20 @@ local function run(context)
                             fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(tonumber(msg.deltaDeg) or 0)) % (2 * math.pi)
                         elseif msg.cmd == "SET_HDG" then
                             fc.ap.targetHdg = tonumber(msg.hdg) or fc.ap.targetHdg
+                        elseif msg.cmd == "REVERSE_HDG" or msg.cmd == "U_TURN" then
+                            if fc.reverseHeading then
+                                fc:reverseHeading()
+                            else
+                                fc.ap.targetHdg = ((fc.ap.targetHdg or 0) + math.pi) % (2 * math.pi)
+                            end
+                            lastCmdName = "U_TURN"
+                            broadcastState()
                         elseif msg.cmd == "THR_DELTA" then
+                            if msg.reverseGear ~= nil then
+                                fc.ap.reverseGear = (msg.reverseGear == true)
+                            end
                             fc.ap.baseThrottle = math.max(0, math.min(15, fc.ap.baseThrottle + (tonumber(msg.delta) or 0)))
+                            broadcastState()
                         elseif msg.cmd == "SET_THROTTLE" then
                             fc.ap.baseThrottle = math.max(0, math.min(15, tonumber(msg.throttle) or 0))
                         elseif msg.cmd == "TOGGLE_BRAKE" then
@@ -518,8 +530,12 @@ local function run(context)
                             fc.ap.parkingBrake = (msg.brake == true)
                         elseif msg.cmd == "TOGGLE_GEAR" then
                             fc.ap.reverseGear = not fc.ap.reverseGear
+                            lastCmdName = fc.ap.reverseGear and "GEAR:REV" or "GEAR:FWD"
+                            broadcastState()
                         elseif msg.cmd == "SET_GEAR" then
                             fc.ap.reverseGear = (msg.reverse == true)
+                            lastCmdName = fc.ap.reverseGear and "GEAR:REV" or "GEAR:FWD"
+                            broadcastState()
                         elseif msg.cmd == "TOGGLE_CLUTCH" then
                             fc:toggleClutchPolarity()
                         elseif msg.cmd == "MANUAL_YAW_DELTA" then

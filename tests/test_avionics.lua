@@ -288,7 +288,27 @@ local function runTests()
     msFC:adjustManualLift(2)
     msFC:step(0.05)
     assert(msFC.manualLift >= 10, "Expected adjustManualLift to increase collective lift")
-    print("  PASS: Test 7: Mothership 4x Quad-Lift Gimbal Stabilization & 3x Rear Thruster Differential Yaw")
+
+    -- Test 7c: Cruise Mode 180° Reverse Heading (U-Turn) & Coordinated Turn Yaw Desaturation
+    msFC:setMode("CRUISE", msFC:readTelemetry(0.05))
+    msFC.ap.baseThrottle = 15 -- Full cruise speed
+    msFC.ap.targetHdg = 0.0
+    local origHdg = msFC.ap.targetHdg
+    local newHdg = msFC:reverseHeading()
+    assert(math.abs(newHdg - math.pi) < 0.01, "Expected reverseHeading to turn targetHdg by 180 degrees (pi rad)")
+    msFC:step(0.05)
+    -- Under hard 180° heading turn command, center thruster (6) must back off and differential yaw must maximize
+    assert(scRPMs[6] == 0, "Expected center thruster to back off to 0 during hard 180° turnaround")
+    assert(scRPMs[5] ~= scRPMs[7], "Expected maximum differential yaw between left and right thrusters")
+
+    -- Test 7d: RTB Departure Takeoff Fallback when Beacon is Missing
+    msFC.ap.homeBase = nil
+    msFC.takeoffPos = { x = 100, y = 120, z = 200, heading = 0.0 }
+    local rtbOk = msFC:engageRTB(msFC:readTelemetry(0.05))
+    assert(rtbOk == true, "Expected engageRTB to succeed using takeoffPos fallback")
+    assert(msFC.ap.mode == "RTB", "Expected mode to switch to RTB")
+
+    print("  PASS: Test 7: Mothership 4x Quad-Lift Gimbal Stabilization, Yaw Desaturation & 180° Turnaround")
 
     -- Test 8: Zeppelin HOVER Equilibrium, Steady-State Inverted Clutch (No Oscillation) & Shared Network Gearshift
     local hoverBurnerSig = 0

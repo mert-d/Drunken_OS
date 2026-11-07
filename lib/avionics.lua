@@ -1357,6 +1357,17 @@ function Avionics:readTelemetry(dt)
         gearRetracted    = gearRetracted,
         transponder      = (self.controller and safeCall(self.controller.isTransponderOn) == true)
     }
+
+    -- Record initial takeoff departure point for fallback RTB (Return To Base)
+    if not self.takeoffPos and tel.pos and (tel.pos.x ~= 0 or tel.pos.z ~= 0) then
+        self.takeoffPos = {
+            x = math.floor(tel.pos.x + 0.5),
+            y = math.floor((alt or 120) + 0.5),
+            z = math.floor(tel.pos.z + 0.5),
+            heading = heading or 0.0
+        }
+    end
+
     self:hook("onTelemetry", tel, dt)
     return tel
 end
@@ -1397,8 +1408,26 @@ function Avionics:setHomeBase(ilsBeacon)
     self.ap.homeBase = ilsBeacon
 end
 
+function Avionics:reverseHeading()
+    local cur = self.ap.targetHdg or (self.lastHeading or 0.0)
+    local newHdg = (cur + math.pi) % (2 * math.pi)
+    self.ap.targetHdg = newHdg
+    if self.hdgPID then self.hdgPID:reset() end
+    return newHdg
+end
+
 function Avionics:engageRTB(currentTel)
-    if not self.ap.homeBase then return false end
+    if not self.ap.homeBase then
+        if self.takeoffPos then
+            self.ap.homeBase = {
+                baseName = "KALKIS NOKTASI",
+                threshold = { x = self.takeoffPos.x, y = self.takeoffPos.y, z = self.takeoffPos.z },
+                rwyHeadingRad = self.takeoffPos.heading or 0.0
+            }
+        else
+            return false
+        end
+    end
     self.ap.enabled  = true
     self.ap.altHold  = true
     self.ap.hdgHold  = true
@@ -2059,6 +2088,7 @@ function Avionics:step(dt)
 
                 self.ap.targetHdg = math.atan2(-dx, dz)
                 self.ap.targetAlt = fafY
+                self.ap.baseThrottle = math.min(10, math.max(6, (self.ap.baseThrottle and self.ap.baseThrottle > 0) and self.ap.baseThrottle or 8))
 
                 if distToFAF < 12.0 then
                     self.ap.rtbPhase = "RTB_ILS"
@@ -2105,9 +2135,18 @@ function Avionics:step(dt)
     end
 
     -- Supports Create Rotation Speed Controllers (-256..+256 RPM with 1-RPM resolution) and 0..15 Signal / Throttle Lever peripherals
+    local hasPhysicalGearshift = (#(self.gearshifts or {}) > 0)
+        or (self:getDeviceConfig("RS:back").role == "GEAR_REVERSE")
+        or (self.ioMap and self.ioMap["RS:back"] and self.ioMap["RS:back"].role == "GEAR_REVERSE")
+    local revActive = (self.ap.reverseGear == true) or (self.ap.mode == "ANCHOR" and tel.anchor and (tel.anchor.surge or 0) < -0.5)
+
     local function driveSignal(dev, sig, inv)
         if dev.setTargetSpeed then
-            local rpm = math.floor((sig / 15.0) * 256 + 0.5)
+            local effSig = sig
+            if hasPhysicalGearshift and revActive then
+                effSig = math.abs(sig)
+            end
+            local rpm = math.floor((effSig / 15.0) * 256 + 0.5)
             if inv then rpm = -rpm end
             callKinetic(dev, dev.setTargetSpeed, rpm)
             return
@@ -2250,7 +2289,7 @@ function Avionics:step(dt)
     end
 
     -- Drive Gearshifts (Forward / Backward Movement via [G], [W]/[S], or Sky Anchor reverse drift)
-    local revActive = (self.ap.reverseGear == true) or (self.ap.mode == "ANCHOR" and tel.anchor and (tel.anchor.surge or 0) < -0.5)
+    revActive = (self.ap.reverseGear == true) or (self.ap.mode == "ANCHOR" and tel.anchor and (tel.anchor.surge or 0) < -0.5)
     for _, gs in ipairs(self.gearshifts or {}) do
         local gsName = (peripheral and peripheral.getName and pcall(peripheral.getName, gs) and peripheral.getName(gs)) or nil
         local devInv = gsName and self:getDeviceConfig(gsName).invert or false
@@ -2329,10 +2368,21 @@ function Avionics:step(dt)
             turnYaw = self.ap.hdgHold and yawDiff or ((steerVal ~= 0 and (steerVal * 6.0)) or (self.ap.manualYaw or 0))
         end
     end
+    -- Coordinated Cruise Turn & Yaw Desaturation:
+    -- When turning hard, desaturate forward thrust so outer motor can push max power while inner & center back off.
+    local absTurn = math.abs(turnYaw)
+    local effFwd = fwdSig
+    if effFwd > 0 and (effFwd + absTurn > 15) then
+        effFwd = 15 - absTurn
+    elseif effFwd < 0 and (math.abs(effFwd) + absTurn > 15) then
+        effFwd = -(15 - absTurn)
+    end
+    -- Center thruster backs off during hard turns to maximize angular yaw moment
+    local centerAtten = (absTurn > 0.5) and math.max(0.0, 1.0 - (absTurn / 6.0)) or 1.0
     local minRear = revActive and -15 or 0
-    local rearL = math.floor(clamp(fwdSig - turnYaw, minRear, 15) + 0.5)
-    local rearC = math.floor(clamp(fwdSig, minRear, 15) + 0.5)
-    local rearR = math.floor(clamp(fwdSig + turnYaw, minRear, 15) + 0.5)
+    local rearL = math.floor(clamp(effFwd - turnYaw, minRear, 15) + 0.5)
+    local rearC = math.floor(clamp(fwdSig * centerAtten, minRear, 15) + 0.5)
+    local rearR = math.floor(clamp(effFwd + turnYaw, minRear, 15) + 0.5)
 
     if not isMothershipOrGunship then
         self.lastMothershipState = {

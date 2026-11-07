@@ -1176,11 +1176,11 @@ local function run(context)
 
         drawTerm.setCursorPos(2, h - 1)
         drawTerm.setTextColor(theme.accent or colors.cyan)
-        drawTerm.write("[V]:Profil Sec | [N]:FMS/Rota | [P]:I/O Matrix | [U]:OTA")
+        drawTerm.write("[V]:Profil Sec | [N]:FMS/Rota | [P]:I/O Matrix | [Y]:180°U-Don")
 
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
-        drawTerm.write("[Up/Dn]:Alt/Lift [Lt/Rt]:Hdg/Dmn [W/S]:Thr [9/0]:Trim [Z]:Capa [A]:AP")
+        drawTerm.write("[Up/Dn]:Alt/Lift [Lt/Rt]:Hdg [W/S]:Thr [G]:Vites [R]:RTB [A]:AP")
         drawTerm = prevTerm
     end
 
@@ -1736,7 +1736,19 @@ local function run(context)
                         hotplugNotice = "HOVER AKTIF: Irtifa Kilitli"; hotplugTimer = 50
                     elseif key == keys.r then
                         if isRemoteFCC then sendAvionicsCmd("ENGAGE_RTB") else fc:engageRTB(lastTel) end
-                        hotplugNotice = "RTB: Eve Donus"; hotplugTimer = 50
+                        local bName = (fc.ap.homeBase and fc.ap.homeBase.baseName) or (fc.takeoffPos and "KALKIS NOKTASI") or "EVE DONUS"
+                        hotplugNotice = "RTB: " .. bName; hotplugTimer = 50
+                    elseif key == keys.y then
+                        if isRemoteFCC then
+                            sendAvionicsCmd("REVERSE_HDG")
+                        else
+                            fc:reverseHeading()
+                        end
+                        local curDeg = math.deg(fc.ap.targetHdg or 0)
+                        local newDeg = (curDeg + 180) % 360
+                        fc.ap.targetHdg = math.rad(newDeg)
+                        hotplugNotice = string.format("180° U-DONUSU (GERIYE DON): %03.0f deg", newDeg)
+                        hotplugTimer = 50
                     elseif key == keys.l then
                         if isRemoteFCC then sendAvionicsCmd("SET_MODE", { mode = "AUTOLAND" }) else fc:setMode("AUTOLAND", lastTel) end
                         hotplugNotice = "AUTOLAND: Inis"; hotplugTimer = 50
@@ -1772,12 +1784,10 @@ local function run(context)
                             hotplugTimer = 60
                         end
                     elseif key == keys.g then
-                        if isRemoteFCC then sendAvionicsCmd("TOGGLE_GEAR")
-                        else
-                            fc.ap.reverseGear = not fc.ap.reverseGear
-                            hotplugNotice = "VITES: " .. (fc.ap.reverseGear and "GERI [REDSTONE 15]" or "ILERI [REDSTONE 0]")
-                            hotplugTimer = 60
-                        end
+                        fc.ap.reverseGear = not fc.ap.reverseGear
+                        if isRemoteFCC then sendAvionicsCmd("TOGGLE_GEAR") end
+                        hotplugNotice = "VITES: " .. (fc.ap.reverseGear and "GERI [REDSTONE 15]" or "ILERI [REDSTONE 0]")
+                        hotplugTimer = 50
                     elseif key == keys.z then
                         if isRemoteFCC then
                             local newM = (fc.ap.mode == "ANCHOR") and "MANUAL" or "ANCHOR"
@@ -1857,12 +1867,34 @@ local function run(context)
                     elseif key == keys.w or key == keys.s then
                         local wantRev = (key == keys.s)
                         if isRemoteFCC then
-                            local d = wantRev and -1 or 1
-                            local newThr = math.max(0, math.min(15, (fc.ap.baseThrottle or 0) + d))
-                            fc.ap.baseThrottle = newThr
-                            sendAvionicsCmd("THR_DELTA", { delta = d })
-                            hotplugNotice = string.format("ILERI ITKI (THR): %d/15", newThr)
-                            hotplugTimer = 35
+                            if fc.ap.reverseGear ~= wantRev and (fc.ap.baseThrottle or 0) > 0 and fc.ap.mode ~= "HOVER" then
+                                fc.ap.baseThrottle = math.max(0, (fc.ap.baseThrottle or 0) - 1)
+                                sendAvionicsCmd("THR_DELTA", { delta = -1 })
+                                if fc.ap.baseThrottle == 0 then
+                                    fc.ap.reverseGear = wantRev
+                                    sendAvionicsCmd("SET_GEAR", { reverse = wantRev })
+                                    hotplugNotice = "DURDU -> VITES: " .. (wantRev and "GERI" or "ILERI")
+                                    hotplugTimer = 40
+                                else
+                                    hotplugNotice = string.format("FREN / GAZ KISMA: %d/15", fc.ap.baseThrottle)
+                                    hotplugTimer = 35
+                                end
+                            else
+                                if (fc.ap.baseThrottle or 0) == 0 and fc.ap.reverseGear ~= wantRev then
+                                    fc.ap.reverseGear = wantRev
+                                    sendAvionicsCmd("SET_GEAR", { reverse = wantRev })
+                                end
+                                if fc.ap.mode == "HOVER" then
+                                    fc:setMode("CRUISE", lastTel)
+                                    sendAvionicsCmd("SET_MODE", { mode = "CRUISE" })
+                                end
+                                fc.ap.parkingBrake = false
+                                local newThr = math.max(0, math.min(15, (fc.ap.baseThrottle or 0) + 1))
+                                fc.ap.baseThrottle = newThr
+                                sendAvionicsCmd("THR_DELTA", { delta = 1, reverseGear = fc.ap.reverseGear })
+                                hotplugNotice = string.format("%s ITKI (THR): %d/15", fc.ap.reverseGear and "GERI" or "ILERI", newThr)
+                                hotplugTimer = 35
+                            end
                         else
                             if fc.ap.reverseGear ~= wantRev and fc.ap.baseThrottle > 0 and fc.ap.mode ~= "HOVER" then
                                 fc.ap.baseThrottle = math.max(0, fc.ap.baseThrottle - 1)
@@ -1872,7 +1904,7 @@ local function run(context)
                                 if fc.ap.mode == "HOVER" then fc:setMode("CRUISE", lastTel) end
                                 fc.ap.parkingBrake = false
                                 fc.ap.baseThrottle = math.min(15, fc.ap.baseThrottle + 1)
-                                hotplugNotice = string.format("ILERI ITKI (THR): %d/15", fc.ap.baseThrottle)
+                                hotplugNotice = string.format("%s ITKI (THR): %d/15", fc.ap.reverseGear and "GERI" or "ILERI", fc.ap.baseThrottle)
                                 hotplugTimer = 35
                             end
                         end
