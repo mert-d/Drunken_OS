@@ -159,10 +159,12 @@ return {
             remote_files = {
                 "lib/avx/wing_level.lua",
                 "lib/avx/sky_anchor.lua",
+                "lib/avx/route_manager.lua",
                 "lib/blackbox.lua",
                 "apps/blackbox.lua",
                 "blackbox.lua",
-                "apps/engineering_deck.lua"
+                "apps/engineering_deck.lua",
+                "apps/tactical_table.lua"
             },
             include_shared = false
         },
@@ -179,10 +181,12 @@ return {
             remote_files = {
                 "lib/avx/wing_level.lua",
                 "lib/avx/sky_anchor.lua",
+                "lib/avx/route_manager.lua",
                 "lib/blackbox.lua",
                 "apps/blackbox.lua",
                 "blackbox.lua",
-                "apps/engineering_deck.lua"
+                "apps/engineering_deck.lua",
+                "apps/tactical_table.lua"
             },
             include_shared = false
         },
@@ -396,6 +400,16 @@ return {
                 "manifest.lua"
              },
              include_shared = false
+        },
+
+        storage_bridge = {
+            name = "Standalone ME & RS Storage Bridge",
+            type = "client",
+            main = "apps/storage_bridge.lua",
+            files = {
+                "apps/storage_bridge.lua"
+            },
+            include_shared = false
         }
     },
 

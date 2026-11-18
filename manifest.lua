@@ -400,6 +400,16 @@ return {
                 "manifest.lua"
              },
              include_shared = false
+        },
+
+        storage_bridge = {
+            name = "Standalone ME & RS Storage Bridge",
+            type = "client",
+            main = "apps/storage_bridge.lua",
+            files = {
+                "apps/storage_bridge.lua"
+            },
+            include_shared = false
         }
     },
 

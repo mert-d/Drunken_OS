@@ -36,6 +36,13 @@ local PACKAGE_METADATA = {
         desc = "Headless redstone node for base doors, sirens & machines",
         prompt = "DISK: Insert blank floppy disk and press ENTER."
     },
+    storage_bridge = {
+        category = "clients",
+        badge = "[STORAGE]",
+        hardware = "Advanced Computer + ME Bridge + RS Bridge + Barrel (+ Monitor)",
+        desc = "100% Standalone AE2 (Quantum CPU) <-> RS Type Archive Bridge",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
     avionics_fcs = {
         category = "avionics",
         badge = "[AVIONICS]",
