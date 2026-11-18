@@ -1,12 +1,12 @@
 -- startup.lua / apps/storage_bridge.lua
 -- STANDALONE AE2 (Quantum Autocrafter) <-> Refined Storage (Unlimited Type Archive) Bridge
--- Zero external dependencies. Runs directly on any CC:Tweaked Advanced Computer.
+-- Zero external dependencies. Supports Advanced Peripherals 1.18 - 1.21+ (meBridge/me_bridge, rsBridge/rs_bridge).
 
 local CONFIG_PATH = "/storage_bridge.cfg"
 
 local DEFAULT_CFG = {
-    meBufferDir    = "east",  -- Barrel, ME Bridge'in hangi yonunde?
-    rsBufferDir    = "west",  -- Barrel, RS Bridge'in hangi yonunde?
+    meBufferDir    = "east",  -- Barrel, ME Bridge'in hangi yonunde? (veya agdaki peripheral adi)
+    rsBufferDir    = "west",  -- Barrel, RS Bridge'in hangi yonunde? (veya agdaki peripheral adi)
     autoCleanME    = true,    -- ME hucrelerindeki tekil/nadir esyalari otomatik RS'ye arsivle
     cleanThreshold = 32,      -- ME'de bu adetten az olan (ve hammadde olmayan) esyalar RS'ye tasinir
     cleanInterval  = 5.0      -- Otomatik temizlik periyodu (saniye)
@@ -18,6 +18,8 @@ for k, v in pairs(DEFAULT_CFG) do
 end
 
 local DIRECTIONS = { "north", "south", "east", "west", "up", "down" }
+local ME_TYPES   = { "me_bridge", "meBridge", "advancedperipherals:me_bridge" }
+local RS_TYPES   = { "rs_bridge", "rsBridge", "advancedperipherals:rs_bridge" }
 
 -- ME sisteminde HER ZAMAN kalmasi gereken anahtar kelimeler (Surekli uretilen kaynaklar ve ara parcalar)
 local PROTECTED_KEYWORDS = {
@@ -79,10 +81,102 @@ end
 
 loadConfig()
 
+-- Coklu surum uyumlu peripheral bulucu (me_bridge / meBridge, rs_bridge / rsBridge)
+local function findBridge(typeList, hintPattern)
+    if not peripheral then return nil, nil end
+
+    if peripheral.find then
+        for _, ptype in ipairs(typeList) do
+            local ok, found = pcall(peripheral.find, ptype)
+            if ok and found then
+                local pname = peripheral.getName and peripheral.getName(found) or ptype
+                return found, pname
+            end
+        end
+    end
+
+    if peripheral.getNames then
+        local okNames, names = pcall(peripheral.getNames)
+        if okNames and type(names) == "table" then
+            for _, name in ipairs(names) do
+                local okType, ptype = pcall(peripheral.getType, name)
+                if okType and type(ptype) == "string" then
+                    local matched = false
+                    for _, candidate in ipairs(typeList) do
+                        if ptype == candidate then
+                            matched = true
+                            break
+                        end
+                    end
+                    if not matched and hintPattern and string.find(string.lower(ptype), hintPattern, 1, true) then
+                        matched = true
+                    end
+                    if not matched and peripheral.hasType then
+                        for _, candidate in ipairs(typeList) do
+                            local okHas, has = pcall(peripheral.hasType, name, candidate)
+                            if okHas and has then
+                                matched = true
+                                break
+                            end
+                        end
+                    end
+                    if matched then
+                        local okWrap, wrapped = pcall(peripheral.wrap, name)
+                        if okWrap and wrapped then
+                            return wrapped, name
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+local function findMonitor()
+    if not peripheral then return nil end
+    if peripheral.find then
+        local ok, m = pcall(peripheral.find, "monitor")
+        if ok and m then return m end
+    end
+    if peripheral.getNames then
+        local okNames, names = pcall(peripheral.getNames)
+        if okNames and type(names) == "table" then
+            for _, name in ipairs(names) do
+                local okType, ptype = pcall(peripheral.getType, name)
+                if okType and ptype == "monitor" then
+                    local okWrap, wrapped = pcall(peripheral.wrap, name)
+                    if okWrap and wrapped then return wrapped end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function getAttachedPeripheralSummary()
+    if not peripheral or not peripheral.getNames then return "yok" end
+    local ok, names = pcall(peripheral.getNames)
+    if not ok or type(names) ~= "table" or #names == 0 then
+        return "yok"
+    end
+    local parts = {}
+    for i = 1, math.min(#names, 4) do
+        local n = names[i]
+        local t = peripheral.getType and peripheral.getType(n) or "?"
+        table.insert(parts, tostring(n) .. "(" .. tostring(t) .. ")")
+    end
+    if #names > 4 then
+        table.insert(parts, "+" .. (#names - 4))
+    end
+    return table.concat(parts, ", ")
+end
+
 -- Donanim Bulucu
-local me = peripheral and peripheral.find and peripheral.find("meBridge") or nil
-local rs = peripheral and peripheral.find and peripheral.find("rsBridge") or nil
-local mon = peripheral and peripheral.find and peripheral.find("monitor") or nil
+local me, meName = findBridge(ME_TYPES, "mebridge")
+local rs, rsName = findBridge(RS_TYPES, "rsbridge")
+local mon = findMonitor()
 
 if mon then
     pcall(function() mon.setTextScale(0.5) end)
@@ -93,9 +187,9 @@ local craftableSet = {}
 local statusMsg = "Sistem Hazir. [Sag/Sol]: Aktar | [C]: Craft | [D]: Simdi Temizle"
 
 local function refreshPeripherals()
-    me = peripheral and peripheral.find and peripheral.find("meBridge") or nil
-    rs = peripheral and peripheral.find and peripheral.find("rsBridge") or nil
-    mon = peripheral and peripheral.find and peripheral.find("monitor") or nil
+    me, meName = findBridge(ME_TYPES, "mebridge")
+    rs, rsName = findBridge(RS_TYPES, "rsbridge")
+    mon = findMonitor()
     if mon then
         pcall(function() mon.setTextScale(0.5) end)
     end
@@ -119,40 +213,120 @@ local function isProtectedResource(itemName, isCraftable, meCount)
     return false
 end
 
-local function safeExport(bridge, itemFilter, targetDir)
-    if not bridge then return 0 end
-    if bridge.exportItemToPeripheral then
-        local ok, res = pcall(bridge.exportItemToPeripheral, itemFilter, targetDir)
-        if ok and type(res) == "number" and res > 0 then return res end
+local function isCardinalDir(target)
+    for _, d in ipairs(DIRECTIONS) do
+        if d == target then return true end
     end
-    if bridge.exportItem then
-        local ok, res = pcall(bridge.exportItem, itemFilter, targetDir)
-        if ok and type(res) == "number" and res > 0 then return res end
+    return false
+end
+
+local function extractMovedCount(ok, res)
+    if not ok then return 0 end
+    if type(res) == "number" then
+        return (res > 0) and res or 0
+    elseif type(res) == "table" then
+        local c = res.count or res.amount or 0
+        return (type(c) == "number" and c > 0) and c or 0
     end
     return 0
 end
 
-local function safeImport(bridge, itemFilter, sourceDir)
-    if not bridge then return 0 end
-    if bridge.importItemFromPeripheral then
-        local ok, res = pcall(bridge.importItemFromPeripheral, itemFilter, sourceDir)
-        if ok and type(res) == "number" and res > 0 then return res end
+local function tryTransferCall(primary, secondary, itemFilter, target)
+    if type(primary) == "function" then
+        local ok, res = pcall(primary, itemFilter, target)
+        local moved = extractMovedCount(ok, res)
+        if moved > 0 then return moved end
     end
-    if bridge.importItem then
-        local ok, res = pcall(bridge.importItem, itemFilter, sourceDir)
-        if ok and type(res) == "number" and res > 0 then return res end
+    if type(secondary) == "function" then
+        local ok, res = pcall(secondary, itemFilter, target)
+        local moved = extractMovedCount(ok, res)
+        if moved > 0 then return moved end
     end
     return 0
+end
+
+local function safeExport(bridge, itemFilter, targetDir)
+    if not bridge or not targetDir then return 0 end
+    if isCardinalDir(targetDir) then
+        return tryTransferCall(bridge.exportItem, bridge.exportItemToPeripheral, itemFilter, targetDir)
+    end
+    return tryTransferCall(bridge.exportItemToPeripheral, bridge.exportItem, itemFilter, targetDir)
+end
+
+local function safeImport(bridge, itemFilter, sourceDir)
+    if not bridge or not sourceDir then return 0 end
+    if isCardinalDir(sourceDir) then
+        return tryTransferCall(bridge.importItem, bridge.importItemFromPeripheral, itemFilter, sourceDir)
+    end
+    return tryTransferCall(bridge.importItemFromPeripheral, bridge.importItem, itemFilter, sourceDir)
+end
+
+-- Legacy (listItems/listCraftableItems) ve Modern Unified (getItems/getCraftableItems) API okuyuculari
+local function fetchItems(bridge)
+    if not bridge then return nil, nil end
+    local lastErr = nil
+
+    if type(bridge.listItems) == "function" then
+        local ok, res, err = pcall(bridge.listItems)
+        if ok and type(res) == "table" then
+            return res, nil
+        elseif not ok then
+            lastErr = tostring(res)
+        elseif err then
+            lastErr = tostring(err)
+        end
+    end
+
+    if type(bridge.getItems) == "function" then
+        local ok, res, err = pcall(bridge.getItems)
+        if ok and type(res) == "table" then
+            return res, nil
+        end
+        local ok2, res2, err2 = pcall(bridge.getItems, {})
+        if ok2 and type(res2) == "table" then
+            return res2, nil
+        end
+        if not ok2 then
+            lastErr = tostring(res2)
+        elseif err2 then
+            lastErr = tostring(err2)
+        elseif not ok then
+            lastErr = tostring(res)
+        elseif err then
+            lastErr = tostring(err)
+        end
+    end
+
+    return nil, lastErr
+end
+
+local function fetchCraftables(bridge)
+    if not bridge then return nil end
+
+    if type(bridge.listCraftableItems) == "function" then
+        local ok, res = pcall(bridge.listCraftableItems)
+        if ok and type(res) == "table" then return res end
+    end
+
+    if type(bridge.getCraftableItems) == "function" then
+        local ok, res = pcall(bridge.getCraftableItems)
+        if ok and type(res) == "table" then return res end
+        local ok2, res2 = pcall(bridge.getCraftableItems, {})
+        if ok2 and type(res2) == "table" then return res2 end
+    end
+
+    return nil
 end
 
 local function scanCraftables()
     craftableSet = {}
-    if me and me.listCraftableItems then
-        local ok, list = pcall(me.listCraftableItems)
-        if ok and type(list) == "table" then
-            for _, item in ipairs(list) do
-                if type(item) == "table" and item.name then
-                    craftableSet[item.name] = item.displayName or item.name
+    local list = fetchCraftables(me)
+    if type(list) == "table" then
+        for _, item in ipairs(list) do
+            if type(item) == "table" then
+                local name = item.name or item.id
+                if name then
+                    craftableSet[name] = item.displayName or name
                 end
             end
         end
@@ -161,8 +335,8 @@ local function scanCraftables()
 end
 
 local function scanInventories(searchQuery)
-    me = peripheral and peripheral.find and peripheral.find("meBridge") or nil
-    rs = peripheral and peripheral.find and peripheral.find("rsBridge") or nil
+    me, meName = findBridge(ME_TYPES, "mebridge")
+    rs, rsName = findBridge(RS_TYPES, "rsbridge")
     scanCraftables()
 
     local map = {}
@@ -174,65 +348,61 @@ local function scanInventories(searchQuery)
             or string.find(string.lower(name), q, 1, true) ~= nil
     end
 
-    if me and me.listItems then
-        local ok, meItems = pcall(me.listItems)
-        if ok and type(meItems) == "table" then
-            for _, item in ipairs(meItems) do
-                if type(item) == "table" then
-                    local name = item.name or "unknown"
-                    local label = item.displayName or name
-                    local count = item.amount or item.count or 0
-                    local craftable = (item.isCraftable == true) or (craftableSet[name] ~= nil)
-                    if craftable and not craftableSet[name] then
-                        craftableSet[name] = label
-                    end
-                    if matches(name, label) then
-                        if not map[name] then
-                            map[name] = {
-                                name = name,
-                                displayName = label,
-                                meCount = count,
-                                rsCount = 0,
-                                total = count,
-                                isCraftable = craftable,
-                                isProtected = isProtectedResource(name, craftable, count)
-                            }
-                        else
-                            map[name].meCount = map[name].meCount + count
-                            map[name].total = map[name].meCount + map[name].rsCount
-                            map[name].isCraftable = map[name].isCraftable or craftable
-                            map[name].isProtected = isProtectedResource(name, map[name].isCraftable, map[name].meCount)
-                        end
+    local meItems, meErr = fetchItems(me)
+    if type(meItems) == "table" then
+        for _, item in ipairs(meItems) do
+            if type(item) == "table" then
+                local name = item.name or item.id or "unknown"
+                local label = item.displayName or name
+                local count = item.amount or item.count or 0
+                local craftable = (item.isCraftable == true) or (craftableSet[name] ~= nil)
+                if craftable and not craftableSet[name] then
+                    craftableSet[name] = label
+                end
+                if matches(name, label) then
+                    if not map[name] then
+                        map[name] = {
+                            name = name,
+                            displayName = label,
+                            meCount = count,
+                            rsCount = 0,
+                            total = count,
+                            isCraftable = craftable,
+                            isProtected = isProtectedResource(name, craftable, count)
+                        }
+                    else
+                        map[name].meCount = map[name].meCount + count
+                        map[name].total = map[name].meCount + map[name].rsCount
+                        map[name].isCraftable = map[name].isCraftable or craftable
+                        map[name].isProtected = isProtectedResource(name, map[name].isCraftable, map[name].meCount)
                     end
                 end
             end
         end
     end
 
-    if rs and rs.listItems then
-        local ok, rsItems = pcall(rs.listItems)
-        if ok and type(rsItems) == "table" then
-            for _, item in ipairs(rsItems) do
-                if type(item) == "table" then
-                    local name = item.name or "unknown"
-                    local label = item.displayName or name
-                    local count = item.amount or item.count or 0
-                    if matches(name, label) then
-                        if not map[name] then
-                            local craftable = (craftableSet[name] ~= nil)
-                            map[name] = {
-                                name = name,
-                                displayName = label,
-                                meCount = 0,
-                                rsCount = count,
-                                total = count,
-                                isCraftable = craftable,
-                                isProtected = isProtectedResource(name, craftable, 0)
-                            }
-                        else
-                            map[name].rsCount = map[name].rsCount + count
-                            map[name].total = map[name].meCount + map[name].rsCount
-                        end
+    local rsItems, rsErr = fetchItems(rs)
+    if type(rsItems) == "table" then
+        for _, item in ipairs(rsItems) do
+            if type(item) == "table" then
+                local name = item.name or item.id or "unknown"
+                local label = item.displayName or name
+                local count = item.amount or item.count or 0
+                if matches(name, label) then
+                    if not map[name] then
+                        local craftable = (craftableSet[name] ~= nil)
+                        map[name] = {
+                            name = name,
+                            displayName = label,
+                            meCount = 0,
+                            rsCount = count,
+                            total = count,
+                            isCraftable = craftable,
+                            isProtected = isProtectedResource(name, craftable, 0)
+                        }
+                    else
+                        map[name].rsCount = map[name].rsCount + count
+                        map[name].total = map[name].meCount + map[name].rsCount
                     end
                 end
             end
@@ -254,6 +424,20 @@ local function scanInventories(searchQuery)
         end
     end
 
+    -- Donanim ve ag sagligi uyarisi
+    if not me or not rs then
+        local attached = getAttachedPeripheralSummary()
+        if not me and not rs then
+            statusMsg = "HATA: ME/RS Bridge yok! Bagli:[" .. attached .. "] (Modem sag tik)"
+        elseif not me then
+            statusMsg = "HATA: ME Bridge yok! Bagli:[" .. attached .. "]"
+        else
+            statusMsg = "HATA: RS Bridge yok! Bagli:[" .. attached .. "]"
+        end
+    elseif meErr or rsErr then
+        statusMsg = "AG HATASI: " .. tostring(meErr or rsErr)
+    end
+
     local list = {}
     for _, v in pairs(map) do
         table.insert(list, v)
@@ -271,6 +455,66 @@ local function scanInventories(searchQuery)
     return list
 end
 
+local function hasSourceStock(bridge, itemName, isME)
+    for _, entry in ipairs(unifiedList) do
+        if entry.name == itemName then
+            return isME and ((entry.meCount or 0) > 0) or ((entry.rsCount or 0) > 0)
+        end
+    end
+    if bridge and type(bridge.getItem) == "function" then
+        local ok, info = pcall(bridge.getItem, { name = itemName })
+        if ok and type(info) == "table" and ((info.amount or info.count or 0) > 0) then
+            return true
+        end
+    end
+    local items = fetchItems(bridge)
+    if type(items) == "table" then
+        for _, item in ipairs(items) do
+            if type(item) == "table" and (item.name or item.id) == itemName then
+                if (item.amount or item.count or 0) > 0 then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function getCandidateTargets(currentDir)
+    local candidates = {}
+    local seen = {}
+    if currentDir then seen[currentDir] = true end
+
+    for _, d in ipairs(DIRECTIONS) do
+        if not seen[d] then
+            seen[d] = true
+            table.insert(candidates, d)
+        end
+    end
+
+    if peripheral and peripheral.getNames then
+        local ok, names = pcall(peripheral.getNames)
+        if ok and type(names) == "table" then
+            for _, name in ipairs(names) do
+                if not seen[name] and name ~= meName and name ~= rsName then
+                    local lowerName = string.lower(name)
+                    local ptype = peripheral.getType and peripheral.getType(name) or ""
+                    local lowerType = string.lower(tostring(ptype))
+                    if string.find(lowerName, "barrel", 1, true)
+                        or string.find(lowerName, "chest", 1, true)
+                        or string.find(lowerType, "barrel", 1, true)
+                        or string.find(lowerType, "chest", 1, true) then
+                        seen[name] = true
+                        table.insert(candidates, name)
+                    end
+                end
+            end
+        end
+    end
+
+    return candidates
+end
+
 local function transferItem(itemName, amount, direction)
     if not me or not rs then
         statusMsg = "HATA: ME Bridge veya RS Bridge bagli degil!"
@@ -280,6 +524,7 @@ local function transferItem(itemName, amount, direction)
 
     local remaining = amount or 64
     local totalMoved = 0
+    local dirUpdated = false
 
     while remaining > 0 do
         local batch = math.min(remaining, 64)
@@ -288,13 +533,65 @@ local function transferItem(itemName, amount, direction)
 
         if direction == "ME_TO_RS" then
             exported = safeExport(me, filter, cfg.meBufferDir)
+            if exported == 0 and totalMoved == 0 and hasSourceStock(me, itemName, true) then
+                for _, cand in ipairs(getCandidateTargets(cfg.meBufferDir)) do
+                    local testExp = safeExport(me, filter, cand)
+                    if testExp > 0 then
+                        exported = testExp
+                        cfg.meBufferDir = cand
+                        dirUpdated = true
+                        break
+                    end
+                end
+            end
             if exported > 0 then
-                safeImport(rs, { name = itemName, count = exported }, cfg.rsBufferDir)
+                local imported = safeImport(rs, { name = itemName, count = exported }, cfg.rsBufferDir)
+                if imported == 0 then
+                    for _, cand in ipairs(getCandidateTargets(cfg.rsBufferDir)) do
+                        local testImp = safeImport(rs, { name = itemName, count = exported }, cand)
+                        if testImp > 0 then
+                            imported = testImp
+                            cfg.rsBufferDir = cand
+                            dirUpdated = true
+                            break
+                        end
+                    end
+                end
+                if imported == 0 then
+                    safeImport(me, { name = itemName, count = exported }, cfg.meBufferDir)
+                    exported = 0
+                end
             end
         elseif direction == "RS_TO_ME" then
             exported = safeExport(rs, filter, cfg.rsBufferDir)
+            if exported == 0 and totalMoved == 0 and hasSourceStock(rs, itemName, false) then
+                for _, cand in ipairs(getCandidateTargets(cfg.rsBufferDir)) do
+                    local testExp = safeExport(rs, filter, cand)
+                    if testExp > 0 then
+                        exported = testExp
+                        cfg.rsBufferDir = cand
+                        dirUpdated = true
+                        break
+                    end
+                end
+            end
             if exported > 0 then
-                safeImport(me, { name = itemName, count = exported }, cfg.meBufferDir)
+                local imported = safeImport(me, { name = itemName, count = exported }, cfg.meBufferDir)
+                if imported == 0 then
+                    for _, cand in ipairs(getCandidateTargets(cfg.meBufferDir)) do
+                        local testImp = safeImport(me, { name = itemName, count = exported }, cand)
+                        if testImp > 0 then
+                            imported = testImp
+                            cfg.meBufferDir = cand
+                            dirUpdated = true
+                            break
+                        end
+                    end
+                end
+                if imported == 0 then
+                    safeImport(rs, { name = itemName, count = exported }, cfg.rsBufferDir)
+                    exported = 0
+                end
             end
         else
             break
@@ -305,10 +602,18 @@ local function transferItem(itemName, amount, direction)
         remaining = remaining - exported
     end
 
+    if dirUpdated then
+        saveConfig()
+    end
+
     if totalMoved > 0 then
-        statusMsg = string.format("AKTARILDI: %d x %s (%s)", totalMoved, itemName, direction)
+        if dirUpdated then
+            statusMsg = string.format("OTOMATIK YON [%s/%s] -> %d x %s", cfg.meBufferDir, cfg.rsBufferDir, totalMoved, itemName)
+        else
+            statusMsg = string.format("AKTARILDI: %d x %s (%s)", totalMoved, itemName, direction)
+        end
     else
-        statusMsg = "UYARI: 0 esya aktarildi! [F2] ile Barrel yonlerini kontrol edin."
+        statusMsg = "UYARI: 0 esya aktarildi! [F2]/[F3] ile Barrel yonlerini kontrol edin."
     end
     return totalMoved
 end
@@ -540,7 +845,9 @@ local function main()
                 statusMsg = "RS Buffer Yonu degisti: " .. cfg.rsBufferDir
             elseif K.f5 and p1 == K.f5 then
                 scanInventories(search)
-                statusMsg = "Envanter listesi yenilendi."
+                if me and rs then
+                    statusMsg = "Envanter listesi yenilendi."
+                end
             elseif K.backspace and p1 == K.backspace then
                 search = string.sub(search, 1, -2)
                 selectedIdx = 1
@@ -574,13 +881,18 @@ end
 return {
     CONFIG_PATH = CONFIG_PATH,
     DIRECTIONS = DIRECTIONS,
+    ME_TYPES = ME_TYPES,
+    RS_TYPES = RS_TYPES,
     PROTECTED_KEYWORDS = PROTECTED_KEYWORDS,
     loadConfig = loadConfig,
     saveConfig = saveConfig,
+    findBridge = findBridge,
     refreshPeripherals = refreshPeripherals,
     isProtectedResource = isProtectedResource,
     safeExport = safeExport,
     safeImport = safeImport,
+    fetchItems = fetchItems,
+    fetchCraftables = fetchCraftables,
     scanCraftables = scanCraftables,
     scanInventories = scanInventories,
     transferItem = transferItem,

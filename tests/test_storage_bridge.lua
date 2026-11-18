@@ -399,12 +399,23 @@ do
     assert_eq(st.rsItems["minecraft:gold_ingot"], 30, "RS gold_ingot = 30")
     assert_eq(st.meItems["minecraft:gold_ingot"], 150, "ME gold_ingot = 150")
 
-    -- Direction mismatch warning
-    SB.getConfig().meBufferDir = "up"
+    -- Direction mismatch warning when no direction or barrel accepts export
+    local stBad, meBad, rsBad = createMockNetwork({
+        meDir = "none",
+        rsDir = "none",
+        meItems = { ["minecraft:redstone"] = 10 }
+    })
+    installPeripherals(meBad, rsBad, nil)
+    SB.scanInventories("")
     local movedZero = SB.transferItem("minecraft:redstone", 10, "ME_TO_RS")
-    assert_eq(movedZero, 0, "Wrong buffer direction moves 0 items")
+    assert_eq(movedZero, 0, "Unreachable barrel returns 0 items")
     assert_true(SB.getStatus():find("F2") ~= nil, "0-item transfer warns user to check [F2] Barrel directions")
+    assert_eq(stBad.meItems["minecraft:redstone"], 10, "Items remain untouched in ME when no barrel is reachable")
+
+    -- Restore modern network for legacy test cleanup
+    installPeripherals(me, rs, nil)
     SB.getConfig().meBufferDir = "east"
+    SB.getConfig().rsBufferDir = "west"
 
     -- Legacy AP API (exportItem / importItem)
     local stLeg, meLeg, rsLeg = createMockNetwork({
@@ -568,6 +579,134 @@ do
         end
     end
     assert_true(sawQuartzOnly, "Typing 'q' filtered search for 'quartz' without quitting")
+end
+
+-- 8. AP 1.20/1.21 snake_case peripheral discovery ("me_bridge"/"rs_bridge"),
+--    Unified Storage API (getItems/getCraftableItems & table { count = N }),
+--    Auto-direction probing & hardware diagnostic error reporting
+do
+    local meStock = { ["minecraft:iron_ingot"] = 96 }
+    local rsStock = { ["minecraft:iron_ingot"] = 10 }
+    local barrelInv = {}
+
+    local modernME = {
+        getItems = function(filter)
+            return {
+                { name = "minecraft:iron_ingot", displayName = "Iron Ingot", count = meStock["minecraft:iron_ingot"] }
+            }
+        end,
+        getCraftableItems = function()
+            return {
+                { name = "minecraft:iron_ingot", displayName = "Iron Ingot" }
+            }
+        end,
+        exportItem = function(filter, target)
+            if target ~= "north" then return nil, "No inventory on side" end
+            local moved = math.min(meStock[filter.name] or 0, filter.count or 0, 64)
+            if moved > 0 then
+                meStock[filter.name] = meStock[filter.name] - moved
+                barrelInv[filter.name] = (barrelInv[filter.name] or 0) + moved
+                return { count = moved }
+            end
+            return { count = 0 }
+        end,
+        importItem = function(filter, target)
+            if target ~= "north" then return { count = 0 } end
+            local moved = math.min(barrelInv[filter.name] or 0, filter.count or 0, 64)
+            if moved > 0 then
+                barrelInv[filter.name] = barrelInv[filter.name] - moved
+                meStock[filter.name] = (meStock[filter.name] or 0) + moved
+                return { count = moved }
+            end
+            return { count = 0 }
+        end
+    }
+
+    local modernRS = {
+        getItems = function()
+            return {
+                { name = "minecraft:iron_ingot", displayName = "Iron Ingot", count = rsStock["minecraft:iron_ingot"] }
+            }
+        end,
+        importItem = function(filter, target)
+            if target ~= "south" then return nil, "No inventory on side" end
+            local moved = math.min(barrelInv[filter.name] or 0, filter.count or 0, 64)
+            if moved > 0 then
+                barrelInv[filter.name] = barrelInv[filter.name] - moved
+                rsStock[filter.name] = (rsStock[filter.name] or 0) + moved
+                return { count = moved }
+            end
+            return { count = 0 }
+        end,
+        exportItem = function(filter, target)
+            if target ~= "south" then return { count = 0 } end
+            local moved = math.min(rsStock[filter.name] or 0, filter.count or 0, 64)
+            if moved > 0 then
+                rsStock[filter.name] = rsStock[filter.name] - moved
+                barrelInv[filter.name] = (barrelInv[filter.name] or 0) + moved
+                return { count = moved }
+            end
+            return { count = 0 }
+        end
+    }
+
+    -- Simulate snake_case wired modem peripheral names ("me_bridge_0", "rs_bridge_0")
+    -- where peripheral.find only knows getNames/getType/wrap
+    _G.peripheral = {
+        getNames = function() return { "me_bridge_0", "rs_bridge_0", "drive_0" } end,
+        getType = function(name)
+            if name == "me_bridge_0" then return "me_bridge" end
+            if name == "rs_bridge_0" then return "rs_bridge" end
+            if name == "drive_0" then return "drive" end
+            return nil
+        end,
+        wrap = function(name)
+            if name == "me_bridge_0" then return modernME end
+            if name == "rs_bridge_0" then return modernRS end
+            return nil
+        end
+    }
+
+    virtualFiles["/storage_bridge.cfg"] = nil
+    SB.loadConfig() -- resets to east / west
+
+    local list = SB.scanInventories("")
+    assert_eq(#list, 1, "Snake-case me_bridge/rs_bridge + getItems() discovered 1 merged item")
+    assert_eq(list[1].meCount, 96, "getItems() read ME count = 96")
+    assert_eq(list[1].rsCount, 10, "getItems() read RS count = 10")
+    assert_eq(list[1].isCraftable, true, "getCraftableItems() detected craftable pattern")
+
+    -- Default config is east/west, but barrel is actually north (ME) / south (RS)
+    local moved = SB.transferItem("minecraft:iron_ingot", 64, "ME_TO_RS")
+    assert_eq(moved, 64, "Auto-probe found non-default north/south barrel and moved 64 items with { count = 64 }")
+    assert_eq(meStock["minecraft:iron_ingot"], 32, "ME iron decremented to 32")
+    assert_eq(rsStock["minecraft:iron_ingot"], 74, "RS iron incremented to 74")
+    assert_eq(barrelInv["minecraft:iron_ingot"] or 0, 0, "Barrel emptied after auto-probed transfer")
+    assert_eq(SB.getConfig().meBufferDir, "north", "Auto-probe updated meBufferDir = north")
+    assert_eq(SB.getConfig().rsBufferDir, "south", "Auto-probe updated rsBufferDir = south")
+    assert_true(virtualFiles["/storage_bridge.cfg"] ~= nil, "Auto-probe saved working directions to /storage_bridge.cfg")
+
+    -- Diagnostic status when only drive_0 is visible (missing bridges)
+    _G.peripheral = {
+        getNames = function() return { "drive_0" } end,
+        getType = function() return "drive" end,
+        wrap = function() return {} end
+    }
+    SB.scanInventories("")
+    assert_true(SB.getStatus():find("drive_0") ~= nil, "Missing bridges diagnostic lists attached peripherals")
+
+    -- Diagnostic status when bridge returns network/power error
+    local offlineME = {
+        getItems = function() return nil, "ME network offline or missing channel" end
+    }
+    _G.peripheral = {
+        getNames = function() return { "me_bridge_0", "rs_bridge_0" } end,
+        getType = function(n) return n:match("me") and "me_bridge" or "rs_bridge" end,
+        wrap = function(n) return n:match("me") and offlineME or modernRS end
+    }
+    SB.scanInventories("")
+    assert_true(SB.getStatus():find("AG HATASI") ~= nil, "Bridge API error surfaces AG HATASI diagnostic")
+    assert_true(SB.getStatus():find("offline") ~= nil, "Bridge API error includes underlying reason")
 end
 
 -- Restore globals cleanly
