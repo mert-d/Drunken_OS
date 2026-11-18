@@ -4,6 +4,7 @@ Bu sistem **%100 Bağımsız (Standalone)** çalışır. Drunken OS sunucuların
 
 * Advanced Peripherals **1.18 – 1.21+** sürümleriyle tam uyumludur:
   * Hem eski (`meBridge` / `rsBridge`, `listItems`, `listCraftableItems`, sayısal dönüş) hem de yeni Unified API (`me_bridge` / `rs_bridge`, `getItems`, `getCraftableItems`, `{ count = N }` tablo dönüşü) otomatik desteklenir.
+* **0ms Bellek İçi Filtreleme:** Arama, sekme değiştirme ve ok tuşu transferleri donanımı her seferinde yeniden taramak yerine bellek içi önbellek (`applyFilter` / `updateEntryCounts`) üzerinde anında güncellenir.
 
 ---
 
@@ -50,14 +51,25 @@ Veya `Master_Installer.lua` üzerinden **Clients & Handhelds -> Standalone ME & 
 
 ---
 
-## 4. Klavye Kısayolları ve Özellikler
+## 4. Kontroller (Klavye + Fare)
 
-* **`[Yukarı / Aşağı]` / `[PageUp / PageDown]`:** Birleşik envanter listesinde gezinme
+### Gezinme & Arama
+* **`[Yukarı / Aşağı]` / `[PageUp / PageDown]` / `[Fare Tekerleği]`:** Listede gezinme
+* **`[F]` veya `[/]` (veya 2. satırdaki `Ara:[...]` alanına tıklama):** Arama moduna odaklanır — bu moddayken `a`, `c`, `d`, `f` dahil **tüm harfler** doğrudan arama kutusuna yazılır (ör. `cadmium`, `draconic`, `andesite`). Aramadan çıkıp eşya seçmek için **`[Enter]`**, **`[Yukarı]`** veya **`[Aşağı]`** tuşuna basın.
+* **`[Tab]` (veya sağ üst `[Tab:...]` sekmesine tıklama):** Görünüm filtresini anında değiştirir:
+  * `TUMU` -> `STOK` (tamamen toplam stoka göre) -> `ME` -> `RS` -> `CRAFT` -> `ARSIV` (RS'ye taşınacak tekil eşyalar)
+
+### Aktarım, Özel Miktar & Üretim
 * **`[Sağ]` (`->`):** Seçili eşyadan 64 adet **ME -> RS** aktar
 * **`[Sol]` (`<-`):** Seçili eşyadan 64 adet **RS -> ME** aktar
+* **`[Enter]` (veya seçili satıra ikinci tıklama):** **Özel Miktar Menüsü** açar — rakam yazıp (`0-9`) ya da **`[A]`** ile `all` (tümü) seçip:
+  * **`[Sağ]`:** Girilen miktarı **ME -> RS** aktar
+  * **`[Sol]`:** Girilen miktarı **RS -> ME** aktar
+  * **`[C]`:** Girilen miktar için **Quantum Craft** başlat
+  * **`[Esc]` / `[Q]`:** İptal
 * **`[C]`:** Quantum Craft — Seçili eşya ME'de 0 ama RS'de varsa önce 64 adete kadar ME'ye çeker, ardından `me.craftItem` ile 10x üretimi başlatır
 * **`[D]`:** AE2 63-tip temizliği (`defragmentMETypesToRS`) — Pattern'i olmayan, `cleanThreshold` (varsayılan `32`) altındaki ve hammadde/korumalı listede yer almayan tekil eşyaları (`~` turuncu) otomatik RS'ye arşivler
-* **`[A]`:** Otomatik arka plan ME tip temizleyicisini (`autoCleanME`) aç/kapat
-* **`[F2]` / `[F3]`:** ME / RS tampon yönünü canlı değiştir ve `/storage_bridge.cfg` dosyasına kaydet
-* **`[F5]`:** Envanteri ve bağlı çevre birimlerini yeniden tara
-* **`[Karakter / Backspace]`:** Canlı arama filtresi (`q` harfi dahil tüm harfler arama içindir; çıkmak için `Ctrl+T`)
+* **`[A]`:** Otomatik arka plan ME tip temizleyicisini (`autoCleanME`) aç/kapat (arka plan döngüsü takılma olmaması için seferde en fazla 5 tip taşır ve arama/miktar modundayken beklemede kalır)
+* **`[F2]` / `[F3]` (veya 2. satırdaki ME/RS yönüne tıklama):** Tampon yönünü canlı değiştir ve `/storage_bridge.cfg` dosyasına kaydet
+* **`[F5]`:** Donanımı ve ağ envanterini yeniden tara
+* **`[Ctrl+T]`:** Programdan çıkış

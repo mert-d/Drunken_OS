@@ -18,6 +18,7 @@ for k, v in pairs(DEFAULT_CFG) do
 end
 
 local DIRECTIONS = { "north", "south", "east", "west", "up", "down" }
+local VIEW_MODES = { "TUMU", "STOK", "ME", "RS", "CRAFT", "ARSIV" }
 local ME_TYPES   = { "me_bridge", "meBridge", "advancedperipherals:me_bridge" }
 local RS_TYPES   = { "rs_bridge", "rsBridge", "advancedperipherals:rs_bridge" }
 
@@ -39,9 +40,11 @@ local DEFAULT_COLORS = {
 }
 
 local DEFAULT_KEYS = {
+    escape = 1, tab = 15, enter = 28, numPadEnter = 156,
     up = 200, down = 208, left = 203, right = 205,
     pageUp = 201, pageDown = 209,
-    c = 46, d = 32, a = 30, f2 = 60, f3 = 61, f5 = 63, backspace = 14
+    c = 46, d = 32, a = 30, f = 33, q = 16,
+    f2 = 60, f3 = 61, f5 = 63, backspace = 14
 }
 
 -- Konfigurasyon Yukleme / Kaydetme
@@ -182,9 +185,18 @@ if mon then
     pcall(function() mon.setTextScale(0.5) end)
 end
 
+local masterMap = {}
+local masterList = {}
 local unifiedList = {}
 local craftableSet = {}
-local statusMsg = "Sistem Hazir. [Sag/Sol]: Aktar | [C]: Craft | [D]: Simdi Temizle"
+local probeFailed = false
+local statusMsg = "Hazir! [F]:Ara [Tab]:Gorunum [Enter]:Ozel Miktar"
+
+local function cleanDisplayName(label, fallback)
+    local s = tostring(label or fallback or "unknown")
+    s = s:gsub("^%[(.*)%]$", "%1")
+    return s
+end
 
 local function refreshPeripherals()
     me, meName = findBridge(ME_TYPES, "mebridge")
@@ -326,7 +338,7 @@ local function scanCraftables()
             if type(item) == "table" then
                 local name = item.name or item.id
                 if name then
-                    craftableSet[name] = item.displayName or name
+                    craftableSet[name] = cleanDisplayName(item.displayName, name)
                 end
             end
         end
@@ -334,48 +346,91 @@ local function scanCraftables()
     return craftableSet
 end
 
-local function scanInventories(searchQuery)
+-- Bellek ici filtreleme ve siralama (0ms, hicbir peripheral cagrisi yapmaz)
+local function applyFilter(searchQuery, viewFilter)
+    local q = (type(searchQuery) == "string") and string.lower(searchQuery) or ""
+    local vf = viewFilter or "TUMU"
+    local list = {}
+
+    for _, entry in ipairs(masterList) do
+        local matchQuery = (q == "")
+            or (string.find(string.lower(entry.displayName or ""), q, 1, true) ~= nil)
+            or (string.find(string.lower(entry.name or ""), q, 1, true) ~= nil)
+
+        if matchQuery then
+            local matchView = true
+            if vf == "ME" then
+                matchView = (entry.meCount or 0) > 0
+            elseif vf == "RS" then
+                matchView = (entry.rsCount or 0) > 0
+            elseif vf == "CRAFT" then
+                matchView = (entry.isCraftable == true)
+            elseif vf == "ARSIV" then
+                matchView = (entry.meCount or 0) > 0 and (not entry.isProtected)
+            end
+            if matchView then
+                table.insert(list, entry)
+            end
+        end
+    end
+
+    table.sort(list, function(a, b)
+        if vf ~= "STOK" and a.isCraftable ~= b.isCraftable then
+            return a.isCraftable
+        end
+        if a.total ~= b.total then
+            return a.total > b.total
+        end
+        return (a.name or "") < (b.name or "")
+    end)
+
+    unifiedList = list
+    return list
+end
+
+local function updateEntryCounts(itemName, deltaME, deltaRS)
+    local entry = masterMap[itemName]
+    if not entry then return end
+    entry.meCount = math.max(0, (entry.meCount or 0) + (deltaME or 0))
+    entry.rsCount = math.max(0, (entry.rsCount or 0) + (deltaRS or 0))
+    entry.total = entry.meCount + entry.rsCount
+    entry.isProtected = isProtectedResource(entry.name, entry.isCraftable, entry.meCount)
+end
+
+local function scanInventories(searchQuery, viewFilter)
     me, meName = findBridge(ME_TYPES, "mebridge")
     rs, rsName = findBridge(RS_TYPES, "rsbridge")
     scanCraftables()
+    probeFailed = false
 
     local map = {}
-    local q = (type(searchQuery) == "string") and string.lower(searchQuery) or ""
-
-    local function matches(name, label)
-        if q == "" then return true end
-        return string.find(string.lower(label), q, 1, true) ~= nil
-            or string.find(string.lower(name), q, 1, true) ~= nil
-    end
 
     local meItems, meErr = fetchItems(me)
     if type(meItems) == "table" then
         for _, item in ipairs(meItems) do
             if type(item) == "table" then
                 local name = item.name or item.id or "unknown"
-                local label = item.displayName or name
+                local label = cleanDisplayName(item.displayName, name)
                 local count = item.amount or item.count or 0
                 local craftable = (item.isCraftable == true) or (craftableSet[name] ~= nil)
                 if craftable and not craftableSet[name] then
                     craftableSet[name] = label
                 end
-                if matches(name, label) then
-                    if not map[name] then
-                        map[name] = {
-                            name = name,
-                            displayName = label,
-                            meCount = count,
-                            rsCount = 0,
-                            total = count,
-                            isCraftable = craftable,
-                            isProtected = isProtectedResource(name, craftable, count)
-                        }
-                    else
-                        map[name].meCount = map[name].meCount + count
-                        map[name].total = map[name].meCount + map[name].rsCount
-                        map[name].isCraftable = map[name].isCraftable or craftable
-                        map[name].isProtected = isProtectedResource(name, map[name].isCraftable, map[name].meCount)
-                    end
+                if not map[name] then
+                    map[name] = {
+                        name = name,
+                        displayName = label,
+                        meCount = count,
+                        rsCount = 0,
+                        total = count,
+                        isCraftable = craftable,
+                        isProtected = isProtectedResource(name, craftable, count)
+                    }
+                else
+                    map[name].meCount = map[name].meCount + count
+                    map[name].total = map[name].meCount + map[name].rsCount
+                    map[name].isCraftable = map[name].isCraftable or craftable
+                    map[name].isProtected = isProtectedResource(name, map[name].isCraftable, map[name].meCount)
                 end
             end
         end
@@ -386,24 +441,22 @@ local function scanInventories(searchQuery)
         for _, item in ipairs(rsItems) do
             if type(item) == "table" then
                 local name = item.name or item.id or "unknown"
-                local label = item.displayName or name
+                local label = cleanDisplayName(item.displayName, name)
                 local count = item.amount or item.count or 0
-                if matches(name, label) then
-                    if not map[name] then
-                        local craftable = (craftableSet[name] ~= nil)
-                        map[name] = {
-                            name = name,
-                            displayName = label,
-                            meCount = 0,
-                            rsCount = count,
-                            total = count,
-                            isCraftable = craftable,
-                            isProtected = isProtectedResource(name, craftable, 0)
-                        }
-                    else
-                        map[name].rsCount = map[name].rsCount + count
-                        map[name].total = map[name].meCount + map[name].rsCount
-                    end
+                if not map[name] then
+                    local craftable = (craftableSet[name] ~= nil)
+                    map[name] = {
+                        name = name,
+                        displayName = label,
+                        meCount = 0,
+                        rsCount = count,
+                        total = count,
+                        isCraftable = craftable,
+                        isProtected = isProtectedResource(name, craftable, 0)
+                    }
+                else
+                    map[name].rsCount = map[name].rsCount + count
+                    map[name].total = map[name].meCount + map[name].rsCount
                 end
             end
         end
@@ -411,10 +464,10 @@ local function scanInventories(searchQuery)
 
     -- Stokta 0 olan ama ME'de Pattern'i (tarifi) bulunan esyalari da listeye ekle
     for cName, cLabel in pairs(craftableSet) do
-        if not map[cName] and matches(cName, cLabel) then
+        if not map[cName] then
             map[cName] = {
                 name = cName,
-                displayName = cLabel,
+                displayName = cleanDisplayName(cLabel, cName),
                 meCount = 0,
                 rsCount = 0,
                 total = 0,
@@ -438,28 +491,20 @@ local function scanInventories(searchQuery)
         statusMsg = "AG HATASI: " .. tostring(meErr or rsErr)
     end
 
-    local list = {}
+    masterMap = map
+    local raw = {}
     for _, v in pairs(map) do
-        table.insert(list, v)
+        table.insert(raw, v)
     end
-    table.sort(list, function(a, b)
-        if a.isCraftable ~= b.isCraftable then
-            return a.isCraftable
-        end
-        if a.total ~= b.total then
-            return a.total > b.total
-        end
-        return (a.name or "") < (b.name or "")
-    end)
-    unifiedList = list
-    return list
+    masterList = raw
+
+    return applyFilter(searchQuery, viewFilter)
 end
 
 local function hasSourceStock(bridge, itemName, isME)
-    for _, entry in ipairs(unifiedList) do
-        if entry.name == itemName then
-            return isME and ((entry.meCount or 0) > 0) or ((entry.rsCount or 0) > 0)
-        end
+    local cached = masterMap[itemName]
+    if cached then
+        return isME and ((cached.meCount or 0) > 0) or ((cached.rsCount or 0) > 0)
     end
     if bridge and type(bridge.getItem) == "function" then
         local ok, info = pcall(bridge.getItem, { name = itemName })
@@ -515,6 +560,66 @@ local function getCandidateTargets(currentDir)
     return candidates
 end
 
+local function transferBatchWithProbe(srcBridge, dstBridge, isMEtoRS, itemName, batch, allowProbe)
+    local srcDir = isMEtoRS and cfg.meBufferDir or cfg.rsBufferDir
+    local dstDir = isMEtoRS and cfg.rsBufferDir or cfg.meBufferDir
+    local filter = { name = itemName, count = batch }
+    local dirUpdated = false
+
+    local exported = safeExport(srcBridge, filter, srcDir)
+    if exported == 0 and allowProbe and not probeFailed and hasSourceStock(srcBridge, itemName, isMEtoRS) then
+        for _, cand in ipairs(getCandidateTargets(srcDir)) do
+            local testExp = safeExport(srcBridge, filter, cand)
+            if testExp > 0 then
+                exported = testExp
+                srcDir = cand
+                if isMEtoRS then cfg.meBufferDir = cand else cfg.rsBufferDir = cand end
+                dirUpdated = true
+                break
+            end
+        end
+        if exported == 0 then
+            probeFailed = true
+        end
+    end
+
+    if exported <= 0 then
+        return 0, dirUpdated
+    end
+
+    local toImport = exported
+    local importedTotal = 0
+    while toImport > 0 do
+        local imp = safeImport(dstBridge, { name = itemName, count = toImport }, dstDir)
+        if imp == 0 and importedTotal == 0 and allowProbe and not probeFailed then
+            for _, cand in ipairs(getCandidateTargets(dstDir)) do
+                local testImp = safeImport(dstBridge, { name = itemName, count = toImport }, cand)
+                if testImp > 0 then
+                    imp = testImp
+                    dstDir = cand
+                    if isMEtoRS then cfg.rsBufferDir = cand else cfg.meBufferDir = cand end
+                    dirUpdated = true
+                    break
+                end
+            end
+            if imp == 0 then
+                probeFailed = true
+            end
+        end
+        if imp <= 0 then break end
+        importedTotal = importedTotal + imp
+        toImport = toImport - imp
+    end
+
+    -- Tamponda kalan aktarilamamis kismi kaynak aga geri al
+    if importedTotal < exported then
+        local leftover = exported - importedTotal
+        safeImport(srcBridge, { name = itemName, count = leftover }, srcDir)
+    end
+
+    return importedTotal, dirUpdated
+end
+
 local function transferItem(itemName, amount, direction)
     if not me or not rs then
         statusMsg = "HATA: ME Bridge veya RS Bridge bagli degil!"
@@ -522,84 +627,34 @@ local function transferItem(itemName, amount, direction)
     end
     if not itemName then return 0 end
 
+    local isMEtoRS = (direction == "ME_TO_RS")
+    if not isMEtoRS and direction ~= "RS_TO_ME" then
+        return 0
+    end
+
+    local srcBridge = isMEtoRS and me or rs
+    local dstBridge = isMEtoRS and rs or me
     local remaining = amount or 64
     local totalMoved = 0
     local dirUpdated = false
 
     while remaining > 0 do
-        local batch = math.min(remaining, 64)
-        local filter = { name = itemName, count = batch }
-        local exported = 0
+        local batch = math.min(remaining, 512)
+        local moved, updated = transferBatchWithProbe(
+            srcBridge, dstBridge, isMEtoRS, itemName, batch, (totalMoved == 0)
+        )
+        if updated then dirUpdated = true end
+        if moved <= 0 then break end
+        totalMoved = totalMoved + moved
+        remaining = remaining - moved
+    end
 
-        if direction == "ME_TO_RS" then
-            exported = safeExport(me, filter, cfg.meBufferDir)
-            if exported == 0 and totalMoved == 0 and hasSourceStock(me, itemName, true) then
-                for _, cand in ipairs(getCandidateTargets(cfg.meBufferDir)) do
-                    local testExp = safeExport(me, filter, cand)
-                    if testExp > 0 then
-                        exported = testExp
-                        cfg.meBufferDir = cand
-                        dirUpdated = true
-                        break
-                    end
-                end
-            end
-            if exported > 0 then
-                local imported = safeImport(rs, { name = itemName, count = exported }, cfg.rsBufferDir)
-                if imported == 0 then
-                    for _, cand in ipairs(getCandidateTargets(cfg.rsBufferDir)) do
-                        local testImp = safeImport(rs, { name = itemName, count = exported }, cand)
-                        if testImp > 0 then
-                            imported = testImp
-                            cfg.rsBufferDir = cand
-                            dirUpdated = true
-                            break
-                        end
-                    end
-                end
-                if imported == 0 then
-                    safeImport(me, { name = itemName, count = exported }, cfg.meBufferDir)
-                    exported = 0
-                end
-            end
-        elseif direction == "RS_TO_ME" then
-            exported = safeExport(rs, filter, cfg.rsBufferDir)
-            if exported == 0 and totalMoved == 0 and hasSourceStock(rs, itemName, false) then
-                for _, cand in ipairs(getCandidateTargets(cfg.rsBufferDir)) do
-                    local testExp = safeExport(rs, filter, cand)
-                    if testExp > 0 then
-                        exported = testExp
-                        cfg.rsBufferDir = cand
-                        dirUpdated = true
-                        break
-                    end
-                end
-            end
-            if exported > 0 then
-                local imported = safeImport(me, { name = itemName, count = exported }, cfg.meBufferDir)
-                if imported == 0 then
-                    for _, cand in ipairs(getCandidateTargets(cfg.meBufferDir)) do
-                        local testImp = safeImport(me, { name = itemName, count = exported }, cand)
-                        if testImp > 0 then
-                            imported = testImp
-                            cfg.meBufferDir = cand
-                            dirUpdated = true
-                            break
-                        end
-                    end
-                end
-                if imported == 0 then
-                    safeImport(rs, { name = itemName, count = exported }, cfg.rsBufferDir)
-                    exported = 0
-                end
-            end
+    if totalMoved > 0 then
+        if isMEtoRS then
+            updateEntryCounts(itemName, -totalMoved, totalMoved)
         else
-            break
+            updateEntryCounts(itemName, totalMoved, -totalMoved)
         end
-
-        if exported <= 0 then break end
-        totalMoved = totalMoved + exported
-        remaining = remaining - exported
     end
 
     if dirUpdated then
@@ -618,17 +673,23 @@ local function transferItem(itemName, amount, direction)
     return totalMoved
 end
 
-local function defragmentMETypesToRS()
+local function defragmentMETypesToRS(maxTypes)
     if not me or not rs then return 0, 0 end
     local typesFreed = 0
     local itemsMoved = 0
 
-    for _, entry in ipairs(unifiedList) do
-        if entry.meCount > 0 and not entry.isProtected then
+    for _, entry in ipairs(masterList) do
+        if (entry.meCount or 0) > 0 and not entry.isProtected then
             local moved = transferItem(entry.name, entry.meCount, "ME_TO_RS")
             if moved > 0 then
                 typesFreed = typesFreed + 1
                 itemsMoved = itemsMoved + moved
+                if maxTypes and typesFreed >= maxTypes then
+                    break
+                end
+            else
+                -- Barrel erisilemez veya RS dolu ise donguyu kilitlemeden cik
+                break
             end
         end
     end
@@ -671,33 +732,56 @@ local function cycleDir(current)
     return "east"
 end
 
-local function drawTarget(t, search, selectedIdx, scrollOffset)
+local function drawTarget(t, search, selectedIdx, scrollOffset, uiState)
     local C = _G.colors or DEFAULT_COLORS
     local w, h = t.getSize()
     w = w or 51
     h = h or 19
+    uiState = uiState or {}
+
+    local viewMode = uiState.viewMode or "TUMU"
+    local searchFocused = uiState.searchFocused or false
+    local qtyPrompt = uiState.qtyPrompt
 
     t.setBackgroundColor(C.black)
     t.clear()
 
-    -- 1. Baslik
+    -- 1. Baslik + Gorunum Sekmesi
     t.setCursorPos(1, 1)
     t.setBackgroundColor(C.blue)
     t.setTextColor(C.white)
     t.clearLine()
-    local modeStr = cfg.autoCleanME and "[OTO-ARSIV: ACIK]" or "[OTO-ARSIV: KAPALI]"
-    t.write((" STANDALONE ME <-> RS BRIDGE " .. modeStr):sub(1, w))
+    local modeStr = cfg.autoCleanME and "[OTO:ACIK]" or "[OTO:KAP]"
+    local titleLeft = " ME <-> RS BRIDGE " .. modeStr
+    local viewBadge = "[Tab:" .. viewMode .. "]"
+    t.write(titleLeft:sub(1, math.max(1, w - #viewBadge - 1)))
+    if w > #viewBadge + 2 then
+        t.setCursorPos(w - #viewBadge, 1)
+        t.setTextColor(C.yellow)
+        t.write(viewBadge)
+    end
 
-    -- 2. Durum ve Yon Bilgisi
+    -- 2. Durum, Yon ve Arama Cubugu
     t.setCursorPos(1, 2)
     t.setBackgroundColor(C.gray)
     t.setTextColor(C.white)
     t.clearLine()
     local meOk = me and "ME:OK" or "ME:YOK"
     local rsOk = rs and "RS:OK" or "RS:YOK"
-    local infoStr = string.format(" %s(%s) | %s(%s) | Esik:<=%d | Ara:[%s]",
-        meOk, cfg.meBufferDir, rsOk, cfg.rsBufferDir, cfg.cleanThreshold or 32, search or "")
-    t.write(infoStr:sub(1, w))
+    local leftInfo = string.format(" %s(%s) %s(%s) | ", meOk, tostring(cfg.meBufferDir):sub(1, 5), rsOk, tostring(cfg.rsBufferDir):sub(1, 5))
+    t.write(leftInfo:sub(1, w))
+    if #leftInfo < w then
+        t.setCursorPos(#leftInfo + 1, 2)
+        if searchFocused then
+            t.setBackgroundColor(C.blue)
+            t.setTextColor(C.yellow)
+        else
+            t.setBackgroundColor(C.gray)
+            t.setTextColor(C.white)
+        end
+        local searchBox = "Ara:[" .. (search or "") .. "]"
+        t.write(searchBox:sub(1, w - #leftInfo))
+    end
 
     -- 3. Tablo Basligi
     t.setCursorPos(1, 3)
@@ -738,19 +822,38 @@ local function drawTarget(t, search, selectedIdx, scrollOffset)
         end
     end
 
-    -- 5. Kisayol Cubugu
+    -- 5. Kisayol / Arama / Ozel Miktar Cubugu
     t.setCursorPos(1, h - 1)
-    t.setBackgroundColor(C.gray)
-    t.setTextColor(C.yellow)
-    t.clearLine()
-    t.write((" [Sag]:ME->RS [Sol]:RS->ME [C]:Craft [D]:Temizle [A]:Oto [F2]:Yon"):sub(1, w))
+    if qtyPrompt then
+        t.setBackgroundColor(C.blue)
+        t.setTextColor(C.yellow)
+        t.clearLine()
+        local qtyLabel = (qtyPrompt.input ~= "" and qtyPrompt.input or "64")
+        local pLine = string.format(" Miktar:[%s] [Sag]ME>RS [Sol]RS>ME [C]raft [Esc]Iptal", qtyLabel)
+        t.write(pLine:sub(1, w))
+    elseif searchFocused then
+        t.setBackgroundColor(C.blue)
+        t.setTextColor(C.yellow)
+        t.clearLine()
+        t.write((" ARAMA MODU: Yazin | [Enter/Yon]:Sec | [BS]:Sil"):sub(1, w))
+    else
+        t.setBackgroundColor(C.gray)
+        t.setTextColor(C.yellow)
+        t.clearLine()
+        t.write((" [Sag]ME>RS [Sol]RS>ME [Enter]Miktar [C]raft [F]Ara"):sub(1, w))
+    end
 
     -- 6. Alt Durum Mesaji
     t.setCursorPos(1, h)
     t.setBackgroundColor(C.black)
     t.setTextColor(C.lime)
     t.clearLine()
-    t.write((" " .. (statusMsg or "")):sub(1, w))
+    if qtyPrompt then
+        local targetName = qtyPrompt.entry and (qtyPrompt.entry.displayName or qtyPrompt.entry.name) or ""
+        t.write((" Secili: " .. targetName .. " | [0-9]:Adet [A]:Tumu").sub(1, w))
+    else
+        t.write((" " .. (statusMsg or "")):sub(1, w))
+    end
 end
 
 -- Ana Dongu
@@ -761,13 +864,30 @@ local function main()
     refreshPeripherals()
 
     local search = ""
+    local viewModeIdx = 1
+    local searchFocused = false
+    local qtyPrompt = nil
+    local skipNextChar = false
     local selectedIdx = 1
     local scrollOffset = 0
-    scanInventories(search)
+
+    scanInventories(search, VIEW_MODES[viewModeIdx])
     local cleanTimer = os.startTimer(cfg.cleanInterval or 5.0)
 
+    local function currentViewMode()
+        return VIEW_MODES[viewModeIdx] or "TUMU"
+    end
+
+    local function resolvePromptQty(prompt, defaultVal, allVal)
+        if prompt.input == "all" then return allVal or defaultVal end
+        local n = tonumber(prompt.input)
+        if n and n > 0 then return math.floor(n) end
+        return defaultVal
+    end
+
     while true do
-        local _, h = term.getSize()
+        local w, h = term.getSize()
+        w = w or 51
         h = h or 19
         local listRows = math.max(1, h - 6)
 
@@ -790,77 +910,272 @@ local function main()
             if scrollOffset < 0 then scrollOffset = 0 end
         end
 
-        drawTarget(term, search, selectedIdx, scrollOffset)
+        local uiState = {
+            viewMode = currentViewMode(),
+            searchFocused = searchFocused,
+            qtyPrompt = qtyPrompt
+        }
+        drawTarget(term, search, selectedIdx, scrollOffset, uiState)
         if mon then
-            pcall(drawTarget, mon, search, selectedIdx, scrollOffset)
+            pcall(drawTarget, mon, search, selectedIdx, scrollOffset, uiState)
         end
 
-        local ev, p1 = os.pullEvent()
+        local ev, p1, p2, p3 = os.pullEvent()
         if ev == "terminate" then
             break
         elseif ev == "timer" and p1 == cleanTimer then
-            if cfg.autoCleanME then
-                scanInventories(search)
-                local freed = defragmentMETypesToRS()
+            if cfg.autoCleanME and not searchFocused and not qtyPrompt then
+                scanInventories(search, currentViewMode())
+                local freed = defragmentMETypesToRS(5)
                 if freed > 0 then
-                    scanInventories(search)
+                    applyFilter(search, currentViewMode())
                 end
             end
             cleanTimer = os.startTimer(cfg.cleanInterval or 5.0)
 
-        elseif ev == "key" and p1 ~= nil then
-            if K.up and p1 == K.up and selectedIdx > 1 then
-                selectedIdx = selectedIdx - 1
-            elseif K.down and p1 == K.down and selectedIdx < #unifiedList then
-                selectedIdx = selectedIdx + 1
-            elseif K.pageUp and p1 == K.pageUp then
-                selectedIdx = math.max(1, selectedIdx - listRows)
-                scrollOffset = math.max(0, scrollOffset - listRows)
-            elseif K.pageDown and p1 == K.pageDown then
-                selectedIdx = math.min(math.max(1, #unifiedList), selectedIdx + listRows)
-                scrollOffset = math.max(0, math.min(math.max(0, #unifiedList - listRows), scrollOffset + listRows))
-            elseif K.right and p1 == K.right and unifiedList[selectedIdx] then
-                transferItem(unifiedList[selectedIdx].name, 64, "ME_TO_RS")
-                scanInventories(search)
-            elseif K.left and p1 == K.left and unifiedList[selectedIdx] then
-                transferItem(unifiedList[selectedIdx].name, 64, "RS_TO_ME")
-                scanInventories(search)
-            elseif K.c and p1 == K.c and unifiedList[selectedIdx] then
-                triggerQuantumCraft(unifiedList[selectedIdx], 10)
-            elseif K.d and p1 == K.d then
-                scanInventories(search)
-                defragmentMETypesToRS()
-                scanInventories(search)
-            elseif K.a and p1 == K.a then
-                cfg.autoCleanME = not cfg.autoCleanME
-                saveConfig()
-                statusMsg = "Otomatik ME Tip Temizleyici: " .. (cfg.autoCleanME and "ACIK" or "KAPALI")
-            elseif K.f2 and p1 == K.f2 then
-                cfg.meBufferDir = cycleDir(cfg.meBufferDir)
-                saveConfig()
-                statusMsg = "ME Buffer Yonu degisti: " .. cfg.meBufferDir .. " ([F3] ile RS yonunu degistirin)"
-            elseif K.f3 and p1 == K.f3 then
-                cfg.rsBufferDir = cycleDir(cfg.rsBufferDir)
-                saveConfig()
-                statusMsg = "RS Buffer Yonu degisti: " .. cfg.rsBufferDir
-            elseif K.f5 and p1 == K.f5 then
-                scanInventories(search)
-                if me and rs then
-                    statusMsg = "Envanter listesi yenilendi."
+        elseif ev == "mouse_scroll" then
+            if not qtyPrompt and #unifiedList > 0 then
+                if p1 < 0 and selectedIdx > 1 then
+                    selectedIdx = selectedIdx - 1
+                elseif p1 > 0 and selectedIdx < #unifiedList then
+                    selectedIdx = selectedIdx + 1
                 end
-            elseif K.backspace and p1 == K.backspace then
-                search = string.sub(search, 1, -2)
-                selectedIdx = 1
-                scrollOffset = 0
-                scanInventories(search)
+            end
+
+        elseif ev == "mouse_click" and p1 == 1 then
+            local cx, cy = p2 or 0, p3 or 0
+            if cy == 1 and cx >= w - 12 then
+                viewModeIdx = (viewModeIdx % #VIEW_MODES) + 1
+                selectedIdx = 1; scrollOffset = 0
+                applyFilter(search, currentViewMode())
+                statusMsg = "Gorunum: " .. currentViewMode()
+            elseif cy == 2 then
+                if cx <= 13 then
+                    cfg.meBufferDir = cycleDir(cfg.meBufferDir)
+                    probeFailed = false
+                    saveConfig()
+                    statusMsg = "ME Buffer Yonu: " .. cfg.meBufferDir
+                elseif cx <= 27 then
+                    cfg.rsBufferDir = cycleDir(cfg.rsBufferDir)
+                    probeFailed = false
+                    saveConfig()
+                    statusMsg = "RS Buffer Yonu: " .. cfg.rsBufferDir
+                else
+                    searchFocused = true
+                    qtyPrompt = nil
+                end
+            elseif cy >= 4 and cy <= 3 + listRows then
+                searchFocused = false
+                qtyPrompt = nil
+                local clickedIdx = scrollOffset + (cy - 3)
+                if clickedIdx >= 1 and clickedIdx <= #unifiedList then
+                    if selectedIdx == clickedIdx then
+                        qtyPrompt = { entry = unifiedList[selectedIdx], input = "" }
+                    else
+                        selectedIdx = clickedIdx
+                    end
+                end
+            elseif cy == h - 1 then
+                if qtyPrompt then
+                    if cx <= 23 then
+                        local qty = resolvePromptQty(qtyPrompt, 64, qtyPrompt.entry.meCount)
+                        local name = qtyPrompt.entry.name
+                        qtyPrompt = nil
+                        transferItem(name, qty, "ME_TO_RS")
+                        applyFilter(search, currentViewMode())
+                    elseif cx <= 35 then
+                        local qty = resolvePromptQty(qtyPrompt, 64, qtyPrompt.entry.rsCount)
+                        local name = qtyPrompt.entry.name
+                        qtyPrompt = nil
+                        transferItem(name, qty, "RS_TO_ME")
+                        applyFilter(search, currentViewMode())
+                    elseif cx <= 44 then
+                        local qty = resolvePromptQty(qtyPrompt, 10, 64)
+                        local entry = qtyPrompt.entry
+                        qtyPrompt = nil
+                        triggerQuantumCraft(entry, qty)
+                    else
+                        qtyPrompt = nil
+                        statusMsg = "Iptal edildi."
+                    end
+                elseif unifiedList[selectedIdx] then
+                    if cx <= 12 then
+                        transferItem(unifiedList[selectedIdx].name, 64, "ME_TO_RS")
+                        applyFilter(search, currentViewMode())
+                    elseif cx <= 24 then
+                        transferItem(unifiedList[selectedIdx].name, 64, "RS_TO_ME")
+                        applyFilter(search, currentViewMode())
+                    elseif cx <= 32 then
+                        triggerQuantumCraft(unifiedList[selectedIdx], 10)
+                    elseif cx <= 39 then
+                        scanInventories(search, currentViewMode())
+                        defragmentMETypesToRS()
+                        applyFilter(search, currentViewMode())
+                    elseif cx <= 45 then
+                        searchFocused = true
+                    else
+                        cfg.autoCleanME = not cfg.autoCleanME
+                        saveConfig()
+                        statusMsg = "Otomatik ME Tip Temizleyici: " .. (cfg.autoCleanME and "ACIK" or "KAPALI")
+                    end
+                end
+            end
+
+        elseif ev == "key" and p1 ~= nil then
+            skipNextChar = false
+            if qtyPrompt then
+                if (K.escape and p1 == K.escape) or (K.q and p1 == K.q) then
+                    qtyPrompt = nil
+                    skipNextChar = true
+                    statusMsg = "Iptal edildi."
+                elseif K.backspace and p1 == K.backspace then
+                    if qtyPrompt.input == "all" then
+                        qtyPrompt.input = ""
+                    else
+                        qtyPrompt.input = string.sub(qtyPrompt.input, 1, -2)
+                    end
+                elseif K.a and p1 == K.a then
+                    qtyPrompt.input = (qtyPrompt.input == "all") and "" or "all"
+                    skipNextChar = true
+                elseif K.right and p1 == K.right then
+                    local qty = resolvePromptQty(qtyPrompt, 64, qtyPrompt.entry.meCount)
+                    local name = qtyPrompt.entry.name
+                    qtyPrompt = nil
+                    transferItem(name, qty, "ME_TO_RS")
+                    applyFilter(search, currentViewMode())
+                elseif K.left and p1 == K.left then
+                    local qty = resolvePromptQty(qtyPrompt, 64, qtyPrompt.entry.rsCount)
+                    local name = qtyPrompt.entry.name
+                    qtyPrompt = nil
+                    transferItem(name, qty, "RS_TO_ME")
+                    applyFilter(search, currentViewMode())
+                elseif K.c and p1 == K.c then
+                    local qty = resolvePromptQty(qtyPrompt, 10, 64)
+                    local entry = qtyPrompt.entry
+                    qtyPrompt = nil
+                    skipNextChar = true
+                    triggerQuantumCraft(entry, qty)
+                elseif (K.enter and p1 == K.enter) or (K.numPadEnter and p1 == K.numPadEnter) then
+                    qtyPrompt = nil
+                end
+            elseif searchFocused then
+                if (K.enter and p1 == K.enter)
+                    or (K.numPadEnter and p1 == K.numPadEnter)
+                    or (K.escape and p1 == K.escape) then
+                    searchFocused = false
+                elseif K.up and p1 == K.up then
+                    searchFocused = false
+                    if selectedIdx > 1 then selectedIdx = selectedIdx - 1 end
+                elseif K.down and p1 == K.down then
+                    searchFocused = false
+                    if selectedIdx < #unifiedList then selectedIdx = selectedIdx + 1 end
+                elseif K.tab and p1 == K.tab then
+                    viewModeIdx = (viewModeIdx % #VIEW_MODES) + 1
+                    selectedIdx = 1; scrollOffset = 0
+                    applyFilter(search, currentViewMode())
+                    statusMsg = "Gorunum: " .. currentViewMode()
+                elseif K.backspace and p1 == K.backspace then
+                    search = string.sub(search, 1, -2)
+                    selectedIdx = 1; scrollOffset = 0
+                    applyFilter(search, currentViewMode())
+                    if search == "" then searchFocused = false end
+                elseif K.f2 and p1 == K.f2 then
+                    cfg.meBufferDir = cycleDir(cfg.meBufferDir)
+                    probeFailed = false
+                    saveConfig()
+                    statusMsg = "ME Buffer Yonu degisti: " .. cfg.meBufferDir
+                elseif K.f3 and p1 == K.f3 then
+                    cfg.rsBufferDir = cycleDir(cfg.rsBufferDir)
+                    probeFailed = false
+                    saveConfig()
+                    statusMsg = "RS Buffer Yonu degisti: " .. cfg.rsBufferDir
+                elseif K.f5 and p1 == K.f5 then
+                    scanInventories(search, currentViewMode())
+                    if me and rs then statusMsg = "Envanter listesi yenilendi." end
+                end
+            else
+                if K.up and p1 == K.up and selectedIdx > 1 then
+                    selectedIdx = selectedIdx - 1
+                elseif K.down and p1 == K.down and selectedIdx < #unifiedList then
+                    selectedIdx = selectedIdx + 1
+                elseif K.pageUp and p1 == K.pageUp then
+                    selectedIdx = math.max(1, selectedIdx - listRows)
+                    scrollOffset = math.max(0, scrollOffset - listRows)
+                elseif K.pageDown and p1 == K.pageDown then
+                    selectedIdx = math.min(math.max(1, #unifiedList), selectedIdx + listRows)
+                    scrollOffset = math.max(0, math.min(math.max(0, #unifiedList - listRows), scrollOffset + listRows))
+                elseif K.tab and p1 == K.tab then
+                    viewModeIdx = (viewModeIdx % #VIEW_MODES) + 1
+                    selectedIdx = 1; scrollOffset = 0
+                    applyFilter(search, currentViewMode())
+                    statusMsg = "Gorunum: " .. currentViewMode()
+                elseif ((K.enter and p1 == K.enter) or (K.numPadEnter and p1 == K.numPadEnter)) and unifiedList[selectedIdx] then
+                    qtyPrompt = { entry = unifiedList[selectedIdx], input = "" }
+                elseif K.f and p1 == K.f then
+                    searchFocused = true
+                    skipNextChar = true
+                elseif K.right and p1 == K.right and unifiedList[selectedIdx] then
+                    transferItem(unifiedList[selectedIdx].name, 64, "ME_TO_RS")
+                    applyFilter(search, currentViewMode())
+                elseif K.left and p1 == K.left and unifiedList[selectedIdx] then
+                    transferItem(unifiedList[selectedIdx].name, 64, "RS_TO_ME")
+                    applyFilter(search, currentViewMode())
+                elseif K.c and p1 == K.c and unifiedList[selectedIdx] then
+                    skipNextChar = true
+                    triggerQuantumCraft(unifiedList[selectedIdx], 10)
+                elseif K.d and p1 == K.d then
+                    skipNextChar = true
+                    scanInventories(search, currentViewMode())
+                    defragmentMETypesToRS()
+                    applyFilter(search, currentViewMode())
+                elseif K.a and p1 == K.a then
+                    skipNextChar = true
+                    cfg.autoCleanME = not cfg.autoCleanME
+                    saveConfig()
+                    statusMsg = "Otomatik ME Tip Temizleyici: " .. (cfg.autoCleanME and "ACIK" or "KAPALI")
+                elseif K.f2 and p1 == K.f2 then
+                    cfg.meBufferDir = cycleDir(cfg.meBufferDir)
+                    probeFailed = false
+                    saveConfig()
+                    statusMsg = "ME Buffer Yonu degisti: " .. cfg.meBufferDir .. " ([F3] ile RS yonunu degistirin)"
+                elseif K.f3 and p1 == K.f3 then
+                    cfg.rsBufferDir = cycleDir(cfg.rsBufferDir)
+                    probeFailed = false
+                    saveConfig()
+                    statusMsg = "RS Buffer Yonu degisti: " .. cfg.rsBufferDir
+                elseif K.f5 and p1 == K.f5 then
+                    scanInventories(search, currentViewMode())
+                    if me and rs then
+                        statusMsg = "Envanter listesi yenilendi."
+                    end
+                elseif K.backspace and p1 == K.backspace then
+                    search = string.sub(search, 1, -2)
+                    selectedIdx = 1; scrollOffset = 0
+                    applyFilter(search, currentViewMode())
+                end
             end
 
         elseif ev == "char" and type(p1) == "string" then
-            if not ({ c = true, C = true, a = true, A = true, d = true, D = true })[p1] then
+            if skipNextChar then
+                skipNextChar = false
+            elseif qtyPrompt then
+                if p1:match("^%d$") and #qtyPrompt.input < 6 then
+                    if qtyPrompt.input == "all" then qtyPrompt.input = "" end
+                    qtyPrompt.input = qtyPrompt.input .. p1
+                end
+            elseif searchFocused then
                 search = search .. p1
-                selectedIdx = 1
-                scrollOffset = 0
-                scanInventories(search)
+                selectedIdx = 1; scrollOffset = 0
+                applyFilter(search, currentViewMode())
+            else
+                if p1 == "/" then
+                    searchFocused = true
+                elseif not ({ c = true, C = true, a = true, A = true, d = true, D = true, f = true, F = true })[p1] then
+                    searchFocused = true
+                    search = search .. p1
+                    selectedIdx = 1; scrollOffset = 0
+                    applyFilter(search, currentViewMode())
+                end
             end
         end
     end
@@ -881,9 +1196,11 @@ end
 return {
     CONFIG_PATH = CONFIG_PATH,
     DIRECTIONS = DIRECTIONS,
+    VIEW_MODES = VIEW_MODES,
     ME_TYPES = ME_TYPES,
     RS_TYPES = RS_TYPES,
     PROTECTED_KEYWORDS = PROTECTED_KEYWORDS,
+    cleanDisplayName = cleanDisplayName,
     loadConfig = loadConfig,
     saveConfig = saveConfig,
     findBridge = findBridge,
@@ -894,6 +1211,8 @@ return {
     fetchItems = fetchItems,
     fetchCraftables = fetchCraftables,
     scanCraftables = scanCraftables,
+    applyFilter = applyFilter,
+    updateEntryCounts = updateEntryCounts,
     scanInventories = scanInventories,
     transferItem = transferItem,
     defragmentMETypesToRS = defragmentMETypesToRS,
@@ -906,5 +1225,6 @@ return {
     getStatus = function() return statusMsg end,
     setStatus = function(msg) statusMsg = msg end,
     getUnifiedList = function() return unifiedList end,
+    getMasterList = function() return masterList end,
     getCraftableSet = function() return craftableSet end
 }

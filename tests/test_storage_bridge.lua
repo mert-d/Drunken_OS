@@ -92,9 +92,11 @@ _G.colors = {
 }
 
 _G.keys = {
+    escape = 1, tab = 15, enter = 28, numPadEnter = 156,
     up = 200, down = 208, left = 203, right = 205,
     pageUp = 201, pageDown = 209,
-    c = 46, d = 32, a = 30, f2 = 60, f3 = 61, f5 = 63, backspace = 14
+    c = 46, d = 32, a = 30, f = 33, q = 16,
+    f2 = 60, f3 = 61, f5 = 63, backspace = 14
 }
 
 -- Helper to build simulated ME Bridge + RS Bridge + Buffer Barrel + optional Monitor
@@ -707,6 +709,154 @@ do
     SB.scanInventories("")
     assert_true(SB.getStatus():find("AG HATASI") ~= nil, "Bridge API error surfaces AG HATASI diagnostic")
     assert_true(SB.getStatus():find("offline") ~= nil, "Bridge API error includes underlying reason")
+end
+
+-- 9. 1.21 Bracket Stripping, 0ms In-Memory Filtering, [Tab] Views, [F] Search Focus (a/c/d),
+--    [Enter] Custom Quantity Prompt & Mouse Scroll/Click
+do
+    local getItemsCalls = 0
+    local meStock = {
+        ["mekanism:dust_cadmium"] = 500,
+        ["minecraft:glowstone_dust"] = 43078,
+        ["minecraft:enchanted_book"] = 2
+    }
+    local rsStock = {
+        ["minecraft:diamond"] = 300
+    }
+    local barrelInv = {}
+    local craftCalls = {}
+
+    local fastME = {
+        getItems = function()
+            getItemsCalls = getItemsCalls + 1
+            return {
+                { name = "mekanism:dust_cadmium", displayName = "[Cadmium Dust]", count = meStock["mekanism:dust_cadmium"] },
+                { name = "minecraft:glowstone_dust", displayName = "[Glowstone Dust]", count = meStock["minecraft:glowstone_dust"] },
+                { name = "minecraft:enchanted_book", displayName = "[Enchanted Book]", count = meStock["minecraft:enchanted_book"] }
+            }
+        end,
+        getCraftableItems = function()
+            return {
+                { name = "minecraft:glowstone_dust", displayName = "[Glowstone Dust]" }
+            }
+        end,
+        craftItem = function(filter)
+            table.insert(craftCalls, filter)
+            return true
+        end,
+        exportItem = function(filter, target)
+            if target ~= "east" then return { count = 0 } end
+            local moved = math.min(meStock[filter.name] or 0, filter.count or 0, 512)
+            if moved > 0 then
+                meStock[filter.name] = meStock[filter.name] - moved
+                barrelInv[filter.name] = (barrelInv[filter.name] or 0) + moved
+                return { count = moved }
+            end
+            return { count = 0 }
+        end,
+        importItem = function(filter, target)
+            if target ~= "east" then return { count = 0 } end
+            local moved = math.min(barrelInv[filter.name] or 0, filter.count or 0, 512)
+            if moved > 0 then
+                barrelInv[filter.name] = barrelInv[filter.name] - moved
+                meStock[filter.name] = (meStock[filter.name] or 0) + moved
+                return { count = moved }
+            end
+            return { count = 0 }
+        end
+    }
+
+    local fastRS = {
+        getItems = function()
+            return {
+                { name = "minecraft:diamond", displayName = "[Diamond]", count = rsStock["minecraft:diamond"] }
+            }
+        end,
+        importItem = function(filter, target)
+            if target ~= "west" then return { count = 0 } end
+            local moved = math.min(barrelInv[filter.name] or 0, filter.count or 0, 512)
+            if moved > 0 then
+                barrelInv[filter.name] = barrelInv[filter.name] - moved
+                rsStock[filter.name] = (rsStock[filter.name] or 0) + moved
+                return { count = moved }
+            end
+            return { count = 0 }
+        end,
+        exportItem = function(filter, target)
+            if target ~= "west" then return { count = 0 } end
+            local moved = math.min(rsStock[filter.name] or 0, filter.count or 0, 512)
+            if moved > 0 then
+                rsStock[filter.name] = rsStock[filter.name] - moved
+                barrelInv[filter.name] = (barrelInv[filter.name] or 0) + moved
+                return { count = moved }
+            end
+            return { count = 0 }
+        end
+    }
+
+    _G.peripheral = {
+        find = function(ptype)
+            if ptype == "me_bridge" then return fastME end
+            if ptype == "rs_bridge" then return fastRS end
+            return nil
+        end
+    }
+    virtualFiles["/storage_bridge.cfg"] = nil
+    SB.loadConfig()
+
+    local list = SB.scanInventories("")
+    assert_eq(getItemsCalls, 1, "Initial scan called me.getItems() once")
+    assert_eq(#list, 4, "4 items scanned")
+    assert_eq(list[1].displayName, "Glowstone Dust", "Outer [ ] brackets stripped from 1.21 displayName")
+
+    -- 0ms in-memory filtering & view modes without calling getItems() again
+    local craftView = SB.applyFilter("", "CRAFT")
+    assert_eq(#craftView, 1, "CRAFT view shows only 1 craftable item")
+    local rsView = SB.applyFilter("", "RS")
+    assert_eq(#rsView, 1, "RS view shows only Diamond")
+    assert_eq(rsView[1].displayName, "Diamond", "Diamond brackets stripped")
+    local arsivView = SB.applyFilter("", "ARSIV")
+    assert_eq(#arsivView, 1, "ARSIV view shows only Enchanted Book")
+    assert_eq(getItemsCalls, 1, "In-memory applyFilter triggered ZERO peripheral calls")
+
+    -- Interactive UI test: [F] search focus + typing "cad" (contains c, a, d!) -> [Enter] -> [Enter] qty "128" -> [Right] -> [Tab] -> mouse_scroll
+    local mockTerm9 = createMockSurface(51, 19)
+    _G.term = mockTerm9
+    installEventLoop({
+        { "key", _G.keys.f },           -- focus search
+        { "char", "f" },                -- trailing char from [F] MUST be skipped!
+        { "char", "c" },                -- typing 'c' in search mode must NOT craft!
+        { "char", "a" },                -- typing 'a' in search mode must NOT toggle autoClean!
+        { "char", "d" },                -- typing 'd' in search mode must NOT defragment!
+        { "key", _G.keys.enter },       -- exit search mode cleanly while keeping "cad" filter
+        { "key", _G.keys.enter },       -- open custom quantity prompt on Cadmium Dust
+        { "char", "1" },
+        { "char", "2" },
+        { "char", "8" },
+        { "key", _G.keys.right },       -- transfer 128 Cadmium Dust ME -> RS in single batch!
+        { "key", _G.keys.tab },         -- cycle view mode TUMU -> STOK
+        { "mouse_scroll", 1 },          -- scroll down
+        { "mouse_click", 1, 46, 1 },    -- click top-right [Tab:STOK] badge -> ME
+        { "terminate" }
+    })
+
+    local ok9 = SB.main()
+    assert_eq(ok9, true, "Interactive UX test exited cleanly")
+    assert_eq(#craftCalls, 0, "Typing 'c' inside [F] search mode did NOT accidentally fire craftItem")
+    assert_eq(SB.getConfig().autoCleanME, true, "Typing 'a' inside [F] search mode did NOT toggle autoCleanME")
+    assert_eq(meStock["minecraft:enchanted_book"], 2, "Typing 'd' inside [F] search mode did NOT trigger defragment")
+    assert_eq(meStock["mekanism:dust_cadmium"], 372, "[Enter] -> 128 -> [Right] moved 128 Cadmium Dust out of ME (500 -> 372)")
+    assert_eq(rsStock["mekanism:dust_cadmium"], 128, "[Enter] -> 128 -> [Right] delivered 128 Cadmium Dust into RS")
+
+    -- Verify 'cad' (without leading 'f') was the search query shown
+    local sawCadQuery = false
+    for _, line in ipairs(mockTerm9.written) do
+        if line:find("Ara:%[cad%]") then
+            sawCadQuery = true
+            break
+        end
+    end
+    assert_true(sawCadQuery, "Pressing [F] then 'cad' produced exact search 'cad' without 'f'")
 end
 
 -- Restore globals cleanly
