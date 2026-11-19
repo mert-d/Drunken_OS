@@ -43,7 +43,7 @@ local DEFAULT_KEYS = {
     escape = 1, tab = 15, enter = 28, numPadEnter = 156,
     up = 200, down = 208, left = 203, right = 205,
     pageUp = 201, pageDown = 209,
-    c = 46, d = 32, a = 30, f = 33, q = 16,
+    c = 46, d = 32, a = 30, f = 33, g = 34, q = 16,
     f2 = 60, f3 = 61, f5 = 63, backspace = 14
 }
 
@@ -190,7 +190,8 @@ local masterList = {}
 local unifiedList = {}
 local craftableSet = {}
 local probeFailed = false
-local statusMsg = "Hazir! [F]:Ara [Tab]:Gorunum [Enter]:Ozel Miktar"
+local lastTransferExported = false
+local statusMsg = "Hazir! [F]:Ara [Tab]:Gorunum [G]:RS->ME Bosalt"
 
 local function cleanDisplayName(label, fallback)
     local s = tostring(label or fallback or "unknown")
@@ -584,7 +585,7 @@ local function transferBatchWithProbe(srcBridge, dstBridge, isMEtoRS, itemName, 
     end
 
     if exported <= 0 then
-        return 0, dirUpdated
+        return 0, dirUpdated, false
     end
 
     local toImport = exported
@@ -617,10 +618,11 @@ local function transferBatchWithProbe(srcBridge, dstBridge, isMEtoRS, itemName, 
         safeImport(srcBridge, { name = itemName, count = leftover }, srcDir)
     end
 
-    return importedTotal, dirUpdated
+    return importedTotal, dirUpdated, true
 end
 
 local function transferItem(itemName, amount, direction)
+    lastTransferExported = false
     if not me or not rs then
         statusMsg = "HATA: ME Bridge veya RS Bridge bagli degil!"
         return 0
@@ -640,9 +642,10 @@ local function transferItem(itemName, amount, direction)
 
     while remaining > 0 do
         local batch = math.min(remaining, 512)
-        local moved, updated = transferBatchWithProbe(
+        local moved, updated, didExport = transferBatchWithProbe(
             srcBridge, dstBridge, isMEtoRS, itemName, batch, (totalMoved == 0)
         )
+        if didExport then lastTransferExported = true end
         if updated then dirUpdated = true end
         if moved <= 0 then break end
         totalMoved = totalMoved + moved
@@ -698,6 +701,51 @@ local function defragmentMETypesToRS(maxTypes)
         statusMsg = string.format("ME TEMIZLENDI: %d tip (%d esya) RS'ye arsivlendi!", typesFreed, itemsMoved)
     end
     return typesFreed, itemsMoved
+end
+
+local function evacuateRSToME(maxTypes)
+    if not me or not rs then
+        statusMsg = "HATA: ME Bridge veya RS Bridge bagli degil!"
+        return 0, 0, 0
+    end
+
+    if cfg.autoCleanME then
+        cfg.autoCleanME = false
+        saveConfig()
+    end
+
+    local typesMoved = 0
+    local itemsMoved = 0
+    local typesSkipped = 0
+
+    for _, entry in ipairs(masterList) do
+        local initialRsCount = entry.rsCount or 0
+        if initialRsCount > 0 then
+            local moved = transferItem(entry.name, initialRsCount, "RS_TO_ME")
+            if moved > 0 then
+                typesMoved = typesMoved + 1
+                itemsMoved = itemsMoved + moved
+                if moved < initialRsCount then
+                    typesSkipped = typesSkipped + 1
+                end
+                if maxTypes and typesMoved >= maxTypes then
+                    break
+                end
+            else
+                typesSkipped = typesSkipped + 1
+                if not lastTransferExported and probeFailed then
+                    break
+                end
+            end
+        end
+    end
+
+    if typesSkipped == 0 then
+        statusMsg = string.format("RS->ME TAHLIYE: %d tip (%d esya) AE2'ye aktarildi! [OTO:KAP]", typesMoved, itemsMoved)
+    else
+        statusMsg = string.format("RS->ME KISMI: %d tip (%d esya) alindi, %d tip ME'ye sigmadi!", typesMoved, itemsMoved, typesSkipped)
+    end
+    return typesMoved, itemsMoved, typesSkipped
 end
 
 local function triggerQuantumCraft(entry, craftAmount)
@@ -840,7 +888,7 @@ local function drawTarget(t, search, selectedIdx, scrollOffset, uiState)
         t.setBackgroundColor(C.gray)
         t.setTextColor(C.yellow)
         t.clearLine()
-        t.write((" [Sag]ME>RS [Sol]RS>ME [Enter]Miktar [C]raft [F]Ara"):sub(1, w))
+        t.write((" [Sag]ME>RS [Sol]RS>ME [G]RSBosalt [C]raft [F]Ara"):sub(1, w))
     end
 
     -- 6. Alt Durum Mesaji
@@ -998,25 +1046,23 @@ local function main()
                         qtyPrompt = nil
                         statusMsg = "Iptal edildi."
                     end
-                elseif unifiedList[selectedIdx] then
-                    if cx <= 12 then
-                        transferItem(unifiedList[selectedIdx].name, 64, "ME_TO_RS")
-                        applyFilter(search, currentViewMode())
-                    elseif cx <= 24 then
-                        transferItem(unifiedList[selectedIdx].name, 64, "RS_TO_ME")
-                        applyFilter(search, currentViewMode())
-                    elseif cx <= 32 then
-                        triggerQuantumCraft(unifiedList[selectedIdx], 10)
-                    elseif cx <= 39 then
+                else
+                    if cx >= 23 and cx <= 35 then
                         scanInventories(search, currentViewMode())
-                        defragmentMETypesToRS()
+                        evacuateRSToME()
                         applyFilter(search, currentViewMode())
-                    elseif cx <= 45 then
+                    elseif cx >= 44 then
                         searchFocused = true
-                    else
-                        cfg.autoCleanME = not cfg.autoCleanME
-                        saveConfig()
-                        statusMsg = "Otomatik ME Tip Temizleyici: " .. (cfg.autoCleanME and "ACIK" or "KAPALI")
+                    elseif unifiedList[selectedIdx] then
+                        if cx <= 11 then
+                            transferItem(unifiedList[selectedIdx].name, 64, "ME_TO_RS")
+                            applyFilter(search, currentViewMode())
+                        elseif cx <= 22 then
+                            transferItem(unifiedList[selectedIdx].name, 64, "RS_TO_ME")
+                            applyFilter(search, currentViewMode())
+                        elseif cx <= 43 then
+                            triggerQuantumCraft(unifiedList[selectedIdx], 10)
+                        end
                     end
                 end
             end
@@ -1128,6 +1174,11 @@ local function main()
                     scanInventories(search, currentViewMode())
                     defragmentMETypesToRS()
                     applyFilter(search, currentViewMode())
+                elseif K.g and p1 == K.g then
+                    skipNextChar = true
+                    scanInventories(search, currentViewMode())
+                    evacuateRSToME()
+                    applyFilter(search, currentViewMode())
                 elseif K.a and p1 == K.a then
                     skipNextChar = true
                     cfg.autoCleanME = not cfg.autoCleanME
@@ -1170,7 +1221,7 @@ local function main()
             else
                 if p1 == "/" then
                     searchFocused = true
-                elseif not ({ c = true, C = true, a = true, A = true, d = true, D = true, f = true, F = true })[p1] then
+                elseif not ({ c = true, C = true, a = true, A = true, d = true, D = true, f = true, F = true, g = true, G = true })[p1] then
                     searchFocused = true
                     search = search .. p1
                     selectedIdx = 1; scrollOffset = 0
@@ -1216,6 +1267,7 @@ return {
     scanInventories = scanInventories,
     transferItem = transferItem,
     defragmentMETypesToRS = defragmentMETypesToRS,
+    evacuateRSToME = evacuateRSToME,
     triggerQuantumCraft = triggerQuantumCraft,
     cycleDir = cycleDir,
     drawTarget = drawTarget,

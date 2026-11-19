@@ -68,6 +68,7 @@ Veya `Master_Installer.lua` üzerinden **Clients & Handhelds -> Standalone ME & 
   * **`[C]`:** Girilen miktar için **Quantum Craft** başlat
   * **`[Esc]` / `[Q]`:** İptal
 * **`[C]`:** Quantum Craft — Seçili eşya ME'de 0 ama RS'de varsa önce 64 adete kadar ME'ye çeker, ardından `me.craftItem` ile 10x üretimi başlatır
+* **`[G]` (veya alt bardaki `[G]RSBosalt`):** **Tüm RS'yi AE2'ye Boşalt (`evacuateRSToME`)** — `autoCleanME` özelliğini otomatik kapatıp `/storage_bridge.cfg` dosyasına kaydeder ve RS'deki tüm eşyaları AE2'ye geri aktarır (RS sistemini kaldırmadan önce tek tuşla tam tahliye)
 * **`[D]`:** AE2 63-tip temizliği (`defragmentMETypesToRS`) — Pattern'i olmayan, `cleanThreshold` (varsayılan `32`) altındaki ve hammadde/korumalı listede yer almayan tekil eşyaları (`~` turuncu) otomatik RS'ye arşivler
 * **`[A]`:** Otomatik arka plan ME tip temizleyicisini (`autoCleanME`) aç/kapat (arka plan döngüsü takılma olmaması için seferde en fazla 5 tip taşır ve arama/miktar modundayken beklemede kalır)
 * **`[F2]` / `[F3]` (veya 2. satırdaki ME/RS yönüne tıklama):** Tampon yönünü canlı değiştir ve `/storage_bridge.cfg` dosyasına kaydet

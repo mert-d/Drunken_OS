@@ -95,7 +95,7 @@ _G.keys = {
     escape = 1, tab = 15, enter = 28, numPadEnter = 156,
     up = 200, down = 208, left = 203, right = 205,
     pageUp = 201, pageDown = 209,
-    c = 46, d = 32, a = 30, f = 33, q = 16,
+    c = 46, d = 32, a = 30, f = 33, g = 34, q = 16,
     f2 = 60, f3 = 61, f5 = 63, backspace = 14
 }
 
@@ -857,6 +857,116 @@ do
         end
     end
     assert_true(sawCadQuery, "Pressing [F] then 'cad' produced exact search 'cad' without 'f'")
+end
+
+-- 10. 1-Key Full RS -> AE2 Evacuation (evacuateRSToME & [G] Hotkey)
+do
+    local st, me, rs = createMockNetwork({
+        meItems = {
+            ["minecraft:iron_ingot"] = 50
+        },
+        rsItems = {
+            ["minecraft:iron_ingot"] = 200,   -- 4 batches (64+64+64+8)
+            ["minecraft:enchanted_book"] = 3,
+            ["minecraft:saddle"] = 5,
+            ["minecraft:cobblestone"] = 140
+        }
+    })
+    installPeripherals(me, rs, nil)
+    virtualFiles["/storage_bridge.cfg"] = nil
+    SB.loadConfig()
+    assert_eq(SB.getConfig().autoCleanME, true, "autoCleanME starts enabled before evacuation")
+
+    local mockTerm10 = createMockSurface(51, 19)
+    _G.term = mockTerm10
+    installEventLoop({
+        { "key", _G.keys.g },           -- Trigger 1-key full RS -> AE2 evacuation
+        { "char", "g" },                -- trailing char from [G] ignored cleanly
+        { "terminate" }
+    })
+
+    local ok10 = SB.main()
+    assert_eq(ok10, true, "[G] evacuation test exited cleanly")
+    assert_eq(SB.getConfig().autoCleanME, false, "evacuateRSToME automatically disabled autoCleanME")
+    assert_true(virtualFiles["/storage_bridge.cfg"] ~= nil, "evacuateRSToME persisted autoCleanME=false to /storage_bridge.cfg")
+    assert_eq(st.rsItems["minecraft:iron_ingot"], 0, "RS iron_ingot completely drained to 0")
+    assert_eq(st.rsItems["minecraft:enchanted_book"], 0, "RS enchanted_book completely drained to 0")
+    assert_eq(st.rsItems["minecraft:saddle"], 0, "RS saddle completely drained to 0")
+    assert_eq(st.rsItems["minecraft:cobblestone"], 0, "RS cobblestone completely drained to 0")
+    assert_eq(st.meItems["minecraft:iron_ingot"], 250, "ME iron_ingot increased to 250 (50 + 200)")
+    assert_eq(st.meItems["minecraft:enchanted_book"], 3, "ME enchanted_book received 3")
+    assert_eq(st.meItems["minecraft:saddle"], 5, "ME saddle received 5")
+    assert_eq(st.meItems["minecraft:cobblestone"], 140, "ME cobblestone received 140")
+    assert_true(SB.getStatus():find("RS%->ME TAHLIYE") ~= nil, "Status reports full RS->ME TAHLIYE")
+
+    -- Partial evacuation when one item type is rejected by AE2 while others still transfer
+    local pMeStock = { ["minecraft:iron_ingot"] = 10 }
+    local pRsStock = { ["minecraft:iron_ingot"] = 50, ["minecraft:nether_star"] = 2, ["minecraft:gold_ingot"] = 20 }
+    local pBarrel = {}
+    local pMe = {
+        getItems = function()
+            local out = {}
+            for k, v in pairs(pMeStock) do
+                if v > 0 then table.insert(out, { name = k, displayName = k, count = v }) end
+            end
+            return out
+        end,
+        importItem = function(filter, dir)
+            if dir ~= "east" then return 0 end
+            if filter.name == "minecraft:nether_star" then return 0 end -- simulate AE2 type-limit rejection
+            local mv = math.min(pBarrel[filter.name] or 0, filter.count or 0, 512)
+            if mv > 0 then
+                pBarrel[filter.name] = pBarrel[filter.name] - mv
+                pMeStock[filter.name] = (pMeStock[filter.name] or 0) + mv
+            end
+            return mv
+        end,
+        exportItem = function(filter, dir)
+            if dir ~= "east" then return 0 end
+            local mv = math.min(pMeStock[filter.name] or 0, filter.count or 0, 512)
+            if mv > 0 then
+                pMeStock[filter.name] = pMeStock[filter.name] - mv
+                pBarrel[filter.name] = (pBarrel[filter.name] or 0) + mv
+            end
+            return mv
+        end
+    }
+    local pRs = {
+        getItems = function()
+            local out = {}
+            for k, v in pairs(pRsStock) do
+                if v > 0 then table.insert(out, { name = k, displayName = k, count = v }) end
+            end
+            return out
+        end,
+        exportItem = function(filter, dir)
+            if dir ~= "west" then return 0 end
+            local mv = math.min(pRsStock[filter.name] or 0, filter.count or 0, 512)
+            if mv > 0 then
+                pRsStock[filter.name] = pRsStock[filter.name] - mv
+                pBarrel[filter.name] = (pBarrel[filter.name] or 0) + mv
+            end
+            return mv
+        end,
+        importItem = function(filter, dir)
+            if dir ~= "west" then return 0 end
+            local mv = math.min(pBarrel[filter.name] or 0, filter.count or 0, 512)
+            if mv > 0 then
+                pBarrel[filter.name] = pBarrel[filter.name] - mv
+                pRsStock[filter.name] = (pRsStock[filter.name] or 0) + mv
+            end
+            return mv
+        end
+    }
+    installPeripherals(pMe, pRs, nil)
+    SB.scanInventories("")
+    local movedTypes, movedItems, skippedTypes = SB.evacuateRSToME()
+    assert_eq(movedTypes, 2, "Partial evacuation moved 2 fitting item types despite 1 rejected type")
+    assert_eq(movedItems, 70, "Partial evacuation moved 70 items (50 iron + 20 gold)")
+    assert_eq(skippedTypes, 1, "Partial evacuation reported 1 skipped type")
+    assert_eq(pRsStock["minecraft:nether_star"], 2, "Rejected nether_star safely rolled back to RS (not stuck in barrel)")
+    assert_eq(pBarrel["minecraft:nether_star"] or 0, 0, "Barrel empty after rollback")
+    assert_true(SB.getStatus():find("RS%->ME KISMI") ~= nil, "Status reports RS->ME KISMI with skipped count")
 end
 
 -- Restore globals cleanly
