@@ -140,6 +140,7 @@ local function createEnv(opts)
     _G.keys = {
         escape = 1, tab = 15, enter = 28, numPadEnter = 156, backspace = 14,
         up = 200, down = 208, left = 203, right = 205,
+        pageUp = 201, pageDown = 209,
         c = 46, d = 32, i = 23, l = 38, p = 25, q = 16, r = 19, s = 31, t = 20
     }
 
@@ -197,11 +198,14 @@ local function createEnv(opts)
 
         local inv = {}
         inv._slots = slots
+        inv._listCalls = 0
         inv._detailCalls = {}
+        inv._totalDetailCalls = 0
         function inv.size()
             return maxSlots
         end
         function inv.list()
+            inv._listCalls = inv._listCalls + 1
             local out = {}
             for s, item in pairs(slots) do
                 if item and item.count > 0 then
@@ -211,6 +215,7 @@ local function createEnv(opts)
             return out
         end
         function inv.getItemDetail(slot)
+            inv._totalDetailCalls = inv._totalDetailCalls + 1
             local item = slots[slot]
             if item and item.count > 0 then
                 inv._detailCalls[item.name] = (inv._detailCalls[item.name] or 0) + 1
@@ -850,6 +855,72 @@ local okAll, errAll = pcall(function()
         assert_eq(core.recipes["create:crushing_wheel"].totalCount, 21, "Default DB crushing_wheel totalCount == 21")
         assert_true(core.recipes["ftbskies2aerocompanion:netherite_energiser"] ~= nil, "Default DB includes netherite_energiser")
         assert_true(env.files["/etc/drunken_crafter_recipes.db"] ~= nil, "Auto-import persisted /etc/drunken_crafter_recipes.db")
+    end
+
+    -- 12. test_ui_keypress_zero_peripheral_calls_and_idle_step_efficiency
+    do
+        print("[12] test_ui_keypress_zero_peripheral_calls_and_idle_step_efficiency")
+        local env = createEnv()
+        local _, core = loadCore(env)
+
+        -- Verify step() on an idle wall calls list() at most once per crafter and 0 getItemDetail()
+        core:step()
+        for i = 1, 25 do
+            local c = env.periphs["create:mechanical_crafter_" .. i]
+            assert_eq(c._listCalls, 1, "Idle step() called list() once on crafter_" .. i)
+            assert_eq(c._totalDetailCalls, 0, "Idle step() called getItemDetail() 0 times on empty crafter_" .. i)
+        end
+
+        -- Verify TUI keypresses ([Down], [Up], [P]) trigger ZERO peripheral calls
+        local fakeTerm = {
+            getSize = function() return 51, 19 end,
+            isColor = function() return true end,
+            setTextColor = function() end,
+            setBackgroundColor = function() end,
+            setCursorPos = function() end,
+            clear = function() end,
+            write = function() end
+        }
+        _G.term = { current = function() return fakeTerm end }
+
+        local listBeforeKeys, detailBeforeKeys
+        local events = {
+            { "key", _G.keys.down },
+            { "key", _G.keys.up },
+            { "key", _G.keys.p },
+            { "key", _G.keys.q }
+        }
+        local evIdx = 0
+        _G.os.pullEvent = function()
+            evIdx = evIdx + 1
+            if evIdx == 1 then
+                listBeforeKeys = 0
+                detailBeforeKeys = 0
+                for i = 1, 25 do
+                    local c = env.periphs["create:mechanical_crafter_" .. i]
+                    listBeforeKeys = listBeforeKeys + c._listCalls
+                    detailBeforeKeys = detailBeforeKeys + c._totalDetailCalls
+                end
+            elseif evIdx == 4 then
+                local listAfterKeys = 0
+                local detailAfterKeys = 0
+                for i = 1, 25 do
+                    local c = env.periphs["create:mechanical_crafter_" .. i]
+                    listAfterKeys = listAfterKeys + c._listCalls
+                    detailAfterKeys = detailAfterKeys + c._totalDetailCalls
+                end
+                assert_eq(listAfterKeys, listBeforeKeys, "TUI keypresses ([Down],[Up],[P]) triggered ZERO crafter list() calls")
+                assert_eq(detailAfterKeys, detailBeforeKeys, "TUI keypresses triggered ZERO crafter getItemDetail() calls")
+            end
+            local e = events[evIdx]
+            if not e then return "terminate" end
+            return e[1], e[2], e[3], e[4]
+        end
+
+        local clientChunk = assert(loadfile("clients/Drunken_Crafter.lua"))
+        local clientMod = clientChunk("Drunken_Crafter")
+        clientMod.run({ term = fakeTerm, core = core })
+        assert_eq(core.paused, true, "TUI [P] toggled paused cleanly with zero peripheral lag")
     end
 end)
 

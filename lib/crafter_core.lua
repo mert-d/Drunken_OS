@@ -155,6 +155,23 @@ local function sortedNumericKeys(tbl)
     return keys
 end
 
+local unpackFn = table.unpack or unpack
+
+local function runParallel(fns)
+    if type(fns) ~= "table" or #fns == 0 then return end
+    if #fns == 1 then
+        fns[1]()
+        return
+    end
+    if parallel and parallel.waitForAll then
+        parallel.waitForAll(unpackFn(fns))
+        return
+    end
+    for _, fn in ipairs(fns) do
+        fn()
+    end
+end
+
 local function callPeriph(name, method, ...)
     if not peripheral or type(name) ~= "string" or name == "" then
         return false, "no peripheral"
@@ -253,7 +270,10 @@ function CrafterCore.new(opts)
     self.recipesPath = opts.recipesPath or CrafterCore.RECIPES_PATH
     self.cfg = deepCopy(CrafterCore.DEFAULT_CONFIG)
     self.recipes = {}
+    self._sortedRecipes = nil
     self.tagCache = {}
+    self.lastWallState = nil
+    self.lastPeripheralStatus = nil
 
     self.paused = false
     self.status = "IDLE"
@@ -372,6 +392,7 @@ function CrafterCore:loadRecipes()
             end
         end
         self.recipes = clean
+        self._sortedRecipes = nil
         return true
     end
     return false
@@ -400,6 +421,7 @@ function CrafterCore:importDefaultRecipes(opts)
         return 0, "Varsayilan tarif veritabani bulunamadi (data/crafter_recipes_default.db)"
     end
 
+    local wasEmpty = (next(self.recipes) == nil)
     local imported = 0
     for rawKey, rec in pairs(sourceData) do
         local rKey, norm = normalizeRecipeRecord(rawKey, rec)
@@ -412,7 +434,17 @@ function CrafterCore:importDefaultRecipes(opts)
     end
 
     if imported > 0 then
-        self:saveRecipes()
+        self._sortedRecipes = nil
+        local copied = false
+        if wasEmpty and opts.overwrite ~= true and usedPath
+            and fs and fs.copy and fs.exists and not fs.exists(self.recipesPath) then
+            ensureParentDir(self.recipesPath)
+            local okCopy = pcall(fs.copy, usedPath, self.recipesPath)
+            copied = (okCopy == true)
+        end
+        if not copied then
+            self:saveRecipes()
+        end
         self.lastAction = tostring(imported) .. " tarif iceri aktarildi"
     end
     return imported, nil, usedPath
@@ -511,22 +543,23 @@ function CrafterCore:getSlotItem(slotIdx)
         return nil, false
     end
 
-    local okDet, detail = callPeriph(periphName, "getItemDetail", 1)
-    if okDet and type(detail) == "table" and detail.name then
-        return detail, true
-    end
-
     local okList, listTbl = callPeriph(periphName, "list")
     if okList and type(listTbl) == "table" then
         local slot1 = listTbl[1]
-        if type(slot1) == "table" and slot1.name then
+        if type(slot1) == "table" and slot1.name and (tonumber(slot1.count) or 1) > 0 then
             return slot1, true
         end
         for _, item in pairs(listTbl) do
-            if type(item) == "table" and item.name and (tonumber(item.count) or 0) > 0 then
+            if type(item) == "table" and item.name and (tonumber(item.count) or 1) > 0 then
                 return item, true
             end
         end
+        return nil, true
+    end
+
+    local okDet, detail = callPeriph(periphName, "getItemDetail", 1)
+    if okDet and type(detail) == "table" and detail.name then
+        return detail, true
     end
 
     return nil, true
@@ -537,48 +570,51 @@ function CrafterCore:scanWallState()
     local slots = {}
     local occupiedCount = 0
     local mappedCount = 0
+    local tasks = {}
 
     for slotIdx = 1, totalSlots do
         local periphName = self.cfg.gridMap and self.cfg.gridMap[slotIdx] or nil
-        local item, online = nil, false
-        if periphName and periphName ~= "" then
-            mappedCount = mappedCount + 1
-            item, online = self:getSlotItem(slotIdx)
-            if item then
-                occupiedCount = occupiedCount + 1
-            end
-        end
         slots[slotIdx] = {
             peripheral = periphName,
-            item = item,
-            online = online
+            item = nil,
+            online = false
         }
+        if periphName and periphName ~= "" then
+            mappedCount = mappedCount + 1
+            local idx = slotIdx
+            table.insert(tasks, function()
+                local item, online = self:getSlotItem(idx)
+                slots[idx].item = item
+                slots[idx].online = online
+            end)
+        end
     end
 
-    return {
+    runParallel(tasks)
+
+    for slotIdx = 1, totalSlots do
+        if slots[slotIdx].item then
+            occupiedCount = occupiedCount + 1
+        end
+    end
+
+    local wall = {
         slots = slots,
         occupiedCount = occupiedCount,
         mappedCount = mappedCount,
         totalSlots = totalSlots
     }
+    self.lastWallState = wall
+    return wall
 end
 
 function CrafterCore:isWallBusy()
-    local _, _, totalSlots = self:getGridSize()
-    for slotIdx = 1, totalSlots do
-        local periphName = self.cfg.gridMap and self.cfg.gridMap[slotIdx]
-        if periphName and periphName ~= "" and isPeriphPresent(periphName) then
-            local okList, listTbl = callPeriph(periphName, "list")
-            if okList and type(listTbl) == "table" then
-                for _, item in pairs(listTbl) do
-                    if type(item) == "table" and item.name and (tonumber(item.count) or 1) > 0 then
-                        return true, slotIdx, item
-                    end
-                end
-            end
-            local okDet, detail = callPeriph(periphName, "getItemDetail", 1)
-            if okDet and type(detail) == "table" and detail.name and (tonumber(detail.count) or 1) > 0 then
-                return true, slotIdx, detail
+    local wall = self:scanWallState()
+    if wall.occupiedCount > 0 then
+        for slotIdx = 1, wall.totalSlots do
+            local sInfo = wall.slots[slotIdx]
+            if sInfo and sInfo.item then
+                return true, slotIdx, sInfo.item
             end
         end
     end
@@ -626,7 +662,7 @@ function CrafterCore:getPeripheralStatus()
             mappedCount = mappedCount + 1
         end
     end
-    return {
+    local status = {
         inputOk = inputOk,
         inputCount = inputTotal,
         outputOk = outputOk,
@@ -637,6 +673,8 @@ function CrafterCore:getPeripheralStatus()
         totalSlots = totalSlots,
         baseBusOpen = self:isBaseBusOpen()
     }
+    self.lastPeripheralStatus = status
+    return status
 end
 
 local function crafterHasItem(periphName)
@@ -658,23 +696,39 @@ local function crafterHasItem(periphName)
     return false, nil, ""
 end
 
+local function scanCraftersParallel(crafterNames)
+    local results = {}
+    local tasks = {}
+    for _, name in ipairs(crafterNames or {}) do
+        local cname = name
+        table.insert(tasks, function()
+            local hasItem, item, sig = crafterHasItem(cname)
+            results[cname] = { hasItem = hasItem, item = item, sig = sig }
+        end)
+    end
+    runParallel(tasks)
+    return results
+end
+
 function CrafterCore:takeCrafterSnapshot(crafterNames)
     local names = crafterNames or self:discoverPeripherals().crafters
+    local scanned = scanCraftersParallel(names)
     local snapshot = {}
     for _, name in ipairs(names) do
-        local _, _, sig = crafterHasItem(name)
-        snapshot[name] = sig
+        local info = scanned[name]
+        snapshot[name] = (info and info.sig) or ""
     end
     return snapshot
 end
 
 function CrafterCore:getOccupiedCrafters(crafterNames)
     local names = crafterNames or self:discoverPeripherals().crafters
+    local scanned = scanCraftersParallel(names)
     local occupied = {}
     for _, name in ipairs(names) do
-        local hasItem, item, sig = crafterHasItem(name)
-        if hasItem then
-            table.insert(occupied, { name = name, item = item, sig = sig })
+        local info = scanned[name]
+        if info and info.hasItem then
+            table.insert(occupied, { name = name, item = info.item, sig = info.sig })
         end
     end
     return occupied
@@ -749,43 +803,62 @@ function CrafterCore:calibrateNextSlot(slotIdx, opts)
     local startClock = safeClock()
 
     local function checkOnce()
+        local scanned = scanCraftersParallel(crafterNames)
+        local occupiedList = {}
+        local matchedName = nil
+
         for _, name in ipairs(crafterNames) do
-            local hasItem, _, sig = crafterHasItem(name)
+            local info = scanned[name]
+            local hasItem = info and info.hasItem
+            local sig = (info and info.sig) or ""
             if not hasItem then
                 baseline[name] = ""
             else
-                local baseVal = baseline[name]
-                local isNew = (baseVal == nil or baseVal == false or baseVal == "")
-                    or (type(baseVal) == "string" and baseVal ~= sig)
-                if isNew then
-                    assignGridSlotUnique(self.cfg.gridMap, slotIdx, name)
-                    if opts.returnToInput ~= false
-                        and type(self.cfg.inputName) == "string"
-                        and self.cfg.inputName ~= ""
-                        and isPeriphPresent(self.cfg.inputName) then
-                        self:returnItemFromCrafter(name, 1)
+                if not matchedName then
+                    local baseVal = baseline[name]
+                    local isNew = (baseVal == nil or baseVal == false or baseVal == "")
+                        or (type(baseVal) == "string" and baseVal ~= sig)
+                    if isNew then
+                        assignGridSlotUnique(self.cfg.gridMap, slotIdx, name)
+                        local returned = 0
+                        if opts.returnToInput ~= false
+                            and type(self.cfg.inputName) == "string"
+                            and self.cfg.inputName ~= ""
+                            and isPeriphPresent(self.cfg.inputName) then
+                            returned = self:returnItemFromCrafter(name, 1)
+                        end
+                        if returned > 0 then
+                            local _, _, postSig = crafterHasItem(name)
+                            baseline[name] = postSig
+                        else
+                            baseline[name] = sig
+                            table.insert(occupiedList, { name = name, item = info.item, sig = sig })
+                        end
+                        self:saveConfig()
+                        matchedName = name
+                    else
+                        table.insert(occupiedList, { name = name, item = info.item, sig = sig })
                     end
-                    local _, _, postSig = crafterHasItem(name)
-                    baseline[name] = postSig
-                    self:saveConfig()
-                    return name
+                else
+                    table.insert(occupiedList, { name = name, item = info.item, sig = sig })
                 end
             end
         end
-        return nil
+        return matchedName, occupiedList
     end
 
     if opts.pollOnce then
-        return checkOnce(), nil
+        local matched, occ = checkOnce()
+        return matched, nil, occ
     end
 
     while true do
-        local matched = checkOnce()
+        local matched, occ = checkOnce()
         if matched then
-            return matched, nil
+            return matched, nil, occ
         end
         if timeout and (safeClock() - startClock) >= timeout then
-            return nil, "timeout"
+            return nil, "timeout", occ
         end
         safeSleep(pollInterval)
     end
@@ -847,6 +920,7 @@ function CrafterCore:learnRecipeFromWall(recipeName)
         layout = layout
     }
     self.recipes[cleanName] = recipe
+    self._sortedRecipes = nil
     local okSave, errSave = self:saveRecipes()
     if not okSave and fs and fs.open then
         return recipe, errSave
@@ -875,12 +949,16 @@ function CrafterCore:deleteRecipe(keyOrName)
     end
     local removedName = (self.recipes[targetKey] and self.recipes[targetKey].name) or tostring(targetKey)
     self.recipes[targetKey] = nil
+    self._sortedRecipes = nil
     self:saveRecipes()
     self.lastAction = "Silindi: " .. tostring(removedName)
     return true
 end
 
 function CrafterCore:getSortedRecipes()
+    if self._sortedRecipes ~= nil and self._sortedRecipesRef == self.recipes then
+        return self._sortedRecipes
+    end
     local list = {}
     for _, rec in pairs(self.recipes) do
         table.insert(list, rec)
@@ -893,6 +971,8 @@ function CrafterCore:getSortedRecipes()
         end
         return tostring(a.name or "") < tostring(b.name or "")
     end)
+    self._sortedRecipes = list
+    self._sortedRecipesRef = self.recipes
     return list
 end
 
@@ -900,14 +980,14 @@ function CrafterCore:returnOutputToAE2()
     local outName = self.cfg.outputName
     local ae2Name = self.cfg.ae2Name
     if type(outName) ~= "string" or outName == "" or type(ae2Name) ~= "string" or ae2Name == "" then
-        return 0
+        return 0, false, 0
     end
     if not (isPeriphPresent(outName) and isPeriphPresent(ae2Name)) then
-        return 0
+        return 0, isPeriphPresent(outName), 0
     end
 
-    local _, slots, _, ok = self:getInventoryCounts(outName)
-    if not ok then return 0 end
+    local _, slots, outTotal, ok = self:getInventoryCounts(outName)
+    if not ok then return 0, false, 0 end
 
     local totalMoved = 0
     for _, slot in ipairs(sortedNumericKeys(slots)) do
@@ -924,7 +1004,7 @@ function CrafterCore:returnOutputToAE2()
     if totalMoved > 0 then
         self.lastAction = "AE2 iade: " .. tostring(totalMoved) .. " esya"
     end
-    return totalMoved
+    return totalMoved, true, math.max(0, outTotal - totalMoved)
 end
 
 function CrafterCore:ensureItemTags(periphName, slot, itemName)
@@ -1198,15 +1278,24 @@ function CrafterCore:dispatchRecipe(recipe)
         table.insert(pushedTargets, { crafter = targetCrafter, gridSlot = gridSlot })
     end
 
-    -- Verify every required slot is populated before pulsing
+    -- Verify every required slot is populated before pulsing (in parallel)
+    local verifyFailedSlot = nil
+    local verifyTasks = {}
     for _, pushed in ipairs(pushedTargets) do
-        local hasItem = crafterHasItem(pushed.crafter)
-        if not hasItem then
-            rollback()
-            self.status = "ERROR"
-            self.lastError = "Dogrulama hatasi: slot " .. tostring(pushed.gridSlot)
-            return false, self.lastError
-        end
+        local p = pushed
+        table.insert(verifyTasks, function()
+            local hasItem = crafterHasItem(p.crafter)
+            if not hasItem and (not verifyFailedSlot or p.gridSlot < verifyFailedSlot) then
+                verifyFailedSlot = p.gridSlot
+            end
+        end)
+    end
+    runParallel(verifyTasks)
+    if verifyFailedSlot then
+        rollback()
+        self.status = "ERROR"
+        self.lastError = "Dogrulama hatasi: slot " .. tostring(verifyFailedSlot)
+        return false, self.lastError
     end
 
     local okPulse, pulseErr = self:triggerPulse()
@@ -1227,6 +1316,21 @@ function CrafterCore:dispatchRecipe(recipe)
     return true, nil
 end
 
+function CrafterCore:updateSnapshotStatus(inputOk, inputTotal, outputOk, outputTotal, wall)
+    local w = wall or self.lastWallState or { mappedCount = 0, totalSlots = select(3, self:getGridSize()) }
+    self.lastPeripheralStatus = {
+        inputOk = inputOk == true,
+        inputCount = tonumber(inputTotal) or 0,
+        outputOk = outputOk == true,
+        outputCount = tonumber(outputTotal) or 0,
+        ae2Ok = isPeriphPresent(self.cfg.ae2Name),
+        ae2IsDirectSide = isRedstoneSide(self.cfg.ae2Name),
+        mappedCount = w.mappedCount or 0,
+        totalSlots = w.totalSlots or 25,
+        baseBusOpen = self:isBaseBusOpen()
+    }
+end
+
 function CrafterCore:step()
     if self.paused then
         self.status = "PAUSED"
@@ -1234,16 +1338,25 @@ function CrafterCore:step()
     end
 
     -- Priority 1: Return finished outputs to AE2 Pattern Provider so crafting lock releases
-    local returned = self:returnOutputToAE2()
+    local returned, outputOk, outputTotal = self:returnOutputToAE2()
 
-    -- Priority 2: Guard against dispatching while wall is still crafting
-    if self:isWallBusy() then
+    -- Priority 2: Guard against dispatching while wall is still crafting (parallel 1-tick scan)
+    local busy = self:isWallBusy()
+    if busy then
         self.status = "CRAFTING"
+        if self.lastPeripheralStatus then
+            self.lastPeripheralStatus.outputOk = outputOk
+            self.lastPeripheralStatus.outputCount = outputTotal
+            self.lastPeripheralStatus.ae2Ok = isPeriphPresent(self.cfg.ae2Name)
+            self.lastPeripheralStatus.ae2IsDirectSide = isRedstoneSide(self.cfg.ae2Name)
+            self.lastPeripheralStatus.baseBusOpen = self:isBaseBusOpen()
+        end
         return { action = "BUSY", returned = returned }
     end
 
     -- Priority 3: Count input barrel & cache tags once, then match recipe (largest totalCount first)
     local invCounts, invSlots, totalItems, inputOk = self:getInventoryCounts(self.cfg.inputName)
+    self:updateSnapshotStatus(inputOk, totalItems, outputOk, outputTotal, self.lastWallState)
     if not inputOk then
         self.status = "ERROR"
         self.lastError = "Input fici bagli degil"
@@ -1269,6 +1382,11 @@ function CrafterCore:step()
     if not okDispatch then
         return { action = "ERROR", recipe = matched.name, error = errDispatch, returned = returned }
     end
+
+    -- Refresh wall/input snapshots after dispatch so UI shows dispatched grid immediately
+    self:scanWallState()
+    local _, _, postInTotal, postInOk = self:getInventoryCounts(self.cfg.inputName)
+    self:updateSnapshotStatus(postInOk, postInTotal, outputOk, outputTotal, self.lastWallState)
 
     return { action = "CRAFTED", recipe = matched.name, returned = returned }
 end

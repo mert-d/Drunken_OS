@@ -182,6 +182,8 @@ local function run(context)
     local lastTermSig = nil
     local lastMonSigs = setmetatable({}, { __mode = "k" })
     local stepTimer = nil
+    local cachedWall = core:scanWallState()
+    local cachedStat = core:getPeripheralStatus()
 
     local function withBuffer(surf, drawFn)
         if not surf then return end
@@ -278,15 +280,15 @@ local function run(context)
         stepTimer = scheduleStepTimer()
     end
 
-    local function drawDashboard(surf, isMonitor)
+    local function drawDashboard(surf, isMonitor, wall, pStat, recipes)
         if not surf then return end
         local w, h = surf.getSize()
         setColors(surf, colors.white, colors.black)
         surf.clear()
 
-        local wall = core:scanWallState()
-        local pStat = core:getPeripheralStatus()
-        local recipes = core:getSortedRecipes()
+        wall = wall or cachedWall
+        pStat = pStat or cachedStat
+        recipes = recipes or core:getSortedRecipes()
         if selectedRecipeIdx > #recipes then
             selectedRecipeIdx = math.max(1, #recipes)
         end
@@ -429,7 +431,7 @@ local function run(context)
         end
     end
 
-    local function drawLearnScreen(surf)
+    local function drawLearnScreen(surf, wall)
         local w, h = surf.getSize()
         setColors(surf, colors.white, colors.black)
         surf.clear()
@@ -437,7 +439,7 @@ local function run(context)
         clearLineAt(surf, 1, colors.blue)
         writeAt(surf, 2, 1, "SIFIR-KODLU TARIF OGRENICI (DUVARDAN OKU)", colors.white, colors.blue)
 
-        local wall = core:scanWallState()
+        wall = wall or cachedWall
         local gw, gh = core:getGridSize()
         writeAt(surf, 2, 3, string.format("Duvarda tespit edilen dolu goz: %d", wall.occupiedCount), colors.cyan, colors.black)
 
@@ -585,12 +587,19 @@ local function run(context)
         return table.concat(parts, "|")
     end
 
-    local function computeTermSignature()
+    local function refreshHardwareSnapshots(preferStepCache)
+        if preferStepCache and not core.paused and core.lastWallState and core.lastPeripheralStatus then
+            cachedWall = core.lastWallState
+            cachedStat = core.lastPeripheralStatus
+        else
+            cachedWall = core:scanWallState()
+            cachedStat = core:getPeripheralStatus()
+        end
+    end
+
+    local function computeTermSignature(wall, pStat, recipes)
         if mode == "MAIN" then
-            local wall = core:scanWallState()
-            local pStat = core:getPeripheralStatus()
-            local recipes = core:getSortedRecipes()
-            return "MAIN|" .. computeDashboardSignature(wall, pStat, recipes, true), wall, pStat, recipes
+            return "MAIN|" .. computeDashboardSignature(wall, pStat, recipes, true)
         elseif mode == "CALIBRATE" then
             local gw, gh, totalSlots = core:getGridSize()
             local parts = {
@@ -603,7 +612,6 @@ local function run(context)
             end
             return table.concat(parts, "|")
         elseif mode == "LEARN" then
-            local wall = core:scanWallState()
             local parts = { "LEARN", tostring(learnInput), tostring(statusToast), tostring(wall.occupiedCount) }
             for i = 1, wall.totalSlots do
                 local s = wall.slots[i]
@@ -626,35 +634,41 @@ local function run(context)
         return tostring(mode)
     end
 
-    local function renderMonitorsOnly(force, cachedWall, cachedStat, cachedRecipes)
+    local function renderMonitorsOnly(force, wall, pStat, recipes)
         if #monitors == 0 then return end
-        local wall = cachedWall or core:scanWallState()
-        local pStat = cachedStat or core:getPeripheralStatus()
-        local recipes = cachedRecipes or core:getSortedRecipes()
+        wall = wall or cachedWall
+        pStat = pStat or cachedStat
+        recipes = recipes or core:getSortedRecipes()
         local monSig = computeDashboardSignature(wall, pStat, recipes, false)
         for _, mon in ipairs(monitors) do
             if force or lastMonSigs[mon] ~= monSig then
                 lastMonSigs[mon] = monSig
                 pcall(withBuffer, mon, function(buf)
-                    drawDashboard(buf, true)
+                    drawDashboard(buf, true, wall, pStat, recipes)
                 end)
             end
         end
     end
 
-    local function renderAll(force)
-        local termSig, wall, pStat, recipes = computeTermSignature()
+    local function renderAll(force, refreshHardware, preferStepCache)
+        if refreshHardware then
+            refreshHardwareSnapshots(preferStepCache)
+        end
+        local wall = cachedWall
+        local pStat = cachedStat
+        local recipes = core:getSortedRecipes()
+        local termSig = computeTermSignature(wall, pStat, recipes)
         if force or termSig ~= lastTermSig then
             lastTermSig = termSig
             withBuffer(parentTerm, function(buf)
                 if mode == "LEARN" then
-                    drawLearnScreen(buf)
+                    drawLearnScreen(buf, wall)
                 elseif mode == "CALIBRATE" then
                     drawCalibrationScreen(buf)
                 elseif mode == "SETTINGS" then
                     drawSettingsScreen(buf)
                 else
-                    drawDashboard(buf, false)
+                    drawDashboard(buf, false, wall, pStat, recipes)
                 end
             end)
         end
@@ -665,32 +679,33 @@ local function run(context)
         if mode == "CALIBRATE" then
             local _, _, totalSlots = core:getGridSize()
             if calSlot <= totalSlots then
-                local matched = core:calibrateNextSlot(calSlot, {
+                local matched, _, occ = core:calibrateNextSlot(calSlot, {
                     crafterNames = calCrafters,
                     baseline = calBaseline,
                     pollOnce = true
                 })
+                calOccupiedCount = occ and #occ or 0
+                calOccupiedSample = (occ and occ[1] and occ[1].name) or ""
                 if matched then
                     calLastOkMsg = string.format("[OK] Slot %d -> %s", calSlot, shortPeriphLabel(matched, 22))
                     setToast(calLastOkMsg)
-                    calBaseline = core:takeCrafterSnapshot(calCrafters)
                     calSlot = calSlot + 1
                     if calSlot > totalSlots then
                         finishCalibration("5x5 Kalibrasyon tamamlandi ve kaydedildi!")
                     end
                 end
-                refreshCalibrationOccupancy()
             else
                 finishCalibration("5x5 Kalibrasyon tamamlandi!")
             end
             core:maybeBroadcastHeartbeat()
-            renderAll(false)
+            renderAll(false, false)
         elseif mode == "SETTINGS" or mode == "LEARN" then
             if not core.paused then
                 core:step()
+                refreshHardwareSnapshots(true)
             end
             core:maybeBroadcastHeartbeat()
-            renderMonitorsOnly(false)
+            renderMonitorsOnly(false, cachedWall, cachedStat)
         else
             local res = core:step()
             if res and res.action == "CRAFTED" then
@@ -699,11 +714,11 @@ local function run(context)
                 setToast("HATA: " .. tostring(res.error))
             end
             core:maybeBroadcastHeartbeat()
-            renderAll(false)
+            renderAll(false, true, true)
         end
     end
 
-    renderAll(true)
+    renderAll(true, false)
     stepTimer = scheduleStepTimer()
 
     while running do
@@ -714,7 +729,7 @@ local function run(context)
         elseif ev == "rednet_message" then
             local handled = core:handleBaseBusMessage(p1, p2, p3)
             if handled then
-                renderAll(false)
+                renderAll(false, false)
             end
         elseif ev == "peripheral" or ev == "peripheral_detach" then
             monitors = findExternalMonitors()
@@ -724,14 +739,14 @@ local function run(context)
                 refreshCalibrationOccupancy()
             end
             core:openBaseBus()
-            renderAll(true)
+            renderAll(true, true, false)
         elseif ev == "char" then
             if mode == "LEARN" then
                 learnInput = learnInput .. tostring(p1)
-                renderAll(false)
+                renderAll(false, false)
             elseif mode == "SETTINGS" and settingsEditing then
                 settingsBuffer = settingsBuffer .. tostring(p1)
-                renderAll(false)
+                renderAll(false, false)
             end
         elseif ev == "key" then
             local key = p1
@@ -751,7 +766,7 @@ local function run(context)
                     mode = "MAIN"
                     setToast("Tarif ogrenme iptal edildi.")
                 end
-                renderAll(false)
+                renderAll(false, false)
 
             elseif mode == "CALIBRATE" then
                 local _, _, totalSlots = core:getGridSize()
@@ -897,6 +912,7 @@ local function run(context)
                     learnInput = ""
                     mode = "LEARN"
                     setToast("Duvardaki tarifi adlandirin.")
+                    renderAll(false, true, false)
                 elseif key == keys.c then
                     startCalibration()
                 elseif keys.i and key == keys.i then
@@ -935,8 +951,12 @@ local function run(context)
                     selectedRecipeIdx = math.max(1, selectedRecipeIdx - 1)
                 elseif key == keys.down then
                     selectedRecipeIdx = math.min(math.max(1, #recipes), selectedRecipeIdx + 1)
+                elseif keys.pageUp and key == keys.pageUp then
+                    selectedRecipeIdx = math.max(1, selectedRecipeIdx - 5)
+                elseif keys.pageDown and key == keys.pageDown then
+                    selectedRecipeIdx = math.min(math.max(1, #recipes), selectedRecipeIdx + 5)
                 end
-                renderAll(false)
+                renderAll(false, false)
             end
         elseif ev == "terminate" then
             running = false
