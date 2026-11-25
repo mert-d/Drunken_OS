@@ -283,10 +283,21 @@ local function createEnv(opts)
             return state.periphs[name] ~= nil
         end,
         getType = function(name)
-            return state.types[name]
+            local t = state.types[name]
+            if type(t) == "table" then
+                return table.unpack(t)
+            end
+            return t
         end,
         hasType = function(name, t)
-            return state.types[name] == t
+            local st = state.types[name]
+            if type(st) == "table" then
+                for _, v in ipairs(st) do
+                    if v == t then return true end
+                end
+                return false
+            end
+            return st == t
         end,
         wrap = function(name)
             return state.periphs[name]
@@ -590,6 +601,34 @@ local okAll, errAll = pcall(function()
         assert_eq(core.cfg.gridMap[1], "create:mechanical_crafter_14", "Mapped slot 1 -> mechanical_crafter_14")
         assert_true(env.periphs["create:mechanical_crafter_14"]._slots[1] == nil, "Cleared calibration item from crafter")
         assert_eq(env.periphs["minecraft:barrel_0"]._slots[1].name, "minecraft:cobblestone", "Returned calibration item to input barrel")
+
+        -- Calibration with list()-only crafter & no inputName configured yet
+        env.periphs["create:mechanical_crafter_15"].getItemDetail = nil
+        core.cfg.inputName = ""
+        baseline = core:takeCrafterSnapshot(crafters)
+        env.periphs["create:mechanical_crafter_15"]._slots[1] = { name = "minecraft:stone", count = 1 }
+        local matchedNoInput = core:calibrateNextSlot(2, { crafterNames = crafters, baseline = baseline, pollOnce = true })
+        assert_eq(matchedNoInput, "create:mechanical_crafter_15", "Detected list()-only crafter without getItemDetail")
+        assert_eq(core.cfg.gridMap[2], "create:mechanical_crafter_15", "Saved gridMap[2] even when inputName is empty")
+        assert_eq(env.periphs["create:mechanical_crafter_15"]._slots[1].name, "minecraft:stone", "Left calibration item in crafter when inputName is empty")
+
+        -- Discovery filter: Sophisticated Storage + ExtendedAE Pattern Provider
+        env.makeInventory("sophisticatedstorage:limited_barrel_0", { "sophisticatedstorage:barrel", "inventory" }, {})
+        env.makeInventory("extendedae:ex_pattern_provider_0", { "extendedae:ex_pattern_provider", "inventory" }, {})
+        local disc = core:discoverPeripherals()
+        local foundSoph, foundExAe, leakedCrafter, leakedProvider = false, false, false, false
+        for _, n in ipairs(disc.inventories) do
+            if n == "sophisticatedstorage:limited_barrel_0" then foundSoph = true end
+            if n:find("mechanical_crafter", 1, true) then leakedCrafter = true end
+            if n:find("pattern_provider", 1, true) then leakedProvider = true end
+        end
+        for _, n in ipairs(disc.ae2Providers) do
+            if n == "extendedae:ex_pattern_provider_0" then foundExAe = true end
+        end
+        assert_true(foundSoph, "discoverPeripherals includes Sophisticated Storage (hasType inventory)")
+        assert_true(foundExAe, "discoverPeripherals includes extendedae:ex_pattern_provider_0 in ae2Providers")
+        assert_eq(leakedCrafter, false, "inventories excludes mechanical_crafter")
+        assert_eq(leakedProvider, false, "inventories excludes pattern_provider")
     end
 
     -- 8. test_client_and_manifest_integrity

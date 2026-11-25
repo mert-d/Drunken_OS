@@ -189,17 +189,27 @@ local function isPeriphPresent(name)
     return false
 end
 
-local function getPeriphType(name)
+local function getPeriphTypes(name)
+    local out = {}
     if not peripheral or type(name) ~= "string" or name == "" then
-        return nil
+        return out
     end
     if peripheral.getType then
-        local ok, ptype = pcall(peripheral.getType, name)
-        if ok and type(ptype) == "string" then
-            return ptype
+        local results = { pcall(peripheral.getType, name) }
+        if results[1] then
+            for i = 2, #results do
+                if type(results[i]) == "string" and results[i] ~= "" then
+                    table.insert(out, results[i])
+                end
+            end
         end
     end
-    return nil
+    return out
+end
+
+local function getPeriphType(name)
+    local types = getPeriphTypes(name)
+    return types[1]
 end
 
 local function hasPeriphType(name, targetType)
@@ -207,8 +217,22 @@ local function hasPeriphType(name, targetType)
         local ok, has = pcall(peripheral.hasType, name, targetType)
         if ok and has then return true end
     end
-    local ptype = getPeriphType(name)
-    return ptype == targetType
+    for _, t in ipairs(getPeriphTypes(name)) do
+        if t == targetType then return true end
+    end
+    return false
+end
+
+local function nameOrTypeContains(name, needle)
+    if type(name) == "string" and name:lower():find(needle, 1, true) then
+        return true
+    end
+    for _, t in ipairs(getPeriphTypes(name)) do
+        if t:lower():find(needle, 1, true) then
+            return true
+        end
+    end
+    return false
 end
 
 function CrafterCore.new(opts)
@@ -334,14 +358,7 @@ function CrafterCore.isCrafterPeripheral(name)
     if hasPeriphType(name, "create:mechanical_crafter") then
         return true
     end
-    local ptype = getPeriphType(name)
-    if ptype and ptype:lower():find("mechanical_crafter", 1, true) then
-        return true
-    end
-    if name:lower():find("mechanical_crafter", 1, true) then
-        return true
-    end
-    return false
+    return nameOrTypeContains(name, "mechanical_crafter")
 end
 
 function CrafterCore:discoverPeripherals()
@@ -362,36 +379,31 @@ function CrafterCore:discoverPeripherals()
     end
 
     for _, name in ipairs(names) do
-        local ptype = tostring(getPeriphType(name) or ""):lower()
-        local lname = tostring(name):lower()
+        local isCrafter = CrafterCore.isCrafterPeripheral(name)
+        local isPatternProvider = nameOrTypeContains(name, "pattern_provider")
 
-        if CrafterCore.isCrafterPeripheral(name) then
+        if isCrafter then
             table.insert(res.crafters, name)
-        elseif ptype == "monitor" or hasPeriphType(name, "monitor") then
+        elseif hasPeriphType(name, "monitor") then
             table.insert(res.monitors, name)
-        elseif ptype == "modem" or hasPeriphType(name, "modem") then
+        elseif hasPeriphType(name, "modem") then
             local okW, isW = callPeriph(name, "isWireless")
             if okW and isW then
                 table.insert(res.wirelessModems, name)
             end
-        elseif ptype:find("redstone_relay", 1, true)
-            or ptype:find("redstone_integrator", 1, true)
-            or lname:find("redstone_relay", 1, true)
-            or lname:find("redstone_integrator", 1, true) then
+        elseif nameOrTypeContains(name, "redstone_relay")
+            or nameOrTypeContains(name, "redstone_integrator") then
             table.insert(res.redstoneRelays, name)
-        elseif ptype:find("pattern_provider", 1, true)
-            or lname:find("pattern_provider", 1, true)
-            or ptype:find("ae2", 1, true)
-            or lname:find("ae2", 1, true) then
+        elseif isPatternProvider then
             table.insert(res.ae2Providers, name)
         else
-            local okList = callPeriph(name, "list")
-            local okSize = callPeriph(name, "size")
-            if okList or okSize
-                or ptype:find("barrel", 1, true)
-                or ptype:find("chest", 1, true)
-                or ptype:find("inventory", 1, true)
-                or hasPeriphType(name, "inventory") then
+            local isInv = hasPeriphType(name, "inventory")
+            if not isInv then
+                local okList = callPeriph(name, "list")
+                local okSize = callPeriph(name, "size")
+                isInv = (okList or okSize) == true
+            end
+            if isInv then
                 table.insert(res.inventories, name)
             end
         end
@@ -543,23 +555,19 @@ function CrafterCore:getPeripheralStatus()
     }
 end
 
-local function crafterHasSlot1Item(periphName)
-    if not isPeriphPresent(periphName) then return false end
+local function crafterHasItem(periphName)
+    if not isPeriphPresent(periphName) then return false, nil end
+    local okList, items = callPeriph(periphName, "list")
+    if okList and type(items) == "table" then
+        local firstKey, firstItem = next(items)
+        if firstKey ~= nil then
+            return true, firstItem
+        end
+        return false, nil
+    end
     local okDet, detail = callPeriph(periphName, "getItemDetail", 1)
     if okDet and type(detail) == "table" and detail.name and (tonumber(detail.count) or 1) > 0 then
         return true, detail
-    end
-    local okList, listTbl = callPeriph(periphName, "list")
-    if okList and type(listTbl) == "table" then
-        local slot1 = listTbl[1]
-        if type(slot1) == "table" and slot1.name and (tonumber(slot1.count) or 1) > 0 then
-            return true, slot1
-        end
-        for _, item in pairs(listTbl) do
-            if type(item) == "table" and item.name and (tonumber(item.count) or 1) > 0 then
-                return true, item
-            end
-        end
     end
     return false, nil
 end
@@ -568,7 +576,7 @@ function CrafterCore:takeCrafterSnapshot(crafterNames)
     local names = crafterNames or self:discoverPeripherals().crafters
     local snapshot = {}
     for _, name in ipairs(names) do
-        local hasItem = crafterHasSlot1Item(name)
+        local hasItem = crafterHasItem(name)
         snapshot[name] = hasItem == true
     end
     return snapshot
@@ -602,7 +610,7 @@ function CrafterCore:calibrateNextSlot(slotIdx, opts)
     local function checkOnce()
         for _, name in ipairs(crafterNames) do
             if not baseline[name] then
-                local hasItem = crafterHasSlot1Item(name)
+                local hasItem = crafterHasItem(name)
                 if hasItem then
                     -- Keep 1-to-1 mapping across grid slots
                     for k, existing in pairs(self.cfg.gridMap) do
@@ -611,7 +619,10 @@ function CrafterCore:calibrateNextSlot(slotIdx, opts)
                         end
                     end
                     self.cfg.gridMap[slotIdx] = name
-                    if opts.returnToInput ~= false then
+                    if opts.returnToInput ~= false
+                        and type(self.cfg.inputName) == "string"
+                        and self.cfg.inputName ~= ""
+                        and isPeriphPresent(self.cfg.inputName) then
                         self:returnItemFromCrafter(name, 1)
                     end
                     self:saveConfig()
@@ -916,7 +927,7 @@ function CrafterCore:dispatchRecipe(recipe)
 
     -- Verify every required slot is populated before pulsing
     for _, pushed in ipairs(pushedTargets) do
-        local hasItem = crafterHasSlot1Item(pushed.crafter)
+        local hasItem = crafterHasItem(pushed.crafter)
         if not hasItem then
             rollback()
             self.status = "ERROR"
