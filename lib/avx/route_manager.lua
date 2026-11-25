@@ -179,7 +179,7 @@ function RouteManager:calculateGuidance(currentPos, currentVel, prevWp, tgtWp)
     local toTgtX = tx - cx
     local toTgtZ = tz - cz
     local distToTgt = math.sqrt(toTgtX * toTgtX + toTgtZ * toTgtZ)
-    local directHdg = math.atan2(-toTgtX, toTgtZ)
+    local directHdg = (math.atan2(toTgtX, -toTgtZ) + 2 * math.pi) % (2 * math.pi)
 
     local prevX = prevWp and prevWp.x or (cx - math.sin(directHdg) * 10)
     local prevY = prevWp and prevWp.y or cy
@@ -195,17 +195,17 @@ function RouteManager:calculateGuidance(currentPos, currentVel, prevWp, tgtWp)
     local along = 0.0
 
     if legLen > 2.0 then
-        legHdg = math.atan2(-legX, legZ)
+        legHdg = (math.atan2(legX, -legZ) + 2 * math.pi) % (2 * math.pi)
         -- Vector from prevWp to currentPos
         local px = cx - prevX
         local pz = cz - prevZ
 
         -- Cross-track error (positive = right of desired course, negative = left)
-        -- In Minecraft X/Z: X is East (+), Z is South (+). Heading 0 is South (-cos), 90 is West (-sin).
-        -- Leg unit vector: (-sin(legHdg), cos(legHdg))
-        -- Perpendicular normal vector: (cos(legHdg), sin(legHdg))
+        -- Aviation compass in Minecraft X/Z: North = 0 deg (-Z), East = 90 deg (+X).
+        -- Leg forward unit vector: (sin(legHdg), -cos(legHdg))
+        -- Perpendicular right-hand normal vector: (cos(legHdg), sin(legHdg))
         xtk = px * math.cos(legHdg) + pz * math.sin(legHdg)
-        along = -px * math.sin(legHdg) + pz * math.cos(legHdg)
+        along = px * math.sin(legHdg) - pz * math.cos(legHdg)
     end
 
     -- Cross-track intercept angle (Gain K_xtk: 2.5 deg per meter of XTK, capped at +/- 45 deg)
@@ -378,6 +378,11 @@ function M.onTelemetry(fc, tel, dt)
         return
     end
 
+    -- Suspend FMS setpoint overwrites while autonomous obstacle escape maneuver is running
+    if fc.ap.escape and fc.ap.escape.active then
+        return
+    end
+
     local activeWp = rm:getActiveWaypoint()
     if not activeWp then
         -- Fall back to single waypoint legacy LNAV if route is empty
@@ -386,8 +391,12 @@ function M.onTelemetry(fc, tel, dt)
             local dz = fc.ap.waypoint.z - tel.pos.z
             local distSq = dx * dx + dz * dz
             if distSq > 25 then
-                fc.ap.targetHdg = math.atan2(-dx, dz)
-                if fc.ap.waypoint.y then fc.ap.targetAlt = fc.ap.waypoint.y end
+                fc.ap.targetHdg = (math.atan2(dx, -dz) + 2 * math.pi) % (2 * math.pi)
+                if fc.ap.waypoint.transitY and distSq > 10000 then
+                    fc.ap.targetAlt = fc.ap.waypoint.transitY
+                elseif fc.ap.waypoint.y then
+                    fc.ap.targetAlt = fc.ap.waypoint.y
+                end
             else
                 fc:setMode("HOVER", tel)
             end
@@ -399,9 +408,13 @@ function M.onTelemetry(fc, tel, dt)
     local guide = rm:calculateGuidance(tel.pos, tel.velocity or { speed = tel.speed }, prevWp, activeWp)
     if not guide then return end
 
-    -- Apply LNAV heading & VNAV altitude guidance
+    -- Apply LNAV heading & VNAV altitude guidance (respecting post-escape altitude floor far from WP)
     fc.ap.targetHdg = guide.commandedHdg
-    fc.ap.targetAlt = guide.targetAlt
+    if fc.ap.escapeFloorAlt and (guide.distToTgt or 0) > 100 then
+        fc.ap.targetAlt = math.max(guide.targetAlt, fc.ap.escapeFloorAlt)
+    else
+        fc.ap.targetAlt = guide.targetAlt
+    end
     if activeWp.speed and activeWp.speed > 0 then
         fc.ap.baseThrottle = math.min(15, math.max(2, math.floor(activeWp.speed)))
     end

@@ -52,8 +52,38 @@ local lastAp = {
     targetHdg = 0,
     reverseGear = false,
     parkingBrake = false,
-    homeBase = nil
+    homeBase = nil,
+    pendingCall = nil,
+    waypoint = nil,
+    atcAutoAccept = false,
+    lastAtcNotice = nil,
+    obstacleAvoid = true,
+    escape = nil
 }
+
+local function formatDist(d)
+    d = tonumber(d) or 0
+    if d >= 1000 then
+        return string.format("%.1fkm", d / 1000.0)
+    end
+    return string.format("%.0fm", d)
+end
+
+local function getHomeBasePos(ap)
+    if not (ap and ap.homeBase) then return nil end
+    local b = ap.homeBase
+    return b.zeppelinMast or b.threshold or b.pos
+end
+
+local function calcVec(fromPos, toPos)
+    if not (fromPos and toPos and toPos.x and toPos.z) then return nil end
+    local dx = (tonumber(toPos.x) or 0) - (tonumber(fromPos.x) or 0)
+    local dz = (tonumber(toPos.z) or 0) - (tonumber(fromPos.z) or 0)
+    return {
+        dist   = math.sqrt(dx * dx + dz * dz),
+        brgDeg = (math.deg(math.atan2(dx, -dz)) % 360)
+    }
+end
 
 local radarRanges = { 50, 100, 250, 500 }
 local currentRangeIdx = 2 -- Default 100m
@@ -68,6 +98,22 @@ local btnAlarm  = { x1 = 2,  y1 = 1, x2 = 14, y2 = 1 }
 local btnAnchor = { x1 = 16, y1 = 1, x2 = 27, y2 = 1 }
 local btnHover  = { x1 = 29, y1 = 1, x2 = 39, y2 = 1 }
 local btnZoom   = { x1 = 41, y1 = 1, x2 = 52, y2 = 1 }
+local btnAccept = nil
+local btnReject = nil
+local btnRtb    = nil
+local btnRtbBar = nil
+
+local function engageRtbFromTable()
+    sendCmd("ENGAGE_RTB")
+    local hp = getHomeBasePos(lastAp)
+    local bName = (lastAp.homeBase and lastAp.homeBase.baseName) or "ANA-US"
+    if hp then
+        toastNotice = string.format("ANA US RTB: %s (%d,%d,%d)", tostring(bName), math.floor(hp.x), math.floor(hp.y), math.floor(hp.z))
+    else
+        toastNotice = "ANA US RTB: " .. tostring(bName)
+    end
+    toastTimer = 60
+end
 
 local function sendCmd(cmd, payload)
     if not hasModem or not rednet then return false end
@@ -116,7 +162,7 @@ local function cycleZoom()
     toastTimer = 50
 end
 
-local function drawRadar(cx, cy, radiusX, radiusY, maxDist)
+local function drawRadar(cx, cy, radiusX, radiusY, maxDist, termW, termH)
     -- Concentric Range Rings
     local r1X, r1Y = math.floor(radiusX * 0.5 + 0.5), math.floor(radiusY * 0.5 + 0.5)
     local r2X, r2Y = radiusX, radiusY
@@ -171,9 +217,10 @@ local function drawRadar(cx, cy, radiusX, radiusY, maxDist)
     end
 
     -- Home Base / Dock Beacon
-    if lastAp.homeBase and lastAp.homeBase.pos then
-        local bx = lastAp.homeBase.pos.x - curX
-        local bz = lastAp.homeBase.pos.z - curZ
+    local homePos = getHomeBasePos(lastAp)
+    if homePos then
+        local bx = (tonumber(homePos.x) or 0) - curX
+        local bz = (tonumber(homePos.z) or 0) - curZ
         local dist = math.sqrt(bx * bx + bz * bz)
         local scale = math.min(1.0, dist / maxDist)
         local angle = math.atan2(bx, -bz)
@@ -181,7 +228,24 @@ local function drawRadar(cx, cy, radiusX, radiusY, maxDist)
         local bpy = math.floor(cy - math.cos(angle) * (scale * radiusY) + 0.5)
         termObj.setTextColor(isColor and colors.yellow or colors.white)
         termObj.setCursorPos(bpx, bpy)
-        termObj.write("⚓")
+        termObj.write("B")
+    end
+
+    -- Active LNAV / Pending Call Waypoint
+    local activeWp = (lastAp.pendingCall and lastAp.pendingCall.targetPos) or lastAp.waypoint
+    if activeWp and activeWp.x and activeWp.z then
+        local wx = (tonumber(activeWp.x) or 0) - curX
+        local wz = (tonumber(activeWp.z) or 0) - curZ
+        local dist = math.sqrt(wx * wx + wz * wz)
+        local scale = math.min(1.0, dist / maxDist)
+        local angle = math.atan2(wx, -wz)
+        local wpx = math.floor(cx + math.sin(angle) * (scale * radiusX) + 0.5)
+        local wpy = math.floor(cy - math.cos(angle) * (scale * radiusY) + 0.5)
+        if wpx >= 1 and wpx <= (termW or 80) and wpy >= 2 and wpy <= ((termH or 24) - 1) then
+            termObj.setCursorPos(wpx, wpy)
+            termObj.setTextColor(isColor and (lastAp.pendingCall and colors.orange or colors.lime) or colors.white)
+            termObj.write(lastAp.pendingCall and "!" or "W")
+        end
     end
 
     -- Route Waypoints & Flight Legs on Radar
@@ -196,7 +260,7 @@ local function drawRadar(cx, cy, radiusX, radiusY, maxDist)
                 local angle = math.atan2(wx, -wz)
                 local rpx = math.floor(cx + math.sin(angle) * (scale * radiusX) + 0.5)
                 local rpy = math.floor(cy - math.cos(angle) * (scale * radiusY) + 0.5)
-                if rpx >= 1 and rpx <= w and rpy >= 2 and rpy <= h - 1 then
+                if rpx >= 1 and rpx <= (termW or 80) and rpy >= 2 and rpy <= ((termH or 24) - 1) then
                     termObj.setCursorPos(rpx, rpy)
                     if idx == lastTel.navRoute.activeIdx then
                         termObj.setTextColor(isColor and colors.lime or colors.white)
@@ -216,12 +280,12 @@ local function drawRadar(cx, cy, radiusX, radiusY, maxDist)
         if dist < maxDist * 1.5 then
             local scale = math.min(1.0, dist / maxDist)
             local brg = lastTel.navTarget.bearing or 0
-            local tx = math.floor(cx + math.sin(brg) * (scale * rx) + 0.5)
-            local ty = math.floor(cy - math.cos(brg) * (scale * ry) + 0.5)
-            if tx >= 1 and tx <= w and ty >= 2 and ty <= h - 2 then
+            local tx = math.floor(cx + math.sin(brg) * (scale * radiusX) + 0.5)
+            local ty = math.floor(cy - math.cos(brg) * (scale * radiusY) + 0.5)
+            if tx >= 1 and tx <= (termW or 80) and ty >= 2 and ty <= ((termH or 24) - 2) then
                 termObj.setCursorPos(tx, ty)
-                termObj.setTextColor(isColor and colors.yellow or colors.white)
-                termObj.write("◈")
+                termObj.setTextColor(isColor and colors.orange or colors.white)
+                termObj.write("T")
             end
         end
     end
@@ -313,7 +377,7 @@ local function renderTable()
     local radX = hasRightCol and math.min(12, math.floor((w - 36) * 0.5)) or math.min(18, math.floor(w * 0.22))
     local radY = math.min(8, math.floor((h - 6) * 0.45))
 
-    drawRadar(radarCx, radarCy, radX, radY, maxDist)
+    drawRadar(radarCx, radarCy, radX, radY, maxDist, w, h)
 
     -- Radar Legend
     termObj.setCursorPos(radarCx - 6, math.max(2, radarCy - radY - 1))
@@ -321,22 +385,27 @@ local function renderTable()
     termObj.write(string.format("[ RADAR: %dm ]", maxDist))
 
     -- 4. Right Status Column (If screen is wide enough)
+    btnAccept = nil
+    btnReject = nil
+    btnRtb    = nil
+    btnRtbBar = nil
     if w >= 48 then
-        local rx = w - 18
+        local rx = math.max(20, w - 21)
+        local colW = w - rx + 1
         termObj.setCursorPos(rx, 3)
         termObj.setTextColor(isColor and colors.cyan or colors.white)
-        termObj.write("--- ISTASYONLAR ---")
+        termObj.write(string.sub("--- ISTASYONLAR ---", 1, colW))
         termObj.setCursorPos(rx, 4)
         termObj.setTextColor(isColor and colors.lime or colors.white)
-        termObj.write("FCS KOKPIT : OK")
+        termObj.write(string.sub("FCS KOKPIT : OK", 1, colW))
         termObj.setCursorPos(rx, 5)
-        termObj.write("FCC MOTOR  : OK")
+        termObj.write(string.sub("FCC MOTOR  : OK", 1, colW))
         termObj.setCursorPos(rx, 6)
         termObj.setTextColor(isColor and colors.lightGray or colors.white)
-        termObj.write("ENG GUVRT  : HAZIR")
+        termObj.write(string.sub("ENG GUVRT  : HAZIR", 1, colW))
         termObj.setCursorPos(rx, 7)
         local baseStr = lastAp.homeBase and tostring(lastAp.homeBase.runwayId or "RWY") or "YOK"
-        termObj.write("ILS KULE   : " .. baseStr)
+        termObj.write(("ILS KULE   : " .. baseStr):sub(1, colW))
 
         termObj.setCursorPos(rx, 9)
         termObj.setTextColor(isColor and colors.yellow or colors.white)
@@ -344,12 +413,95 @@ local function renderTable()
         termObj.setCursorPos(rx, 10)
         local alertStr = (lastTel.alertLevel == "RED") and "KIRMIZI ALARM" or "GUVENLI SEYIR"
         termObj.setTextColor((lastTel.alertLevel == "RED") and colors.red or (isColor and colors.lime or colors.white))
-        termObj.write(alertStr)
+        termObj.write(alertStr:sub(1, colW))
         termObj.setCursorPos(rx, 11)
         termObj.setTextColor(colors.white)
-        termObj.write("MOD: " .. tostring(lastAp.mode or "MANUAL"))
+        termObj.write(("MOD: " .. tostring(lastAp.mode or "MANUAL")):sub(1, colW))
 
-        if lastTel.navRoute and lastTel.navRoute.wpName then
+        local hp = getHomeBasePos(lastAp)
+        if lastAp.escape and lastAp.escape.active then
+            local esc = lastAp.escape
+            local tr = (esc.phase == "BACKUP" and "GERI") or (esc.phase == "CLIMB" and "YUKSEL") or (esc.phase == "BYPASS" and "BYPASS") or tostring(esc.phase or "KRT")
+            termObj.setCursorPos(rx, 13)
+            termObj.setBackgroundColor(isColor and colors.red or colors.white)
+            termObj.setTextColor(isColor and colors.white or colors.black)
+            termObj.write(string.sub("! ENGEL KURTARMA !", 1, colW))
+            termObj.setBackgroundColor(colors.black)
+            termObj.setCursorPos(rx, 14)
+            termObj.setTextColor(isColor and colors.orange or colors.white)
+            termObj.write(string.format("#%d %s->%.0fm", tonumber(esc.attempt) or 1, tr, tonumber(esc.climbAlt) or 0):sub(1, colW))
+            termObj.setCursorPos(rx, 15)
+            termObj.setTextColor(colors.white)
+            termObj.write(("SEBEP: " .. tostring(esc.reason or "ENGEL")):sub(1, colW))
+            termObj.setCursorPos(rx, 16)
+            termObj.setTextColor(colors.lightGray)
+            termObj.write(string.sub("[E]IPTAL [T]KRTR", 1, colW))
+        elseif lastAp.pendingCall then
+            local pc = lastAp.pendingCall
+            local vec = pc.targetPos and calcVec(lastTel.pos, pc.targetPos)
+            termObj.setCursorPos(rx, 13)
+            termObj.setBackgroundColor(isColor and colors.orange or colors.white)
+            termObj.setTextColor(colors.black)
+            termObj.write(string.sub("! GELEN CAGRI !", 1, colW))
+            termObj.setBackgroundColor(colors.black)
+            termObj.setCursorPos(rx, 14)
+            termObj.setTextColor(isColor and colors.yellow or colors.white)
+            termObj.write(string.format("%s -> %s", tostring(pc.baseName or "KULE"):sub(1, 10), tostring(pc.cmd)):sub(1, colW))
+            termObj.setCursorPos(rx, 15)
+            termObj.setTextColor(colors.white)
+            if pc.targetPos then
+                termObj.write(string.format("(%d,%d,%d)", pc.targetPos.x, pc.targetPos.y, pc.targetPos.z):sub(1, colW))
+            end
+            termObj.setCursorPos(rx, 16)
+            termObj.setTextColor(isColor and colors.cyan or colors.white)
+            if vec then
+                termObj.write(string.format("D:%s Y:%03.0fd", formatDist(vec.dist), vec.brgDeg):sub(1, colW))
+            end
+            if h >= 19 then
+                termObj.setCursorPos(rx, 17)
+                termObj.setBackgroundColor(isColor and colors.lime or colors.white)
+                termObj.setTextColor(colors.black)
+                local accTxt = "[KABUL]"
+                termObj.write(accTxt)
+                btnAccept = { x1 = rx, y1 = 17, x2 = rx + #accTxt - 1, y2 = 17 }
+                termObj.setBackgroundColor(colors.black)
+                termObj.write(" ")
+                termObj.setBackgroundColor(isColor and colors.red or colors.gray)
+                termObj.setTextColor(colors.white)
+                local rejTxt = "[RED]"
+                local rrx = rx + #accTxt + 1
+                termObj.write(rejTxt)
+                btnReject = { x1 = rrx, y1 = 17, x2 = rrx + #rejTxt - 1, y2 = 17 }
+                termObj.setBackgroundColor(colors.black)
+            end
+        elseif lastAp.mode == "RTB" and hp then
+            local vec = calcVec(lastTel.pos, hp)
+            termObj.setCursorPos(rx, 13)
+            termObj.setTextColor(isColor and colors.lime or colors.white)
+            termObj.write("--- AKTIF RTB ---")
+            termObj.setCursorPos(rx, 14)
+            termObj.setTextColor(colors.white)
+            termObj.write(tostring(lastAp.homeBase.baseName or "BASE"):sub(1, colW))
+            termObj.setCursorPos(rx, 15)
+            termObj.write(string.format("(%d,%d,%d)", math.floor(hp.x), math.floor(hp.y), math.floor(hp.z)):sub(1, colW))
+            termObj.setCursorPos(rx, 16)
+            termObj.setTextColor(isColor and colors.cyan or colors.white)
+            termObj.write(string.format("D:%s %03.0fd", vec and formatDist(vec.dist) or "?", vec and vec.brgDeg or 0):sub(1, colW))
+        elseif lastAp.mode == "LNAV" and lastAp.waypoint then
+            local wp = lastAp.waypoint
+            local vec = calcVec(lastTel.pos, wp)
+            termObj.setCursorPos(rx, 13)
+            termObj.setTextColor(isColor and colors.lime or colors.white)
+            termObj.write("--- AKTIF LNAV ---")
+            termObj.setCursorPos(rx, 14)
+            termObj.setTextColor(colors.white)
+            termObj.write(tostring(wp.name or "HEDEF"):sub(1, colW))
+            termObj.setCursorPos(rx, 15)
+            termObj.write(string.format("(%d,%d,%d)", math.floor(wp.x), math.floor(wp.y or 0), math.floor(wp.z)):sub(1, colW))
+            termObj.setCursorPos(rx, 16)
+            termObj.setTextColor(isColor and colors.cyan or colors.white)
+            termObj.write(string.format("D:%s %03.0fd", vec and formatDist(vec.dist) or "?", vec and vec.brgDeg or 0):sub(1, colW))
+        elseif lastTel.navRoute and lastTel.navRoute.wpName then
             termObj.setCursorPos(rx, 13)
             termObj.setTextColor(isColor and colors.cyan or colors.white)
             termObj.write("--- OTONOM NAV ---")
@@ -371,10 +523,42 @@ local function renderTable()
             termObj.write(string.format("TGT: %s", tostring(lastTel.navTarget.name or "HEDEF"):sub(1, 12)))
             termObj.setCursorPos(rx, 15)
             termObj.setTextColor(colors.white)
-            termObj.write(string.format("DST: %4.0fm", lastTel.navTarget.distance or 0))
+            termObj.write(string.format("DST: %s", formatDist(lastTel.navTarget.distance or 0)))
             termObj.setCursorPos(rx, 16)
             termObj.setTextColor(colors.lightGray)
             termObj.write(string.format("BRG: %03.0f°", math.deg(lastTel.navTarget.bearing or 0) % 360))
+            if h >= 19 then
+                termObj.setCursorPos(rx, 17)
+                termObj.setBackgroundColor(isColor and colors.lime or colors.white)
+                termObj.setTextColor(colors.black)
+                local navBtn = "[MASA->LNAV]"
+                termObj.write(navBtn)
+                btnAccept = { x1 = rx, y1 = 17, x2 = rx + #navBtn - 1, y2 = 17 }
+                termObj.setBackgroundColor(colors.black)
+            end
+        elseif hp then
+            local vec = calcVec(lastTel.pos, hp)
+            termObj.setCursorPos(rx, 13)
+            termObj.setTextColor(isColor and colors.cyan or colors.white)
+            termObj.write("--- US BEACON ---")
+            termObj.setCursorPos(rx, 14)
+            termObj.setTextColor(colors.white)
+            termObj.write(tostring(lastAp.homeBase.baseName or "BASE"):sub(1, colW))
+            termObj.setCursorPos(rx, 15)
+            termObj.write(string.format("(%d,%d,%d)", math.floor(hp.x), math.floor(hp.y), math.floor(hp.z)):sub(1, colW))
+            termObj.setCursorPos(rx, 16)
+            termObj.setTextColor(isColor and colors.lightGray or colors.white)
+            termObj.write(string.format("D:%s %03.0fd", vec and formatDist(vec.dist) or "?", vec and vec.brgDeg or 0):sub(1, colW))
+            local isHpOk = not (lastAp.homeBase and lastAp.homeBase.calibrated == false and (tonumber(hp.x) or 0) == 0 and (tonumber(hp.z) or 0) == 0)
+            if isHpOk and h >= 19 then
+                termObj.setCursorPos(rx, 17)
+                termObj.setBackgroundColor(isColor and colors.cyan or colors.white)
+                termObj.setTextColor(colors.black)
+                local rtbTxt = "[ANA US (RTB)]"
+                termObj.write(rtbTxt:sub(1, colW))
+                btnRtb = { x1 = rx, y1 = 17, x2 = rx + math.min(#rtbTxt, colW) - 1, y2 = 17 }
+                termObj.setBackgroundColor(colors.black)
+            end
         end
     end
 
@@ -431,6 +615,18 @@ local function renderTable()
     termObj.setCursorPos(btnZoom.x1, btnZoom.y2)
     termObj.write("              ")
 
+    -- [RTB / ANA US] Button (when wide enough)
+    if w >= 66 then
+        btnRtbBar = { x1 = 54, y1 = h - 1, x2 = 65, y2 = h }
+        local isRtb = (lastAp.mode == "RTB")
+        termObj.setCursorPos(btnRtbBar.x1, btnRtbBar.y1)
+        termObj.setBackgroundColor(isRtb and (isColor and colors.lime or colors.white) or (isColor and colors.cyan or colors.white))
+        termObj.setTextColor(colors.black)
+        termObj.write(" [R] ANA US ")
+        termObj.setCursorPos(btnRtbBar.x1, btnRtbBar.y2)
+        termObj.write("            ")
+    end
+
     termObj.setBackgroundColor(colors.black)
 end
 
@@ -457,6 +653,13 @@ local function networkLoop()
                 if msg.alertLevel then lastTel.alertLevel = msg.alertLevel end
                 if msg.ap then
                     for k, v in pairs(msg.ap) do lastAp[k] = v end
+                    lastAp.pendingCall   = msg.ap.pendingCall
+                    lastAp.homeBase      = msg.ap.homeBase
+                    lastAp.waypoint      = msg.ap.waypoint
+                    lastAp.lastAtcNotice = msg.ap.lastAtcNotice
+                    lastAp.atcAutoAccept = (msg.ap.atcAutoAccept == true)
+                    lastAp.escape        = msg.ap.escape
+                    lastAp.obstacleAvoid = (msg.ap.obstacleAvoid ~= false)
                 end
             elseif msg.type == "AVIONICS_TELEMETRY" and msg.telemetry then
                 lastTel = msg.telemetry
@@ -492,12 +695,52 @@ local function interactionLoop()
                 toggleAnchor()
             elseif k == keys.h then
                 toggleHover()
-            elseif k == keys.r or k == keys.tab then
+            elseif k == keys.j or k == keys.enter then
+                sendCmd("ACCEPT_CALL")
+                toastNotice = "CAGRI / HEDEF KABUL EDILDI"
+                toastTimer = 60
+            elseif k == keys.backspace or (k == keys.x and lastAp.pendingCall ~= nil) then
+                sendCmd("REJECT_CALL")
+                toastNotice = "CAGRI REDDEDILDI"
+                toastTimer = 60
+            elseif k == keys.e then
+                if lastAp.escape and lastAp.escape.active then
+                    sendCmd("CANCEL_ESCAPE")
+                    toastNotice = "ENGEL KURTARMA IPTAL EDILDI"
+                else
+                    sendCmd("TOGGLE_OBSTACLE_AVOID")
+                    lastAp.obstacleAvoid = not (lastAp.obstacleAvoid ~= false)
+                    toastNotice = "OTO ENGEL KURTARMA: " .. (lastAp.obstacleAvoid and "ACIK" or "KAPALI")
+                end
+                toastTimer = 60
+            elseif k == keys.t then
+                sendCmd("TRIGGER_ESCAPE")
+                toastNotice = "MANUEL KURTARMA: GERI + YUKSEL!"
+                toastTimer = 60
+            elseif k == keys.r then
+                engageRtbFromTable()
+            elseif k == keys.tab then
                 cycleZoom()
             end
         elseif ev == "monitor_touch" or ev == "mouse_click" then
             local tx, ty = p2, p3
-            if ty >= btnAlarm.y1 and ty <= btnAlarm.y2 and tx >= btnAlarm.x1 and tx <= btnAlarm.x2 then
+            if btnAccept and ty >= btnAccept.y1 and ty <= btnAccept.y2 and tx >= btnAccept.x1 and tx <= btnAccept.x2 then
+                sendCmd("ACCEPT_CALL")
+                toastNotice = "CAGRI / HEDEF KABUL EDILDI"
+                toastTimer = 60
+            elseif btnReject and ty >= btnReject.y1 and ty <= btnReject.y2 and tx >= btnReject.x1 and tx <= btnReject.x2 then
+                sendCmd("REJECT_CALL")
+                toastNotice = "CAGRI REDDEDILDI"
+                toastTimer = 60
+            elseif btnRtb and ty >= btnRtb.y1 and ty <= btnRtb.y2 and tx >= btnRtb.x1 and tx <= btnRtb.x2 then
+                engageRtbFromTable()
+            elseif btnRtbBar and ty >= btnRtbBar.y1 and ty <= btnRtbBar.y2 and tx >= btnRtbBar.x1 and tx <= btnRtbBar.x2 then
+                if lastAp.mode == "RTB" then
+                    toggleHover()
+                else
+                    engageRtbFromTable()
+                end
+            elseif ty >= btnAlarm.y1 and ty <= btnAlarm.y2 and tx >= btnAlarm.x1 and tx <= btnAlarm.x2 then
                 toggleRedAlert()
             elseif ty >= btnAnchor.y1 and ty <= btnAnchor.y2 and tx >= btnAnchor.x1 and tx <= btnAnchor.x2 then
                 toggleAnchor()

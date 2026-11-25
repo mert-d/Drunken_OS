@@ -308,7 +308,119 @@ local function runTests()
     assert(rtbOk == true, "Expected engageRTB to succeed using takeoffPos fallback")
     assert(msFC.ap.mode == "RTB", "Expected mode to switch to RTB")
 
-    print("  PASS: Test 7: Mothership 4x Quad-Lift Gimbal Stabilization, Yaw Desaturation & 180° Turnaround")
+    -- Test 7e: High-Authority Climb (+30m) & HOVER Push-Pull Yaw Couple
+    msFC.lastBaseLift = nil
+    msFC:setMode("HOVER", msFC:readTelemetry(0.05))
+    msFC.ap.targetAlt = 100.0
+    msFC:step(0.05)
+    local levelFlRpm = msFC.lastMothershipState.flRpm
+    local levelRlRpm = msFC.lastMothershipState.rlRpm
+
+    msFC.ap.targetAlt = 130.0 -- +30m climb command in HOVER
+    msFC.ap.targetHdg = math.rad(45) -- 45 deg turn in HOVER
+    for _ = 1, 5 do
+        msFC:step(0.05)
+    end
+    local climbFlRpm = msFC.lastMothershipState.flRpm
+    local climbRlRpm = msFC.lastMothershipState.rlRpm
+    assert(climbFlRpm > levelFlRpm + 20 and climbRlRpm > levelRlRpm + 20,
+        "Expected strong climb RPM boost (+30m HOVER), got FL:" .. tostring(climbFlRpm) .. " RL:" .. tostring(climbRlRpm))
+    assert(scRPMs[5] ~= scRPMs[7] and ((scRPMs[5] < 0 and scRPMs[7] > 0) or (scRPMs[5] > 0 and scRPMs[7] < 0)),
+        "Expected opposite-sign push-pull rear thruster RPMs in HOVER turn, got L:" .. tostring(scRPMs[5]) .. " R:" .. tostring(scRPMs[7]))
+
+    -- Test 7f: Correct Yaw Polarity, Fine 1-RPM Intermediate Thrust & Eastward RTB Bearing (North=0, East=90)
+    msFC:setMode("CRUISE", msFC:readTelemetry(0.05))
+    msFC.ap.baseThrottle = 10
+    msFC.yawRateInt = 0.0
+    msFC.smoothYawRate = 0.0
+    msFC.prevYawHdg = 0.0
+    msFC.ap.targetHdg = math.rad(5) -- +5 deg gentle right turn
+    msFC:step(0.05)
+    assert(scRPMs[5] > scRPMs[7],
+        "Expected Port thruster (5) > Starboard thruster (7) on right turn, got L:" .. tostring(scRPMs[5]) .. " R:" .. tostring(scRPMs[7]))
+    assert(scRPMs[5] < 240 and scRPMs[7] > 0,
+        "Expected smooth intermediate RPMs (no +15/-9 bang-bang) on +5 deg turn, got L:" .. tostring(scRPMs[5]) .. " R:" .. tostring(scRPMs[7]))
+
+    msFC.ap.homeBase = { baseName = "EAST-HOME", threshold = { x = 1000, y = 120, z = 0 }, rwyHeadingRad = 0.0, approachDist = 0.0 }
+    msFC.pos = { x = 0, y = 120, z = 0 }
+    msFC:engageRTB(msFC:readTelemetry(0.05))
+    msFC:step(0.05)
+    assert(math.abs(msFC.ap.targetHdg - math.rad(90)) < 0.02,
+        "Expected Eastward RTB targetHdg ~ 90 deg (pi/2 rad), got deg=" .. tostring(math.deg(msFC.ap.targetHdg)))
+
+    -- Test 7g: Slow Real-Loop + Measured Create Rotor Transport Lag (lag=2 + alpha=0.45) Anti-Pogo Settling
+    local pogoAlt, pogoVy = 210.0, 0.0
+    local pogoAltMock = { getHeight = function() return pogoAlt end, getVerticalSpeed = function() return pogoVy end }
+    local pogoGimbalMock = { getAnglesRad = function() return { 0.0, 0.0 } end, getAngularVelocity = function() return { 0.0, 0.0, 0.0 } end }
+    local pogoFC = Avionics.new({ callsign = "POGO-TEST", profile = "MOTHERSHIP", useGPS = false })
+    pogoFC.scanPeripherals = function() end
+    pogoFC.altSensor = pogoAltMock
+    pogoFC.altSensors = { pogoAltMock }
+    pogoFC.gimbal = pogoGimbalMock
+    pogoFC.adaptive.hoverBase = 10.97 -- Start bloated like live incident
+    pogoFC:setMode("HOVER", { altitude = pogoAlt, heading = 0.0 })
+    pogoFC.ap.targetAlt = 235.0
+    local uHist7g = { 9.0, 9.0, 9.0 }
+    local uRotor7g = 9.0
+    local tailMinAlt, tailMaxAlt = math.huge, -math.huge
+    for stepIdx = 1, 200 do
+        local simDt = 0.35
+        local eq = 9.0 + (pogoAlt - 220.0) * 0.035
+        pogoFC.altSensor = pogoAltMock
+        pogoFC.altSensors = { pogoAltMock }
+        pogoFC.gimbal = pogoGimbalMock
+        pogoFC:step(simDt)
+        local st = pogoFC.lastMothershipState
+        local cmdLift = (st.rlRpm / 256.0) * 15.0
+        table.insert(uHist7g, cmdLift)
+        local uDelayed = table.remove(uHist7g, 1)
+        uRotor7g = uRotor7g * 0.55 + uDelayed * 0.45
+        pogoVy = pogoVy + ((uRotor7g - eq) * 0.58 - pogoVy * 0.05) * simDt
+        pogoAlt = pogoAlt + pogoVy * simDt
+        if stepIdx >= 145 then
+            tailMinAlt = math.min(tailMinAlt, pogoAlt)
+            tailMaxAlt = math.max(tailMaxAlt, pogoAlt)
+        end
+    end
+    assert(math.abs(pogoAlt - 235.0) < 1.5, "Expected vertical hold convergence within 1.5m under dt=0.35s & lag=2, got alt=" .. tostring(pogoAlt))
+    assert((tailMaxAlt - tailMinAlt) < 1.0, "Expected zero vertical pogo oscillation at tail, span=" .. tostring(tailMaxAlt - tailMinAlt))
+
+    -- Live Hover Disturbance Recovery (232.1m, vy=+1.2 m/s -> tgt=234.0m, identified Ku=0.5825, eq=9.73)
+    local liveAlt, liveVy = 232.1, 1.2
+    local liveAltMock = { getHeight = function() return liveAlt end, getVerticalSpeed = function() return liveVy end }
+    local liveFC = Avionics.new({ callsign = "POGO-LIVE", profile = "MOTHERSHIP", useGPS = false })
+    liveFC.scanPeripherals = function() end
+    liveFC.altSensor = liveAltMock
+    liveFC.altSensors = { liveAltMock }
+    liveFC.gimbal = pogoGimbalMock
+    liveFC.adaptive.hoverBase = 9.685
+    liveFC:setMode("HOVER", { altitude = liveAlt, heading = 0.0 })
+    liveFC.ap.targetAlt = 234.0
+    local uHistLive = { 9.73, 9.73, 9.73 }
+    local uRotorLive = 9.73
+    local liveTailMin, liveTailMax = math.huge, -math.huge
+    for stepIdx = 1, 220 do
+        local simDt = 0.303
+        liveFC.altSensor = liveAltMock
+        liveFC.altSensors = { liveAltMock }
+        liveFC.gimbal = pogoGimbalMock
+        liveFC:step(simDt)
+        local st = liveFC.lastMothershipState
+        local cmdLift = (st.rlRpm / 256.0) * 15.0
+        table.insert(uHistLive, cmdLift)
+        local uDelayed = table.remove(uHistLive, 1)
+        uRotorLive = uRotorLive * 0.55 + uDelayed * 0.45
+        liveVy = liveVy + ((uRotorLive - 9.73) * 0.5825 - liveVy * 0.02) * simDt
+        liveAlt = liveAlt + liveVy * simDt
+        if stepIdx >= 160 then
+            liveTailMin = math.min(liveTailMin, liveAlt)
+            liveTailMax = math.max(liveTailMax, liveAlt)
+        end
+    end
+    assert(math.abs(liveAlt - 234.0) < 0.3, "Expected live hover disturbance lock within 0.3m, got alt=" .. tostring(liveAlt))
+    assert((liveTailMax - liveTailMin) < 0.4, "Expected dead-flat live hover tail < 0.4m, got span=" .. tostring(liveTailMax - liveTailMin))
+
+    print("  PASS: Test 7: Mothership 4x Quad-Lift Gimbal Stabilization, Climb Authority, Yaw Desaturation & Precision Turn")
 
     -- Test 8: Zeppelin HOVER Equilibrium, Steady-State Inverted Clutch (No Oscillation) & Shared Network Gearshift
     local hoverBurnerSig = 0
@@ -431,6 +543,347 @@ local function runTests()
     }, hvrTel)
     assert(okPark == true and hvrFC.ap.mode == "MANUAL" and hvrFC.ap.parkingBrake == true and hvrFC.ap.baseThrottle == 0, "Expected ATC PARK command to cut throttle and engage parkingBrake")
     print("  PASS: Test 9: Remote ATC Command Uplink (RTB, WAYPOINT, PARK)")
+
+    -- Test 9b: ATC Incoming Call Confirmation Queue, Accept/Reject, Safe En-Route Transit Alt, Nav-Table Accept & Calibrated Beacon Guard
+    do
+    local callFC = Avionics.new({ callsign = "SKYFIRE-CALL", profile = "MOTHERSHIP", useGPS = false })
+    callFC.scanPeripherals = function() end
+    local callAlt = 220.0
+    callFC.altSensor = { getHeight = function() return callAlt end, getVerticalSpeed = function() return 0.0 end }
+    callFC.altSensors = { callFC.altSensor }
+    callFC.gimbal = { getAnglesRad = function() return { 0.0, 0.0 } end, getAngularVelocity = function() return { 0.0, 0.0, 0.0 } end }
+    callFC.pos = { x = -1000, y = 220, z = 1000 }
+    local callTel = { callsign = "SKYFIRE-CALL", altitude = 220.0, heading = 0.0, pos = { x = -1000, y = 220, z = 1000 } }
+    callFC:setMode("HOVER", callTel)
+
+    local calBeacon = {
+        type         = "AVIONICS_ILS_BEACON",
+        baseName     = "DRUNKEN-BASE-ALPHA",
+        runwayId     = "RWY-36",
+        calibrated   = true,
+        threshold    = { x = 1142, y = 156, z = -249 },
+        zeppelinMast = { x = 1142, y = 171, z = -249 }
+    }
+
+    -- 1. Normal RTB call queues without hijacking active HOVER mode
+    local st1, _ = callFC:receiveAtcCall({
+        type = "AVIONICS_ATC_CMD", target = "SKYFIRE-CALL", cmd = "RTB", requireConfirm = true, beacon = calBeacon
+    }, callTel, 17)
+    assert(st1 == "PENDING", "Expected normal RTB call to return PENDING")
+    assert(callFC.ap.mode == "HOVER", "Expected HOVER mode to stay undisturbed while call is pending")
+    assert(callFC.ap.pendingCall ~= nil and callFC.ap.pendingCall.targetPos.x == 1142 and callFC.ap.pendingCall.targetPos.y == 171 and callFC.ap.pendingCall.targetPos.z == -249,
+        "Expected pendingCall to hold exact calibrated Base coordinates (1142,171,-249)")
+
+    -- 2. Reject clears pendingCall cleanly
+    local okRej, _ = callFC:rejectPendingCall()
+    assert(okRej == true and callFC.ap.pendingCall == nil and callFC.ap.mode == "HOVER", "Expected rejectPendingCall to clear pendingCall")
+
+    -- 3. Re-queue and accept RTB -> engages RTB_MAST, holds rtbTransitAlt when far (>100m), descends to mast+15 when near (<=100m)
+    callFC:receiveAtcCall({
+        type = "AVIONICS_ATC_CMD", target = "SKYFIRE-CALL", cmd = "RTB", beacon = calBeacon
+    }, callTel, 17)
+    local okAcc, _, accCall = callFC:acceptPendingCall(callTel)
+    assert(okAcc == true and accCall ~= nil and callFC.ap.mode == "RTB" and callFC.ap.rtbPhase == "RTB_MAST",
+        "Expected acceptPendingCall to execute queued RTB into RTB_MAST")
+    assert(callFC.ap.pendingCall == nil, "Expected pendingCall cleared upon accept")
+
+    local prevSublevel9b = _G.sublevel
+    _G.sublevel = { getLogicalPose = function() return { position = { x = -1000, y = 220, z = 1000 } } end }
+    callFC:step(0.05)
+    assert(callFC.ap.targetAlt >= 220.0, "Expected long-range RTB (>100m) to hold safe en-route altitude >=220m, got " .. tostring(callFC.ap.targetAlt))
+    _G.sublevel = { getLogicalPose = function() return { position = { x = 1100, y = 220, z = -220 } } end }
+    callFC:step(0.05)
+    assert(math.abs(callFC.ap.targetAlt - 186.0) < 0.1, "Expected short-range RTB (<=100m) to step down to mast.y+15 (186m), got " .. tostring(callFC.ap.targetAlt))
+    _G.sublevel = prevSublevel9b
+
+    -- 4. force=true, atcAutoAccept=true, and cmd=PARK bypass queue immediately
+    local stForce, _ = callFC:receiveAtcCall({
+        type = "AVIONICS_ATC_CMD", target = "SKYFIRE-CALL", cmd = "HOVER", force = true
+    }, callTel, 17)
+    assert(stForce == "EXECUTED" and callFC.ap.mode == "HOVER", "Expected force=true call to execute immediately")
+
+    callFC.ap.atcAutoAccept = true
+    local stAuto, _ = callFC:receiveAtcCall({
+        type = "AVIONICS_ATC_CMD", target = "SKYFIRE-CALL", cmd = "RTB", beacon = calBeacon
+    }, callTel, 17)
+    assert(stAuto == "EXECUTED" and callFC.ap.mode == "RTB", "Expected atcAutoAccept=true to execute RTB immediately")
+    callFC.ap.atcAutoAccept = false
+
+    local stPark, _ = callFC:receiveAtcCall({
+        type = "AVIONICS_ATC_CMD", target = "SKYFIRE-CALL", cmd = "PARK"
+    }, callTel, 17)
+    assert(stPark == "EXECUTED" and callFC.ap.mode == "MANUAL" and callFC.ap.parkingBrake == true, "Expected emergency PARK to bypass confirmation queue")
+
+    -- 5. Uncalibrated (0,0) beacon must not overwrite an already-calibrated homeBase
+    callFC:setHomeBase({
+        type = "AVIONICS_ILS_BEACON", baseName = "BAD-TOWER", runwayId = "RWY-00", calibrated = false,
+        threshold = { x = 0, y = 68, z = 0 }, zeppelinMast = { x = 0, y = 85, z = 0 }
+    })
+    assert(callFC.ap.homeBase.zeppelinMast.x == 1142 and callFC.ap.homeBase.zeppelinMast.z == -249,
+        "Expected uncalibrated (0,0) beacon not to overwrite calibrated Base coordinates")
+
+    -- 6. Accepting with no pending ATC call adopts Navigation Table target (explicit pos and bearing+distance projection)
+    callTel.pos = { x = 100, y = 200, z = -200 }
+    callTel.altitude = 200.0
+    callTel.navTarget = { active = true, name = "LODESTONE-A", distance = 500, bearing = math.rad(90), vOffset = -20, pos = { x = 600, y = 180, z = -200 } }
+    local okNav1, _ = callFC:acceptPendingCall(callTel)
+    assert(okNav1 == true and callFC.ap.mode == "LNAV" and math.abs(callFC.ap.waypoint.x - 600) < 0.1 and math.abs(callFC.ap.waypoint.z - (-200)) < 0.1,
+        "Expected acceptPendingCall to adopt explicit navTarget.pos into LNAV")
+
+    callTel.navTarget = { active = true, name = "BEARING-ONLY", distance = 200, bearing = math.rad(0), vOffset = -10, pos = nil }
+    local okNav2, _ = callFC:acceptPendingCall(callTel)
+    assert(okNav2 == true and callFC.ap.mode == "LNAV" and math.abs(callFC.ap.waypoint.x - 100) < 0.1 and math.abs(callFC.ap.waypoint.z - (-400)) < 0.1,
+        "Expected acceptPendingCall to project bearing+distance navTarget into LNAV Northward")
+    print("  PASS: Test 9b: ATC Incoming Call Queue, Accept/Reject, Safe RTB Transit, Nav-Table Accept & Zero-Beacon Guard")
+    end
+
+    -- Test 9c: Autonomous Obstacle / Island Collision Escape & Recovery (Backup + Climb + Bypass + Cap)
+    do
+    local escRPMs = { 0, 0, 0, 0, 0, 0, 0 }
+    local escMocks = {}
+    for i = 1, 7 do
+        escMocks[i] = {
+            setTargetSpeed = function(rpm) escRPMs[i] = rpm end,
+            getTargetSpeed = function() return escRPMs[i] end
+        }
+    end
+    local simX, simY, simZ = 0.0, 259.0, 0.0
+    local simVx, simVz = 0.0, 0.0
+    local simHdg = math.rad(119.3)
+    local simRadar = nil
+    local prevFind9c = _G.peripheral.find
+    local prevSub9c  = _G.sublevel
+    _G.peripheral.find = function(pType)
+        if pType == "rotation_speed_controller" then
+            return table.unpack(escMocks)
+        elseif pType == "altitude_sensor" then
+            return { getHeight = function() return simY end, getVerticalSpeed = function() return 0.0 end }
+        elseif pType == "gimbal_sensor" then
+            return { getAnglesRad = function() return { 0.0, 0.0 } end, getAngularVelocity = function() return { 0.0, 0.0, 0.0 } end }
+        elseif pType == "navigation_table" then
+            return { getHeadingRad = function() return simHdg end, hasTarget = function() return false end }
+        elseif pType == "radar" and simRadar then
+            return { getContact = function() return simRadar end }
+        end
+        return nil
+    end
+    _G.sublevel = {
+        getLogicalPose = function() return { position = { x = simX, y = simY, z = simZ } } end,
+        getLinearVelocity = function() return { x = simVx, y = 0.0, z = simVz } end
+    }
+
+    local escFC = Avionics.new({ callsign = "ESC-TEST", profile = "MOTHERSHIP", useGPS = false })
+    escFC.scanPeripherals = function() end
+    escFC:setHomeBase({
+        type = "AVIONICS_ILS_BEACON", baseName = "HOME", runwayId = "RWY-36", calibrated = true,
+        threshold = { x = 1142, y = 156, z = -249 }, zeppelinMast = { x = 1142, y = 171, z = -249 }
+    })
+
+    -- 1. Open-air in-place pivot turn (speed=0, changing heading fast -> NO false escape trigger)
+    escFC:engageRTB({ altitude = simY, heading = simHdg, pos = { x = simX, y = simY, z = simZ } })
+    escFC.ap.baseThrottle = 10
+    for stepIdx = 1, 24 do -- 6.0s of turning cleanly
+        simHdg = (simHdg + math.rad(4.0)) % (2 * math.pi)
+        escFC:step(0.25)
+        assert(escFC.ap.escape == nil, "Expected no false obstacle escape during free heading pivot at step " .. tostring(stepIdx))
+    end
+
+    -- 2. Wedged against sky island in RTB (speed=0, moved=0, yawRate=0 for >3.5s after turn decays) -> triggers BACKUP
+    simHdg = math.rad(119.3)
+    for _ = 1, 22 do -- allow yawRate filter decay after snap + 3.5s stuck threshold
+        escFC:step(0.25)
+    end
+    assert(escFC.ap.escape ~= nil and escFC.ap.escape.phase == "BACKUP", "Expected wedged stall to trigger BACKUP escape phase")
+    assert(escFC.ap.escape.attempt == 1 and math.abs(escFC.ap.escape.climbAlt - 281.0) < 0.5, "Expected attempt=1 and climbAlt=281m")
+    assert(escRPMs[5] < 0 and escRPMs[6] < 0 and escRPMs[7] < 0,
+        string.format("Expected all 3 rear thrusters in reverse (<0 RPM) during BACKUP, got L:%d C:%d R:%d", escRPMs[5], escRPMs[6], escRPMs[7]))
+
+    -- 3. Phase progression: BACKUP -> CLIMB (baseThrottle=0) -> Resume RTB with elevated rtbTransitAlt
+    for _ = 1, 20 do -- > 4.5s backupDur
+        escFC:step(0.25)
+    end
+    assert(escFC.ap.escape ~= nil and escFC.ap.escape.phase == "CLIMB", "Expected transition to CLIMB phase after BACKUP")
+    assert(escFC.ap.baseThrottle == 0, "Expected forward/rear thrusters halted (baseThrottle=0) during vertical CLIMB")
+    simY = 280.0
+    escFC:step(0.25)
+    assert(escFC.ap.escape == nil and escFC.ap.mode == "RTB", "Expected attempt 1 climb completion to resume RTB cleanly")
+    assert((escFC.ap.rtbTransitAlt or 0) >= 280.5, "Expected RTB to preserve elevated transit altitude >= 281m after escape")
+
+    -- 4. Second consecutive obstacle triggers attempt=2 with BYPASS phase; 5th hits 4-attempt safety cap -> HOVER
+    escFC.obsSimClock = escFC.obsSimClock + 10.0 -- within 120s window
+    escFC.obsLastEscapeClock = escFC.obsSimClock - 10.0
+    escFC:triggerObstacleEscape({ altitude = 260.0, heading = simHdg, pos = { x = simX, y = 260.0, z = simZ } }, "ENGEL-2")
+    assert(escFC.ap.escape and escFC.ap.escape.attempt == 2 and escFC.ap.escape.bypassHdg ~= nil,
+        "Expected 2nd consecutive obstacle to schedule lateral BYPASS")
+    for _ = 1, 24 do escFC:step(0.25) end -- Finish 5.5s BACKUP -> enters CLIMB
+    assert(escFC.ap.escape and escFC.ap.escape.phase == "CLIMB", "Expected attempt 2 in CLIMB phase")
+    simY = 283.0
+    escFC:step(0.25) -- Reach climbAlt -> enters BYPASS
+    assert(escFC.ap.escape and escFC.ap.escape.phase == "BYPASS" and escFC.ap.baseThrottle > 0,
+        "Expected attempt 2 to enter lateral BYPASS phase with forward throttle")
+    for _ = 1, 22 do escFC:step(0.25) end -- Finish 5.0s BYPASS -> resumes RTB
+    assert(escFC.ap.escape == nil and escFC.ap.mode == "RTB", "Expected BYPASS completion to resume RTB")
+
+    -- Attempts 3, 4, then 5 triggers safety cap -> HOVER
+    escFC:triggerObstacleEscape({ altitude = 260.0, heading = simHdg, pos = { x = simX, y = 260.0, z = simZ } }, "3")
+    escFC:triggerObstacleEscape({ altitude = 260.0, heading = simHdg, pos = { x = simX, y = 260.0, z = simZ } }, "4")
+    local ok5, _ = escFC:triggerObstacleEscape({ altitude = 260.0, heading = simHdg, pos = { x = simX, y = 260.0, z = simZ } }, "5")
+    assert(ok5 == false and escFC.ap.mode == "HOVER" and escFC.ap.escape == nil,
+        "Expected 5th escape attempt to hit 4-attempt safety cap and fall back to HOVER")
+
+    -- 5. Manual [T] trigger from HOVER must actively drive reverse (clutchCut=false), and setMode('HOVER') cancels it
+    local escTelHover = { altitude = 200.0, heading = 0.0, pos = { x = 0, y = 200, z = 0 } }
+    escFC:setMode("HOVER", escTelHover)
+    simY = 200.0; simHdg = 0.0
+    local okMan, _ = escFC:triggerObstacleEscape(escTelHover, "MANUEL")
+    assert(okMan == true and escFC.ap.escape ~= nil, "Expected manual escape trigger from HOVER to activate")
+    escFC:step(0.25)
+    assert(escRPMs[5] < 0 and escRPMs[6] < 0 and escRPMs[7] < 0,
+        "Expected manual escape from HOVER to disengage clutchCut and drive reverse rear thrusters")
+    escFC:setMode("HOVER", escTelHover)
+    assert(escFC.ap.escape == nil, "Expected setMode('HOVER') to cancel active obstacle escape")
+
+    -- 6. Proactive Radar Mk.1 terrain threat triggers immediate BACKUP escape
+    simY = 180.0
+    escFC:setMode("CRUISE", { altitude = simY, heading = 0.0, pos = { x = 0, y = simY, z = 0 } })
+    escFC.ap.baseThrottle = 10
+    simRadar = { kind = "terrain", distance = 18.0, closingSpeed = 4.0, name = "CLIFF" }
+    escFC.radar = { getContact = function() return simRadar end }
+    simVx = 8.0
+    escFC:step(0.05)
+    assert(escFC.ap.escape ~= nil and escFC.ap.escape.reason == "RADAR-ENGEL" and escFC.ap.escape.phase == "BACKUP",
+        "Expected Radar Mk.1 terrain contact (<25m, >1.5m/s closing) to trigger proactive RADAR-ENGEL BACKUP")
+
+    _G.peripheral.find = prevFind9c
+    _G.sublevel = prevSub9c
+    print("  PASS: Test 9c: Autonomous Obstacle / Island Collision Escape (Backup + Climb + Bypass + Cap)")
+    end
+
+    -- Test 9d: Persistent Main Base Memory (/etc/avionics_homebase.cfg) & On-Ship RTB with Base Chunk Unloaded
+    do
+    local origFs9d = _G.fs
+    local origTu9d = _G.textutils
+    local origFind9d = _G.peripheral.find
+    local memFiles = {}
+
+    _G.fs = {
+        exists = function(p) return memFiles[p] ~= nil or p == "/etc" end,
+        makeDir = function(p) end,
+        open = function(p, mode)
+            if mode == "w" then
+                return {
+                    write = function(s) memFiles[p] = s end,
+                    close = function() end
+                }
+            elseif mode == "r" then
+                if not memFiles[p] then return nil end
+                return {
+                    readAll = function() return memFiles[p] end,
+                    close = function() end
+                }
+            end
+            return nil
+        end
+    }
+
+    local function serVal(v)
+        local t = type(v)
+        if t == "string" then return string.format("%q", v)
+        elseif t == "number" or t == "boolean" then return tostring(v)
+        elseif t == "table" then
+            local parts = {}
+            for k, val in pairs(v) do
+                parts[#parts + 1] = string.format("[%q]=%s", tostring(k), serVal(val))
+            end
+            return "{" .. table.concat(parts, ",") .. "}"
+        end
+        return "nil"
+    end
+    _G.textutils = {
+        serialize = function(t) return serVal(t) end,
+        unserialize = function(s)
+            local loader = load or loadstring
+            local fn = loader("return " .. tostring(s))
+            if fn then return fn() end
+            return nil
+        end
+    }
+
+    local rtbX, rtbY, rtbZ = -24000.0, 260.0, 2800.0
+    local rtbHdg = 0.0
+    _G.peripheral.find = function(pType)
+        if pType == "altitude_sensor" then
+            return { getHeight = function() return rtbY end, getVerticalSpeed = function() return 0.0 end, getAirPressure = function() return 1.0 end }
+        elseif pType == "gimbal_sensor" then
+            return { getAnglesRad = function() return { 0.0, 0.0 } end, getAngularVelocity = function() return { 0.0, 0.0, 0.0 } end }
+        elseif pType == "navigation_table" then
+            return { getHeadingRad = function() return rtbHdg end, hasTarget = function() return false end }
+        elseif pType == "Create_RotationSpeedController" then
+            return { setTargetSpeed = function() end }
+        end
+        return origFind9d(pType)
+    end
+
+    -- 1. Receiving calibrated beacon persists /etc/avionics_homebase.cfg
+    local fcBeacon = Avionics.new({ callsign = "SKYFIRE", profile = "MOTHERSHIP", useGPS = false })
+    fcBeacon:setHomeBase({
+        type          = "AVIONICS_ILS_BEACON",
+        baseName      = "DRUNKEN-BASE-ALPHA",
+        runwayId      = "RWY-36",
+        calibrated    = true,
+        threshold     = { x = 1142, y = 156, z = -249 },
+        zeppelinMast  = { x = 1142, y = 171, z = -249 },
+        rwyHeadingRad = 0.0,
+        approachDist  = 80,
+        glideSlopeRad = math.rad(8.0)
+    })
+    assert(memFiles["/etc/avionics_homebase.cfg"] ~= nil, "Expected calibrated beacon to persist /etc/avionics_homebase.cfg")
+
+    -- 2. Uncalibrated (0,0) beacon must NOT overwrite saved homeBase or disk file
+    local prevSaved = memFiles["/etc/avionics_homebase.cfg"]
+    fcBeacon:setHomeBase({
+        type       = "AVIONICS_ILS_BEACON",
+        baseName   = "BAD-BEACON",
+        calibrated = false,
+        threshold  = { x = 0, y = 0, z = 0 },
+        zeppelinMast = { x = 0, y = 0, z = 0 }
+    })
+    assert(memFiles["/etc/avionics_homebase.cfg"] == prevSaved, "Expected uncalibrated (0,0) beacon not to overwrite persisted homeBase")
+    assert(fcBeacon.ap.homeBase.baseName == "DRUNKEN-BASE-ALPHA", "Expected existing calibrated homeBase to stay intact")
+
+    -- 3. Rebooting 25 km away with Base chunk unloaded restores Main Base from disk & flies home (not to takeoffPos)
+    local fcReboot = Avionics.new({ callsign = "SKYFIRE", profile = "MOTHERSHIP", useGPS = false })
+    assert(fcReboot.ap.homeBase ~= nil and fcReboot.ap.homeBase.baseName == "DRUNKEN-BASE-ALPHA",
+        "Expected fresh Avionics.new to restore DRUNKEN-BASE-ALPHA from /etc/avionics_homebase.cfg")
+    assert(fcReboot.ap.homeBase.zeppelinMast and math.abs(fcReboot.ap.homeBase.zeppelinMast.x - 1142) < 0.1,
+        "Expected restored zeppelinMast X = 1142")
+
+    fcReboot.pos = { x = rtbX, y = rtbY, z = rtbZ }
+    fcReboot.takeoffPos = { x = rtbX, y = rtbY, z = rtbZ, heading = 0.0 }
+    fcReboot.ap.reverseGear = true -- should clear on RTB engagement
+    local okRtb9d = fcReboot:engageRTB({ altitude = rtbY, heading = 0.0, pos = { x = rtbX, y = rtbY, z = rtbZ } })
+    assert(okRtb9d == true and fcReboot.ap.mode == "RTB" and fcReboot.ap.rtbPhase == "RTB_MAST",
+        "Expected on-ship engageRTB to enter RTB_MAST toward persisted Main Base")
+    assert(fcReboot.ap.reverseGear == false, "Expected engageRTB to clear reverseGear")
+    fcReboot:step(0.05)
+    local expBrg = (math.atan2(1142 - rtbX, -(-249 - rtbZ)) + 2 * math.pi) % (2 * math.pi)
+    assert(math.abs(fcReboot.ap.targetHdg - expBrg) < 0.02,
+        string.format("Expected RTB heading toward Main Base (%.1f deg), got %.1f deg", math.deg(expBrg), math.deg(fcReboot.ap.targetHdg)))
+    assert(fcReboot.ap.baseThrottle == 12, "Expected long-range RTB cruise throttle = 12")
+
+    -- 4. setCurrentPosAsHomeBase saves ship's current position as new persistent Main Base
+    local okSaveShip = fcReboot:setCurrentPosAsHomeBase({ altitude = 195.4, heading = 1.2, pos = { x = -3500.2, y = 195.4, z = 4200.8 } }, "YENI-ANA-US")
+    assert(okSaveShip == true, "Expected setCurrentPosAsHomeBase to succeed")
+    local fcReload2 = Avionics.new({ callsign = "SKYFIRE", profile = "MOTHERSHIP", useGPS = false })
+    assert(fcReload2.ap.homeBase and fcReload2.ap.homeBase.baseName == "YENI-ANA-US", "Expected new ship-saved base to reload after reboot")
+    assert(fcReload2.ap.homeBase.zeppelinMast.x == -3500 and fcReload2.ap.homeBase.zeppelinMast.z == 4201,
+        "Expected saved coordinates (-3500, 195, 4201) to persist")
+
+    _G.fs = origFs9d
+    _G.textutils = origTu9d
+    _G.peripheral.find = origFind9d
+    print("  PASS: Test 9d: Persistent Main Base Memory (/etc/avionics_homebase.cfg) & Unloaded-Tower RTB")
+    end
 
     -- Test 10: Dual-Computer Architecture (Avionics Core Daemon FCC + Multi-Monitor Cockpit Remote Command Bus & Telemetry)
     -- Step 10a: Initialize FCC Core Daemon simulation
@@ -1051,36 +1504,36 @@ local function runTests()
     local rm = RM.RouteManager.new({ routesDir = "/routes" })
     assert(#rm.pois >= 2, "Expected default POIs present in RouteManager")
     rm:createRoute("PATROL_ALPHA", {}, false, "DOCK")
-    rm:addWaypoint({ name = "WP1", x = 0, y = 185, z = 100, speed = 8, radius = 8, action = "FLYBY" })
-    rm:addWaypoint({ name = "WP2", x = 100, y = 200, z = 100, speed = 10, radius = 8, action = "FLYBY" })
+    rm:addWaypoint({ name = "WP1", x = 0, y = 185, z = -100, speed = 8, radius = 8, action = "FLYBY" })
+    rm:addWaypoint({ name = "WP2", x = 100, y = 200, z = -100, speed = 10, radius = 8, action = "FLYBY" })
     rm:addWaypoint({ name = "WP3", x = 100, y = 185, z = 0, speed = 6, radius = 8, action = "DOCK" })
 
     assert(#rm.activeRoute.waypoints == 3, "Expected 3 waypoints in active route")
 
     -- Cross-Track Error (XTK) verification:
-    -- Desired track: (0, 185, 0) -> (0, 185, 100) [Heading South: 0 deg]
+    -- Desired track: (0, 185, 0) -> (0, 185, -100) [Heading North: 0 deg (-Z)]
     local prevPt = { x = 0, y = 185, z = 0 }
     local tgtPt  = rm.activeRoute.waypoints[1]
 
     -- 1. Vessel 5m to the right (X = +5): XTK must be positive and intercept heading turns left (< 0 or > 180 deg)
-    local curRight = { x = 5.0, y = 185, z = 40.0 }
+    local curRight = { x = 5.0, y = 185, z = -40.0 }
     local gRight = rm:calculateGuidance(curRight, { speed = 8 }, prevPt, tgtPt)
     assert(math.abs(gRight.xtk - 5.0) < 0.1, "Expected XTK ~ +5.0m when 5m right of track")
     assert(gRight.commandedHdg < gRight.legHdg or gRight.commandedHdg > math.pi, "Expected commanded heading to steer left to intercept course")
 
     -- 2. Vessel 5m to the left (X = -5): XTK must be negative and intercept heading turns right
-    local curLeft = { x = -5.0, y = 185, z = 40.0 }
+    local curLeft = { x = -5.0, y = 185, z = -40.0 }
     local gLeft = rm:calculateGuidance(curLeft, { speed = 8 }, prevPt, tgtPt)
     assert(math.abs(gLeft.xtk - (-5.0)) < 0.1, "Expected XTK ~ -5.0m when 5m left of track")
     assert(gLeft.commandedHdg > gLeft.legHdg, "Expected commanded heading to steer right to intercept course")
 
     -- 3. VNAV Guidance:
     local climbTgt = rm.activeRoute.waypoints[2]
-    local gClimb = rm:calculateGuidance({ x = 0, y = 185, z = 100 }, { speed = 8 }, tgtPt, climbTgt)
+    local gClimb = rm:calculateGuidance({ x = 0, y = 185, z = -100 }, { speed = 8 }, tgtPt, climbTgt)
     assert(gClimb.targetAlt == 200 and gClimb.deltaAlt == 15 and gClimb.vSpeedTarget > 0, "Expected VNAV climb target")
 
     -- 4. Waypoint Sequencing:
-    local curNearWP1 = { x = 0, y = 185, z = 95 } -- 5m from WP1 (radius 8m + anticipation)
+    local curNearWP1 = { x = 0, y = 185, z = -95 } -- 5m from WP1 (radius 8m + anticipation)
     local gArrive = rm:calculateGuidance(curNearWP1, { speed = 8 }, prevPt, tgtPt)
     assert(gArrive.isArrived == true, "Expected waypoint arrival detected within radius")
     local advOk, status, nextWp = rm:advance(curNearWP1)

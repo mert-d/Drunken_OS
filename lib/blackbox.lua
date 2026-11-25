@@ -18,6 +18,7 @@ function Blackbox.new(opts)
         entries      = {},
         isAirborne   = false,
         takeoffTick  = 0,
+        airborneSec  = 0.0,
         currentTick  = 0,
         prevPitch    = nil,
         flushTimer   = 0,
@@ -58,16 +59,21 @@ function Blackbox:record(tel, apState, msState, ctrl)
     if airborneNow and not self.isAirborne then
         self.isAirborne = true
         self.takeoffTick = self.currentTick
+        self.airborneSec = 0.0
     elseif not airborneNow and (apState.parkingBrake and not apState.enabled) then
         self.isAirborne = false
+        self.airborneSec = 0.0
+    elseif self.isAirborne then
+        self.airborneSec = (self.airborneSec or 0.0) + dt
     end
 
-    local tSec = (self.currentTick - (self.takeoffTick or self.currentTick)) * dt
-    if not self.isAirborne then tSec = 0.0 end
+    local tSec = self.isAirborne and (self.airborneSec or 0.0) or 0.0
 
     -- Determine status label
     local status = "TERAZI"
-    if ctrl.antiDiveActive or tel.pitchWarning then
+    if apState.escape and apState.escape.active then
+        status = "ENGEL-" .. tostring(apState.escape.phase or "KRT")
+    elseif ctrl.antiDiveActive or tel.pitchWarning then
         status = "ANTI-DIVE"
     elseif math.abs(pitchDeg) > 18 then
         status = (pitchDeg > 0) and "ASIRI-BURUN-YUKARI" or "ASIRI-BURUN-ASAGI"

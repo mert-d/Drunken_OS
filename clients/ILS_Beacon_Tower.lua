@@ -121,7 +121,7 @@ end
 
 local function detectTowerPos(cfg)
     if gps and gps.locate then
-        local ok, x, y, z = pcall(gps.locate, 1.5)
+        local ok, x, y, z = pcall(gps.locate, 2.0)
         if ok and x and y and z then
             return math.floor(x + 0.5), math.floor(y + 0.5), math.floor(z + 0.5), "GPS"
         end
@@ -245,10 +245,12 @@ local function runTowerConsole(context)
     end
 
     local function buildBeaconPacket()
+        local isCalibrated = not ((tonumber(cfg.mastX) or 0) == 0 and (tonumber(cfg.mastZ) or 0) == 0 and (tonumber(cfg.thrX) or 0) == 0 and (tonumber(cfg.thrZ) or 0) == 0)
         return {
             type          = "AVIONICS_ILS_BEACON",
             baseName      = cfg.baseName,
             runwayId      = cfg.runwayId,
+            calibrated    = isCalibrated,
             threshold     = { x = tonumber(cfg.thrX) or 0, y = tonumber(cfg.thrY) or 68, z = tonumber(cfg.thrZ) or 0 },
             rwyHeadingRad = math.rad(tonumber(cfg.rwyHeadingDeg) or 0),
             glideSlopeRad = math.rad(tonumber(cfg.glideSlopeDeg) or 8.0),
@@ -261,6 +263,25 @@ local function runTowerConsole(context)
     local function setToast(msg)
         statusToast = tostring(msg)
         toastTicks = 80
+    end
+
+    -- Auto-calibrate uncalibrated (0,0) tower on startup using GPS or ship locator
+    do
+        local isZeroCfg = (tonumber(cfg.mastX) or 0) == 0 and (tonumber(cfg.mastZ) or 0) == 0 and (tonumber(cfg.thrX) or 0) == 0 and (tonumber(cfg.thrZ) or 0) == 0
+        if isZeroCfg then
+            local gx, gy, gz, gsrc = detectTowerPos(cfg)
+            if gsrc and (gx ~= 0 or gz ~= 0) then
+                cfg.thrX, cfg.thrY, cfg.thrZ = gx, gy, gz
+                cfg.mastX, cfg.mastY, cfg.mastZ = gx, gy + 15, gz
+                saveConfig(cfg)
+                local okMsg = string.format("OTO-GPS KONUM KILITLENDI (%s): (%d,%d,%d)", tostring(gsrc), cfg.mastX, cfg.mastY, cfg.mastZ)
+                pushLog(okMsg)
+                setToast(okMsg)
+            else
+                pushLog("UYARI: Kule konumu (0,0)! [P] GPS veya [K] Gemiden Al!")
+                setToast("UYARI: KULE KONUMU (0,0)! [P] GPS veya [K] Gemiden Al!")
+            end
+        end
     end
 
     local function rebuildContactList()
@@ -290,6 +311,28 @@ local function runTowerConsole(context)
         if not (rednet and rednet.isOpen and rednet.isOpen()) then
             setToast("HATA: Kablosuz Modem bulunamadi / kapali!")
             return
+        end
+        local upperCmd = tostring(cmd or ""):upper()
+        local hasNonZeroWp = (extra and type(extra.waypoint) == "table" and ((tonumber(extra.waypoint.x) or 0) ~= 0 or (tonumber(extra.waypoint.z) or 0) ~= 0))
+        if upperCmd == "RTB" or (upperCmd == "WAYPOINT" and not hasNonZeroWp) then
+            local mx, mz = tonumber(cfg.mastX) or 0, tonumber(cfg.mastZ) or 0
+            local tx, tz = tonumber(cfg.thrX) or 0, tonumber(cfg.thrZ) or 0
+            if mx == 0 and mz == 0 and tx == 0 and tz == 0 then
+                local gx, gy, gz, gsrc = detectTowerPos(cfg)
+                if gsrc and (gx ~= 0 or gz ~= 0) then
+                    cfg.thrX, cfg.thrY, cfg.thrZ = gx, gy, gz
+                    cfg.mastX, cfg.mastY, cfg.mastZ = gx, gy + 15, gz
+                    saveConfig(cfg)
+                    pushLog(string.format("OTO-GPS (%s): (%d,%d,%d)", tostring(gsrc), cfg.mastX, cfg.mastY, cfg.mastZ))
+                    if extra and type(extra.waypoint) == "table" and not hasNonZeroWp then
+                        extra.waypoint.x, extra.waypoint.y, extra.waypoint.z = cfg.mastX, cfg.mastY, cfg.mastZ
+                    end
+                else
+                    setToast("HATA: Kule konumu (0,0)! [3:Ayar]->[P] GPS veya [K] Gemiden Al!")
+                    pushLog("RET: Kalibresiz (0,0) konumla " .. upperCmd .. " gonderilmedi.")
+                    return
+                end
+            end
         end
         local sel = getSelectedContact()
         local tgt = (targetAll or not sel) and "ALL" or sel.callsign
@@ -557,9 +600,12 @@ local function runTowerConsole(context)
                 local dz = (tonumber(sel.pos.z) or 0) - towerZ
                 local calcDist = math.sqrt(dx * dx + dz * dz)
                 local dist = (calcDist > 0.5) and calcDist or (tonumber(sel.modemDist) or calcDist)
-                local brg = (math.deg(math.atan2(-dx, dz)) % 360)
+                local brg = (math.deg(math.atan2(dx, -dz)) % 360)
+                local callBadge = sel.escapePhase and (" [ENGEL:" .. tostring(sel.escapePhase) .. "]")
+                    or (sel.hasPendingCall and (" [CAGRI:" .. tostring(sel.pendingCmd or "BEK") .. "]")
+                    or (sel.lastAck and (" [" .. tostring(sel.lastAck) .. "]") or ""))
                 writeAt(surf, rightX, 6, string.rep("-", rightW), colors.gray, colors.black)
-                writeAt(surf, rightX, 7, string.format("SECILI: %s (%s)", tostring(sel.callsign), tostring(sel.mode or "MAN")):sub(1, rightW), colors.yellow, colors.black)
+                writeAt(surf, rightX, 7, string.format("SECILI: %s (%s)%s", tostring(sel.callsign), tostring(sel.mode or "MAN"), callBadge):sub(1, rightW), (sel.escapePhase and colors.red) or (sel.hasPendingCall and colors.orange) or colors.yellow, colors.black)
                 writeAt(surf, rightX, 8, string.format("POS : (%d, %d, %d)", math.floor(sel.pos.x), math.floor(sel.pos.y), math.floor(sel.pos.z)):sub(1, rightW), colors.white, colors.black)
                 writeAt(surf, rightX, 9, string.format("ALT : %.1fm (TGT:%.0fm)", tonumber(sel.altitude) or 0, tonumber(sel.targetAlt or sel.altitude) or 0):sub(1, rightW), colors.cyan, colors.black)
                 writeAt(surf, rightX, 10, string.format("VSI : %+5.1fm/s | SPD:%.1f", tonumber(sel.vSpeed) or 0, tonumber(sel.speed) or 0):sub(1, rightW), colors.lime, colors.black)
@@ -586,8 +632,8 @@ local function runTowerConsole(context)
         )
 
         -- Rows 16-19: Bottom Remote Command Keybind Dock
-        writeAt(surf, 2, 16, "[R]Eve Cagir(RTB)  [G]Kuleye Cek(LNAV) [H]Havada Tut", colors.lime, colors.black)
-        writeAt(surf, 2, 17, "[L]Otonom Indir    [B]Acil Park/Fren   [+/-]Irtifa+-10", colors.cyan, colors.black)
+        writeAt(surf, 2, 16, "[R]Eve Cagir [F]Zorunlu RTB [G]KuleyeCek [H]Hvr", colors.lime, colors.black)
+        writeAt(surf, 2, 17, "[L]Otonom Indir [B]Acil Park [+/-]Irtifa+-10", colors.cyan, colors.black)
         writeAt(surf, 2, 18, "[K]Gemiden KonumAl [0]INS Kalibre Et   [Z]Radar Menzil", colors.yellow, colors.black)
         writeAt(surf, 2, 19, "[1/2/3]Sekme [Up/Dn]Sec [A]Filo [U]OTA Guncelle [Q]Cik", colors.lightGray, colors.black)
     end
@@ -664,6 +710,14 @@ local function runTowerConsole(context)
                     if isNew then
                         pushLog(string.format("%s (%s) radara girdi (%.0fm)", call, tostring(msg.vehicleType or "ZEP"), tonumber(msg.altitude) or 0))
                     end
+                elseif protocol == "DRUNKEN_ATC" and type(msg) == "table" and msg.type == "AVIONICS_ATC_ACK" then
+                    local call = tostring(msg.callsign or ("SHIP-" .. tostring(senderId)))
+                    if contacts[call] then
+                        contacts[call].lastAck = tostring(msg.status or "OK")
+                    end
+                    local ackText = string.format("%s [%s]: %s", call, tostring(msg.status or "OK"), tostring(msg.message or msg.cmd or ""))
+                    pushLog(ackText)
+                    setToast(ackText)
                 end
             elseif ev == "peripheral" or ev == "peripheral_detach" then
                 modem = findWirelessModem()
@@ -773,13 +827,17 @@ local function runTowerConsole(context)
                             targetAll = not targetAll
                             setToast(targetAll and "KOMUT HEDEFI: TUM FILO (ALL)" or "KOMUT HEDEFI: SADECE SECILI ARAC")
                         elseif key == keys.r then
-                            sendAtcCommand("RTB")
+                            sendAtcCommand("RTB", { requireConfirm = true })
+                        elseif key == keys.f then
+                            sendAtcCommand("RTB", { force = true })
                         elseif key == keys.g then
                             sendAtcCommand("WAYPOINT", {
+                                requireConfirm = true,
                                 waypoint = {
                                     x = tonumber(cfg.mastX) or 0,
                                     y = tonumber(cfg.mastY) or 85,
-                                    z = tonumber(cfg.mastZ) or 0
+                                    z = tonumber(cfg.mastZ) or 0,
+                                    name = cfg.baseName
                                 }
                             })
                         elseif key == keys.h then

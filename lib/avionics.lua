@@ -6,6 +6,7 @@ local Avionics = {}
 Avionics.__index = Avionics
 
 local ADAPTIVE_CFG_PATH = "/etc/avionics_adaptive.cfg"
+local HOMEBASE_CFG_PATH = "/etc/avionics_homebase.cfg"
 local MAX_GYRO_CONE_RAD = math.rad(12) -- Gyroscopic Propeller Bearing 12 deg limit
 
 -- Derivative-on-Measurement & Anti-Windup PID Controller
@@ -299,8 +300,23 @@ function Avionics.new(config)
         waypoint     = nil,      -- { x = 0, y = 120, z = 0, name = "HOME" }
         homeBase     = nil,      -- ILS Beacon packet or manual base table
         rtbPhase     = "NONE",   -- NONE, RTB_IAF, RTB_ILS, RTB_MAST
-        ilsDev       = { loc = 0.0, gs = 0.0, dist = 0.0 }
+        ilsDev       = { loc = 0.0, gs = 0.0, dist = 0.0 },
+        pendingCall  = nil,      -- Queued incoming ATC / tower command waiting for pilot accept/reject
+        atcAutoAccept = false,   -- When true, incoming ATC calls execute automatically without prompt
+        lastAtcNotice = nil,     -- Last human-readable ATC call / response notice
+        rtbTransitAlt = nil,     -- Safe en-route cruise altitude maintained during long-range RTB
+        obstacleAvoid = true,    -- Autonomous collision/island escape & climb recovery
+        escape        = nil,     -- Active 3-phase obstacle escape state (BACKUP -> CLIMB -> BYPASS)
+        escapeFloorAlt = nil     -- Elevated minimum transit altitude preserved after escaping an obstacle
     }
+
+    -- Obstacle / Collision Detector Internal State
+    self.obsStuckTime       = 0.0
+    self.obsCheckPos        = nil
+    self.obsPrevHorizSpeed  = 0.0
+    self.obsAttempts        = 0
+    self.obsLastEscapeClock = -999.0
+    self.obsSimClock        = 0.0
 
     -- Dead-Reckoning Position Estimate & GPS Tick Throttle
     self.pos = { x = 0, y = 0, z = 0 }
@@ -323,8 +339,8 @@ function Avionics.new(config)
     }
 
     -- PID Controllers (Smooth proportional + derivative damping for equilibrium altitude hold)
-    self.altPID   = createPID(0.85, 0.04, 0.00, -2.5, 2.5, 0.8) -- Dikey irtifa (Y) - pure PI; velocity damping handled by vsiDamp
-    self.hdgPID   = createPID(3.80, 0.10, 1.20, -6.0, 6.0)
+    self.altPID   = createPID(0.85, 0.04, 0.00, -1.5, 1.5, 0.5) -- Dikey irtifa (Y) - hassas ince trim PI
+    self.hdgPID   = createPID(7.50, 0.45, 2.00, -12.0, 12.0, 6.0)
     self.pitchPID = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.rollPID  = createPID(0.80, 0.05, 0.40, -MAX_GYRO_CONE_RAD, MAX_GYRO_CONE_RAD)
     self.yawPID   = createPID(4.00, 0.25, 2.10, -4.5, 4.5) -- Pruva (Psi)
@@ -376,6 +392,7 @@ function Avionics.new(config)
     }
 
     self:loadAdaptiveState()
+    self:loadHomeBase()
 
     self.mods = {}
     self:loadModules(self.config.modDir or "/lib/avx")
@@ -918,30 +935,265 @@ function Avionics:readTelemetry(dt)
         self:scanPeripherals()
     end
 
+    -- Batch all independent mainThread peripheral reads into parallel.waitForAll
+    local unpackFn = table.unpack or unpack
+    local readTasks = {}
+    local function addRead(fn)
+        table.insert(readTasks, fn)
+    end
+    local function flushReads()
+        if #readTasks == 0 then return end
+        local batch = readTasks
+        readTasks = {}
+        if parallel and parallel.waitForAll then
+            parallel.waitForAll(unpackFn(batch))
+        else
+            for _, fn in ipairs(batch) do fn() end
+        end
+    end
+
+    -- Queue Batch 1: All independent sensors, physics pose, navigation & SCADA reads
+    local altList = (self.altSensors and #self.altSensors > 1) and self.altSensors or (self.altSensor and { self.altSensor } or {})
+    local altRes = {}
+    for i, as in ipairs(altList) do
+        local slot = {}
+        altRes[i] = slot
+        addRead(function() slot.a = tonumber(safeCall(as.getHeight)) or tonumber(safeCall(as.getAltitude)) end)
+        addRead(function() slot.v = tonumber(safeCall(as.getVerticalSpeed)) end)
+        addRead(function() slot.p = tonumber(safeCall(as.getAirPressure)) or tonumber(safeCall(as.getPressure)) end)
+    end
+
+    local gRads, gDegs, gPitchFallback, gRollFallback = nil, nil, nil, nil
+    local gAcc, gRates = nil, nil
+    if self.gimbal then
+        local g = self.gimbal
+        addRead(function()
+            local rads = safeCall(g.getAnglesRad)
+            if type(rads) == "table" and rads[1] and rads[2] then
+                gRads = rads
+            else
+                local degs = safeCall(g.getAngles)
+                if type(degs) == "table" and degs[1] and degs[2] then
+                    gDegs = degs
+                else
+                    gPitchFallback = tonumber(safeCall(g.getPitchRad)) or tonumber(safeCall(g.getPitch)) or 0
+                    gRollFallback  = tonumber(safeCall(g.getRollRad)) or tonumber(safeCall(g.getRoll)) or 0
+                end
+            end
+        end)
+        addRead(function()
+            gAcc = safeCall(g.getLinearAcceleration)
+        end)
+        addRead(function()
+            gRates = safeCall(g.getAngularRatesRad)
+                  or safeCall(g.getAngularRates)
+                  or safeCall(g.getAngularVelocity)
+        end)
+    end
+
+    local sublevelPose, sublevelLinVel = nil, nil
+    if _G.sublevel then
+        if _G.sublevel.getLogicalPose then
+            addRead(function()
+                local okPose, pose = pcall(_G.sublevel.getLogicalPose)
+                if okPose then sublevelPose = pose end
+            end)
+        end
+        if _G.sublevel.getLinearVelocity then
+            addRead(function()
+                local okLv, lv = pcall(_G.sublevel.getLinearVelocity)
+                if okLv then sublevelLinVel = lv end
+            end)
+        end
+    end
+
+    local navHdgRad, navHdgDeg, navHasTgt, navTgtTable, navTabPos = nil, nil, nil, nil, nil
+    if self.nav then
+        local navDev = self.nav
+        addRead(function()
+            local hRad = tonumber(safeCall(navDev.getHeadingRad))
+            if hRad then
+                navHdgRad = hRad
+            else
+                navHdgDeg = tonumber(safeCall(navDev.getHeading))
+            end
+        end)
+        addRead(function()
+            navHasTgt = safeCall(navDev.hasTarget)
+            if navHasTgt == nil and navDev.getTarget then
+                navTgtTable = safeCall(navDev.getTarget)
+            end
+        end)
+        addRead(function()
+            if navDev.getTablePosition then
+                local okTab, tabPos = pcall(navDev.getTablePosition)
+                if okTab then navTabPos = tabPos end
+            elseif navDev.getBlockPos then
+                local okTab, tabPos = pcall(navDev.getBlockPos)
+                if okTab then navTabPos = tabPos end
+            end
+        end)
+    end
+
+    local velSensList = (self.velSensors and #self.velSensors > 0) and self.velSensors or (self.velSensor and { self.velSensor } or {})
+    local vsRes = {}
+    if #velSensList >= 2 then
+        for i, vs in ipairs(velSensList) do
+            local slot = {}
+            vsRes[i] = slot
+            addRead(function() slot.axis = tostring(safeCall(vs.getAxis) or ""):lower() end)
+            addRead(function() slot.val = safeCall(vs.getVelocity) end)
+        end
+    elseif #velSensList == 1 then
+        local vs = velSensList[1]
+        local slot = {}
+        vsRes[1] = slot
+        addRead(function() slot.val = safeCall(vs.getVelocity) end)
+    end
+
+    local agl = nil
+    if self.laserSensor then
+        local ls = self.laserSensor
+        addRead(function()
+            agl = tonumber(safeCall(ls.getClosestHitDistance))
+               or tonumber(safeCall(ls.getDistance))
+               or tonumber(safeCall(ls.getHitDistance))
+        end)
+    end
+
+    local radarRaw = nil
+    if self.radar then
+        local r = self.radar
+        addRead(function()
+            radarRaw = safeCall(r.getContact)
+        end)
+    end
+
+    local wheelRes = {}
+    for i, w in ipairs(self.wheels) do
+        local slot = {}
+        wheelRes[i] = slot
+        addRead(function() slot.fric = tonumber(safeCall(w.getTouchingFriction)) or 0 end)
+        addRead(function() slot.lifted = safeCall(w.isLiftedUp) end)
+    end
+
+    local engRes = {}
+    for i, eng in ipairs(self.engines) do
+        local slot = {}
+        engRes[i] = slot
+        addRead(function() slot.rpm = tonumber(safeCall(eng.getRpm)) or tonumber(safeCall(eng.getSpeed)) or 0 end)
+        addRead(function() slot.over = (safeCall(eng.isOverstressed) == true) end)
+        addRead(function() slot.bTime = tonumber(safeCall(eng.getBurnTime)) end)
+        addRead(function() slot.tTime = tonumber(safeCall(eng.getTotalBurnTime)) end)
+    end
+
+    local clRes = {}
+    for i, cl in ipairs(self.clutches or {}) do
+        local slot = {}
+        clRes[i] = slot
+        addRead(function()
+            slot.outSpd = tonumber(callKinetic(cl, cl.getOutputSpeed))
+            if slot.outSpd == nil then
+                slot.fallbackSpd = tonumber(callKinetic(cl, cl.getSpeed))
+                                or tonumber(callKinetic(cl, cl.getGeneratedSpeed))
+                                or 0
+            end
+        end)
+        addRead(function() slot.over = (callKinetic(cl, cl.isOverstressed) == true) end)
+    end
+
+    local pollSc = (self.gpsTick % 5 == 1) or (self._cachedScRpm == nil)
+    local scRes = {}
+    if pollSc then
+        for i, sc in ipairs(self.speedControllers or {}) do
+            local slot = {}
+            scRes[i] = slot
+            addRead(function()
+                slot.rpm = tonumber(callKinetic(sc, sc.getTargetSpeed))
+                        or tonumber(callKinetic(sc, sc.getSpeed))
+                        or tonumber(callKinetic(sc, sc.getOutputSpeed))
+                        or 0
+            end)
+            addRead(function() slot.over = (callKinetic(sc, sc.isOverstressed) == true) end)
+        end
+    end
+
+    local burnerRes = {}
+    for i, b in ipairs(self.burners) do
+        local slot = {}
+        burnerRes[i] = slot
+        addRead(function() slot.gt = safeCall(b.getGasType) end)
+        addRead(function() slot.sig = tonumber(safeCall(b.getSignalStrength)) or 0 end)
+        addRead(function() slot.act = (safeCall(b.isActive) == true) end)
+        addRead(function() slot.vc = tonumber(safeCall(b.getBalloonVolumeChange)) end)
+    end
+
+    local transponderOn = false
+    if self.controller then
+        local ctrlDev = self.controller
+        addRead(function()
+            transponderOn = (safeCall(ctrlDev.isTransponderOn) == true)
+        end)
+    end
+
+    flushReads()
+
+    -- Queue Batch 2 ONLY if navigation_table has an active target
+    local navTarget = nil
+    local hasTgt = navHasTgt
+    if hasTgt == nil and type(navTgtTable) == "table" and navTgtTable.hasTarget == true then
+        hasTgt = true
+    end
+    if self.nav and hasTgt == true then
+        local navDev = self.nav
+        local tName, brgRad, dist, vOff, closure, tPos = nil, nil, nil, nil, nil, nil
+        addRead(function() tName = safeCall(navDev.getTargetName) or safeCall(navDev.getTargetDisplayName) or safeCall(navDev.getTargetLabel) or "WAYPOINT" end)
+        addRead(function()
+            brgRad = tonumber(safeCall(navDev.getBearingRad))
+            if brgRad == nil and navDev.getBearing then
+                local bDeg = tonumber(safeCall(navDev.getBearing))
+                if bDeg then brgRad = math.rad(bDeg) end
+            elseif brgRad == nil and navDev.getCurrentAngle then
+                local aDeg = tonumber(safeCall(navDev.getCurrentAngle))
+                if aDeg then brgRad = math.rad(aDeg) end
+            end
+        end)
+        addRead(function() dist = tonumber(safeCall(navDev.getDistanceToTarget)) or tonumber(safeCall(navDev.getTargetDistance)) end)
+        addRead(function() vOff = tonumber(safeCall(navDev.getVerticalOffsetToTarget)) end)
+        addRead(function() closure = tonumber(safeCall(navDev.getClosureRate)) end)
+        addRead(function() tPos = safeCall(navDev.getTargetPosition) or safeCall(navDev.getTargetPos) end)
+        flushReads()
+        navTarget = {
+            active   = true,
+            name     = tostring(tName or "WAYPOINT"),
+            bearing  = brgRad or 0,
+            distance = (dist and dist >= 0) and dist or 0,
+            vOffset  = vOff or 0,
+            closure  = closure or 0,
+            pos      = tPos
+        }
+    end
+
     -- 1. Altitude & Vertical Speed (Averages all connected altitude_sensor blocks so corner tilt doesn't skew altitude)
     local alt = 0
     local sensorVsi = 0
     local pressure = 1.0
-    if self.altSensors and #self.altSensors > 1 then
+    if #altRes > 1 then
         local sumA, cntA, sumV, cntV = 0, 0, 0, 0
         local sumP, cntP = 0, 0
-        for _, as in ipairs(self.altSensors) do
-            local a = tonumber(safeCall(as.getHeight)) or tonumber(safeCall(as.getAltitude))
-            if a then sumA = sumA + a; cntA = cntA + 1 end
-            local v = tonumber(safeCall(as.getVerticalSpeed))
-            if v then sumV = sumV + v; cntV = cntV + 1 end
-            local p = tonumber(safeCall(as.getAirPressure)) or tonumber(safeCall(as.getPressure))
-            if p then sumP = sumP + p; cntP = cntP + 1 end
+        for _, slot in ipairs(altRes) do
+            if slot.a then sumA = sumA + slot.a; cntA = cntA + 1 end
+            if slot.v then sumV = sumV + slot.v; cntV = cntV + 1 end
+            if slot.p then sumP = sumP + slot.p; cntP = cntP + 1 end
         end
         if cntA > 0 then alt = sumA / cntA end
         if cntV > 0 then sensorVsi = sumV / cntV end
         if cntP > 0 then pressure = sumP / cntP end
-    elseif self.altSensor then
-        alt = tonumber(safeCall(self.altSensor.getHeight))
-           or tonumber(safeCall(self.altSensor.getAltitude))
-           or 0
-        sensorVsi = tonumber(safeCall(self.altSensor.getVerticalSpeed)) or 0
-        pressure = tonumber(safeCall(self.altSensor.getAirPressure)) or tonumber(safeCall(self.altSensor.getPressure)) or 1.0
+    elseif #altRes == 1 then
+        local slot = altRes[1]
+        alt = slot.a or 0
+        sensorVsi = slot.v or 0
+        pressure = slot.p or 1.0
     end
     local pressureHPa = pressure * 1013.25
     local vsi = sensorVsi
@@ -959,23 +1211,19 @@ function Avionics:readTelemetry(dt)
     local linAcc = { x = 0, y = 0, z = 0, 0, 0, 0 }
     local angVel = { x = 0, y = 0, z = 0 }
     if self.gimbal then
-        local rads = safeCall(self.gimbal.getAnglesRad)
-        if type(rads) == "table" and rads[1] and rads[2] then
-            pitch = tonumber(rads[1]) or 0
-            roll  = tonumber(rads[2]) or 0
+        if gRads then
+            pitch = tonumber(gRads[1]) or 0
+            roll  = tonumber(gRads[2]) or 0
+        elseif gDegs then
+            pitch = math.rad(tonumber(gDegs[1]) or 0)
+            roll  = math.rad(tonumber(gDegs[2]) or 0)
         else
-            local degs = safeCall(self.gimbal.getAngles)
-            if type(degs) == "table" and degs[1] and degs[2] then
-                pitch = math.rad(tonumber(degs[1]) or 0)
-                roll  = math.rad(tonumber(degs[2]) or 0)
-            else
-                local p = tonumber(safeCall(self.gimbal.getPitchRad)) or tonumber(safeCall(self.gimbal.getPitch)) or 0
-                local r = tonumber(safeCall(self.gimbal.getRollRad)) or tonumber(safeCall(self.gimbal.getRoll)) or 0
-                if math.abs(p) > math.pi then p = math.rad(p) end
-                if math.abs(r) > math.pi then r = math.rad(r) end
-                pitch = p
-                roll  = r
-            end
+            local p = gPitchFallback or 0
+            local r = gRollFallback or 0
+            if math.abs(p) > math.pi then p = math.rad(p) end
+            if math.abs(r) > math.pi then r = math.rad(r) end
+            pitch = p
+            roll  = r
         end
         local gName = (peripheral and peripheral.getName and pcall(peripheral.getName, self.gimbal) and peripheral.getName(self.gimbal)) or nil
         local gCfg  = gName and self:getDeviceConfig(gName) or nil
@@ -994,21 +1242,17 @@ function Avionics:readTelemetry(dt)
         end
         pitch = pitch * (self.gimbalPitchSign or 1)
         roll  = roll  * (self.gimbalRollSign  or 1)
-        local acc = safeCall(self.gimbal.getLinearAcceleration)
-        if type(acc) == "table" then
-            local ax = tonumber(acc[1] or acc.x) or 0
-            local ay = tonumber(acc[2] or acc.y) or 0
-            local az = tonumber(acc[3] or acc.z) or 0
+        if type(gAcc) == "table" then
+            local ax = tonumber(gAcc[1] or gAcc.x) or 0
+            local ay = tonumber(gAcc[2] or gAcc.y) or 0
+            local az = tonumber(gAcc[3] or gAcc.z) or 0
             linAcc = { x = ax, y = ay, z = az, ax, ay, az }
         end
-        local rates = safeCall(self.gimbal.getAngularRatesRad)
-                   or safeCall(self.gimbal.getAngularRates)
-                   or safeCall(self.gimbal.getAngularVelocity)
         local wx, wy, wz = 0, 0, 0
-        if type(rates) == "table" then
-            wx = tonumber(rates[1] or rates.x) or 0
-            wy = tonumber(rates[2] or rates.y) or 0
-            wz = tonumber(rates[3] or rates.z) or 0
+        if type(gRates) == "table" then
+            wx = tonumber(gRates[1] or gRates.x) or 0
+            wy = tonumber(gRates[2] or gRates.y) or 0
+            wz = tonumber(gRates[3] or gRates.z) or 0
             if gMode == 2 or gMode == 3 then wx = -wx end
             if gMode == 1 or gMode == 3 then wz = -wz end
             if gMode == 4 or gMode == 5 then wx, wz = wz, wx end
@@ -1022,63 +1266,23 @@ function Avionics:readTelemetry(dt)
         angVel = { x = wx, y = wy, z = wz }
     end
 
-    -- 3. Heading & Navigation Target (Create: Avionics Navigation Table or Sublevel Pose)
+    -- 3. Heading (Create: Avionics Navigation Table or Sublevel Pose)
     local heading = nil
-    local navTarget = nil
-    if _G.sublevel and _G.sublevel.getLogicalPose then
-        local okPose, pose = pcall(_G.sublevel.getLogicalPose)
-        if okPose and pose and pose.orientation then
-            local q = pose.orientation
-            local qw = tonumber(q.a) or 0
-            local qx = tonumber(q.v and q.v.x) or 0
-            local qy = tonumber(q.v and q.v.y) or 0
-            local qz = tonumber(q.v and q.v.z) or 0
-            local fx = -2 * (qx * qz + qy * qw)
-            local fz = 2 * (qx * qx + qy * qy) - 1
-            heading = (math.atan2(fx, -fz) + 2 * math.pi) % (2 * math.pi)
-        end
+    if sublevelPose and sublevelPose.orientation then
+        local q = sublevelPose.orientation
+        local qw = tonumber(q.a) or 0
+        local qx = tonumber(q.v and q.v.x) or 0
+        local qy = tonumber(q.v and q.v.y) or 0
+        local qz = tonumber(q.v and q.v.z) or 0
+        local fx = -2 * (qx * qz + qy * qw)
+        local fz = 2 * (qx * qx + qy * qy) - 1
+        heading = (math.atan2(fx, -fz) + 2 * math.pi) % (2 * math.pi)
     end
-    if self.nav then
-        if heading == nil then
-            local hRad = tonumber(safeCall(self.nav.getHeadingRad))
-            if hRad then
-                heading = (hRad + 2 * math.pi) % (2 * math.pi)
-            else
-                local hDeg = tonumber(safeCall(self.nav.getHeading))
-                if hDeg then heading = (math.rad(hDeg) + 2 * math.pi) % (2 * math.pi) end
-            end
-        end
-
-        local hasTgt = safeCall(self.nav.hasTarget)
-        if hasTgt == nil and self.nav.getTarget then
-            local tgtTable = safeCall(self.nav.getTarget)
-            if type(tgtTable) == "table" and tgtTable.hasTarget == true then
-                hasTgt = true
-            end
-        end
-        if hasTgt == true then
-            local tName = safeCall(self.nav.getTargetName) or safeCall(self.nav.getTargetDisplayName) or safeCall(self.nav.getTargetLabel) or "WAYPOINT"
-            local brgRad = tonumber(safeCall(self.nav.getBearingRad))
-            if brgRad == nil and self.nav.getBearing then
-                local bDeg = tonumber(safeCall(self.nav.getBearing))
-                if bDeg then brgRad = math.rad(bDeg) end
-            elseif brgRad == nil and self.nav.getCurrentAngle then
-                local aDeg = tonumber(safeCall(self.nav.getCurrentAngle))
-                if aDeg then brgRad = math.rad(aDeg) end
-            end
-            local dist = tonumber(safeCall(self.nav.getDistanceToTarget)) or tonumber(safeCall(self.nav.getTargetDistance))
-            local vOff = tonumber(safeCall(self.nav.getVerticalOffsetToTarget))
-            local closure = tonumber(safeCall(self.nav.getClosureRate))
-            local tPos = safeCall(self.nav.getTargetPosition) or safeCall(self.nav.getTargetPos)
-            navTarget = {
-                active   = true,
-                name     = tostring(tName),
-                bearing  = brgRad or 0,
-                distance = (dist and dist >= 0) and dist or 0,
-                vOffset  = vOff or 0,
-                closure  = closure or 0,
-                pos      = tPos
-            }
+    if heading == nil and self.nav then
+        if navHdgRad then
+            heading = (navHdgRad + 2 * math.pi) % (2 * math.pi)
+        elseif navHdgDeg then
+            heading = (math.rad(navHdgDeg) + 2 * math.pi) % (2 * math.pi)
         end
     end
 
@@ -1086,17 +1290,15 @@ function Avionics:readTelemetry(dt)
     local vel = { x = 0, y = vsi, z = 0 }
     local speed = 0
     local rawVel = 0
-    local velSensList = (self.velSensors and #self.velSensors > 0) and self.velSensors or (self.velSensor and { self.velSensor } or {})
     if #velSensList > 0 then
         local reconstructed = false
         if #velSensList >= 2 then
             local hasX, hasZ = false, false
-            for _, vs in ipairs(velSensList) do
-                local axis = tostring(safeCall(vs.getAxis) or ""):lower()
-                local val = tonumber(safeCall(vs.getVelocity)) or 0
-                if axis == "x" then vel.x = val; hasX = true
-                elseif axis == "z" then vel.z = val; hasZ = true
-                elseif axis == "y" then vel.y = val
+            for _, slot in ipairs(vsRes) do
+                local val = tonumber(slot.val) or 0
+                if slot.axis == "x" then vel.x = val; hasX = true
+                elseif slot.axis == "z" then vel.z = val; hasZ = true
+                elseif slot.axis == "y" then vel.y = val
                 end
             end
             if hasX or hasZ then
@@ -1105,9 +1307,8 @@ function Avionics:readTelemetry(dt)
                 rawVel = speed
             end
         end
-        if not reconstructed then
-            local vs = velSensList[1]
-            local v = safeCall(vs.getVelocity)
+        if not reconstructed and vsRes[1] then
+            local v = vsRes[1].val
             if type(v) == "table" then
                 vel.x = tonumber(v[1] or v.x) or 0
                 vel.y = tonumber(v[2] or v.y) or vsi
@@ -1126,15 +1327,12 @@ function Avionics:readTelemetry(dt)
         end
     end
 
-    if (vel.x == 0 and vel.z == 0) and _G.sublevel and _G.sublevel.getLinearVelocity then
-        local okLv, lv = pcall(_G.sublevel.getLinearVelocity)
-        if okLv and type(lv) == "table" and (lv.x or lv.z) then
-            vel.x = tonumber(lv.x) or vel.x
-            vel.y = tonumber(lv.y) or vel.y
-            vel.z = tonumber(lv.z) or vel.z
-            speed = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
-            rawVel = speed
-        end
+    if (vel.x == 0 and vel.z == 0) and type(sublevelLinVel) == "table" and (sublevelLinVel.x or sublevelLinVel.z) then
+        vel.x = tonumber(sublevelLinVel.x) or vel.x
+        vel.y = tonumber(sublevelLinVel.y) or vel.y
+        vel.z = tonumber(sublevelLinVel.z) or vel.z
+        speed = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
+        rawVel = speed
     end
 
     if heading == nil and (math.abs(vel.x) > 0.3 or math.abs(vel.z) > 0.3) then
@@ -1152,31 +1350,20 @@ function Avionics:readTelemetry(dt)
     -- Tier 3: GPS Constellation (Trilateration fallback if in open airspace)
     -- Tier 4: INS Dead-Reckoning (Internal speed & altitude integration fallback)
     local posSource = "INS"
-    if _G.sublevel and _G.sublevel.getLogicalPose then
-        local okPose, pose = pcall(_G.sublevel.getLogicalPose)
-        if okPose and pose and pose.position and type(pose.position.x) == "number" then
-            self.pos.x = pose.position.x
-            self.pos.y = pose.position.y
-            self.pos.z = pose.position.z
-            self.gpsLocked = true
-            posSource = "SUBLEVEL"
-        end
+    if sublevelPose and sublevelPose.position and type(sublevelPose.position.x) == "number" then
+        self.pos.x = sublevelPose.position.x
+        self.pos.y = sublevelPose.position.y
+        self.pos.z = sublevelPose.position.z
+        self.gpsLocked = true
+        posSource = "SUBLEVEL"
     end
 
-    if posSource == "INS" and self.nav then
-        local okTab, tabPos = nil, nil
-        if self.nav.getTablePosition then
-            okTab, tabPos = pcall(self.nav.getTablePosition)
-        elseif self.nav.getBlockPos then
-            okTab, tabPos = pcall(self.nav.getBlockPos)
-        end
-        if okTab and tabPos and type(tabPos.x) == "number" and type(tabPos.z) == "number" then
-            self.pos.x = tabPos.x
-            self.pos.y = tabPos.y or alt
-            self.pos.z = tabPos.z
-            self.gpsLocked = true
-            posSource = "NAV_TABLE"
-        end
+    if posSource == "INS" and navTabPos and type(navTabPos.x) == "number" and type(navTabPos.z) == "number" then
+        self.pos.x = navTabPos.x
+        self.pos.y = navTabPos.y or alt
+        self.pos.z = navTabPos.z
+        self.gpsLocked = true
+        posSource = "NAV_TABLE"
     end
 
     if posSource == "INS" and self.config.useGPS and gps and gps.locate and (self.gpsTick % 40 == 1) then
@@ -1199,41 +1386,29 @@ function Avionics:readTelemetry(dt)
         self.pos.z = self.pos.z + vel.z * dt
     end
 
-    -- 5. Laser Radar Altimeter (AGL - Create: Avionics Laser Sensor)
-    local agl = nil
-    if self.laserSensor then
-        agl = tonumber(safeCall(self.laserSensor.getClosestHitDistance))
-           or tonumber(safeCall(self.laserSensor.getDistance))
-           or tonumber(safeCall(self.laserSensor.getHitDistance))
-    end
-
     -- 5b. Radar Mk.1 Beam & Contact Processing
     local radarContact = nil
     local radarGpws = false
-    if self.radar then
-        local contact = safeCall(self.radar.getContact)
-        if type(contact) == "table" then
-            radarContact = {
-                kind         = contact.kind,
-                distance     = tonumber(contact.distance) or 0,
-                closingSpeed = tonumber(contact.closingSpeed) or 0,
-                name         = contact.name
-            }
-            if contact.kind == "terrain" and (tonumber(contact.distance) or 999) < 40 and (tonumber(contact.closingSpeed) or 0) > 2 then
-                radarGpws = true
-            end
+    if type(radarRaw) == "table" then
+        radarContact = {
+            kind         = radarRaw.kind,
+            distance     = tonumber(radarRaw.distance) or 0,
+            closingSpeed = tonumber(radarRaw.closingSpeed) or 0,
+            name         = radarRaw.name
+        }
+        if radarRaw.kind == "terrain" and (tonumber(radarRaw.distance) or 999) < 40 and (tonumber(radarRaw.closingSpeed) or 0) > 2 then
+            radarGpws = true
         end
     end
 
     -- 6. Weight-on-Wheels & Landing Gear Retraction (Create: Avionics Wheel Mount)
     local weightOnWheels = false
     local gearRetracted = false
-    for _, w in ipairs(self.wheels) do
-        local fric = tonumber(safeCall(w.getTouchingFriction)) or 0
-        if fric > 0 then
+    for _, slot in ipairs(wheelRes) do
+        if (slot.fric or 0) > 0 then
             weightOnWheels = true
         end
-        if safeCall(w.isLiftedUp) == true then
+        if slot.lifted == true then
             gearRetracted = true
         end
     end
@@ -1249,60 +1424,44 @@ function Avionics:readTelemetry(dt)
 
     local totalFuel = 0
     local maxFuel = 0
-    for _, eng in ipairs(self.engines) do
-        local engRpm = tonumber(safeCall(eng.getRpm)) or tonumber(safeCall(eng.getSpeed)) or 0
-        maxRpm = math.max(maxRpm, math.abs(engRpm))
-        if safeCall(eng.isOverstressed) == true then
-            overstressed = true
-        end
-        local bTime = tonumber(safeCall(eng.getBurnTime))
-        local tTime = tonumber(safeCall(eng.getTotalBurnTime))
-        if bTime and tTime and tTime > 0 then
-            totalFuel = totalFuel + bTime
-            maxFuel = maxFuel + tTime
+    for _, slot in ipairs(engRes) do
+        maxRpm = math.max(maxRpm, math.abs(slot.rpm or 0))
+        if slot.over then overstressed = true end
+        if slot.bTime and slot.tTime and slot.tTime > 0 then
+            totalFuel = totalFuel + slot.bTime
+            maxFuel = maxFuel + slot.tTime
         end
     end
 
-    for _, cl in ipairs(self.clutches or {}) do
-        local outSpd = tonumber(callKinetic(cl, cl.getOutputSpeed))
-        if outSpd ~= nil then
-            clutchOutRpm = math.max(clutchOutRpm or 0, math.abs(outSpd))
+    for _, slot in ipairs(clRes) do
+        if slot.outSpd ~= nil then
+            clutchOutRpm = math.max(clutchOutRpm or 0, math.abs(slot.outSpd))
         end
-        local clRpm = outSpd
-                   or tonumber(callKinetic(cl, cl.getSpeed))
-                   or tonumber(callKinetic(cl, cl.getGeneratedSpeed))
-                   or 0
+        local clRpm = slot.outSpd or slot.fallbackSpd or 0
         maxRpm = math.max(maxRpm, math.abs(clRpm))
-        if callKinetic(cl, cl.isOverstressed) == true then
-            overstressed = true
-        end
+        if slot.over then overstressed = true end
     end
 
-    for _, sc in ipairs(self.speedControllers or {}) do
-        local scRpm = tonumber(callKinetic(sc, sc.getTargetSpeed))
-                   or tonumber(callKinetic(sc, sc.getSpeed))
-                   or tonumber(callKinetic(sc, sc.getOutputSpeed))
-                   or 0
-        maxRpm = math.max(maxRpm, math.abs(scRpm))
-        if callKinetic(sc, sc.isOverstressed) == true then
-            overstressed = true
+    if pollSc then
+        local scMaxRpm = 0
+        local scOver = false
+        for _, slot in ipairs(scRes) do
+            scMaxRpm = math.max(scMaxRpm, math.abs(slot.rpm or 0))
+            if slot.over then scOver = true end
         end
+        self._cachedScRpm = scMaxRpm
+        self._cachedScOverstressed = scOver
     end
+    maxRpm = math.max(maxRpm, self._cachedScRpm or 0)
+    if self._cachedScOverstressed then overstressed = true end
 
-    for _, b in ipairs(self.burners) do
-        if gasType == "NONE" then
-            local gt = safeCall(b.getGasType)
-            if gt then gasType = tostring(gt) end
+    for _, slot in ipairs(burnerRes) do
+        if gasType == "NONE" and slot.gt then
+            gasType = tostring(slot.gt)
         end
-        local bSig = tonumber(safeCall(b.getSignalStrength)) or 0
-        burnerActual = math.max(burnerActual, bSig)
-        if safeCall(b.isActive) == true then
-            burnerActive = true
-        end
-        local vc = tonumber(safeCall(b.getBalloonVolumeChange))
-        if vc ~= nil then
-            balloonVolChange = balloonVolChange + vc
-        end
+        burnerActual = math.max(burnerActual, slot.sig or 0)
+        if slot.act then burnerActive = true end
+        if slot.vc ~= nil then balloonVolChange = balloonVolChange + slot.vc end
     end
 
     -- 8. Warnings (GPWS, Stall & Pitch Anti-Dive)
@@ -1355,7 +1514,7 @@ function Avionics:readTelemetry(dt)
         navTarget        = navTarget,
         radarContact     = radarContact,
         gearRetracted    = gearRetracted,
-        transponder      = (self.controller and safeCall(self.controller.isTransponderOn) == true)
+        transponder      = transponderOn
     }
 
     -- Record initial takeoff departure point for fallback RTB (Return To Base)
@@ -1404,8 +1563,147 @@ function Avionics:startRoute(name, tel)
     return true, rm.activeRoute
 end
 
-function Avionics:setHomeBase(ilsBeacon)
+local function isCalibratedHomeBase(b)
+    if type(b) ~= "table" or b.calibrated == false then return false end
+    local p = b.zeppelinMast or b.threshold or b.pos
+    if type(p) ~= "table" then return false end
+    return ((tonumber(p.x) or 0) ~= 0 or (tonumber(p.z) or 0) ~= 0)
+end
+
+local function homeBaseSignature(b)
+    if type(b) ~= "table" then return "" end
+    local thr = b.threshold or b.pos or b.zeppelinMast or {}
+    local mast = b.zeppelinMast or b.threshold or b.pos or {}
+    return string.format(
+        "%s|%s|%.1f,%.1f,%.1f|%.1f,%.1f,%.1f|%.3f",
+        tostring(b.baseName or ""),
+        tostring(b.runwayId or ""),
+        tonumber(thr.x) or 0, tonumber(thr.y) or 0, tonumber(thr.z) or 0,
+        tonumber(mast.x) or 0, tonumber(mast.y) or 0, tonumber(mast.z) or 0,
+        tonumber(b.rwyHeadingRad) or 0
+    )
+end
+
+function Avionics:loadHomeBase()
+    if not (fs and fs.exists and fs.exists(HOMEBASE_CFG_PATH)) then return false end
+    if not (textutils and textutils.unserialize) then return false end
+    local okO, f = pcall(fs.open, HOMEBASE_CFG_PATH, "r")
+    if not okO or not f then return false end
+    local okR, raw = pcall(f.readAll)
+    pcall(f.close)
+    if not okR or type(raw) ~= "string" or raw == "" then return false end
+    local okU, data = pcall(textutils.unserialize, raw)
+    if not okU or not isCalibratedHomeBase(data) then return false end
+
+    local ref = data.zeppelinMast or data.threshold or data.pos
+    local rx = tonumber(ref.x) or 0
+    local ry = tonumber(ref.y) or 120
+    local rz = tonumber(ref.z) or 0
+    local thr = type(data.threshold) == "table" and data.threshold or { x = rx, y = ry, z = rz }
+    local mast = type(data.zeppelinMast) == "table" and data.zeppelinMast or { x = rx, y = ry, z = rz }
+    local pos = type(data.pos) == "table" and data.pos or { x = tonumber(mast.x) or rx, y = tonumber(mast.y) or ry, z = tonumber(mast.z) or rz }
+
+    local clean = {
+        type          = "AVIONICS_ILS_BEACON",
+        baseName      = tostring(data.baseName or "ANA-US"),
+        runwayId      = tostring(data.runwayId or "RWY-36"),
+        calibrated    = true,
+        threshold     = { x = tonumber(thr.x) or rx, y = tonumber(thr.y) or ry, z = tonumber(thr.z) or rz },
+        zeppelinMast  = { x = tonumber(mast.x) or rx, y = tonumber(mast.y) or ry, z = tonumber(mast.z) or rz },
+        pos           = { x = tonumber(pos.x) or rx, y = tonumber(pos.y) or ry, z = tonumber(pos.z) or rz },
+        rwyHeadingRad = tonumber(data.rwyHeadingRad) or 0.0,
+        glideSlopeRad = tonumber(data.glideSlopeRad) or math.rad(8.0),
+        approachDist  = tonumber(data.approachDist) or 80.0
+    }
+    self.ap.homeBase = clean
+    self._savedHomeBaseSig = homeBaseSignature(clean)
+    return true
+end
+
+function Avionics:saveHomeBase(beacon)
+    beacon = beacon or self.ap.homeBase
+    if not isCalibratedHomeBase(beacon) then return false end
+    if not (fs and fs.open and textutils and textutils.serialize) then return false end
+    if fs.makeDir and not fs.exists("/etc") then pcall(fs.makeDir, "/etc") end
+
+    local ref = beacon.zeppelinMast or beacon.threshold or beacon.pos
+    local rx = tonumber(ref.x) or 0
+    local ry = tonumber(ref.y) or 120
+    local rz = tonumber(ref.z) or 0
+    local thr = type(beacon.threshold) == "table" and beacon.threshold or { x = rx, y = ry, z = rz }
+    local mast = type(beacon.zeppelinMast) == "table" and beacon.zeppelinMast or { x = rx, y = ry, z = rz }
+    local pos = type(beacon.pos) == "table" and beacon.pos or { x = tonumber(mast.x) or rx, y = tonumber(mast.y) or ry, z = tonumber(mast.z) or rz }
+
+    local payload = {
+        type          = "AVIONICS_ILS_BEACON",
+        baseName      = tostring(beacon.baseName or "ANA-US"),
+        runwayId      = tostring(beacon.runwayId or "RWY-36"),
+        calibrated    = true,
+        threshold     = { x = tonumber(thr.x) or rx, y = tonumber(thr.y) or ry, z = tonumber(thr.z) or rz },
+        zeppelinMast  = { x = tonumber(mast.x) or rx, y = tonumber(mast.y) or ry, z = tonumber(mast.z) or rz },
+        pos           = { x = tonumber(pos.x) or rx, y = tonumber(pos.y) or ry, z = tonumber(pos.z) or rz },
+        rwyHeadingRad = tonumber(beacon.rwyHeadingRad) or 0.0,
+        glideSlopeRad = tonumber(beacon.glideSlopeRad) or math.rad(8.0),
+        approachDist  = tonumber(beacon.approachDist) or 80.0
+    }
+    local ok, f = pcall(fs.open, HOMEBASE_CFG_PATH, "w")
+    if ok and f then
+        pcall(f.write, textutils.serialize(payload))
+        pcall(f.close)
+        self._savedHomeBaseSig = homeBaseSignature(payload)
+        return true
+    end
+    return false
+end
+
+function Avionics:setHomeBase(ilsBeacon, skipSave)
+    if type(ilsBeacon) ~= "table" then return end
+    local newPos = ilsBeacon.zeppelinMast or ilsBeacon.threshold or ilsBeacon.pos
+    if ilsBeacon.calibrated == false and self.ap.homeBase then
+        local curPos = self.ap.homeBase.zeppelinMast or self.ap.homeBase.threshold or self.ap.homeBase.pos
+        if curPos and ((tonumber(curPos.x) or 0) ~= 0 or (tonumber(curPos.z) or 0) ~= 0) then
+            return
+        end
+    end
+    if newPos and not ilsBeacon.pos then
+        ilsBeacon.pos = { x = tonumber(newPos.x) or 0, y = tonumber(newPos.y) or 0, z = tonumber(newPos.z) or 0 }
+    end
     self.ap.homeBase = ilsBeacon
+    if (not skipSave) and isCalibratedHomeBase(ilsBeacon) then
+        local sig = homeBaseSignature(ilsBeacon)
+        if sig ~= self._savedHomeBaseSig then
+            self:saveHomeBase(ilsBeacon)
+        end
+    end
+end
+
+function Avionics:setCurrentPosAsHomeBase(currentTel, baseName)
+    local pos = (currentTel and currentTel.pos) or self.pos
+    local px = pos and tonumber(pos.x) or 0
+    local pz = pos and tonumber(pos.z) or 0
+    local py = (currentTel and tonumber(currentTel.altitude)) or (pos and tonumber(pos.y)) or 120
+    if px == 0 and pz == 0 then
+        return false, "GECERSIZ KONUM (0,0)"
+    end
+    local rx = math.floor(px + 0.5)
+    local ry = math.floor(py + 0.5)
+    local rz = math.floor(pz + 0.5)
+    local bName = (type(baseName) == "string" and baseName ~= "") and baseName or "ANA-US"
+    local beacon = {
+        type          = "AVIONICS_ILS_BEACON",
+        baseName      = bName,
+        runwayId      = "SHIP-HOME",
+        calibrated    = true,
+        threshold     = { x = rx, y = math.max(1, ry - 15), z = rz },
+        zeppelinMast  = { x = rx, y = ry, z = rz },
+        pos           = { x = rx, y = ry, z = rz },
+        rwyHeadingRad = (currentTel and tonumber(currentTel.heading)) or self.lastHeading or 0.0,
+        glideSlopeRad = math.rad(8.0),
+        approachDist  = 80.0
+    }
+    self:setHomeBase(beacon, false)
+    self.ap.lastAtcNotice = string.format("ANA US KAYDEDILDI: %s (%d,%d,%d)", bName, rx, ry, rz)
+    return true, self.ap.lastAtcNotice, beacon
 end
 
 function Avionics:reverseHeading()
@@ -1417,22 +1715,55 @@ function Avionics:reverseHeading()
 end
 
 function Avionics:engageRTB(currentTel)
-    if not self.ap.homeBase then
+    local hbPos = self.ap.homeBase and (self.ap.homeBase.zeppelinMast or self.ap.homeBase.threshold or self.ap.homeBase.pos)
+    local isUncalibratedZero = self.ap.homeBase and (self.ap.homeBase.calibrated == false)
+        and ((not hbPos) or ((tonumber(hbPos.x) or 0) == 0 and (tonumber(hbPos.z) or 0) == 0))
+
+    if (not self.ap.homeBase) or isUncalibratedZero then
+        local isMastShip = (self.vehicleType == "ZEPPELIN" or self.vehicleType == "MOTHERSHIP" or self.vehicleType == "GUNSHIP")
         if self.takeoffPos then
             self.ap.homeBase = {
-                baseName = "KALKIS NOKTASI",
-                threshold = { x = self.takeoffPos.x, y = self.takeoffPos.y, z = self.takeoffPos.z },
+                baseName      = "KALKIS NOKTASI",
+                threshold     = { x = self.takeoffPos.x, y = self.takeoffPos.y, z = self.takeoffPos.z },
+                zeppelinMast  = isMastShip and { x = self.takeoffPos.x, y = self.takeoffPos.y, z = self.takeoffPos.z } or nil,
+                pos           = { x = self.takeoffPos.x, y = self.takeoffPos.y, z = self.takeoffPos.z },
                 rwyHeadingRad = self.takeoffPos.heading or 0.0
             }
         else
-            return false
+            local rm = self.routeManager or (self.getRouteManager and self:getRouteManager())
+            local poi = rm and rm.pois and rm.pois[1]
+            if poi then
+                self.ap.homeBase = {
+                    baseName      = tostring(poi.name or "ANA-US"),
+                    runwayId      = "POI-HOME",
+                    calibrated    = true,
+                    threshold     = { x = poi.x, y = math.max(1, (poi.y or 170) - 15), z = poi.z },
+                    zeppelinMast  = isMastShip and { x = poi.x, y = poi.y or 170, z = poi.z } or nil,
+                    pos           = { x = poi.x, y = poi.y or 170, z = poi.z },
+                    rwyHeadingRad = 0.0
+                }
+            else
+                return false
+            end
         end
     end
-    self.ap.enabled  = true
-    self.ap.altHold  = true
-    self.ap.hdgHold  = true
-    self.ap.parkingBrake = false
-    self.ap.mode     = "RTB"
+    local mast = self.ap.homeBase.zeppelinMast or self.ap.homeBase.threshold or self.ap.homeBase.pos
+    self.ap.rtbTransitAlt = math.max(((mast and tonumber(mast.y)) or 85) + 15.0, (currentTel and tonumber(currentTel.altitude)) or 0, self.ap.escapeFloorAlt or 0)
+    self.ap.enabled       = true
+    self.ap.altHold       = true
+    self.ap.hdgHold       = true
+    self.ap.parkingBrake  = false
+    self.ap.reverseGear   = false
+    self.ap.escape        = nil
+    self.obsStuckTime     = 0.0
+    self.obsCheckPos      = nil
+    self.ap.mode          = "RTB"
+    self.ap.lastAtcNotice = string.format("ANA US RTB: %s (%d,%d,%d)",
+        tostring(self.ap.homeBase.baseName or "ANA-US"),
+        math.floor((mast and tonumber(mast.x)) or 0),
+        math.floor((mast and tonumber(mast.y)) or 0),
+        math.floor((mast and tonumber(mast.z)) or 0)
+    )
 
     if (self.vehicleType == "ZEPPELIN" or self.vehicleType == "MOTHERSHIP" or self.vehicleType == "GUNSHIP") and self.ap.homeBase.zeppelinMast then
         self.ap.rtbPhase = "RTB_MAST"
@@ -1468,6 +1799,12 @@ function Avionics:setMode(modeName, currentTel)
     local bumplessInt = wasAltHold and savedIntegral or clamp((self.lastBurnerSignal and self.lastBurnerSignal > 0) and (self.lastBurnerSignal - (self.skyfireModel.hoverBaseSig or 10.8)) or 0.0, -1.0, 1.5)
 
     if modeName ~= "ANCHOR" then self.anchorPos = nil end
+    if modeName == "MANUAL" or modeName == "HOVER" or modeName == "ANCHOR" or modeName == "AUTOLAND" then
+        self.ap.escape = nil
+        self.obsStuckTime = 0.0
+        self.obsCheckPos = nil
+        self.ap.escapeFloorAlt = nil
+    end
     if modeName == "MANUAL" then
         self.ap.enabled = false
         self.ap.altHold = false
@@ -1578,12 +1915,16 @@ function Avionics:executeAtcCommand(msg, currentTel)
         return true, string.format("ATC IRTIFA EMRI: %.0fm (%+dm)", self.ap.targetAlt, delta)
     elseif cmd == "WAYPOINT" or cmd == "LNAV" then
         if type(msg.waypoint) == "table" and msg.waypoint.x and msg.waypoint.z then
+            local wpY = tonumber(msg.waypoint.y) or self.ap.targetAlt
+            local safeTransit = tonumber(msg.waypoint.transitY)
             self.ap.waypoint = {
                 x = tonumber(msg.waypoint.x) or 0,
-                y = tonumber(msg.waypoint.y) or self.ap.targetAlt,
-                z = tonumber(msg.waypoint.z) or 0
+                y = wpY,
+                transitY = safeTransit,
+                z = tonumber(msg.waypoint.z) or 0,
+                name = tostring(msg.waypoint.name or (msg.beacon and msg.beacon.baseName) or "ATC-WP")
             }
-            self.ap.targetAlt = self.ap.waypoint.y
+            self.ap.targetAlt = safeTransit or self.ap.waypoint.y
             self:setMode("LNAV", currentTel)
             return true, string.format("ATC ROTA EMRI: (%d, %d, %d)", self.ap.waypoint.x, self.ap.waypoint.y, self.ap.waypoint.z)
         end
@@ -1595,6 +1936,208 @@ function Avionics:executeAtcCommand(msg, currentTel)
         end
     end
     return false, nil
+end
+
+function Avionics:receiveAtcCall(msg, currentTel, senderId)
+    if type(msg) ~= "table" or msg.type ~= "AVIONICS_ATC_CMD" then
+        return nil, nil
+    end
+    local myCall = (currentTel and currentTel.callsign) or self.callsign
+    if msg.target and msg.target ~= "ALL" and msg.target ~= myCall then
+        return nil, nil
+    end
+
+    if type(msg.beacon) == "table" and msg.beacon.type == "AVIONICS_ILS_BEACON" then
+        self:setHomeBase(msg.beacon)
+    end
+
+    local cmd = tostring(msg.cmd or ""):upper()
+    if cmd == "PARK" or cmd == "INS_SYNC" or msg.force == true or msg.requireConfirm == false or self.ap.atcAutoAccept == true then
+        local ok, notice = self:executeAtcCommand(msg, currentTel)
+        self.ap.pendingCall = nil
+        self.ap.lastAtcNotice = notice
+        return (ok and "EXECUTED" or "FAILED"), notice
+    end
+
+    local targetPos = nil
+    if cmd == "RTB" then
+        local tp = (msg.beacon and (msg.beacon.zeppelinMast or msg.beacon.threshold or msg.beacon.pos))
+            or (self.ap.homeBase and (self.ap.homeBase.zeppelinMast or self.ap.homeBase.threshold or self.ap.homeBase.pos))
+            or self.takeoffPos
+        if tp then
+            targetPos = { x = tonumber(tp.x) or 0, y = tonumber(tp.y) or 0, z = tonumber(tp.z) or 0 }
+        end
+    elseif (cmd == "WAYPOINT" or cmd == "LNAV") and type(msg.waypoint) == "table" then
+        targetPos = {
+            x = tonumber(msg.waypoint.x) or 0,
+            y = tonumber(msg.waypoint.y) or (self.ap.targetAlt or 120),
+            z = tonumber(msg.waypoint.z) or 0
+        }
+    end
+
+    local baseName = tostring((msg.beacon and msg.beacon.baseName) or (self.ap.homeBase and self.ap.homeBase.baseName) or "KULE")
+    local runwayId = tostring((msg.beacon and msg.beacon.runwayId) or (self.ap.homeBase and self.ap.homeBase.runwayId) or "RWY")
+    self.ap.pendingCall = {
+        id         = tostring(msg.timestamp or os.clock()),
+        cmd        = cmd,
+        baseName   = baseName,
+        runwayId   = runwayId,
+        targetPos  = targetPos,
+        delta      = tonumber(msg.delta),
+        targetAlt  = tonumber(msg.targetAlt),
+        senderId   = senderId,
+        receivedAt = (os.epoch and os.epoch("utc")) or os.time(),
+        rawMsg     = msg
+    }
+    self.ap.lastAtcNotice = string.format("GELEN CAGRI [%s]: %s", baseName, cmd)
+    return "PENDING", self.ap.lastAtcNotice
+end
+
+function Avionics:acceptPendingCall(currentTel)
+    if self.ap.pendingCall then
+        local call = self.ap.pendingCall
+        self.ap.pendingCall = nil
+        local ok, notice = self:executeAtcCommand(call.rawMsg, currentTel)
+        self.ap.lastAtcNotice = ok and ("KABUL: " .. tostring(notice)) or ("HATA: " .. tostring(notice))
+        return ok, notice, call
+    end
+
+    local nt = currentTel and currentTel.navTarget
+    if nt and nt.active then
+        local tx, ty, tz
+        local curPos = (currentTel and currentTel.pos) or self.pos or { x = 0, y = 100, z = 0 }
+        if type(nt.pos) == "table" and tonumber(nt.pos.x or nt.pos[1]) and tonumber(nt.pos.z or nt.pos[3]) then
+            tx = tonumber(nt.pos.x or nt.pos[1])
+            tz = tonumber(nt.pos.z or nt.pos[3])
+            ty = tonumber(nt.pos.y or nt.pos[2]) or ((tonumber(currentTel.altitude) or 100) + (tonumber(nt.vOffset) or 0))
+        else
+            local d = tonumber(nt.distance) or 0
+            local b = tonumber(nt.bearing) or 0
+            tx = (tonumber(curPos.x) or 0) + d * math.sin(b)
+            tz = (tonumber(curPos.z) or 0) - d * math.cos(b)
+            ty = (tonumber(currentTel.altitude) or 100) + (tonumber(nt.vOffset) or 0)
+        end
+        local curAlt = tonumber(currentTel.altitude) or ty
+        local safeCruiseY = math.max(ty + 15.0, curAlt)
+        local dist = math.sqrt((tx - (tonumber(curPos.x) or 0)) ^ 2 + (tz - (tonumber(curPos.z) or 0)) ^ 2)
+        self.ap.waypoint = {
+            x        = tx,
+            y        = ty,
+            transitY = safeCruiseY,
+            z        = tz,
+            name     = tostring(nt.name or "MASA HEDEF")
+        }
+        self:setMode("LNAV", currentTel)
+        self.ap.targetAlt = (dist > 100.0) and safeCruiseY or ty
+        self.ap.lastAtcNotice = string.format(
+            "MASA HEDEFI: %s (%d,%d,%d)",
+            self.ap.waypoint.name,
+            math.floor(tx + 0.5),
+            math.floor(ty + 0.5),
+            math.floor(tz + 0.5)
+        )
+        return true, self.ap.lastAtcNotice, nil
+    end
+
+    return false, "KABUL EDILECEK CAGRI/HEDEF YOK", nil
+end
+
+function Avionics:rejectPendingCall()
+    if not self.ap.pendingCall then
+        return false, "BEKLEYEN CAGRI YOK", nil
+    end
+    local call = self.ap.pendingCall
+    self.ap.pendingCall = nil
+    self.ap.lastAtcNotice = "REDDEDILDI: " .. tostring(call.cmd) .. " (" .. tostring(call.baseName) .. ")"
+    return true, self.ap.lastAtcNotice, call
+end
+
+function Avionics:cancelObstacleEscape()
+    self.ap.escape = nil
+    self.obsStuckTime = 0.0
+    self.obsCheckPos = nil
+    return true
+end
+
+function Avionics:triggerObstacleEscape(currentTel, reason)
+    local nowSec = self.obsSimClock or 0.0
+    if (nowSec - (self.obsLastEscapeClock or -999.0)) > 120.0 then
+        self.obsAttempts = 0
+    end
+    self.obsAttempts = (self.obsAttempts or 0) + 1
+
+    if self.obsAttempts > 4 then
+        self.ap.escape = nil
+        self.obsStuckTime = 0.0
+        self.obsAttempts = 0
+        self:setMode("HOVER", currentTel)
+        self.ap.lastAtcNotice = "ENGEL: 4 DENEME DOLDU -> HOVER (PILOT)"
+        return false, self.ap.lastAtcNotice
+    end
+
+    local curAlt = (currentTel and tonumber(currentTel.altitude)) or (self.pos and self.pos.y) or self.ap.targetAlt or 120.0
+    local curHdg = (currentTel and tonumber(currentTel.heading)) or self.ap.targetHdg or 0.0
+    local curX = (currentTel and currentTel.pos and tonumber(currentTel.pos.x)) or (self.pos and self.pos.x) or 0.0
+    local curZ = (currentTel and currentTel.pos and tonumber(currentTel.pos.z)) or (self.pos and self.pos.z) or 0.0
+
+    local MAX_ESCAPE_ALT = 305.0
+    local thinAir = (currentTel and currentTel.pressure and currentTel.pressure < 0.35)
+    local climbStep = thinAir and 0.0 or ((self.obsAttempts >= 2) and 24.0 or 22.0)
+    local climbAlt = math.min(MAX_ESCAPE_ALT, curAlt + climbStep)
+    local nearCeiling = thinAir or ((climbAlt - curAlt) < 10.0)
+
+    local bypassHdg = nil
+    local bypassDur = 0.0
+    if self.obsAttempts >= 2 or nearCeiling then
+        local sign = (self.obsAttempts % 2 == 1) and 1 or -1
+        local angle = nearCeiling and math.rad(65) or math.rad(35)
+        bypassHdg = (curHdg + sign * angle) % (2 * math.pi)
+        bypassDur = nearCeiling and 6.0 or 5.0
+    end
+
+    local prevEsc = self.ap.escape
+    local resumeMode = (prevEsc and prevEsc.resumeMode)
+        or ((self.ap.mode == "RTB" or self.ap.mode == "LNAV" or self.ap.mode == "CRUISE") and self.ap.mode)
+        or "HOVER"
+    local resumeThrottle = (prevEsc and prevEsc.resumeThrottle)
+        or ((self.ap.baseThrottle and self.ap.baseThrottle > 0) and self.ap.baseThrottle)
+        or 8
+    local resumeTargetAlt = (prevEsc and prevEsc.resumeTargetAlt) or self.ap.targetAlt or curAlt
+
+    self.ap.enabled = true
+    self.ap.altHold = true
+    self.ap.hdgHold = true
+    self.ap.parkingBrake = false
+
+    self.ap.escape = {
+        active          = true,
+        phase           = "BACKUP",
+        phaseTime       = 0.0,
+        backupDur       = (self.obsAttempts >= 2) and 5.5 or 4.5,
+        attempt         = self.obsAttempts,
+        maxAttempts     = 4,
+        reason          = tostring(reason or "ENGEL"),
+        startX          = curX,
+        startZ          = curZ,
+        startAlt        = curAlt,
+        holdHdg         = curHdg,
+        climbAlt        = climbAlt,
+        bypassHdg       = bypassHdg,
+        bypassDur       = bypassDur,
+        resumeMode      = resumeMode,
+        resumeThrottle  = resumeThrottle,
+        resumeTargetAlt = resumeTargetAlt
+    }
+
+    self.obsStuckTime = 0.0
+    self.obsCheckPos = { x = curX, z = curZ }
+    self.ap.lastAtcNotice = string.format(
+        "ENGEL KURTARMA #%d (%s): GERI + YUKSEL -> %.0fm",
+        self.obsAttempts,
+        tostring(reason or "ENGEL"),
+        climbAlt
+    )
+    return true, self.ap.lastAtcNotice
 end
 
 function Avionics:loadAdaptiveState()
@@ -1644,7 +2187,7 @@ end
 
 function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     local a = self.adaptive
-    local safeDt = clamp(dt or 0.05, 0.02, 0.25)
+    local safeDt = clamp(dt or 0.05, 0.02, 0.50)
     local m = self.skyfireModel or {
         mass          = 15120.0,
         gravityForce  = 166000.0,
@@ -1686,7 +2229,7 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     a.fPitchRate = a.fPitchRate * 0.55 + rawPitchRate * 0.45
     a.fRollRate  = a.fRollRate  * 0.55 + rawRollRate  * 0.45
     a.fYawRate   = a.fYawRate   * 0.60 + rawYawRate   * 0.40
-    a.fVSpeed    = a.fVSpeed    * 0.65 + rawVSpeed    * 0.35
+    a.fVSpeed    = a.fVSpeed    * 0.10 + rawVSpeed    * 0.90
 
     local ap = self.autopilot or self.ap or {}
     local apMode = ap.mode or "MANUAL"
@@ -1711,43 +2254,35 @@ function Avionics:stepGunshipAdaptive(tel, dt, tasks)
     else
         local tgtAlt = ap.targetAltitude or ap.targetAlt or tel.altitude or 0
         local altErr = tgtAlt - (tel.altitude or 0)
+        local absAltErr = math.abs(altErr)
 
-        -- 1. Dış Çevrim: Hedef Dikey Hız Profili (Target Velocity Governor)
-        -- HOVER modunda tırmanış/alçalış hızını katı şekilde maks +-0.8 m/s ile sınırlar.
-        -- Böylece kinetik enerji minimumda kalır; gemi 10-20 blok zıplamak yerine
-        -- hedefine yaklaştıkça hızını santimetrik olarak sıfırlar.
-        local maxSpeed = (apMode == "HOVER") and 0.80 or 2.50
-        local targetVSpeed = clamp(altErr * 0.60, -maxSpeed, maxSpeed)
+        -- 1. Dış Çevrim: Tek Pürüzsüz Aşırı-Sönümlü Hedef Dikey Hız Zarfı (Create Pervane/Rotor Gecikmesi ~1.0 sn için faz-marjlı)
+        -- Kp = 0.20 s^-1 (tau = 5.0 sn) -> 0.9-1.2 sn aktüatör/döngü gecikmesinde dahi salınımsız oturma
+        local maxClimb = (apMode == "HOVER") and 3.00 or 3.40
+        local maxDesc  = (apMode == "HOVER") and 1.80 or 2.20
+        local targetVSpeed = clamp(altErr * 0.20, -maxDesc, maxClimb)
 
-        -- 2. İç Çevrim: Hız Takip Hatası Regülatörü (Velocity Feedback)
+        -- 2. İç Çevrim: Doğrudan Dikey Hız Regülatörü (Kv = 0.58; kesintili altPID darbesi kaldırıldı)
         local vErr = targetVSpeed - a.fVSpeed
-        -- HOVER modunda gaz otoritesini +-1.2 ile sınırla (aşırı ivmelenme ve fırlamayı önler)
-        local maxCmd = (apMode == "HOVER") and 1.20 or 2.60
-        local altCmd = clamp(vErr * 1.80, -maxCmd, maxCmd)
+        local maxCmd = (absAltErr <= 2.5) and 1.20 or 2.40
+        local altCmd = clamp(vErr * 0.58, -maxCmd, maxCmd)
 
-        -- 3. Milimetrik Duraklama İrtifa İntegratörü (|altErr| < 1.0m iken kalıcı hatayı sıfırlar)
-        if math.abs(altErr) < 1.0 then
-            local intVal = self.altPID:compute(0, -altErr, safeDt)
-            altCmd = clamp(altCmd + intVal, -maxCmd - 0.3, maxCmd + 0.3)
-        else
-            self.altPID:reset()
-        end
-
-        -- Canlı Hover Taban Gazı: YALNIZCA hedef irtifaya yakın iken (|altErr| < 1.5m) adapte olur
-        local isNearTargetAlt = (math.abs(altErr) < 1.5) and (math.abs(pitch) < 0.20) and (math.abs(roll) < 0.20)
-        if isNearTargetAlt and apMode == "HOVER" then
-            a.hoverBase = clamp(a.hoverBase + (vErr * (a.hoverLearnRate or 0.15)) * safeDt, 6.0, 11.5)
+        -- 3. Tek Sürekli Adaptif Denge Öğrenicisi (a.hoverBase):
+        -- Hava yoğunluğu ve kütle değişimini kesintisiz öğrenir; aşırı düşüş/tırmanışta (|vy| >= 4.5) şişmeyi kilitler
+        local isLevelAttitude = (math.abs(pitch) < 0.22) and (math.abs(roll) < 0.22)
+        if isLevelAttitude and math.abs(a.fVSpeed) < 4.5 and (apMode == "HOVER" or apMode == "CRUISE" or apMode == "ANCHOR" or apMode == "LNAV" or apMode == "RTB") then
+            local learnRate = 0.055
+            a.hoverBase = clamp(a.hoverBase + (vErr * learnRate) * safeDt, 6.5, 13.5)
             m.hoverBaseSig = a.hoverBase
         end
 
-        local baseCenter = math.max(ap.baseThrottle or 0, a.hoverBase or m.hoverBaseSig or 8.90)
+        local baseCenter = a.hoverBase or m.hoverBaseSig or 8.90
         local rawLiftCmd = baseCenter + altCmd
         baseLift = clamp(rawLiftCmd, 0.0, 15.0)
 
-        -- Yumuşak Gaz Hız Sınırlayıcı (Slew Rate Limiter):
-        -- Aşırı gecikmeye sebep olmadan mekanik darbeyi engeller (10.0 birim/sn)
-        if self.lastBaseLift and apMode == "HOVER" then
-            local maxStep = 10.0 * safeDt
+        -- Faz Gecikmesiz Koruyucu Slew Limiti (40.0/sn: 20Hz'de 2.0/adım, 3Hz'de anlık frenleme -> pogo salınımını tamamen önler)
+        if self.lastBaseLift and (apMode == "HOVER" or apMode == "CRUISE" or apMode == "ANCHOR") then
+            local maxStep = 40.0 * safeDt
             baseLift = clamp(baseLift, self.lastBaseLift - maxStep, self.lastBaseLift + maxStep)
         end
         self.lastBaseLift = baseLift
@@ -2016,25 +2551,40 @@ function Avionics:step(dt)
         if self.spinTest.ticks <= 0 then self.spinTest = nil end
     end
 
-    -- Enforce zero forward throttle in HOVER mode; in other modes, advancing throttle > 0 releases parking brake
-    if self.ap.mode == "HOVER" then
+    local safeObsDt = clamp(dt or 0.05, 0.02, 0.50)
+    self.obsSimClock = (self.obsSimClock or 0.0) + safeObsDt
+    local escapeRevOverride = false
+
+    -- Enforce zero forward throttle in HOVER mode (except during active manual escape); in other modes, advancing throttle > 0 releases parking brake
+    if self.ap.mode == "HOVER" and not self.ap.escape then
         self.ap.baseThrottle = 0
         self.ap.parkingBrake = true
-    elseif self.ap.parkingBrake and self.ap.baseThrottle > 0 then
+    elseif self.ap.parkingBrake and self.ap.baseThrottle > 0 and not self.ap.escape then
         self.ap.parkingBrake = false
     end
+
+    if not (self.ap.escape and self.ap.enabled and not self.ap.parkingBrake) then
 
     -- Handle Waypoint LNAV Bearing Calculation
     if self.ap.enabled and self.ap.mode == "LNAV" and self.ap.waypoint then
         local dx = self.ap.waypoint.x - tel.pos.x
         local dz = self.ap.waypoint.z - tel.pos.z
         local distSq = dx * dx + dz * dz
+        local dist = math.sqrt(distSq)
+        self.ap.ilsDev.dist = dist
         if distSq > 25 then -- > 5 blocks away
-            self.ap.targetHdg = math.atan2(-dx, dz)
-            if self.ap.waypoint.y then
+            self.ap.targetHdg = (math.atan2(dx, -dz) + 2 * math.pi) % (2 * math.pi)
+            if self.ap.waypoint.transitY and dist > 100.0 then
+                self.ap.targetAlt = self.ap.waypoint.transitY
+            elseif self.ap.waypoint.y then
                 self.ap.targetAlt = self.ap.waypoint.y
             end
+            if dist < 40.0 then
+                local cruiseSpd = (self.ap.baseThrottle and self.ap.baseThrottle > 0) and self.ap.baseThrottle or 8
+                self.ap.baseThrottle = math.min(cruiseSpd, math.max(3, math.floor(dist * 0.25)))
+            end
         elseif self.vehicleType == "ZEPPELIN" or self.vehicleType == "MOTHERSHIP" or self.vehicleType == "GUNSHIP" then
+            self.ap.waypoint = nil
             self:setMode("HOVER", tel)
         end
     end
@@ -2044,14 +2594,19 @@ function Avionics:step(dt)
         local base = self.ap.homeBase
 
         if self.ap.rtbPhase == "RTB_MAST" then
-            local mast = base.zeppelinMast or base.threshold
+            local mast = base.zeppelinMast or base.threshold or base.pos
             local dx = mast.x - tel.pos.x
             local dz = mast.z - tel.pos.z
             local dist = math.sqrt(dx * dx + dz * dz)
             self.ap.ilsDev.dist = dist
+            self.ap.ilsDev.loc  = 0.0
 
-            if dist > 6.0 then
-                self.ap.targetHdg = math.atan2(-dx, dz)
+            if dist > 100.0 then
+                self.ap.targetHdg = (math.atan2(dx, -dz) + 2 * math.pi) % (2 * math.pi)
+                self.ap.targetAlt = math.max(mast.y + 15.0, self.ap.rtbTransitAlt or (mast.y + 15.0))
+                self.ap.baseThrottle = 12
+            elseif dist > 6.0 then
+                self.ap.targetHdg = (math.atan2(dx, -dz) + 2 * math.pi) % (2 * math.pi)
                 self.ap.targetAlt = mast.y + 15.0
                 self.ap.baseThrottle = math.min(10, math.max(3, math.floor(dist * 0.25)))
             else
@@ -2062,6 +2617,7 @@ function Avionics:step(dt)
                     self:setMode("HOVER", tel)
                 end
             end
+            self.ap.ilsDev.gs = (tel.altitude or 0) - (self.ap.targetAlt or mast.y)
         else
             local thr = base.threshold
             local psi = base.rwyHeadingRad or 0.0
@@ -2086,7 +2642,7 @@ function Avionics:step(dt)
                 local dz = fafZ - tel.pos.z
                 local distToFAF = math.sqrt(dx * dx + dz * dz)
 
-                self.ap.targetHdg = math.atan2(-dx, dz)
+                self.ap.targetHdg = (math.atan2(dx, -dz) + 2 * math.pi) % (2 * math.pi)
                 self.ap.targetAlt = fafY
                 self.ap.baseThrottle = math.min(10, math.max(6, (self.ap.baseThrottle and self.ap.baseThrottle > 0) and self.ap.baseThrottle or 8))
 
@@ -2126,27 +2682,189 @@ function Avionics:step(dt)
             self.ap.targetAlt = tel.altitude - 2.0
         end
     end
+    end -- end non-escape navigation block
 
-    -- Heading PID computation (used for differential thrust, vectoring gyros, and rudder steering)
-    local yawDiff = 0
+    -- Heading Cascaded Rate Governor (Smooth, Critically-Damped Precision Yaw Control)
+    -- Outer Loop: Heading Error -> Target Angular Yaw Rate (rad/s)
+    -- Inner Loop: Yaw Rate Error -> Smooth Continuous Differential Thrust (-10..+10)
+    local dHdgStep = normalizeAngleRad((tel.heading or 0) - (self.prevYawHdg or tel.heading or 0))
+    self.prevYawHdg = tel.heading or 0
+    local rawYawRate = clamp(dHdgStep / math.max(dt, 0.02), -2.5, 2.5)
+    self.smoothYawRate = (self.smoothYawRate or 0.0) * 0.55 + rawYawRate * 0.45
+
+    -- Autonomous Obstacle / Island Collision Escape State Machine & Multi-Signal Stall Detector
+    local function finishObstacleEscape(esc)
+        self.obsLastEscapeClock = self.obsSimClock or 0.0
+        self.ap.escape = nil
+        self.obsStuckTime = 0.0
+        self.obsCheckPos = { x = (tel.pos and tel.pos.x) or 0, z = (tel.pos and tel.pos.z) or 0 }
+        self.ap.escapeFloorAlt = esc.climbAlt
+
+        local targetMode = esc.resumeMode or "HOVER"
+        if targetMode == "HOVER" then
+            self:setMode("HOVER", tel)
+            self.ap.baseThrottle = 0
+        else
+            self.ap.mode = targetMode
+            self.ap.baseThrottle = esc.resumeThrottle or 8
+            self.ap.parkingBrake = false
+        end
+        self.ap.targetAlt = math.max(esc.resumeTargetAlt or esc.climbAlt, esc.climbAlt)
+        if self.ap.rtbTransitAlt or targetMode == "RTB" then
+            self.ap.rtbTransitAlt = math.max(self.ap.rtbTransitAlt or 0, esc.climbAlt)
+        end
+        if self.ap.waypoint then
+            self.ap.waypoint.transitY = math.max(self.ap.waypoint.transitY or 0, esc.climbAlt)
+        end
+        self.ap.lastAtcNotice = string.format("ENGEL ASILDI -> %s (%.0fm)", tostring(targetMode), esc.climbAlt)
+    end
+
+    if self.ap.escape and self.ap.enabled and not self.ap.parkingBrake then
+        local esc = self.ap.escape
+        if esc.phase == "BACKUP" then
+            self.ap.targetHdg = esc.holdHdg
+            self.ap.targetAlt = esc.climbAlt
+            self.ap.baseThrottle = 8
+            self.ap.parkingBrake = false
+            escapeRevOverride = true
+            esc.phaseTime = (esc.phaseTime or 0.0) + safeObsDt
+            local backedDist = math.sqrt((((tel.pos and tel.pos.x) or 0) - esc.startX) ^ 2 + (((tel.pos and tel.pos.z) or 0) - esc.startZ) ^ 2)
+            if esc.phaseTime >= (esc.backupDur or 4.5) or backedDist >= 20.0 then
+                esc.phase = "CLIMB"
+                esc.phaseTime = 0.0
+                escapeRevOverride = false
+                self.ap.baseThrottle = 0
+                self.ap.targetHdg = esc.bypassHdg or esc.holdHdg
+            end
+        elseif esc.phase == "CLIMB" then
+            self.ap.targetHdg = esc.bypassHdg or esc.holdHdg
+            self.ap.targetAlt = esc.climbAlt
+            self.ap.baseThrottle = 0
+            escapeRevOverride = false
+            esc.phaseTime = (esc.phaseTime or 0.0) + safeObsDt
+            if (tel.altitude or 0) >= (esc.climbAlt - 2.0) or esc.phaseTime >= 14.0 then
+                if (esc.bypassDur or 0) > 0 and esc.bypassHdg then
+                    esc.phase = "BYPASS"
+                    esc.phaseTime = 0.0
+                    self.ap.baseThrottle = 8
+                else
+                    finishObstacleEscape(esc)
+                end
+            end
+        elseif esc.phase == "BYPASS" then
+            self.ap.targetHdg = esc.bypassHdg
+            self.ap.targetAlt = esc.climbAlt
+            self.ap.baseThrottle = 8
+            escapeRevOverride = false
+            esc.phaseTime = (esc.phaseTime or 0.0) + safeObsDt
+            if esc.phaseTime >= (esc.bypassDur or 5.0) then
+                finishObstacleEscape(esc)
+            end
+        end
+    else
+        local isCruisingNav = self.ap.enabled
+            and (self.ap.obstacleAvoid ~= false)
+            and (not self.ap.parkingBrake)
+            and (not self.ap.reverseGear)
+            and (self.ap.mode == "CRUISE" or self.ap.mode == "LNAV" or self.ap.mode == "RTB")
+            and (not tel.weightOnWheels)
+            and (tel.agl == nil or tel.agl > 4.0)
+            and ((self.ap.baseThrottle or 0) >= 3)
+
+        local nearDest = ((self.ap.mode == "RTB" or self.ap.mode == "LNAV") and (self.ap.ilsDev and self.ap.ilsDev.dist or 999) <= 12.0)
+        if isCruisingNav and not nearDest then
+            local vx = (tel.velocity and tel.velocity.x) or 0
+            local vz = (tel.velocity and tel.velocity.z) or 0
+            local horizSpeed = math.sqrt(vx * vx + vz * vz)
+            if vx == 0 and vz == 0 and (tel.speed or 0) > 0 then
+                horizSpeed = tel.speed
+            end
+            local yawRateAbs = math.abs(self.smoothYawRate or 0)
+
+            -- Signal A: Proactive Radar Mk.1 terrain threat ahead
+            if tel.radarContact and tel.radarContact.kind == "terrain"
+               and (tel.radarContact.distance or 999) < 25
+               and (tel.radarContact.closingSpeed or 0) > 1.5 then
+                local okEsc = self:triggerObstacleEscape(tel, "RADAR-ENGEL")
+                if okEsc and self.ap.escape then
+                    self.ap.targetHdg = self.ap.escape.holdHdg
+                    self.ap.targetAlt = self.ap.escape.climbAlt
+                    self.ap.baseThrottle = 8
+                    escapeRevOverride = true
+                end
+            else
+                -- Signal B + C: Physical collision spike or wedged stall against an island
+                local px = (tel.pos and tel.pos.x) or 0
+                local pz = (tel.pos and tel.pos.z) or 0
+                if not self.obsCheckPos then
+                    self.obsCheckPos = { x = px, z = pz }
+                end
+                local movedDist = math.sqrt((px - self.obsCheckPos.x) ^ 2 + (pz - self.obsCheckPos.z) ^ 2)
+
+                if (self.obsPrevHorizSpeed or 0) >= 6.0 and horizSpeed < 1.5 and ((self.obsPrevHorizSpeed or 0) - horizSpeed) >= 5.0 then
+                    self.obsStuckTime = math.max(self.obsStuckTime or 0.0, 2.5)
+                end
+
+                if horizSpeed >= 2.0 or movedDist >= 3.0 or yawRateAbs >= 0.08 then
+                    self.obsStuckTime = 0.0
+                    self.obsCheckPos = { x = px, z = pz }
+                elseif horizSpeed < 0.85 and movedDist < 2.5 and yawRateAbs < 0.08 then
+                    self.obsStuckTime = (self.obsStuckTime or 0.0) + safeObsDt
+                    if self.obsStuckTime >= 3.5 then
+                        local okEsc = self:triggerObstacleEscape(tel, "CARPISMA")
+                        if okEsc and self.ap.escape then
+                            self.ap.targetHdg = self.ap.escape.holdHdg
+                            self.ap.targetAlt = self.ap.escape.climbAlt
+                            self.ap.baseThrottle = 8
+                            escapeRevOverride = true
+                        end
+                    end
+                end
+                self.obsPrevHorizSpeed = horizSpeed
+            end
+        else
+            self.obsStuckTime = 0.0
+            self.obsCheckPos = nil
+            self.obsPrevHorizSpeed = 0.0
+        end
+    end
+
+    local yawDiff = 0.0
+    local activeHdgErrRad = 0.0
     if self.ap.hdgHold then
-        local hdgErr = normalizeAngleRad(self.ap.targetHdg - tel.heading)
-        yawDiff = self.hdgPID:compute(0, -hdgErr, dt)
+        local hdgErr = normalizeAngleRad(self.ap.targetHdg - (tel.heading or 0))
+        local absHdgErr = math.abs(hdgErr)
+        activeHdgErrRad = absHdgErr
+
+        if absHdgErr <= math.rad(0.5) and math.abs(self.smoothYawRate) < 0.02 then
+            -- Locked on target heading: gently bleed integrator and hold zero differential
+            self.yawRateInt = (self.yawRateInt or 0.0) * 0.80
+            yawDiff = 0.0
+        else
+            -- Progressive target yaw rate: gentle fine-lock near target, max ~17 deg/s (0.30 rad/s) on large turns
+            local maxYawRate = (absHdgErr > math.rad(45)) and 0.30 or 0.24
+            local targetYawRate = clamp(hdgErr * 0.65, -maxYawRate, maxYawRate)
+            local yawRateErr = targetYawRate - self.smoothYawRate
+
+            -- Gentle anti-windup integrator ONLY when stalled against static rotational drag
+            if math.abs(self.smoothYawRate) < 0.03 and absHdgErr > math.rad(1.0) then
+                self.yawRateInt = clamp((self.yawRateInt or 0.0) + hdgErr * 0.60 * dt, -2.5, 2.5)
+            else
+                self.yawRateInt = (self.yawRateInt or 0.0) * 0.92
+            end
+
+            yawDiff = clamp(yawRateErr * 22.0 + (self.yawRateInt or 0.0), -10.0, 10.0)
+        end
+    else
+        self.yawRateInt = 0.0
     end
 
     -- Supports Create Rotation Speed Controllers (-256..+256 RPM with 1-RPM resolution) and 0..15 Signal / Throttle Lever peripherals
-    local hasPhysicalGearshift = (#(self.gearshifts or {}) > 0)
-        or (self:getDeviceConfig("RS:back").role == "GEAR_REVERSE")
-        or (self.ioMap and self.ioMap["RS:back"] and self.ioMap["RS:back"].role == "GEAR_REVERSE")
-    local revActive = (self.ap.reverseGear == true) or (self.ap.mode == "ANCHOR" and tel.anchor and (tel.anchor.surge or 0) < -0.5)
+    local revActive = (self.ap.reverseGear == true) or escapeRevOverride or (self.ap.mode == "ANCHOR" and tel.anchor and (tel.anchor.surge or 0) < -0.5)
 
     local function driveSignal(dev, sig, inv)
         if dev.setTargetSpeed then
-            local effSig = sig
-            if hasPhysicalGearshift and revActive then
-                effSig = math.abs(sig)
-            end
-            local rpm = math.floor((effSig / 15.0) * 256 + 0.5)
+            local rpm = math.floor((sig / 15.0) * 256 + 0.5)
             if inv then rpm = -rpm end
             callKinetic(dev, dev.setTargetSpeed, rpm)
             return
@@ -2267,7 +2985,8 @@ function Avionics:step(dt)
     -- Steady-state deterministic polarity (no auto-flipping oscillation loop!)
     local isSpinTestingAny = (self.spinTest and self.spinTest.ticks and self.spinTest.ticks > 0) or false
     local isAnchorThrust = (self.ap.mode == "ANCHOR" and tel.anchor and math.abs(tel.anchor.surge or 0) > 0.5)
-    local clutchCut = (self.ap.mode == "HOVER") or self.ap.parkingBrake or (self.ap.baseThrottle <= 0 and not isAnchorThrust)
+    local isEscapeMove = (self.ap.escape ~= nil and (self.ap.escape.phase == "BACKUP" or self.ap.escape.phase == "BYPASS"))
+    local clutchCut = (not isEscapeMove) and ((self.ap.mode == "HOVER") or self.ap.parkingBrake or (self.ap.baseThrottle <= 0 and not isAnchorThrust))
     for _, cl in ipairs(self.clutches or {}) do
         local clName = (peripheral and peripheral.getName and pcall(peripheral.getName, cl) and peripheral.getName(cl)) or nil
         local clCfg  = clName and self:getDeviceConfig(clName) or { role = "AUTO", invert = false }
@@ -2288,8 +3007,8 @@ function Avionics:step(dt)
         end
     end
 
-    -- Drive Gearshifts (Forward / Backward Movement via [G], [W]/[S], or Sky Anchor reverse drift)
-    revActive = (self.ap.reverseGear == true) or (self.ap.mode == "ANCHOR" and tel.anchor and (tel.anchor.surge or 0) < -0.5)
+    -- Drive Gearshifts (Forward / Backward Movement via [G], [W]/[S], Escape Backup, or Sky Anchor reverse drift)
+    revActive = (self.ap.reverseGear == true) or escapeRevOverride or (self.ap.mode == "ANCHOR" and tel.anchor and (tel.anchor.surge or 0) < -0.5)
     for _, gs in ipairs(self.gearshifts or {}) do
         local gsName = (peripheral and peripheral.getName and pcall(peripheral.getName, gs) and peripheral.getName(gs)) or nil
         local devInv = gsName and self:getDeviceConfig(gsName).invert or false
@@ -2309,8 +3028,8 @@ function Avionics:step(dt)
     end
 
     local mainThrottleSig = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle, 0, 15))
-    local portSignal = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
-    local stbdSignal = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
+    local portSignal = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
+    local stbdSignal = clutchCut and 0 or math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
     local boostSignal = (not clutchCut and self.ap.baseThrottle >= 12) and 15 or 0
     local burnerSignal = mainThrottleSig
 
@@ -2368,21 +3087,42 @@ function Avionics:step(dt)
             turnYaw = self.ap.hdgHold and yawDiff or ((steerVal ~= 0 and (steerVal * 6.0)) or (self.ap.manualYaw or 0))
         end
     end
-    -- Coordinated Cruise Turn & Yaw Desaturation:
-    -- When turning hard, desaturate forward thrust so outer motor can push max power while inner & center back off.
+    if escapeRevOverride then
+        turnYaw = clamp(turnYaw, -3.0, 3.0)
+    end
+    -- Coordinated Turn, Alignment Throttle & Smooth 1-RPM Differential Yaw Mixer:
+    -- Positive turnYaw (Right / CW turn) -> Port (Left) increases (+turnYaw), Starboard (Right) decreases (-turnYaw)
     local absTurn = math.abs(turnYaw)
     local effFwd = fwdSig
-    if effFwd > 0 and (effFwd + absTurn > 15) then
-        effFwd = 15 - absTurn
-    elseif effFwd < 0 and (math.abs(effFwd) + absTurn > 15) then
-        effFwd = -(15 - absTurn)
+    if self.ap.enabled and self.ap.hdgHold and effFwd > 0 and activeHdgErrRad > math.rad(25) then
+        -- While pointing >25 deg off target, smoothly attenuate forward push (0% at >=90 deg) so vessel pivots cleanly
+        local alignFactor = clamp(1.0 - ((activeHdgErrRad - math.rad(25)) / math.rad(65)), 0.0, 1.0)
+        effFwd = effFwd * alignFactor
     end
-    -- Center thruster backs off during hard turns to maximize angular yaw moment
-    local centerAtten = (absTurn > 0.5) and math.max(0.0, 1.0 - (absTurn / 6.0)) or 1.0
-    local minRear = revActive and -15 or 0
-    local rearL = math.floor(clamp(effFwd - turnYaw, minRear, 15) + 0.5)
-    local rearC = math.floor(clamp(fwdSig * centerAtten, minRear, 15) + 0.5)
-    local rearR = math.floor(clamp(effFwd + turnYaw, minRear, 15) + 0.5)
+    if effFwd > 0 and (effFwd + absTurn > 15.0) then
+        effFwd = 15.0 - absTurn
+    elseif effFwd < 0 and (math.abs(effFwd) + absTurn > 15.0) then
+        effFwd = -(15.0 - absTurn)
+    end
+    -- Center thruster smoothly backs off on large heading turns (>= 60 deg -> 0), full thrust when aligned
+    local centerAtten = 1.0
+    if self.ap.enabled and self.ap.hdgHold and activeHdgErrRad > math.rad(8) then
+        centerAtten = clamp(1.0 - ((activeHdgErrRad - math.rad(8)) / math.rad(52)), 0.0, 1.0)
+    elseif absTurn > 1.0 then
+        centerAtten = math.max(0.0, 1.0 - (absTurn / 10.0))
+    end
+    -- Allow reverse push-pull on rear outer thrusters in HOVER (fwdSig==0), reverse gear, or large turns (>5.0);
+    -- keep fine cruise corrections smoothly positive (0..15) without harsh reverse bangs.
+    local allowPushPull = revActive or (math.abs(fwdSig) < 0.5 and absTurn > 0.05) or (absTurn > 5.0) or (activeHdgErrRad > math.rad(45))
+    local minRear = allowPushPull and -15.0 or 0.0
+    local minCenter = revActive and -15.0 or 0.0
+
+    local rawRearL = clamp(effFwd + turnYaw, minRear, 15.0)
+    local rawRearC = clamp(fwdSig * centerAtten, minCenter, 15.0)
+    local rawRearR = clamp(effFwd - turnYaw, minRear, 15.0)
+    local rearL = math.floor(rawRearL + 0.5)
+    local rearC = math.floor(rawRearC + 0.5)
+    local rearR = math.floor(rawRearR + 0.5)
 
     if not isMothershipOrGunship then
         self.lastMothershipState = {
@@ -2438,7 +3178,7 @@ function Avionics:step(dt)
                 local boolState = nil
                 local roleSigs = {
                     LIFT_FL = rawLiftFL, LIFT_FR = rawLiftFR, LIFT_RL = rawLiftRL, LIFT_RR = rawLiftRR,
-                    REAR_LEFT = rearL, REAR_CENTER = rearC, REAR_RIGHT = rearR,
+                    REAR_LEFT = rawRearL, REAR_CENTER = rawRearC, REAR_RIGHT = rawRearR,
                     THRUST_MAIN = mainThrottleSig, THRUST_PORT = portSignal, THRUST_STBD = stbdSignal,
                     AUX_BOOST = boostSignal
                 }
@@ -2555,8 +3295,8 @@ function Avionics:step(dt)
     -- 2. Differential Thrust on Analog Transmissions (for non-Mothership or unassigned gearboxes)
     if self.vehicleType ~= "MOTHERSHIP" and self.vehicleType ~= "GUNSHIP" then
         if #self.gearboxes >= 2 then
-            local pSig = (self.ap.mode == "HOVER") and 0 or math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
-            local sSig = (self.ap.mode == "HOVER") and 0 or math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
+            local pSig = (self.ap.mode == "HOVER") and 0 or math.floor(clamp(self.ap.baseThrottle + yawDiff, 0, 15))
+            local sSig = (self.ap.mode == "HOVER") and 0 or math.floor(clamp(self.ap.baseThrottle - yawDiff, 0, 15))
             table.insert(tasks, function() driveSignal(self.gearboxes[1], pSig, false) end)
             table.insert(tasks, function() driveSignal(self.gearboxes[2], sSig, false) end)
         elseif #self.gearboxes == 1 then

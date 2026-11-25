@@ -46,11 +46,60 @@ if not okSound or type(Sound) ~= "table" then
     end
 end
 
-local function renderTacticalDisplay(mon, tel, ap)
+local monitorButtons = {}
+
+local function formatDist(d)
+    d = tonumber(d) or 0
+    if d >= 1000 then
+        return string.format("%.1fkm", d / 1000.0)
+    end
+    return string.format("%.0fm", d)
+end
+
+local function formatEta(dist, spd)
+    dist = tonumber(dist) or 0
+    spd = tonumber(spd) or 0
+    if spd <= 0.5 then return "--" end
+    local secs = math.floor((dist / spd) + 0.5)
+    if secs >= 3600 then
+        return string.format("%dh%02dm", math.floor(secs / 3600), math.floor((secs % 3600) / 60))
+    elseif secs >= 60 then
+        return string.format("%d:%02d", math.floor(secs / 60), secs % 60)
+    end
+    return string.format("%ds", secs)
+end
+
+local function getHomeBasePos(ap)
+    if not (ap and ap.homeBase) then return nil end
+    local b = ap.homeBase
+    return b.zeppelinMast or b.threshold or b.pos
+end
+
+local function calcVec(fromPos, toPos, spd)
+    if not (fromPos and toPos and toPos.x and toPos.z) then return nil end
+    local dx = (tonumber(toPos.x) or 0) - (tonumber(fromPos.x) or 0)
+    local dz = (tonumber(toPos.z) or 0) - (tonumber(fromPos.z) or 0)
+    local dist = math.sqrt(dx * dx + dz * dz)
+    local brgDeg = (math.deg(math.atan2(dx, -dz)) % 360)
+    return {
+        dist   = dist,
+        brgDeg = brgDeg,
+        etaStr = formatEta(dist, spd or 0)
+    }
+end
+
+local function formatEscapeTag(esc)
+    local p = esc and esc.phase
+    local tr = (p == "BACKUP" and "GERI") or (p == "CLIMB" and "YUKSEL") or (p == "BYPASS" and "BYPASS") or tostring(p or "KRT")
+    return string.format("#%d %s->%.0fm", tonumber(esc and esc.attempt) or 1, tr, tonumber(esc and esc.climbAlt) or 0)
+end
+
+local function renderTacticalDisplay(mon, tel, ap, mName)
     if not mon or not mon.getSize then return end
     local w, h = mon.getSize()
     if w < 20 or h < 7 then return end
     local isCol = mon.isColor and mon.isColor()
+    if mName then monitorButtons[mName] = {} end
 
     mon.setBackgroundColor(colors.black)
     mon.clear()
@@ -59,7 +108,11 @@ local function renderTacticalDisplay(mon, tel, ap)
     mon.setCursorPos(1, 1)
     mon.setBackgroundColor(isCol and colors.blue or colors.black)
     mon.setTextColor(colors.white)
-    local hdr = " TAKTIK & NAVIGASYON (AMIRAL KAMARASI) "
+    local autoTag = (ap and ap.atcAutoAccept) and "AUTO:ON " or "AUTO:OFF"
+    local hdr = " TAKTIK & NAVIGASYON "
+    if w >= 36 then
+        hdr = hdr .. string.rep(" ", math.max(1, w - #hdr - #autoTag - 1)) .. autoTag .. " "
+    end
     if #hdr > w then hdr = hdr:sub(1, w) end
     mon.write(hdr .. string.rep(" ", math.max(0, w - #hdr)))
 
@@ -68,12 +121,12 @@ local function renderTacticalDisplay(mon, tel, ap)
     mon.setCursorPos(2, 2)
     mon.setTextColor(isCol and colors.cyan or colors.white)
     local vType = tel.vehicleType or "UNKNOWN"
-    mon.write(string.format("GEMI: %-10s [%s]", tostring(tel.callsign or "DOS"), vType))
+    mon.write(string.format("GEMI: %-10s [%s]", tostring(tel.callsign or "DOS"), vType):sub(1, w - 1))
 
     mon.setCursorPos(2, 3)
-    local apMode = ap.mode or "MANUAL"
-    mon.setTextColor(ap.enabled and (isCol and colors.lime or colors.white) or (isCol and colors.orange or colors.white))
-    mon.write(string.format("MOD : %s (PARK:%s)", apMode, ap.parkingBrake and "ON" or "OFF"))
+    local apMode = (ap and ap.mode) or "MANUAL"
+    mon.setTextColor((ap and ap.enabled) and (isCol and colors.lime or colors.white) or (isCol and colors.orange or colors.white))
+    mon.write(string.format("MOD : %s (PARK:%s)", apMode, (ap and ap.parkingBrake) and "ON" or "OFF"):sub(1, w - 1))
 
     -- Coordinates & GPS
     mon.setCursorPos(2, 4)
@@ -82,49 +135,217 @@ local function renderTacticalDisplay(mon, tel, ap)
     local py = tel.pos and math.floor(tel.pos.y + 0.5) or 0
     local pz = tel.pos and math.floor(tel.pos.z + 0.5) or 0
     local srcTag = tel.posSource or (tel.gpsLocked and "GPS" or "INS")
-    mon.write(string.format("POS : X:%d Y:%d Z:%d [%s]", px, py, pz, srcTag))
+    mon.write(string.format("POS : X:%d Y:%d Z:%d [%s]", px, py, pz, srcTag):sub(1, w - 1))
 
     -- Flight Dynamics
     mon.setCursorPos(2, 5)
     mon.setTextColor(isCol and colors.yellow or colors.white)
     local alt = tel.altitude or 0
-    local tgtAlt = ap.targetAlt or 0
-    local agl = tel.agl and string.format("%.1fm", tel.agl) or "N/A"
+    local tgtAlt = (ap and ap.targetAlt) or 0
     local pStr = string.format(" %3.0fhPa", (tel.pressureHPa or (tel.pressure and tel.pressure * 1013.25) or 1013))
-    mon.write(string.format("ALT : %5.1fm (TGT:%5.1fm)%s", alt, tgtAlt, (w >= 44 and pStr or "")))
+    mon.write(string.format("ALT : %.0fm->%.0fm VSI:%+.1f%s", alt, tgtAlt, tel.vSpeed or 0, (w >= 42 and pStr or "")):sub(1, w - 1))
 
-    -- Speed & Heading
+    -- Speed, Heading & Course
     mon.setCursorPos(2, 6)
     mon.setTextColor(colors.white)
     local spd = tel.speed or 0
-    local vsi = tel.vSpeed or 0
     local hdg = math.deg(tel.heading or 0) % 360
-    mon.write(string.format("SPD : %4.1fm/s | VSI:%+4.1fm/s | HDG:%03.0f", spd, vsi, hdg))
+    local crs = math.deg((ap and ap.targetHdg) or tel.heading or 0) % 360
+    mon.write(string.format("SPD : %.1fm/s HDG:%03.0f->%03.0f", spd, hdg, crs):sub(1, w - 1))
 
-    -- ILS & Approach
-    if h >= 7 then
-        mon.setCursorPos(2, 7)
-        if ap.homeBase then
+    local curY = 7
+    local esc = ap and ap.escape
+    if esc and esc.active and curY < h then
+        mon.setCursorPos(2, curY)
+        mon.setBackgroundColor(isCol and colors.red or colors.white)
+        mon.setTextColor(isCol and colors.white or colors.black)
+        mon.write(string.format(" ! ENGEL KURTARMA: %s ! ", formatEscapeTag(esc)):sub(1, w - 2))
+        curY = curY + 1
+        if curY < h then
+            mon.setCursorPos(2, curY)
+            mon.setBackgroundColor(isCol and colors.orange or colors.gray)
+            mon.setTextColor(isCol and colors.black or colors.white)
+            local canTxt = " [ IPTAL ] "
+            mon.write(canTxt)
+            if mName then
+                table.insert(monitorButtons[mName], { action = "cancel_escape", x1 = 2, y = curY, x2 = 2 + #canTxt - 1 })
+            end
+            mon.setBackgroundColor(colors.black)
+            curY = curY + 1
+        end
+        mon.setBackgroundColor(colors.black)
+    end
+
+    local pc = ap and ap.pendingCall
+    if pc and curY < h then
+        local vec = pc.targetPos and calcVec(tel.pos, pc.targetPos, math.max(spd, 10))
+        mon.setCursorPos(2, curY)
+        mon.setBackgroundColor(isCol and colors.orange or colors.white)
+        mon.setTextColor(colors.black)
+        local cHdr = string.format(" ! CAGRI: %s -> %s ! ", tostring(pc.baseName or "KULE"):sub(1, 10), tostring(pc.cmd))
+        mon.write(cHdr:sub(1, w - 2))
+        curY = curY + 1
+
+        if pc.targetPos and curY < h then
+            mon.setBackgroundColor(colors.black)
+            mon.setCursorPos(2, curY)
+            mon.setTextColor(isCol and colors.yellow or colors.white)
+            local dTxt = vec and (formatDist(vec.dist) .. string.format(" %03.0fd", vec.brgDeg)) or "?"
+            mon.write(string.format("HD:(%d,%d,%d) %s", pc.targetPos.x, pc.targetPos.y, pc.targetPos.z, dTxt):sub(1, w - 2))
+            curY = curY + 1
+        end
+
+        if curY < h then
+            mon.setCursorPos(2, curY)
+            mon.setBackgroundColor(isCol and colors.lime or colors.white)
+            mon.setTextColor(colors.black)
+            local accTxt = " [ KABUL ] "
+            mon.write(accTxt)
+            if mName then
+                table.insert(monitorButtons[mName], { action = "accept", x1 = 2, y = curY, x2 = 2 + #accTxt - 1 })
+            end
+
+            mon.setBackgroundColor(colors.black)
+            mon.write(" ")
+            mon.setBackgroundColor(isCol and colors.red or colors.gray)
+            mon.setTextColor(colors.white)
+            local rejTxt = " [ REDDET ] "
+            local rx1 = 2 + #accTxt + 1
+            mon.write(rejTxt)
+            if mName then
+                table.insert(monitorButtons[mName], { action = "reject", x1 = rx1, y = curY, x2 = rx1 + #rejTxt - 1 })
+            end
+            mon.setBackgroundColor(colors.black)
+            curY = curY + 1
+        end
+    end
+
+    -- Active Destination & Base Telemetry Section
+    mon.setBackgroundColor(colors.black)
+    local hp = getHomeBasePos(ap)
+    local isHpValid = hp and not (ap and ap.homeBase and ap.homeBase.calibrated == false and (tonumber(hp.x) or 0) == 0 and (tonumber(hp.z) or 0) == 0)
+    if apMode == "RTB" and hp and curY < h then
+        local vec = calcVec(tel.pos, hp, math.max(spd, 0))
+        mon.setCursorPos(2, curY)
+        mon.setTextColor(isCol and colors.lime or colors.white)
+        mon.write(string.format("RTB : %s (%s)", tostring(ap.homeBase.baseName or "BASE"):sub(1, 14), tostring(ap.rtbPhase or "RTB")):sub(1, w - 2))
+        curY = curY + 1
+        if curY < h then
+            mon.setCursorPos(2, curY)
             mon.setTextColor(isCol and colors.cyan or colors.white)
-            local rwy = ap.homeBase.runwayId or "RWY"
-            mon.write(string.format("ILS : %s - RTB HAZIR", tostring(rwy)))
+            mon.write(string.format("->(%d,%d,%d) %s %03.0fd %s", math.floor(hp.x), math.floor(hp.y), math.floor(hp.z), vec and formatDist(vec.dist) or "?", vec and vec.brgDeg or 0, vec and vec.etaStr or "--"):sub(1, w - 2))
+            curY = curY + 1
+        end
+        if (not pc) and not (esc and esc.active) and curY < h then
+            mon.setCursorPos(2, curY)
+            mon.setBackgroundColor(isCol and colors.orange or colors.gray)
+            mon.setTextColor(isCol and colors.black or colors.white)
+            local hvrTxt = " [ IPTAL->HOVER ] "
+            mon.write(hvrTxt)
+            if mName then
+                table.insert(monitorButtons[mName], { action = "hover", x1 = 2, y = curY, x2 = 2 + #hvrTxt - 1 })
+            end
+            mon.setBackgroundColor(colors.black)
+            curY = curY + 1
+        end
+    elseif apMode == "LNAV" and ap and ap.waypoint and curY < h then
+        local wp = ap.waypoint
+        local vec = calcVec(tel.pos, wp, spd)
+        mon.setCursorPos(2, curY)
+        mon.setTextColor(isCol and colors.lime or colors.white)
+        mon.write(string.format("LNAV: %s (%d,%d,%d)", tostring(wp.name or "WP"):sub(1, 10), math.floor(wp.x), math.floor(wp.y or 0), math.floor(wp.z)):sub(1, w - 2))
+        curY = curY + 1
+        if curY < h then
+            mon.setCursorPos(2, curY)
+            mon.setTextColor(isCol and colors.cyan or colors.white)
+            mon.write(string.format("DST:%s YON:%03.0fd ETA:%s", vec and formatDist(vec.dist) or "?", vec and vec.brgDeg or 0, vec and vec.etaStr or "--"):sub(1, w - 2))
+            curY = curY + 1
+        end
+    elseif tel.navRoute and tel.navRoute.wpName and curY < h then
+        local nr = tel.navRoute
+        mon.setCursorPos(2, curY)
+        mon.setTextColor(isCol and colors.lime or colors.white)
+        mon.write(string.format("ROTA[%d/%d] %s %s", nr.activeIdx, nr.totalWps, tostring(nr.wpName):sub(1, 10), formatDist(nr.dist)):sub(1, w - 2))
+        curY = curY + 1
+    end
+
+    if curY < h and not (apMode == "RTB" and hp) then
+        mon.setCursorPos(2, curY)
+        if hp then
+            if not isHpValid then
+                mon.setTextColor(isCol and colors.red or colors.white)
+                mon.write("ILS : KALIBRE DEGIL (0,0)!")
+            else
+                local vec = calcVec(tel.pos, hp, spd)
+                mon.setTextColor(isCol and colors.cyan or colors.white)
+                mon.write(string.format("ILS:%s (%d,%d,%d) %s %03.0fd", tostring(ap.homeBase.baseName or "US"):sub(1, 8), math.floor(hp.x), math.floor(hp.y), math.floor(hp.z), vec and formatDist(vec.dist) or "?", vec and vec.brgDeg or 0):sub(1, w - 2))
+            end
         else
             mon.setTextColor(isCol and colors.gray or colors.white)
             mon.write("ILS : BEACON ARANIYOR...")
         end
+        curY = curY + 1
     end
 
-    -- Radar & Terrain Alert
+    local nt = tel.navTarget
+    local drewRtbBtn = false
+    if nt and nt.active and curY < h then
+        mon.setCursorPos(2, curY)
+        mon.setTextColor(isCol and colors.yellow or colors.white)
+        mon.write(string.format("MASA:%s %s %03.0fd", tostring(nt.name or "HEDEF"):sub(1, 10), formatDist(nt.distance), math.deg(nt.bearing or 0) % 360):sub(1, w - 2))
+        curY = curY + 1
+        if (not pc) and apMode ~= "LNAV" and curY < h then
+            mon.setCursorPos(2, curY)
+            mon.setBackgroundColor(isCol and colors.lime or colors.white)
+            mon.setTextColor(colors.black)
+            local navBtn = " [ MASA->LNAV ] "
+            mon.write(navBtn)
+            if mName then
+                table.insert(monitorButtons[mName], { action = "accept", x1 = 2, y = curY, x2 = 2 + #navBtn - 1 })
+            end
+            if isHpValid and apMode ~= "RTB" and not (esc and esc.active) and w >= 30 then
+                mon.setBackgroundColor(colors.black)
+                mon.write(" ")
+                mon.setBackgroundColor(isCol and colors.cyan or colors.white)
+                mon.setTextColor(colors.black)
+                local rtbBtn = "[ANA US]"
+                local rx1 = 2 + #navBtn + 1
+                mon.write(rtbBtn)
+                if mName then
+                    table.insert(monitorButtons[mName], { action = "engage_rtb", x1 = rx1, y = curY, x2 = rx1 + #rtbBtn - 1 })
+                end
+                drewRtbBtn = true
+            end
+            mon.setBackgroundColor(colors.black)
+            curY = curY + 1
+        end
+    end
+
+    if (not drewRtbBtn) and isHpValid and apMode ~= "RTB" and (not pc) and not (esc and esc.active) and curY < h then
+        mon.setCursorPos(2, curY)
+        mon.setBackgroundColor(isCol and colors.cyan or colors.white)
+        mon.setTextColor(colors.black)
+        local rtbBtn = " [ ANA US (RTB) ] "
+        mon.write(rtbBtn)
+        if mName then
+            table.insert(monitorButtons[mName], { action = "engage_rtb", x1 = 2, y = curY, x2 = 2 + #rtbBtn - 1 })
+        end
+        mon.setBackgroundColor(colors.black)
+        curY = curY + 1
+    end
+
+    -- Bottom Radar & Terrain Alert Row
     if h >= 8 then
-        mon.setCursorPos(2, 8)
+        mon.setCursorPos(2, h)
         if tel.gpwsWarning then
             mon.setBackgroundColor(colors.red)
             mon.setTextColor(colors.white)
-            mon.write(" ! DIKKAT: ARAZI CARPISMA RISKI ! ")
+            mon.write(string.sub(" ! DIKKAT: ARAZI CARPISMA RISKI ! ", 1, w - 2))
         else
             mon.setBackgroundColor(colors.black)
             mon.setTextColor(isCol and colors.lime or colors.white)
-            mon.write("RADAR: ADS-B 1Hz YAYINDA")
+            local foot = (ap and ap.lastAtcNotice) and tostring(ap.lastAtcNotice) or "RADAR: ADS-B 1Hz | [J]Kabul [O]Oto"
+            mon.write(foot:sub(1, w - 2))
         end
     end
 end
@@ -204,6 +425,20 @@ local function renderScadaDisplay(mon, tel, ap)
         mon.write(string.format("TRIM: P:%+4.1f deg | R:%+4.1f deg", math.deg(tel.pitch or 0), math.deg(tel.roll or 0)))
     end
 
+    if h >= 10 and ap and ap.escape and ap.escape.active then
+        mon.setCursorPos(2, h - 2)
+        mon.setBackgroundColor(isCol and colors.red or colors.white)
+        mon.setTextColor(isCol and colors.white or colors.black)
+        mon.write(string.format("! ENGEL KURTARMA [%s] !", formatEscapeTag(ap.escape)):sub(1, w - 2))
+        mon.setBackgroundColor(colors.black)
+    elseif h >= 10 and ap and ap.pendingCall then
+        mon.setCursorPos(2, h - 2)
+        mon.setBackgroundColor(isCol and colors.orange or colors.white)
+        mon.setTextColor(colors.black)
+        mon.write(string.format("! CAGRI: %s -> %s [J]KABUL !", tostring(ap.pendingCall.baseName):sub(1, 10), tostring(ap.pendingCall.cmd)):sub(1, w - 2))
+        mon.setBackgroundColor(colors.black)
+    end
+
     if h >= 8 then
         mon.setCursorPos(2, h - 1)
         mon.setTextColor(isCol and colors.cyan or colors.white)
@@ -217,14 +452,15 @@ local function renderScadaDisplay(mon, tel, ap)
     end
 end
 
-local function renderTacticalTable(mon, tel, ap, fcObj)
+local function renderTacticalTable(mon, tel, ap, fcObj, mName)
     if not mon or not mon.getSize then return end
     local w, h = mon.getSize()
     if w < 20 or h < 8 then
-        pcall(renderTacticalDisplay, mon, tel, ap)
+        pcall(renderTacticalDisplay, mon, tel, ap, mName)
         return
     end
     local isCol = mon.isColor and mon.isColor()
+    if mName then monitorButtons[mName] = {} end
     mon.setBackgroundColor(colors.black)
     mon.clear()
 
@@ -313,17 +549,49 @@ local function renderTacticalTable(mon, tel, ap, fcObj)
     mon.setBackgroundColor(colors.black)
 
     -- Dock / Base Beacon
-    if ap and ap.homeBase and ap.homeBase.pos and tel.pos then
-        local dx = ap.homeBase.pos.x - tel.pos.x
-        local dz = ap.homeBase.pos.z - tel.pos.z
+    local homePos = getHomeBasePos(ap)
+    if homePos and tel.pos then
+        local dx = (tonumber(homePos.x) or 0) - tel.pos.x
+        local dz = (tonumber(homePos.z) or 0) - tel.pos.z
         local dist = math.sqrt(dx * dx + dz * dz)
-        local scale = math.min(1.0, dist / 150)
+        local scale = math.min(1.0, dist / 250)
         local angle = math.atan2(dx, -dz)
         local bx = math.floor(rcx + math.sin(angle) * (scale * rx) + 0.5)
         local by = math.floor(rcy - math.cos(angle) * (scale * ry) + 0.5)
         mon.setCursorPos(bx, by)
         mon.setTextColor(isCol and colors.yellow or colors.white)
-        mon.write("⚓")
+        mon.write("B")
+    end
+
+    -- Active LNAV / Incoming Call Waypoint
+    local activeWp = (ap and ap.pendingCall and ap.pendingCall.targetPos) or (ap and ap.waypoint)
+    if activeWp and tel.pos then
+        local dx = (tonumber(activeWp.x) or 0) - tel.pos.x
+        local dz = (tonumber(activeWp.z) or 0) - tel.pos.z
+        local dist = math.sqrt(dx * dx + dz * dz)
+        local scale = math.min(1.0, dist / 250)
+        local angle = math.atan2(dx, -dz)
+        local wx = math.floor(rcx + math.sin(angle) * (scale * rx) + 0.5)
+        local wy = math.floor(rcy - math.cos(angle) * (scale * ry) + 0.5)
+        if wx >= 1 and wx <= w and wy >= 2 and wy <= h - 1 then
+            mon.setCursorPos(wx, wy)
+            mon.setTextColor(isCol and ((ap and ap.pendingCall) and colors.orange or colors.lime) or colors.white)
+            mon.write((ap and ap.pendingCall) and "!" or "W")
+        end
+    end
+
+    -- Navigation Table Target Marker
+    if tel.navTarget and tel.navTarget.active and tel.navTarget.distance and tel.navTarget.distance > 0 then
+        local dist = tel.navTarget.distance
+        local scale = math.min(1.0, dist / 250)
+        local brg = tel.navTarget.bearing or 0
+        local tx = math.floor(rcx + math.sin(brg) * (scale * rx) + 0.5)
+        local ty = math.floor(rcy - math.cos(brg) * (scale * ry) + 0.5)
+        if tx >= 1 and tx <= w and ty >= 2 and ty <= h - 1 then
+            mon.setCursorPos(tx, ty)
+            mon.setTextColor(isCol and colors.orange or colors.white)
+            mon.write("T")
+        end
     end
 
     -- Route Waypoints & Flight Corridor on Radar
@@ -355,32 +623,188 @@ local function renderTacticalTable(mon, tel, ap, fcObj)
 
     -- 4. Right Status Column (If w >= 48)
     if w >= 48 then
-        local stX = w - 18
+        local stX = math.max(18, w - 21)
+        local colW = w - stX + 1
         mon.setCursorPos(stX, 3)
         mon.setTextColor(isCol and colors.cyan or colors.white)
-        mon.write("--- ISTASYONLAR ---")
+        mon.write(string.sub("--- ISTASYONLAR ---", 1, colW))
         mon.setCursorPos(stX, 4)
         mon.setTextColor(isCol and colors.lime or colors.white)
-        mon.write("KOKPIT FCS : OK")
+        mon.write(string.sub("KOKPIT FCS : OK", 1, colW))
         mon.setCursorPos(stX, 5)
-        mon.write("MOTOR FCC  : OK")
+        mon.write(string.sub("MOTOR FCC  : OK", 1, colW))
         mon.setCursorPos(stX, 6)
         mon.setTextColor(isCol and colors.lightGray or colors.white)
-        mon.write("ENG GUVRT  : HAZIR")
+        mon.write(string.sub("ENG GUVRT  : HAZIR", 1, colW))
 
-        if tel.navRoute and tel.navRoute.wpName then
+        local esc = ap and ap.escape
+        local pc = ap and ap.pendingCall
+        local hp = getHomeBasePos(ap)
+        if esc and esc.active then
             mon.setCursorPos(stX, 8)
-            mon.setTextColor(isCol and colors.cyan or colors.white)
-            mon.write("--- OTONOM NAV ---")
+            mon.setBackgroundColor(isCol and colors.red or colors.white)
+            mon.setTextColor(isCol and colors.white or colors.black)
+            mon.write(string.sub(" ! ENGEL KURTARMA ! ", 1, colW))
+            mon.setBackgroundColor(colors.black)
             mon.setCursorPos(stX, 9)
-            mon.setTextColor(isCol and colors.lime or colors.white)
-            mon.write(string.format("WP: %s", tel.navRoute.wpName:sub(1, 13)))
+            mon.setTextColor(isCol and colors.orange or colors.white)
+            mon.write(formatEscapeTag(esc):sub(1, colW))
             mon.setCursorPos(stX, 10)
             mon.setTextColor(colors.white)
-            mon.write(string.format("DST:%4.0fm T:%3.0fs", tel.navRoute.dist or 0, tel.navRoute.ete or 0))
+            mon.write(("SEBEP: " .. tostring(esc.reason or "ENGEL")):sub(1, colW))
+            if h >= 14 then
+                mon.setCursorPos(stX, 11)
+                mon.setBackgroundColor(isCol and colors.orange or colors.white)
+                mon.setTextColor(colors.black)
+                local canTxt = "[IPTAL]"
+                mon.write(canTxt)
+                if mName then table.insert(monitorButtons[mName], { action = "cancel_escape", x1 = stX, y = 11, x2 = stX + #canTxt - 1 }) end
+                mon.setBackgroundColor(colors.black)
+            end
+        elseif pc then
+            local vec = pc.targetPos and calcVec(tel.pos, pc.targetPos, tel.speed)
+            mon.setCursorPos(stX, 8)
+            mon.setBackgroundColor(isCol and colors.orange or colors.white)
+            mon.setTextColor(colors.black)
+            mon.write(string.sub(" ! GELEN CAGRI ! ", 1, colW))
+            mon.setBackgroundColor(colors.black)
+            mon.setCursorPos(stX, 9)
+            mon.setTextColor(isCol and colors.yellow or colors.white)
+            mon.write(string.format("%s -> %s", tostring(pc.baseName or "KULE"):sub(1, 10), tostring(pc.cmd)):sub(1, colW))
+            if pc.targetPos then
+                mon.setCursorPos(stX, 10)
+                mon.setTextColor(colors.white)
+                mon.write(string.format("(%d,%d,%d)", pc.targetPos.x, pc.targetPos.y, pc.targetPos.z):sub(1, colW))
+            end
+            if vec then
+                mon.setCursorPos(stX, 11)
+                mon.setTextColor(isCol and colors.cyan or colors.white)
+                mon.write(string.format("D:%s Y:%03.0fd", formatDist(vec.dist), vec.brgDeg):sub(1, colW))
+            end
+            if h >= 14 then
+                mon.setCursorPos(stX, 12)
+                mon.setBackgroundColor(isCol and colors.lime or colors.white)
+                mon.setTextColor(colors.black)
+                local accTxt = "[KABUL]"
+                mon.write(accTxt)
+                if mName then table.insert(monitorButtons[mName], { action = "accept", x1 = stX, y = 12, x2 = stX + #accTxt - 1 }) end
+                mon.setBackgroundColor(colors.black)
+                mon.write(" ")
+                mon.setBackgroundColor(isCol and colors.red or colors.gray)
+                mon.setTextColor(colors.white)
+                local rejTxt = "[RED]"
+                local rx1 = stX + #accTxt + 1
+                mon.write(rejTxt)
+                if mName then table.insert(monitorButtons[mName], { action = "reject", x1 = rx1, y = 12, x2 = rx1 + #rejTxt - 1 }) end
+                mon.setBackgroundColor(colors.black)
+            end
+        elseif ap and ap.mode == "RTB" and hp then
+            local vec = calcVec(tel.pos, hp, tel.speed)
+            mon.setCursorPos(stX, 8)
+            mon.setTextColor(isCol and colors.lime or colors.white)
+            mon.write(string.sub("--- AKTIF RTB ---", 1, colW))
+            mon.setCursorPos(stX, 9)
+            mon.setTextColor(colors.white)
+            mon.write(tostring(ap.homeBase.baseName or "BASE"):sub(1, colW))
+            mon.setCursorPos(stX, 10)
+            mon.write(string.format("(%d,%d,%d)", math.floor(hp.x), math.floor(hp.y), math.floor(hp.z)):sub(1, colW))
+            mon.setCursorPos(stX, 11)
+            mon.setTextColor(isCol and colors.cyan or colors.white)
+            mon.write(string.format("D:%s %03.0fd", vec and formatDist(vec.dist) or "?", vec and vec.brgDeg or 0):sub(1, colW))
+            if h >= 14 then
+                mon.setCursorPos(stX, 12)
+                mon.setTextColor(isCol and colors.lightGray or colors.white)
+                mon.write(string.format("%s ETA:%s", tostring(ap.rtbPhase or "RTB"):sub(1, 8), vec and vec.etaStr or "--"):sub(1, colW))
+            end
+            if h >= 15 then
+                mon.setCursorPos(stX, 13)
+                mon.setBackgroundColor(isCol and colors.orange or colors.gray)
+                mon.setTextColor(isCol and colors.black or colors.white)
+                local hvrTxt = "[HOVER IPTAL]"
+                mon.write(hvrTxt:sub(1, colW))
+                if mName then table.insert(monitorButtons[mName], { action = "hover", x1 = stX, y = 13, x2 = stX + math.min(#hvrTxt, colW) - 1 }) end
+                mon.setBackgroundColor(colors.black)
+            end
+        elseif ap and ap.mode == "LNAV" and ap.waypoint then
+            local wp = ap.waypoint
+            local vec = calcVec(tel.pos, wp, tel.speed)
+            mon.setCursorPos(stX, 8)
+            mon.setTextColor(isCol and colors.lime or colors.white)
+            mon.write(string.sub("--- AKTIF LNAV ---", 1, colW))
+            mon.setCursorPos(stX, 9)
+            mon.setTextColor(colors.white)
+            mon.write(tostring(wp.name or "HEDEF"):sub(1, colW))
+            mon.setCursorPos(stX, 10)
+            mon.write(string.format("(%d,%d,%d)", math.floor(wp.x), math.floor(wp.y or 0), math.floor(wp.z)):sub(1, colW))
+            mon.setCursorPos(stX, 11)
+            mon.setTextColor(isCol and colors.cyan or colors.white)
+            mon.write(string.format("D:%s %03.0fd ETA:%s", vec and formatDist(vec.dist) or "?", vec and vec.brgDeg or 0, vec and vec.etaStr or "--"):sub(1, colW))
+        elseif tel.navRoute and tel.navRoute.wpName then
+            mon.setCursorPos(stX, 8)
+            mon.setTextColor(isCol and colors.cyan or colors.white)
+            mon.write(string.sub("--- OTONOM NAV ---", 1, colW))
+            mon.setCursorPos(stX, 9)
+            mon.setTextColor(isCol and colors.lime or colors.white)
+            mon.write(string.format("WP: %s", tel.navRoute.wpName:sub(1, 13)):sub(1, colW))
+            mon.setCursorPos(stX, 10)
+            mon.setTextColor(colors.white)
+            mon.write(string.format("DST:%4.0fm T:%3.0fs", tel.navRoute.dist or 0, tel.navRoute.ete or 0):sub(1, colW))
             mon.setCursorPos(stX, 11)
             mon.setTextColor(colors.lightGray)
-            mon.write(string.format("XTK: %+5.1fm", tel.navRoute.xtk or 0))
+            mon.write(string.format("XTK: %+5.1fm", tel.navRoute.xtk or 0):sub(1, colW))
+        elseif tel.navTarget and tel.navTarget.active then
+            local nt = tel.navTarget
+            mon.setCursorPos(stX, 8)
+            mon.setTextColor(isCol and colors.yellow or colors.white)
+            mon.write(string.sub("--- MASA HEDEF ---", 1, colW))
+            mon.setCursorPos(stX, 9)
+            mon.setTextColor(isCol and colors.lime or colors.white)
+            mon.write(tostring(nt.name or "HEDEF"):sub(1, colW))
+            mon.setCursorPos(stX, 10)
+            mon.setTextColor(colors.white)
+            mon.write(string.format("D:%s %03.0fd", formatDist(nt.distance), math.deg(nt.bearing or 0) % 360):sub(1, colW))
+            if h >= 14 then
+                mon.setCursorPos(stX, 11)
+                mon.setBackgroundColor(isCol and colors.lime or colors.white)
+                mon.setTextColor(colors.black)
+                local navBtn = "[MASA->LNAV]"
+                mon.write(navBtn)
+                if mName then table.insert(monitorButtons[mName], { action = "accept", x1 = stX, y = 11, x2 = stX + #navBtn - 1 }) end
+                mon.setBackgroundColor(colors.black)
+            end
+            local isHpOk = hp and not (ap.homeBase and ap.homeBase.calibrated == false and (tonumber(hp.x) or 0) == 0 and (tonumber(hp.z) or 0) == 0)
+            if isHpOk and h >= 14 then
+                mon.setCursorPos(stX, 12)
+                mon.setBackgroundColor(isCol and colors.cyan or colors.white)
+                mon.setTextColor(colors.black)
+                local rtbBtn = "[ANA US (RTB)]"
+                mon.write(rtbBtn:sub(1, colW))
+                if mName then table.insert(monitorButtons[mName], { action = "engage_rtb", x1 = stX, y = 12, x2 = stX + math.min(#rtbBtn, colW) - 1 }) end
+                mon.setBackgroundColor(colors.black)
+            end
+        elseif hp then
+            local vec = calcVec(tel.pos, hp, tel.speed)
+            mon.setCursorPos(stX, 8)
+            mon.setTextColor(isCol and colors.cyan or colors.white)
+            mon.write(string.sub("--- US BEACON ---", 1, colW))
+            mon.setCursorPos(stX, 9)
+            mon.setTextColor(colors.white)
+            mon.write(tostring(ap.homeBase.baseName or "BASE"):sub(1, colW))
+            mon.setCursorPos(stX, 10)
+            mon.write(string.format("(%d,%d,%d)", math.floor(hp.x), math.floor(hp.y), math.floor(hp.z)):sub(1, colW))
+            mon.setCursorPos(stX, 11)
+            mon.setTextColor(isCol and colors.lightGray or colors.white)
+            mon.write(string.format("D:%s %03.0fd", vec and formatDist(vec.dist) or "?", vec and vec.brgDeg or 0):sub(1, colW))
+            local isHpOk = not (ap.homeBase and ap.homeBase.calibrated == false and (tonumber(hp.x) or 0) == 0 and (tonumber(hp.z) or 0) == 0)
+            if isHpOk and h >= 14 then
+                mon.setCursorPos(stX, 12)
+                mon.setBackgroundColor(isCol and colors.cyan or colors.white)
+                mon.setTextColor(colors.black)
+                local rtbBtn = "[ANA US (RTB)]"
+                mon.write(rtbBtn:sub(1, colW))
+                if mName then table.insert(monitorButtons[mName], { action = "engage_rtb", x1 = stX, y = 12, x2 = stX + math.min(#rtbBtn, colW) - 1 }) end
+                mon.setBackgroundColor(colors.black)
+            end
         end
     end
 
@@ -432,6 +856,7 @@ local function run(context)
     -- Show loaded GitHub AVX extension modules (or load error) at boot
     local hotplugNotice = fc.modErr and ("AVX HATA: " .. fc.modErr) or (#(fc.mods or {}) > 0 and ("AVX MODUL: " .. #fc.mods .. " yuklendi") or nil)
     local hotplugTimer = hotplugNotice and 100 or 0
+    local confirmHomeSetTick = 0
 
     local lastTel = fc:readTelemetry(0.05)
     if lastTel.altitude and lastTel.altitude ~= 0 then
@@ -611,24 +1036,18 @@ local function run(context)
         drawTerm.setCursorPos(1, 1)
         drawTerm.setBackgroundColor(theme.header or colors.blue)
         drawTerm.setTextColor(colors.white)
-        local vShort = (lastTel.vehicleType == "MOTHERSHIP" and "MSHIP")
-            or (lastTel.vehicleType == "GUNSHIP" and "GSHIP")
-            or (lastTel.vehicleType == "ZEPPELIN" and "ZEP")
-            or "AIR"
-        local tabLabel = (activeTab == "PFD") and "[PFD] [N:NAV] [P:I/O] [V:ARAC]"
-            or ((activeTab == "NAV") and "[N:PFD] [NAV] [P:I/O] [V:ARAC]"
-            or ((activeTab == "IO") and "[P:PFD] [N:NAV] [I/O] [V:ARAC]" or "[ARAC SECIMI]"))
-        local modeStr = fc.ap.mode
-        if isRemoteFCC then
-            modeStr = modeStr .. " [REMOTE FCC]"
-        end
-        local headerText = string.format(
-            " DOS | %s [%s] | %s | %s",
-            lastTel.callsign or "DOS",
-            vShort,
-            modeStr,
-            tabLabel
-        )
+        local cs = tostring(lastTel.callsign or "SKYFIRE"):sub(1, 10)
+        local modeStr = tostring(fc.ap.mode or "MANUAL"):sub(1, 8)
+        local fccTag = isRemoteFCC and " [FCC]" or ""
+        local leftStr = string.format(" %s | %s%s", cs, modeStr, fccTag)
+        local tabLabel = (activeTab == "PFD") and "[PFD] N:NAV P:IO ?:YRD"
+            or ((activeTab == "NAV") and "N:PFD [NAV] P:IO ?:YRD"
+            or ((activeTab == "IO") and "P:PFD N:NAV [IO] ?:YRD"
+            or ((activeTab == "HELP") and "[YARDIM] ?:PFD" or "[ARAC PROFILI] V:PFD")))
+        local maxLeft = math.max(8, w - #tabLabel - 2)
+        if #leftStr > maxLeft then leftStr = leftStr:sub(1, maxLeft) end
+        local gap = math.max(1, w - #leftStr - #tabLabel - 1)
+        local headerText = leftStr .. string.rep(" ", gap) .. tabLabel
         if #headerText > w then headerText = headerText:sub(1, w) end
         drawTerm.write(headerText .. string.rep(" ", math.max(0, w - #headerText)))
     end
@@ -663,7 +1082,7 @@ local function run(context)
         drawTerm.setBackgroundColor(theme.bg)
         drawTerm.setCursorPos(2, h - 1)
         drawTerm.setTextColor(theme.ok or colors.lime)
-        drawTerm.write("[1/2/3] veya [Up/Dn + Enter]: Profili Kur & Baslat")
+        drawTerm.write("[1-3] veya [Up/Dn+Enter]: Profili Kur & Baslat")
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
         drawTerm.write("[P]: I/O Motor Siralamasi | [V/Tab]: Kokpite Don")
@@ -769,7 +1188,7 @@ local function run(context)
         drawTerm.setCursorPos(2, h - 1)
         drawTerm.setTextColor(theme.ok or colors.lime)
         if selItem and (selItem.cap == "DISP" or selItem.kind == "monitor") then
-            drawTerm.write("[Sol/Sag]:Rol [1]:Radar [2]:SCADA [3]:PFD [4]:Masa [5]:Kapat [Space]:Test")
+            drawTerm.write("[</>]Rol [1]Rdr [2]Scd [3]PFD [4]Msa [5]Kpt [Spc]")
         else
             drawTerm.write("[Sol/Sag]:Gorev [1-7]:Motor [Space]:SpinTest")
         end
@@ -793,8 +1212,7 @@ local function run(context)
         local rLoop = (r and r.loop) and "[DONGU:ACIK]" or "[DONGU:KAPALI]"
         local rEnd  = r and r.endAction or "HOVER"
         local srcTag = lastTel.posSource or (lastTel.gpsLocked and "GPS" or "INS")
-        local posStr = string.format("POS:(%d,%d)[%s]", math.floor(lastTel.pos.x + 0.5), math.floor(lastTel.pos.z + 0.5), srcTag)
-        drawTerm.write(string.format("=== FMS: %s %s [%s] %s ===", rName:sub(1, 10), rLoop, rEnd, posStr))
+        drawTerm.write(string.format("FMS:%s [%s] POS:(%d,%d)[%s]", rName:sub(1, 8), (r and r.loop) and "DNG" or "TEK", math.floor(lastTel.pos.x + 0.5), math.floor(lastTel.pos.z + 0.5), srcTag):sub(1, w - 2))
 
         -- Table header
         drawTerm.setCursorPos(2, 3)
@@ -863,20 +1281,71 @@ local function run(context)
         drawTerm.setCursorPos(2, h - 2)
         drawTerm.setTextColor(theme.accent or colors.cyan)
         if #wps == 0 then
-            drawTerm.write("ROTA BOS! [C]:Mevcut Konum | [1-4]:Hazir POI Ekle | [L]:Yukle")
+            drawTerm.write("ROTA BOS! [C]Konum Ekle [1-4]POI [R]AnaUs")
         else
             local curWp = wps[activeIdx]
             local cName = curWp and curWp.name or "-"
-            drawTerm.write(string.format("HEDEF: %s (%d/%d WP) | [Space]: LNAV %s", cName, activeIdx, #wps, (fc.ap.mode == "LNAV") and "DURDUR" or "BASLAT"))
+            drawTerm.write(string.format("HEDEF: %s (%d/%d) [Spc]LNAV %s", cName:sub(1, 10), activeIdx, #wps, (fc.ap.mode == "LNAV") and "DUR" or "BAS"):sub(1, w - 2))
         end
 
         drawTerm.setCursorPos(2, h - 1)
         drawTerm.setTextColor(theme.ok or colors.lime)
-        drawTerm.write("[C]:KonumCapture [1-4]:POI [A/Enter]:Aktif [D]:Sil [O]:Loop [Space]:Ucus")
+        drawTerm.write("[C]Ekle [1-4]POI [A]Aktif [D]Sil [O]Dng [Spc]Ucus")
 
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
-        drawTerm.write("[Up/Dn]:Sec [S]:Kaydet [L]:Yukle [X]:Temizle [N/Tab]:Kokpit")
+        drawTerm.write("[S]Kydt [X]Temiz [R]AnaUs [H]UsKydt [N]PFD")
+    end
+
+    local function renderHelp(w, h)
+        drawTerm.setBackgroundColor(theme.bg)
+        drawTerm.clear()
+        renderHeader(w)
+
+        drawTerm.setBackgroundColor(theme.bg)
+        drawTerm.setCursorPos(2, 3)
+        drawTerm.setTextColor(theme.accent or colors.cyan)
+        drawTerm.write("--- UCUS & MANEVRA ---")
+
+        local flightRows = {
+            "[A] Otopilot Ac/Kapa    [H] Hover (Sabitle)",
+            "[C] Cruise (Seyir)      [Z] 3D Gokyuzu Capasi",
+            "[W/S] Ileri/Geri Itki   [G] Vites (Ileri/Geri)",
+            "[Up/Dn] Irtifa / Lift   [Lt/Rt] Rota / Dumen",
+            "[Y] 180d U-Donusu       [B] Park Freni",
+            "[9/0] Burun Trim (-/+)  [D] Debriyaj Yonu"
+        }
+        drawTerm.setTextColor(theme.fg)
+        for i, line in ipairs(flightRows) do
+            if 3 + i < h - 1 then
+                drawTerm.setCursorPos(2, 3 + i)
+                drawTerm.write(line:sub(1, w - 2))
+            end
+        end
+
+        drawTerm.setCursorPos(2, 11)
+        drawTerm.setTextColor(theme.accent or colors.cyan)
+        drawTerm.write("--- NAVIGASYON & GUVENLIK ---")
+
+        local navRows = {
+            "[R] Ana Usse Don (RTB)  [N] FMS / Rota & UsKydt",
+            "[J] Cagri / Masa Kabul  [X] Cagri Red / Dmn 0",
+            "[O] ATC Oto-Kabul       [E] Engel Koruma Ac/Kp",
+            "[T] Manuel Kurtarma     [K] Kirmizi Alarm",
+            "[P] Motor & Ekran I/O   [V] Arac Profili",
+            "[L] Kara Kutu Kaydet    [U] OTA  [Q] Guv.Cik"
+        }
+        drawTerm.setTextColor(colors.lightGray)
+        for i, line in ipairs(navRows) do
+            if 11 + i < h then
+                drawTerm.setCursorPos(2, 11 + i)
+                drawTerm.write(line:sub(1, w - 2))
+            end
+        end
+
+        drawTerm.setCursorPos(2, h)
+        drawTerm.setTextColor(isColor and colors.yellow or colors.white)
+        drawTerm.write(string.sub("Kokpite donmek icin [F1], [?] veya [Enter] bas", 1, w - 2))
     end
 
     local function renderPFD(targetTerm)
@@ -898,17 +1367,11 @@ local function run(context)
                 renderFMS(w, h)
                 drawTerm = prevTerm
                 return
+            elseif activeTab == "HELP" then
+                renderHelp(w, h)
+                drawTerm = prevTerm
+                return
             end
-        end
-        if activeTab == "PROFILE" then
-            renderProfileSelector(w, h)
-            return
-        elseif activeTab == "IO" then
-            renderIOConfigurator(w, h)
-            return
-        elseif activeTab == "NAV" then
-            renderFMS(w, h)
-            return
         end
 
         drawTerm.setBackgroundColor(theme.bg)
@@ -922,7 +1385,7 @@ local function run(context)
         drawTerm.setBackgroundColor(theme.bg)
         drawTerm.setTextColor(theme.muted)
         drawTerm.setCursorPos(2, 2)
-        drawTerm.write("-- ITKI & MOTOR --")
+        drawTerm.write("-- MOTORLAR --")
 
         if w >= 45 then
             local cx = math.floor(w / 2)
@@ -932,17 +1395,17 @@ local function run(context)
             drawTerm.write("[" .. tape .. "]")
         end
 
-        local rightCol = math.max(33, w - 17)
+        local rightCol = math.max(34, w - 17)
         drawTerm.setCursorPos(rightCol, 2)
         drawTerm.setTextColor(theme.muted)
-        drawTerm.write("-- IRTIFA & NAV --")
+        drawTerm.write("-- IRTIFA/NAV --")
 
-        -- Artificial Horizon (Center)
+        -- Artificial Horizon (Center: cols 19..31 on 51x19)
         if w >= 45 and h >= 16 then
             drawArtificialHorizon(math.floor(w / 2), 6, 13, 7, lastTel.pitch, lastTel.roll)
         end
 
-        -- Left Tape: Speed, Throttle Bar, Reverse Gear, Vehicle-Specific Propulsion, RPM, Stress
+        -- Left Tape (cols 2..17): Speed, Throttle, Gear/Lift, Motors, Stress
         drawTerm.setBackgroundColor(theme.bg)
         drawTerm.setTextColor(theme.fg)
         drawTerm.setCursorPos(2, 3)
@@ -977,7 +1440,7 @@ local function run(context)
             drawTerm.write(string.format("L-AR: RL%2d RR%2d", ms.rl, ms.rr))
             drawTerm.setCursorPos(2, 8)
             drawTerm.setTextColor(theme.ok or colors.lime)
-            drawTerm.write(string.format("ARKA: %+3d %+3d %+3d", ms.rearL, ms.rearC, ms.rearR))
+            drawTerm.write(string.format("ARK:%+3d %+3d %+3d", ms.rearL, ms.rearC, ms.rearR))
         elseif lastTel.vehicleType == "ZEPPELIN" then
             local bCmd = lastTel.burnerCmd or 0
             local bIn  = lastTel.burnerActual or 0
@@ -1005,13 +1468,13 @@ local function run(context)
         drawTerm.setCursorPos(2, 9)
         if lastTel.overstressed then
             drawTerm.setTextColor(theme.err or colors.red)
-            drawTerm.write("STRS: OVERSTRESS!")
+            drawTerm.write("STRS: ASIRI YUK!")
         else
             drawTerm.setTextColor(theme.ok or colors.lime)
-            drawTerm.write(string.format("STRS: NOM | TRM:%+4.1f", lastTel.pitchBias or fc.pitchBias or 0))
+            drawTerm.write("STRS: NOMINAL")
         end
 
-        -- Right Tape: Altitude, Target, VSI, Heading, Course, Radar AGL
+        -- Right Tape (cols 34..49): Altitude, Target, VSI, Heading, Course, AGL, Barometer
         drawTerm.setTextColor(theme.fg)
         drawTerm.setCursorPos(rightCol, 3)
         drawTerm.write(string.format("ALT : %6.1f m", lastTel.altitude))
@@ -1048,10 +1511,6 @@ local function run(context)
         end
 
         drawTerm.setCursorPos(rightCol, 9)
-        drawTerm.setTextColor(theme.muted)
-        drawTerm.write(string.format("P:%+4.0f R:%+4.0f", math.deg(lastTel.pitch), math.deg(lastTel.roll)))
-
-        drawTerm.setCursorPos(rightCol, 10)
         local pAtm = lastTel.pressure or 1.0
         local pHpa = lastTel.pressureHPa or (pAtm * 1013.25)
         if pAtm < 0.45 then
@@ -1059,128 +1518,186 @@ local function run(context)
         else
             drawTerm.setTextColor(theme.accent or colors.cyan)
         end
-        if w >= 52 then
+        if w >= 54 then
             drawTerm.write(string.format("BAR :%4.0fhPa %4.2fa", pHpa, pAtm))
         else
             drawTerm.write(string.format("BAR : %4.0f hPa", pHpa))
         end
 
-        -- Row 11: Hot-Plug Toast Notification OR LNAV Status OR Anchor OR ILS Status
-        drawTerm.setCursorPos(2, 11)
-        if hotplugNotice and hotplugTimer > 0 then
-            drawTerm.setBackgroundColor(isColor and colors.cyan or colors.white)
-            drawTerm.setTextColor(colors.black)
-            local msg = " " .. hotplugNotice .. " "
-            drawTerm.write(msg:sub(1, w - 2))
-        elseif lastTel.navRoute and lastTel.navRoute.wpName then
-            local nr = lastTel.navRoute
-            drawTerm.setBackgroundColor(isColor and colors.purple or colors.blue)
-            drawTerm.setTextColor(colors.white)
-            local navMsg = string.format(" LNAV [%d/%d %s] DST:%3.0fm ETE:%2.0fs XTK:%+4.1fm ",
-                nr.activeIdx, nr.totalWps, nr.wpName, nr.dist, nr.ete, nr.xtk)
-            drawTerm.write(navMsg:sub(1, w - 2))
-        elseif fc.ap.mode == "ANCHOR" and lastTel.anchor and lastTel.anchor.active then
-            drawTerm.setBackgroundColor(isColor and colors.yellow or colors.white)
-            drawTerm.setTextColor(colors.black)
-            local a = lastTel.anchor
-            drawTerm.write(string.format(" CAPA [3D-LOCK] dH:%4.1fm SURGE:%+5.1fm SWAY:%+5.1fm dY:%+4.1fm ", a.dist, a.surge, a.sway, a.dy):sub(1, w - 2))
-        elseif fc.ap.mode == "RTB" and fc.ap.homeBase then
-            drawTerm.setBackgroundColor(theme.bg)
-            drawTerm.setTextColor(theme.accent or colors.cyan)
-            drawTerm.write(string.format(
-                "ILS [%s/%s] LOC:%+5.1fm GS:%+5.1fm DST:%4.0fm",
-                tostring(fc.ap.homeBase.runwayId or "RWY"),
-                tostring(fc.ap.rtbPhase),
-                fc.ap.ilsDev.loc or 0,
-                fc.ap.ilsDev.gs or 0,
-                fc.ap.ilsDev.dist or 0
-            ))
-        elseif lastTel.navTarget and lastTel.navTarget.active then
-            drawTerm.setBackgroundColor(theme.bg)
-            drawTerm.setTextColor(isColor and colors.yellow or colors.white)
-            local nt = lastTel.navTarget
-            drawTerm.write(string.format(
-                "MASA HEDEF: %s (%4.0fm) BRG:%03.0f°",
-                tostring(nt.name or "HEDEF"):sub(1, 14),
-                nt.distance or 0,
-                math.deg(nt.bearing or 0) % 360
-            ):sub(1, w - 2))
-        elseif fc.ap.homeBase then
-            drawTerm.setBackgroundColor(theme.bg)
+        -- Row 10: Symmetrical Sub-Horizon Strip (Trim, Attitude Deg, Brake Status)
+        drawTerm.setCursorPos(2, 10)
+        drawTerm.setTextColor(colors.lightGray)
+        drawTerm.write(string.format("TRM : %+4.1f", lastTel.pitchBias or fc.pitchBias or 0))
+        if w >= 45 then
+            drawTerm.setCursorPos(math.floor(w / 2) - 6, 10)
             drawTerm.setTextColor(colors.lightGray)
-            drawTerm.write(string.format(
-                "ILS LOCKED: %s (%s) - [R] RTB",
-                tostring(fc.ap.homeBase.baseName or "BASE"),
-                tostring(fc.ap.homeBase.runwayId or "RWY")
-            ))
-        else
-            drawTerm.setBackgroundColor(theme.bg)
-            drawTerm.setTextColor(theme.muted)
-            local periphCount = math.max(0, #(fc.ioDevices or {}) - 6)
-            drawTerm.write(string.format(
-                "PROFIL: %s | %d Cihaz ([V] Profil Sec | [P] I/O Ayarla)",
-                lastTel.vehicleType,
-                periphCount
-            ):sub(1, w - 2))
+            drawTerm.write(string.format("P:%+4.0f R:%+4.0f", math.deg(lastTel.pitch), math.deg(lastTel.roll)))
         end
+        drawTerm.setCursorPos(rightCol, 10)
+        drawTerm.setTextColor(fc.ap.parkingBrake and (theme.warn or colors.orange) or (theme.ok or colors.lime))
+        drawTerm.write("BRK : " .. (fc.ap.parkingBrake and "PARK" or "OFF "))
 
-        -- Row 12: Warnings Banner (GPWS / Pitch Anti-Dive / Stall / Gear & Clutch / Red Alert)
-        drawTerm.setCursorPos(2, 12)
-        if (fc.alertLevel == "RED" or lastTel.alertLevel == "RED") then
-            drawTerm.setBackgroundColor(colors.red)
-            drawTerm.setTextColor(colors.white)
-            drawTerm.write(" 🚨 KIRMIZI ALARM // SAVAS ISTASYONLARI [K]: Kapat 🚨 ")
-        elseif lastTel.gpwsWarning then
-            drawTerm.setBackgroundColor(colors.red)
-            drawTerm.setTextColor(colors.white)
-            drawTerm.write(" !! PULL UP - TERRAIN AHEAD !! ")
-        elseif lastTel.pitchWarning then
-            drawTerm.setBackgroundColor(colors.red)
-            drawTerm.setTextColor(colors.white)
-            drawTerm.write(" !! ANTI-DIVE: ARKA GAZ KESILDI !! ")
-        elseif lastTel.stallWarning then
-            drawTerm.setBackgroundColor(colors.orange)
-            drawTerm.setTextColor(colors.black)
-            drawTerm.write(" !! STALL WARNING - LOWER NOSE !! ")
-        else
-            local clutchCut = (fc.ap.mode == "HOVER") or fc.ap.parkingBrake or (fc.ap.baseThrottle <= 0)
+        -- Row 12: Ship Coordinates & Safety Flags
+        if 12 < h - 2 then
+            drawTerm.setCursorPos(2, 12)
             drawTerm.setBackgroundColor(theme.bg)
             drawTerm.setTextColor(lastTel.weightOnWheels and (theme.ok or colors.lime) or colors.lightGray)
             local srcTag = lastTel.posSource or (lastTel.gpsLocked and "GPS" or "INS")
             drawTerm.write(string.format(
-                "DMN:%+3.0fdg STR:%+4.2f | BRK:%s | WOW:%s | POS:(%d,%d)[%s]",
-                lastTel.rudderDeflectionDeg or 0,
-                lastTel.steerCmd or 0,
-                fc.ap.parkingBrake and "PARK" or "OFF ",
-                lastTel.weightOnWheels and "EVET" or "HAYIR",
+                "POS:%d,%d [%s] ENG:%s OTO:%s",
                 math.floor(lastTel.pos.x),
                 math.floor(lastTel.pos.z),
-                srcTag
+                srcTag,
+                (fc.ap.obstacleAvoid ~= false) and "ON" or "OF",
+                (fc.ap.atcAutoAccept == true) and "ON" or "OF"
             ):sub(1, w - 2))
         end
 
-        -- Bottom Dock Separator & Keybind Controls
+        -- Row 13: Active Destination / Route / Anchor / Saved Main Base
+        if 13 < h - 2 then
+            drawTerm.setCursorPos(2, 13)
+            drawTerm.setBackgroundColor(theme.bg)
+            if lastTel.navRoute and lastTel.navRoute.wpName then
+                local nr = lastTel.navRoute
+                drawTerm.setTextColor(theme.ok or colors.lime)
+                drawTerm.write(string.format("LNAV[%d/%d %s] %s E:%2.0fs", nr.activeIdx, nr.totalWps, tostring(nr.wpName):sub(1, 8), formatDist(nr.dist), nr.ete or 0):sub(1, w - 2))
+            elseif fc.ap.mode == "ANCHOR" and lastTel.anchor and lastTel.anchor.active then
+                local a = lastTel.anchor
+                drawTerm.setTextColor(isColor and colors.yellow or colors.white)
+                drawTerm.write(string.format("CAPA[3D] dH:%4.1fm S:%+4.1f W:%+4.1f dY:%+4.1f", a.dist, a.surge, a.sway, a.dy):sub(1, w - 2))
+            elseif fc.ap.mode == "RTB" and fc.ap.homeBase then
+                local hp = getHomeBasePos(fc.ap)
+                local vec = hp and calcVec(lastTel.pos, hp, lastTel.speed)
+                drawTerm.setTextColor(theme.accent or colors.cyan)
+                if hp then
+                    local shortPh = tostring(fc.ap.rtbPhase or "RTB"):gsub("^RTB_", "")
+                    drawTerm.write(string.format(
+                        "RTB[%s] (%d,%d,%d) %s %03.0fd %s",
+                        shortPh:sub(1, 5),
+                        math.floor(hp.x), math.floor(hp.y), math.floor(hp.z),
+                        vec and formatDist(vec.dist) or "?",
+                        vec and vec.brgDeg or 0,
+                        vec and vec.etaStr or "--"
+                    ):sub(1, w - 2))
+                else
+                    drawTerm.write(string.format(
+                        "ILS[%s/%s] LOC:%+5.1f GS:%+5.1f D:%4.0fm",
+                        tostring(fc.ap.homeBase.runwayId or "RWY"),
+                        tostring(fc.ap.rtbPhase),
+                        fc.ap.ilsDev.loc or 0,
+                        fc.ap.ilsDev.gs or 0,
+                        fc.ap.ilsDev.dist or 0
+                    ):sub(1, w - 2))
+                end
+            elseif fc.ap.mode == "LNAV" and fc.ap.waypoint then
+                local wp = fc.ap.waypoint
+                local vec = calcVec(lastTel.pos, wp, lastTel.speed)
+                drawTerm.setTextColor(theme.ok or colors.lime)
+                drawTerm.write(string.format(
+                    "LNAV[%s] (%d,%d,%d) %s %03.0fd",
+                    tostring(wp.name or "HEDEF"):sub(1, 7),
+                    math.floor(wp.x), math.floor(wp.y or 0), math.floor(wp.z),
+                    vec and formatDist(vec.dist) or "?",
+                    vec and vec.brgDeg or 0
+                ):sub(1, w - 2))
+            elseif lastTel.navTarget and lastTel.navTarget.active then
+                local nt = lastTel.navTarget
+                drawTerm.setTextColor(isColor and colors.yellow or colors.white)
+                drawTerm.write(string.format(
+                    "MASA:%s (%s %03.0fd) [J]LNAV",
+                    tostring(nt.name or "HEDEF"):sub(1, 10),
+                    formatDist(nt.distance or 0),
+                    math.deg(nt.bearing or 0) % 360
+                ):sub(1, w - 2))
+            elseif fc.ap.homeBase then
+                local hp = getHomeBasePos(fc.ap)
+                if hp and fc.ap.homeBase.calibrated == false and (tonumber(hp.x) or 0) == 0 and (tonumber(hp.z) or 0) == 0 then
+                    drawTerm.setTextColor(theme.warn or colors.orange)
+                    drawTerm.write(string.sub("US: KALIBRE DEGIL (0,0) - Kuleyi Kontrol Et", 1, w - 2))
+                elseif hp then
+                    local vec = calcVec(lastTel.pos, hp, lastTel.speed)
+                    drawTerm.setTextColor(colors.lightGray)
+                    drawTerm.write(string.format(
+                        "US:%s (%d,%d,%d) %s %03.0fd [R]RTB",
+                        tostring(fc.ap.homeBase.baseName or "ANA-US"):sub(1, 7),
+                        math.floor(hp.x), math.floor(hp.y), math.floor(hp.z),
+                        vec and formatDist(vec.dist) or "?",
+                        vec and vec.brgDeg or 0
+                    ):sub(1, w - 2))
+                else
+                    drawTerm.setTextColor(colors.lightGray)
+                    drawTerm.write(string.format(
+                        "ILS: %s (%s) [R]RTB",
+                        tostring(fc.ap.homeBase.baseName or "BASE"):sub(1, 12),
+                        tostring(fc.ap.homeBase.runwayId or "RWY"):sub(1, 8)
+                    ):sub(1, w - 2))
+                end
+            else
+                drawTerm.setTextColor(theme.muted)
+                drawTerm.write(string.format("PROFIL: %s | [V]Sec [P]I/O", tostring(lastTel.vehicleType)):sub(1, w - 2))
+            end
+        end
+
+        -- Row 14 (+15 for Call Coords): Dedicated Alerts, Incoming Calls, Obstacle Escape & Toast Notifications
+        if 14 < h - 2 then
+            drawTerm.setCursorPos(2, 14)
+            if (fc.alertLevel == "RED" or lastTel.alertLevel == "RED") then
+                drawTerm.setBackgroundColor(colors.red)
+                drawTerm.setTextColor(colors.white)
+                drawTerm.write(string.sub(" ! KIRMIZI ALARM - SAVAS ISTASYONLARI [K] ! ", 1, w - 2))
+            elseif lastTel.gpwsWarning then
+                drawTerm.setBackgroundColor(colors.red)
+                drawTerm.setTextColor(colors.white)
+                drawTerm.write(string.sub(" !! PULL UP - ARAZI CARPISMA RISKI !! ", 1, w - 2))
+            elseif lastTel.pitchWarning then
+                drawTerm.setBackgroundColor(colors.red)
+                drawTerm.setTextColor(colors.white)
+                drawTerm.write(string.sub(" !! ANTI-DIVE: ARKA GAZ KESILDI !! ", 1, w - 2))
+            elseif lastTel.stallWarning then
+                drawTerm.setBackgroundColor(colors.orange)
+                drawTerm.setTextColor(colors.black)
+                drawTerm.write(string.sub(" !! STALL UYARISI - BURNU INDIR !! ", 1, w - 2))
+            elseif fc.ap.pendingCall then
+                local pc = fc.ap.pendingCall
+                local vec = pc.targetPos and calcVec(lastTel.pos, pc.targetPos, lastTel.speed)
+                local distStr = vec and formatDist(vec.dist) or "?"
+                drawTerm.setBackgroundColor(isColor and colors.orange or colors.white)
+                drawTerm.setTextColor(colors.black)
+                drawTerm.write(string.format(" CAGRI:%s->%s %s [J]KBL [X]RED ", tostring(pc.baseName or "KULE"):sub(1, 7), tostring(pc.cmd), distStr):sub(1, w - 2))
+                if 15 < h - 2 and pc.targetPos then
+                    drawTerm.setCursorPos(2, 15)
+                    drawTerm.setBackgroundColor(theme.bg)
+                    drawTerm.setTextColor(isColor and colors.yellow or colors.white)
+                    drawTerm.write(string.format("  Hedef: (%d,%d,%d) Yon:%03.0fd", pc.targetPos.x, pc.targetPos.y, pc.targetPos.z, vec and vec.brgDeg or 0):sub(1, w - 2))
+                end
+            elseif fc.ap.escape and fc.ap.escape.active then
+                drawTerm.setBackgroundColor(isColor and colors.red or colors.white)
+                drawTerm.setTextColor(isColor and colors.white or colors.black)
+                drawTerm.write(string.format(" ! ENGEL KURTARMA [%s] [E]IPTAL ! ", formatEscapeTag(fc.ap.escape)):sub(1, w - 2))
+            elseif hotplugNotice and hotplugTimer > 0 then
+                drawTerm.setBackgroundColor(isColor and colors.cyan or colors.white)
+                drawTerm.setTextColor(colors.black)
+                drawTerm.write((" " .. hotplugNotice .. " "):sub(1, w - 2))
+            end
+        end
+
+        -- Slim 2-Row Bottom Control Dock (Rows h-2..h)
         drawTerm.setBackgroundColor(theme.bg)
-        drawTerm.setCursorPos(1, h - 3)
+        drawTerm.setCursorPos(1, h - 2)
         drawTerm.setTextColor(theme.muted)
         drawTerm.write(string.rep("-", w))
 
-        drawTerm.setCursorPos(2, h - 2)
+        drawTerm.setCursorPos(2, h - 1)
         drawTerm.setTextColor(fc.ap.enabled and (theme.ok or colors.lime) or (theme.warn or colors.orange))
         drawTerm.write(string.format(
-            "[A]AP:%s [H]HVR [C]CRS [Z]CAPA:%s [B]PARK:%s [G]VTS",
+            "[A]AP:%s [H]HVR [C]CRS [R]RTB [Z]CAPA [B]PRK:%s",
             fc.ap.enabled and "ON " or "OFF",
-            (fc.ap.mode == "ANCHOR") and "LOK" or "OFF",
             fc.ap.parkingBrake and "ON " or "OFF"
         ):sub(1, w - 2))
 
-        drawTerm.setCursorPos(2, h - 1)
-        drawTerm.setTextColor(theme.accent or colors.cyan)
-        drawTerm.write("[V]:Profil Sec | [N]:FMS/Rota | [P]:I/O Matrix | [Y]:180°U-Don")
-
         drawTerm.setCursorPos(2, h)
         drawTerm.setTextColor(colors.lightGray)
-        drawTerm.write("[Up/Dn]:Alt/Lift [Lt/Rt]:Hdg [W/S]:Thr [G]:Vites [R]:RTB [A]:AP")
+        drawTerm.write(string.sub("[W/S]Gaz [Oklar]Irt/Yon [G]Vites [?]Tum Tuslar", 1, w - 2))
         drawTerm = prevTerm
     end
 
@@ -1247,13 +1764,13 @@ local function run(context)
                 mon._lastRole = effectiveRole
 
                 if effectiveRole == "DISP_NAV" or effectiveRole == "DISP_TACTICAL" then
-                    pcall(renderTacticalDisplay, mon, lastTel, fc.ap)
+                    pcall(renderTacticalDisplay, mon, lastTel, fc.ap, mName)
                 elseif effectiveRole == "DISP_SCADA" or effectiveRole == "DISP_ENGINE" then
                     pcall(renderScadaDisplay, mon, lastTel, fc.ap)
                 elseif effectiveRole == "DISP_PFD" or effectiveRole == "DISP_MIRROR" then
                     pcall(renderPFD, mon)
                 elseif effectiveRole == "DISP_TABLE" then
-                    pcall(renderTacticalTable, mon, lastTel, fc.ap, fc)
+                    pcall(renderTacticalTable, mon, lastTel, fc.ap, fc, mName)
                 elseif effectiveRole == "DISP_OFF" or effectiveRole == "IGNORE" then
                     if not mon._isBlanked then
                         pcall(function()
@@ -1360,6 +1877,13 @@ local function run(context)
                             for k, v in pairs(msg.ap) do
                                 fc.ap[k] = v
                             end
+                            fc.ap.pendingCall   = msg.ap.pendingCall
+                            fc.ap.homeBase      = msg.ap.homeBase
+                            fc.ap.waypoint      = msg.ap.waypoint
+                            fc.ap.lastAtcNotice = msg.ap.lastAtcNotice
+                            fc.ap.atcAutoAccept = (msg.ap.atcAutoAccept == true)
+                            fc.ap.escape        = msg.ap.escape
+                            fc.ap.obstacleAvoid = (msg.ap.obstacleAvoid ~= false)
                             if msg.ap.manualLift ~= nil then
                                 fc.manualLift = msg.ap.manualLift
                             end
@@ -1432,11 +1956,27 @@ local function run(context)
                 elseif protocol == "DRUNKEN_ILS" and type(msg) == "table" and msg.type == "AVIONICS_ILS_BEACON" then
                     fc:setHomeBase(msg)
                 elseif protocol == "DRUNKEN_ATC" and type(msg) == "table" and msg.type == "AVIONICS_ATC_CMD" then
-                    local okCmd, notice = fc:executeAtcCommand(msg, lastTel)
-                    if okCmd and notice then
-                        hotplugNotice = notice
-                        hotplugTimer = 100
+                    if isRemoteFCC then
                         playAlert("CLICK")
+                        hotplugNotice = string.format("GELEN ATC: %s -> [J] KABUL / [X] RED", tostring(msg.cmd or ""))
+                        hotplugTimer = 80
+                    else
+                        local status, notice = fc:receiveAtcCall(msg, lastTel, p1)
+                        if status then
+                            if rednet and rednet.isOpen and rednet.isOpen() then
+                                pcall(rednet.broadcast, {
+                                    type     = "AVIONICS_ATC_ACK",
+                                    callsign = fc.callsign,
+                                    cmd      = msg.cmd,
+                                    status   = status,
+                                    message  = notice,
+                                    senderId = (os.getComputerID and os.getComputerID()) or 0
+                                }, "DRUNKEN_ATC")
+                            end
+                            hotplugNotice = notice
+                            hotplugTimer = 100
+                            playAlert("CLICK")
+                        end
                     end
                 end
             elseif ev == "peripheral" then
@@ -1454,15 +1994,70 @@ local function run(context)
                 hotplugNotice = "HOTPLUG - " .. tostring(p1) .. " ayrildi!"
                 hotplugTimer = 80
             elseif ev == "monitor_touch" then
-                local monSide = p1
+                local monSide, tx, ty = p1, p2, p3
                 if monSide then
-                    local newR = fc:cycleRole(monSide, 1)
-                    if isRemoteFCC then
-                        sendAvionicsCmd("SET_IO_ROLE", { name = monSide, role = newR })
+                    local handledBtn = false
+                    local btns = monitorButtons[monSide]
+                    if btns and tx and ty then
+                        for _, b in ipairs(btns) do
+                            if ty == b.y and tx >= b.x1 and tx <= b.x2 then
+                                if b.action == "accept" then
+                                    if isRemoteFCC then
+                                        sendAvionicsCmd("ACCEPT_CALL")
+                                        hotplugNotice = "CAGRI / HEDEF KABUL EDILDI"
+                                    else
+                                        local _, nA = fc:acceptPendingCall(lastTel)
+                                        hotplugNotice = nA or "KABUL EDILDI"
+                                    end
+                                elseif b.action == "reject" then
+                                    if isRemoteFCC then
+                                        sendAvionicsCmd("REJECT_CALL")
+                                        hotplugNotice = "CAGRI REDDEDILDI"
+                                    else
+                                        local _, nR = fc:rejectPendingCall()
+                                        hotplugNotice = nR or "REDDEDILDI"
+                                    end
+                                elseif b.action == "cancel_escape" then
+                                    if isRemoteFCC then
+                                        sendAvionicsCmd("CANCEL_ESCAPE")
+                                    else
+                                        fc:cancelObstacleEscape()
+                                    end
+                                    hotplugNotice = "ENGEL KURTARMA IPTAL EDILDI"
+                                elseif b.action == "engage_rtb" then
+                                    if isRemoteFCC then
+                                        sendAvionicsCmd("ENGAGE_RTB")
+                                    else
+                                        fc:engageRTB(lastTel)
+                                    end
+                                    local hp = getHomeBasePos(fc.ap)
+                                    local bName = (fc.ap.homeBase and fc.ap.homeBase.baseName) or "ANA-US"
+                                    local vec = hp and calcVec(lastTel.pos, hp, lastTel.speed)
+                                    hotplugNotice = hp and string.format("ANA US RTB: %s (%d,%d,%d) %s", tostring(bName), math.floor(hp.x), math.floor(hp.y), math.floor(hp.z), vec and formatDist(vec.dist) or "") or ("ANA US RTB: " .. tostring(bName))
+                                elseif b.action == "hover" then
+                                    if isRemoteFCC then
+                                        sendAvionicsCmd("SET_MODE", { mode = "HOVER" })
+                                    else
+                                        fc:setMode("HOVER", lastTel)
+                                    end
+                                    hotplugNotice = "RTB IPTAL -> HOVER"
+                                end
+                                hotplugTimer = 70
+                                playAlert("CLICK")
+                                handledBtn = true
+                                break
+                            end
+                        end
                     end
-                    hotplugNotice = "EKRAN DOKUNULDU: " .. tostring(monSide) .. " -> " .. tostring(newR)
-                    hotplugTimer = 80
-                    playAlert("CLICK")
+                    if not handledBtn then
+                        local newR = fc:cycleRole(monSide, 1)
+                        if isRemoteFCC then
+                            sendAvionicsCmd("SET_IO_ROLE", { name = monSide, role = newR })
+                        end
+                        hotplugNotice = "EKRAN DOKUNULDU: " .. tostring(monSide) .. " -> " .. tostring(newR)
+                        hotplugTimer = 80
+                        playAlert("CLICK")
+                    end
                 end
             elseif ev == "key" then
                 local key = p1
@@ -1505,6 +2100,8 @@ local function run(context)
                     end
                 elseif key == keys.n then
                     activeTab = (activeTab == "NAV") and "PFD" or "NAV"
+                elseif (keys.f1 and key == keys.f1) or (keys.slash and key == keys.slash) then
+                    activeTab = (activeTab == "HELP") and "PFD" or "HELP"
                 elseif key == keys.p then
                     if activeTab == "IO" then
                         activeTab = "PFD"
@@ -1523,6 +2120,10 @@ local function run(context)
                     elseif activeTab == "IO" then
                         activeTab = "PROFILE"
                     else
+                        activeTab = "PFD"
+                    end
+                elseif activeTab == "HELP" then
+                    if key == keys.enter or key == keys.space or (keys.backspace and key == keys.backspace) then
                         activeTab = "PFD"
                     end
                 elseif activeTab == "PROFILE" then
@@ -1648,6 +2249,33 @@ local function run(context)
                             hotplugNotice = "KAYITLI ROTA YOK"
                         end
                         hotplugTimer = 60
+                    elseif key == keys.r then
+                        if isRemoteFCC then sendAvionicsCmd("ENGAGE_RTB") else fc:engageRTB(lastTel) end
+                        local hp = getHomeBasePos(fc.ap)
+                        local bName = (fc.ap.homeBase and fc.ap.homeBase.baseName) or "ANA-US"
+                        local vec = hp and calcVec(lastTel.pos, hp, lastTel.speed)
+                        hotplugNotice = hp and string.format("ANA US RTB: %s (%d,%d,%d) %s", tostring(bName), math.floor(hp.x), math.floor(hp.y), math.floor(hp.z), vec and formatDist(vec.dist) or "") or ("ANA US RTB: " .. tostring(bName))
+                        hotplugTimer = 70
+                        activeTab = "PFD"
+                    elseif key == keys.h then
+                        if tickCount <= confirmHomeSetTick then
+                            confirmHomeSetTick = 0
+                            if isRemoteFCC then
+                                sendAvionicsCmd("SAVE_HOME_BASE")
+                                local rx = math.floor(((lastTel.pos and lastTel.pos.x) or 0) + 0.5)
+                                local ry = math.floor((lastTel.altitude or 0) + 0.5)
+                                local rz = math.floor(((lastTel.pos and lastTel.pos.z) or 0) + 0.5)
+                                hotplugNotice = string.format("ANA US KAYDEDILDI: (%d,%d,%d)", rx, ry, rz)
+                            else
+                                local _, noticeH = fc:setCurrentPosAsHomeBase(lastTel)
+                                hotplugNotice = noticeH or "ANA US KAYDEDILDI"
+                            end
+                            hotplugTimer = 80
+                        else
+                            confirmHomeSetTick = tickCount + 80
+                            hotplugNotice = "ONAY: Burayi ANA US yapmak icin [H]'ye tekrar bas!"
+                            hotplugTimer = 80
+                        end
                     end
                 elseif activeTab == "IO" then
                     local devs = fc.ioDevices or {}
@@ -1736,8 +2364,11 @@ local function run(context)
                         hotplugNotice = "HOVER AKTIF: Irtifa Kilitli"; hotplugTimer = 50
                     elseif key == keys.r then
                         if isRemoteFCC then sendAvionicsCmd("ENGAGE_RTB") else fc:engageRTB(lastTel) end
-                        local bName = (fc.ap.homeBase and fc.ap.homeBase.baseName) or (fc.takeoffPos and "KALKIS NOKTASI") or "EVE DONUS"
-                        hotplugNotice = "RTB: " .. bName; hotplugTimer = 50
+                        local hp = getHomeBasePos(fc.ap)
+                        local bName = (fc.ap.homeBase and fc.ap.homeBase.baseName) or (fc.takeoffPos and "KALKIS NOKTASI") or "ANA-US"
+                        local vec = hp and calcVec(lastTel.pos, hp, lastTel.speed)
+                        hotplugNotice = hp and string.format("ANA US RTB: %s (%d,%d,%d) %s", tostring(bName), math.floor(hp.x), math.floor(hp.y), math.floor(hp.z), vec and formatDist(vec.dist) or "") or ("ANA US RTB: " .. tostring(bName))
+                        hotplugTimer = 70
                     elseif key == keys.y then
                         if isRemoteFCC then
                             sendAvionicsCmd("REVERSE_HDG")
@@ -1819,19 +2450,18 @@ local function run(context)
                             hotplugTimer = 40
                         else
                             local d = (key == keys.up) and 5 or -5
-                            if isRemoteFCC then sendAvionicsCmd("ALT_DELTA", { delta = d })
-                            else
-                                fc.ap.targetAlt = math.max(0, fc.ap.targetAlt + d)
-                            end
-                            hotplugNotice = "HEDEF IRTIFA " .. (d > 0 and "+5m" or "-5m"); hotplugTimer = 30
+                            fc.ap.targetAlt = math.max(0, (fc.ap.targetAlt or (lastTel and lastTel.altitude) or 120) + d)
+                            if isRemoteFCC then sendAvionicsCmd("ALT_DELTA", { delta = d }) end
+                            hotplugNotice = string.format("HEDEF IRTIFA: %.0fm (%+dm)", fc.ap.targetAlt, d); hotplugTimer = 35
                         end
                     elseif key == keys.left or key == keys.right then
-                        local d = (key == keys.right) and 2 or -2
+                        local d = (key == keys.right) and 3 or -3
                         if not fc.ap.enabled then
-                            if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = d }) else fc.ap.manualYaw = math.max(-6, math.min(6, (fc.ap.manualYaw or 0) + d)) end
+                            fc.ap.manualYaw = math.max(-12, math.min(12, (fc.ap.manualYaw or 0) + d))
+                            if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = d }) end
                             hotplugNotice = "DUMEN: " .. (d > 0 and "SAG " or "SOL ") .. tostring(fc.ap.manualYaw); hotplugTimer = 30
                         else
-                            local hdgDelta = (key == keys.right) and 5 or -5
+                            local hdgDelta = (key == keys.right) and 10 or -10
                             local currentTarget = fc.ap.targetHdg or (lastTel and lastTel.heading) or 0
                             local newHdg = (currentTarget + math.rad(hdgDelta)) % (2 * math.pi)
                             fc.ap.targetHdg = newHdg
@@ -1841,6 +2471,56 @@ local function run(context)
                             hotplugNotice = string.format("HEDEF ROTASI: %03.0f deg (%+d deg)", math.deg(newHdg), hdgDelta)
                             hotplugTimer = 40
                         end
+                    elseif key == keys.j or key == keys.enter then
+                        if isRemoteFCC then
+                            sendAvionicsCmd("ACCEPT_CALL")
+                            if fc.ap.pendingCall then
+                                hotplugNotice = "KABUL EDILDI: " .. tostring(fc.ap.pendingCall.cmd) .. " -> " .. tostring(fc.ap.pendingCall.baseName)
+                            elseif lastTel.navTarget and lastTel.navTarget.active then
+                                hotplugNotice = "MASA HEDEFI LNAV AKTIF: " .. tostring(lastTel.navTarget.name or "HEDEF")
+                            else
+                                hotplugNotice = "BEKLEYEN CAGRI VEYA MASA HEDEFI YOK"
+                            end
+                        else
+                            local _, noticeA = fc:acceptPendingCall(lastTel)
+                            hotplugNotice = noticeA or "CAGRI / HEDEF YOK"
+                        end
+                        hotplugTimer = 70
+                    elseif key == keys.o then
+                        local nextAuto = not (fc.ap.atcAutoAccept == true)
+                        fc.ap.atcAutoAccept = nextAuto
+                        if isRemoteFCC then sendAvionicsCmd("TOGGLE_AUTO_ACCEPT") end
+                        hotplugNotice = "ATC OTO-KABUL: " .. (nextAuto and "ACIK" or "KAPALI")
+                        hotplugTimer = 60
+                    elseif key == keys.backspace or (key == keys.x and fc.ap.pendingCall ~= nil) then
+                        if isRemoteFCC then
+                            sendAvionicsCmd("REJECT_CALL")
+                            hotplugNotice = "CAGRI REDDEDILDI"
+                        else
+                            local _, noticeR = fc:rejectPendingCall()
+                            hotplugNotice = noticeR or "BEKLEYEN CAGRI YOK"
+                        end
+                        hotplugTimer = 60
+                    elseif key == keys.e then
+                        if fc.ap.escape and fc.ap.escape.active then
+                            if isRemoteFCC then sendAvionicsCmd("CANCEL_ESCAPE") else fc:cancelObstacleEscape() end
+                            hotplugNotice = "ENGEL KURTARMA IPTAL EDILDI"
+                        else
+                            local nextObs = not (fc.ap.obstacleAvoid ~= false)
+                            fc.ap.obstacleAvoid = nextObs
+                            if isRemoteFCC then sendAvionicsCmd("TOGGLE_OBSTACLE_AVOID") end
+                            hotplugNotice = "OTO ENGEL KURTARMA: " .. (nextObs and "ACIK" or "KAPALI")
+                        end
+                        hotplugTimer = 60
+                    elseif key == keys.t then
+                        if isRemoteFCC then
+                            sendAvionicsCmd("TRIGGER_ESCAPE")
+                            hotplugNotice = "MANUEL KURTARMA: GERI + YUKSEL BASLATILDI!"
+                        else
+                            local _, escMsg = fc:triggerObstacleEscape(lastTel, "MANUEL")
+                            hotplugNotice = escMsg or "MANUEL KURTARMA: GERI + YUKSEL BASLATILDI!"
+                        end
+                        hotplugTimer = 70
                     elseif key == keys.x then
                         if not fc.ap.enabled then
                             if isRemoteFCC then sendAvionicsCmd("MANUAL_YAW_DELTA", { delta = -(fc.ap.manualYaw or 0) }) else fc.ap.manualYaw = 0 end
@@ -1910,6 +2590,9 @@ local function run(context)
                         end
                     end
                 end
+            elseif ev == "char" and p1 == "?" then
+                playAlert("CLICK")
+                activeTab = (activeTab == "HELP") and "PFD" or "HELP"
             end
         end
     end

@@ -271,7 +271,7 @@ local function run(context)
         parentTerm.write("[P / Tab]: FCC Donanim & Motor Rol Atama Ekrani")
         parentTerm.setCursorPos(2, math.min(h, 12))
         parentTerm.setTextColor(isColor and colors.lightGray or colors.white)
-        parentTerm.write("[H]:Hover [M]:Manual [C]:Cruise [Z]:Anchor [B]:Brake [K]:Alarm [U]:OTA")
+        parentTerm.write("[H]:Hover [M]:Man [C]:Crs [R]:RTB [Z]:Anc [B]:Brk [K]:Alrm")
     end
 
     local function broadcastState()
@@ -283,6 +283,21 @@ local function run(context)
                 kind       = d.kind,
                 cap        = d.cap,
                 isRedstone = d.isRedstone
+            }
+        end
+        local pubPendingCall = nil
+        if fc.ap.pendingCall then
+            local pc = fc.ap.pendingCall
+            pubPendingCall = {
+                id         = pc.id,
+                cmd        = pc.cmd,
+                baseName   = pc.baseName,
+                runwayId   = pc.runwayId,
+                targetPos  = pc.targetPos,
+                delta      = pc.delta,
+                targetAlt  = pc.targetAlt,
+                senderId   = pc.senderId,
+                receivedAt = pc.receivedAt
             }
         end
         pcall(rednet.broadcast, {
@@ -309,16 +324,47 @@ local function run(context)
                 ilsDev       = fc.ap.ilsDev,
                 waypoint     = fc.ap.waypoint,
                 vehicleType  = fc.vehicleType,
+                pendingCall  = pubPendingCall,
+                atcAutoAccept = (fc.ap.atcAutoAccept == true),
+                lastAtcNotice = fc.ap.lastAtcNotice,
+                obstacleAvoid = (fc.ap.obstacleAvoid ~= false),
+                escape        = fc.ap.escape and {
+                    active      = true,
+                    phase       = fc.ap.escape.phase,
+                    attempt     = fc.ap.escape.attempt,
+                    maxAttempts = fc.ap.escape.maxAttempts,
+                    climbAlt    = fc.ap.escape.climbAlt,
+                    reason      = fc.ap.escape.reason
+                } or nil,
                 homeBase     = fc.ap.homeBase and {
-                    baseName = fc.ap.homeBase.baseName,
-                    runwayId = fc.ap.homeBase.runwayId
+                    baseName      = fc.ap.homeBase.baseName,
+                    runwayId      = fc.ap.homeBase.runwayId,
+                    calibrated    = fc.ap.homeBase.calibrated,
+                    threshold     = fc.ap.homeBase.threshold,
+                    zeppelinMast  = fc.ap.homeBase.zeppelinMast,
+                    pos           = fc.ap.homeBase.pos,
+                    rwyHeadingRad = fc.ap.homeBase.rwyHeadingRad,
+                    approachDist  = fc.ap.homeBase.approachDist
                 } or nil
             }
         }, BUS_PROTOCOL)
     end
 
-    -- 1. Real-Time 20Hz Sensor Fusion & Actuator PID Loop
+    local function sendAtcAck(cmd, status, message)
+        if not (rednet and rednet.isOpen and rednet.isOpen()) then return end
+        pcall(rednet.broadcast, {
+            type     = "AVIONICS_ATC_ACK",
+            callsign = fc.callsign,
+            cmd      = cmd,
+            status   = status,
+            message  = message,
+            senderId = (os.getComputerID and os.getComputerID()) or 0
+        }, ATC_PROTOCOL)
+    end
+
+    -- 1. Real-Time 20Hz Sensor Fusion & Actuator PID Loop (with real loop dt measurement)
     local function controlLoop()
+        local lastStepEpoch = (os.epoch and os.epoch("utc")) or nil
         while running do
             -- File-based IPC command trigger (for autonomous bridge tests and external control)
             if tick % 4 == 1 and fs and fs.exists and fs.exists("/fcc_cmd.txt") then
@@ -375,7 +421,13 @@ local function run(context)
                 end
             end
 
-            lastTel = fc:step(0.05)
+            local nowEpoch = (os.epoch and os.epoch("utc")) or nil
+            local realDt = 0.05
+            if lastStepEpoch and nowEpoch and nowEpoch > lastStepEpoch then
+                realDt = math.max(0.05, math.min(0.50, (nowEpoch - lastStepEpoch) / 1000.0))
+            end
+            lastStepEpoch = nowEpoch
+            lastTel = fc:step(realDt)
             tick = tick + 1
 
             -- Broadcast High-Rate Internal Avionics Bus State (10 Hz) to Bridge/Cabin Computers
@@ -401,6 +453,9 @@ local function run(context)
                     vSpeed       = lastTel.vSpeed,
                     mode         = fc.ap.mode,
                     parkingBrake = fc.ap.parkingBrake,
+                    hasPendingCall = (fc.ap.pendingCall ~= nil),
+                    pendingCmd   = fc.ap.pendingCall and fc.ap.pendingCall.cmd or nil,
+                    escapePhase  = fc.ap.escape and fc.ap.escape.phase or nil,
                     timestamp    = (os.epoch and os.epoch("utc")) or os.time()
                 }, RADAR_PROTOCOL)
             end
@@ -463,9 +518,13 @@ local function run(context)
                 if protocol == ILS_PROTOCOL and type(msg) == "table" and msg.type == "AVIONICS_ILS_BEACON" then
                     fc:setHomeBase(msg)
                 elseif protocol == ATC_PROTOCOL and type(msg) == "table" and msg.type == "AVIONICS_ATC_CMD" then
-                    lastCmdSender = senderId
-                    lastCmdName = "ATC:" .. tostring(msg.cmd or "")
-                    fc:executeAtcCommand(msg, lastTel)
+                    local status, notice = fc:receiveAtcCall(msg, lastTel, senderId)
+                    if status then
+                        lastCmdSender = senderId
+                        lastCmdName = "ATC:" .. tostring(msg.cmd or "") .. "(" .. status .. ")"
+                        sendAtcAck(msg.cmd, status, notice)
+                        broadcastState()
+                    end
                 elseif protocol == BUS_PROTOCOL and type(msg) == "table" then
                     if msg.type == "AVIONICS_DISCOVER" then
                         broadcastState()
@@ -487,11 +546,52 @@ local function run(context)
                                 fc:setMode(isHoverable and "HOVER" or "CRUISE", lastTel)
                             end
                         elseif msg.cmd == "ENGAGE_RTB" then
-                            fc:engageRTB(lastTel)
+                            local okRtb = fc:engageRTB(lastTel)
+                            lastCmdName = okRtb and "RTB:ENGAGED" or "RTB:NO_BASE"
+                            broadcastState()
+                        elseif msg.cmd == "SAVE_HOME_BASE" then
+                            local okHb = fc:setCurrentPosAsHomeBase(lastTel, msg.baseName)
+                            lastCmdName = okHb and "HOME:SAVED" or "HOME:ERR"
+                            broadcastState()
+                        elseif msg.cmd == "ACCEPT_CALL" then
+                            local okA, noticeA, callA = fc:acceptPendingCall(lastTel)
+                            lastCmdName = okA and "CALL:ACCEPTED" or "CALL:NONE"
+                            if callA then
+                                sendAtcAck(callA.cmd, okA and "ACCEPTED" or "FAILED", noticeA)
+                            end
+                            broadcastState()
+                        elseif msg.cmd == "REJECT_CALL" then
+                            local okR, noticeR, callR = fc:rejectPendingCall()
+                            lastCmdName = "CALL:REJECTED"
+                            if callR then
+                                sendAtcAck(callR.cmd, "REJECTED", noticeR)
+                            end
+                            broadcastState()
+                        elseif msg.cmd == "TOGGLE_AUTO_ACCEPT" then
+                            fc.ap.atcAutoAccept = not (fc.ap.atcAutoAccept == true)
+                            lastCmdName = fc.ap.atcAutoAccept and "ATC:AUTO_ON" or "ATC:AUTO_OFF"
+                            broadcastState()
+                        elseif msg.cmd == "TOGGLE_OBSTACLE_AVOID" then
+                            fc.ap.obstacleAvoid = not (fc.ap.obstacleAvoid ~= false)
+                            if not fc.ap.obstacleAvoid and fc.ap.escape and fc.cancelObstacleEscape then
+                                fc:cancelObstacleEscape()
+                            end
+                            lastCmdName = fc.ap.obstacleAvoid and "OBS:ON" or "OBS:OFF"
+                            broadcastState()
+                        elseif msg.cmd == "TRIGGER_ESCAPE" then
+                            fc:triggerObstacleEscape(lastTel, "MANUEL")
+                            lastCmdName = "ESCAPE:MANUEL"
+                            broadcastState()
+                        elseif msg.cmd == "CANCEL_ESCAPE" then
+                            if fc.cancelObstacleEscape then fc:cancelObstacleEscape() end
+                            lastCmdName = "ESCAPE:CANCEL"
+                            broadcastState()
                         elseif msg.cmd == "ALT_DELTA" then
                             fc.ap.targetAlt = math.max(0, fc.ap.targetAlt + (tonumber(msg.delta) or 0))
+                            broadcastState()
                         elseif msg.cmd == "SET_ALT" then
                             fc.ap.targetAlt = math.max(0, tonumber(msg.alt) or fc.ap.targetAlt)
+                            broadcastState()
                         elseif msg.cmd == "LIFT_DELTA" then
                             if fc.adjustManualLift then
                                 fc:adjustManualLift(tonumber(msg.delta) or 0)
@@ -506,8 +606,10 @@ local function run(context)
                             end
                         elseif msg.cmd == "HDG_DELTA" then
                             fc.ap.targetHdg = (fc.ap.targetHdg + math.rad(tonumber(msg.deltaDeg) or 0)) % (2 * math.pi)
+                            broadcastState()
                         elseif msg.cmd == "SET_HDG" then
                             fc.ap.targetHdg = tonumber(msg.hdg) or fc.ap.targetHdg
+                            broadcastState()
                         elseif msg.cmd == "REVERSE_HDG" or msg.cmd == "U_TURN" then
                             if fc.reverseHeading then
                                 fc:reverseHeading()
@@ -539,7 +641,8 @@ local function run(context)
                         elseif msg.cmd == "TOGGLE_CLUTCH" then
                             fc:toggleClutchPolarity()
                         elseif msg.cmd == "MANUAL_YAW_DELTA" then
-                            fc.ap.manualYaw = math.max(-6, math.min(6, (fc.ap.manualYaw or 0) + (tonumber(msg.delta) or 0)))
+                            fc.ap.manualYaw = math.max(-12, math.min(12, (fc.ap.manualYaw or 0) + (tonumber(msg.delta) or 0)))
+                            broadcastState()
                         elseif msg.cmd == "SET_WAYPOINT" and type(msg.waypoint) == "table" then
                             fc.ap.waypoint = msg.waypoint
                         elseif msg.cmd == "GET_AUTOTUNE_PARAMS" or msg.cmd == "GET_PARAMS" then
@@ -734,6 +837,10 @@ local function run(context)
                     broadcastState()
                 elseif p1 == keys.c then
                     fc:setMode("CRUISE", lastTel)
+                    broadcastState()
+                elseif p1 == keys.r then
+                    local okRtb = fc:engageRTB(lastTel)
+                    lastCmdName = okRtb and "RTB:LOCAL" or "RTB:NO_BASE"
                     broadcastState()
                 elseif p1 == keys.z then
                     local newM = (fc.ap.mode == "ANCHOR") and "MANUAL" or "ANCHOR"
