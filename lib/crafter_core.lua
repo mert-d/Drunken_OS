@@ -7,9 +7,10 @@
 local CrafterCore = {}
 CrafterCore.__index = CrafterCore
 
-CrafterCore.VERSION = "1.0.0"
+CrafterCore.VERSION = "1.1.0"
 CrafterCore.CONFIG_PATH = "/etc/drunken_crafter.cfg"
 CrafterCore.RECIPES_PATH = "/etc/drunken_crafter_recipes.db"
+CrafterCore.DEFAULT_RECIPES_PATHS = { "/data/crafter_recipes_default.db", "data/crafter_recipes_default.db" }
 CrafterCore.BASE_BUS_PROTOCOL = "DRUNKEN_BASE_BUS"
 CrafterCore.NODE_TYPE = "MECHANICAL_CRAFTER"
 CrafterCore.REDSTONE_SIDES = { "left", "right", "top", "bottom", "front", "back" }
@@ -252,6 +253,7 @@ function CrafterCore.new(opts)
     self.recipesPath = opts.recipesPath or CrafterCore.RECIPES_PATH
     self.cfg = deepCopy(CrafterCore.DEFAULT_CONFIG)
     self.recipes = {}
+    self.tagCache = {}
 
     self.paused = false
     self.status = "IDLE"
@@ -263,10 +265,19 @@ function CrafterCore.new(opts)
     self.rednetModemName = nil
     self.lastHeartbeatClock = -999
     self.heartbeatInterval = 10.0
+    self.autoImportedDefaultCount = 0
 
     if opts.autoLoad ~= false then
         self:loadConfig()
         self:loadRecipes()
+    end
+
+    if next(self.recipes) == nil and opts.autoImportDefault ~= false then
+        local imported = self:importDefaultRecipes({ overwrite = false })
+        if imported > 0 then
+            self.autoImportedDefaultCount = imported
+            self.lastAction = tostring(imported) .. " varsayilan tarif yuklendi"
+        end
     end
 
     if type(opts.config) == "table" then
@@ -308,42 +319,56 @@ function CrafterCore:saveConfig()
     return writeSerializedTable(self.configPath, self.cfg)
 end
 
+local function normalizeRecipeRecord(rawKey, rec)
+    if type(rec) ~= "table" or type(rec.layout) ~= "table" then
+        return nil, nil
+    end
+    local rKey = tostring(rawKey or rec.result or rec.name or "")
+    local rName = rec.name or rKey
+    local normLayout = {}
+    for k, itemName in pairs(rec.layout) do
+        local numK = tonumber(k)
+        if numK and type(itemName) == "string" and itemName ~= "" then
+            normLayout[numK] = itemName
+        end
+    end
+    local normIngredients = {}
+    local count = 0
+    if type(rec.ingredients) == "table" then
+        for itemName, qty in pairs(rec.ingredients) do
+            local nQty = tonumber(qty) or 0
+            if nQty > 0 then
+                normIngredients[itemName] = nQty
+            end
+        end
+    end
+    for _, itemName in pairs(normLayout) do
+        count = count + 1
+        if not rec.ingredients then
+            normIngredients[itemName] = (normIngredients[itemName] or 0) + 1
+        end
+    end
+    if count == 0 then
+        return nil, nil
+    end
+    return rKey, {
+        name = rName,
+        result = rec.result,
+        resultCount = tonumber(rec.resultCount),
+        totalCount = tonumber(rec.totalCount) or count,
+        ingredients = normIngredients,
+        layout = normLayout
+    }
+end
+
 function CrafterCore:loadRecipes()
     local loaded = readSerializedTable(self.recipesPath)
     if type(loaded) == "table" then
         local clean = {}
-        for name, rec in pairs(loaded) do
-            if type(rec) == "table" and type(rec.layout) == "table" then
-                local rName = rec.name or tostring(name)
-                local normLayout = {}
-                for k, itemName in pairs(rec.layout) do
-                    local numK = tonumber(k)
-                    if numK and type(itemName) == "string" and itemName ~= "" then
-                        normLayout[numK] = itemName
-                    end
-                end
-                local normIngredients = {}
-                local count = 0
-                if type(rec.ingredients) == "table" then
-                    for itemName, qty in pairs(rec.ingredients) do
-                        local nQty = tonumber(qty) or 0
-                        if nQty > 0 then
-                            normIngredients[itemName] = nQty
-                        end
-                    end
-                end
-                for _, itemName in pairs(normLayout) do
-                    count = count + 1
-                    if not rec.ingredients then
-                        normIngredients[itemName] = (normIngredients[itemName] or 0) + 1
-                    end
-                end
-                clean[rName] = {
-                    name = rName,
-                    totalCount = tonumber(rec.totalCount) or count,
-                    ingredients = normIngredients,
-                    layout = normLayout
-                }
+        for key, rec in pairs(loaded) do
+            local rKey, norm = normalizeRecipeRecord(key, rec)
+            if rKey and norm then
+                clean[rKey] = norm
             end
         end
         self.recipes = clean
@@ -354,6 +379,43 @@ end
 
 function CrafterCore:saveRecipes()
     return writeSerializedTable(self.recipesPath, self.recipes)
+end
+
+function CrafterCore:importDefaultRecipes(opts)
+    opts = opts or {}
+    local candidates = opts.path and { opts.path } or CrafterCore.DEFAULT_RECIPES_PATHS
+    local sourceData = nil
+    local usedPath = nil
+
+    for _, path in ipairs(candidates) do
+        local data = readSerializedTable(path)
+        if type(data) == "table" then
+            sourceData = data
+            usedPath = path
+            break
+        end
+    end
+
+    if not sourceData then
+        return 0, "Varsayilan tarif veritabani bulunamadi (data/crafter_recipes_default.db)"
+    end
+
+    local imported = 0
+    for rawKey, rec in pairs(sourceData) do
+        local rKey, norm = normalizeRecipeRecord(rawKey, rec)
+        if rKey and norm then
+            if opts.overwrite or self.recipes[rKey] == nil then
+                self.recipes[rKey] = norm
+                imported = imported + 1
+            end
+        end
+    end
+
+    if imported > 0 then
+        self:saveRecipes()
+        self.lastAction = tostring(imported) .. " tarif iceri aktarildi"
+    end
+    return imported, nil, usedPath
 end
 
 function CrafterCore:getGridSize()
@@ -420,12 +482,24 @@ function CrafterCore:discoverPeripherals()
 
     table.sort(res.crafters)
     table.sort(res.inventories)
-    table.sort(res.ae2Providers)
+    table.sort(res.ae2Providers, function(a, b)
+        local da = isRedstoneSide(a)
+        local db = isRedstoneSide(b)
+        if da ~= db then
+            return not da
+        end
+        return a < b
+    end)
+    res.ae2DirectSideOnly = (#res.ae2Providers > 0 and isRedstoneSide(res.ae2Providers[1]))
     table.sort(res.redstoneRelays)
     table.sort(res.wirelessModems)
     table.sort(res.monitors)
 
     return res
+end
+
+function CrafterCore.isDirectSide(name)
+    return isRedstoneSide(name)
 end
 
 function CrafterCore:getSlotItem(slotIdx)
@@ -558,6 +632,7 @@ function CrafterCore:getPeripheralStatus()
         outputOk = outputOk,
         outputCount = outputTotal,
         ae2Ok = ae2Ok,
+        ae2IsDirectSide = isRedstoneSide(self.cfg.ae2Name),
         mappedCount = mappedCount,
         totalSlots = totalSlots,
         baseBusOpen = self:isBaseBusOpen()
@@ -780,13 +855,28 @@ function CrafterCore:learnRecipeFromWall(recipeName)
     return recipe, nil
 end
 
-function CrafterCore:deleteRecipe(recipeName)
-    if not recipeName or not self.recipes[recipeName] then
+function CrafterCore:deleteRecipe(keyOrName)
+    if not keyOrName then
         return false
     end
-    self.recipes[recipeName] = nil
+    local targetKey = nil
+    if self.recipes[keyOrName] then
+        targetKey = keyOrName
+    else
+        for k, rec in pairs(self.recipes) do
+            if rec.name == keyOrName then
+                targetKey = k
+                break
+            end
+        end
+    end
+    if not targetKey then
+        return false
+    end
+    local removedName = (self.recipes[targetKey] and self.recipes[targetKey].name) or tostring(targetKey)
+    self.recipes[targetKey] = nil
     self:saveRecipes()
-    self.lastAction = "Silindi: " .. tostring(recipeName)
+    self.lastAction = "Silindi: " .. tostring(removedName)
     return true
 end
 
@@ -837,30 +927,128 @@ function CrafterCore:returnOutputToAE2()
     return totalMoved
 end
 
+function CrafterCore:ensureItemTags(periphName, slot, itemName)
+    if type(itemName) ~= "string" or itemName == "" then
+        return nil
+    end
+    if self.tagCache[itemName] ~= nil then
+        return self.tagCache[itemName]
+    end
+    local tags = {}
+    if type(periphName) == "string" and periphName ~= "" and slot then
+        local okDet, detail = callPeriph(periphName, "getItemDetail", slot)
+        if okDet and type(detail) == "table" and type(detail.tags) == "table" then
+            for k, v in pairs(detail.tags) do
+                if v then
+                    tags[k] = true
+                end
+            end
+        end
+    end
+    self.tagCache[itemName] = tags
+    return tags
+end
+
+function CrafterCore:cacheInventoryTags(periphName, invSlots)
+    if type(invSlots) ~= "table" then return end
+    for _, slot in ipairs(sortedNumericKeys(invSlots)) do
+        local info = invSlots[slot]
+        if info and info.name and self.tagCache[info.name] == nil then
+            self:ensureItemTags(periphName, slot, info.name)
+        end
+    end
+end
+
+function CrafterCore:itemMatchesMatcher(itemName, matcher)
+    if type(itemName) ~= "string" or type(matcher) ~= "string" then
+        return false
+    end
+    if matcher:sub(1, 1) ~= "#" then
+        return itemName == matcher
+    end
+    local tagName = matcher:sub(2)
+    local cached = self.tagCache[itemName]
+    return type(cached) == "table" and cached[tagName] == true
+end
+
 function CrafterCore:matchRecipe(invCounts)
     if type(invCounts) ~= "table" then return nil end
+
+    local invItemNames = {}
+    for itemName, cnt in pairs(invCounts) do
+        if (tonumber(cnt) or 0) > 0 then
+            table.insert(invItemNames, itemName)
+        end
+    end
+    table.sort(invItemNames)
+
     local sorted = self:getSortedRecipes()
     for _, rec in ipairs(sorted) do
-        local okIngredients = true
-        for itemName, reqQty in pairs(rec.ingredients or {}) do
-            if (invCounts[itemName] or 0) < (tonumber(reqQty) or 0) then
-                okIngredients = false
+        local okLayout = true
+        local hasAnySlot = false
+        for slotIdx in pairs(rec.layout or {}) do
+            hasAnySlot = true
+            local mapped = self.cfg.gridMap and self.cfg.gridMap[slotIdx]
+            if not mapped or mapped == "" then
+                okLayout = false
                 break
             end
         end
 
-        if okIngredients then
-            local okLayout = true
-            local hasAnySlot = false
-            for slotIdx in pairs(rec.layout or {}) do
-                hasAnySlot = true
-                local mapped = self.cfg.gridMap and self.cfg.gridMap[slotIdx]
-                if not mapped or mapped == "" then
-                    okLayout = false
-                    break
+        if hasAnySlot and okLayout then
+            local pool = {}
+            for _, itemName in ipairs(invItemNames) do
+                pool[itemName] = tonumber(invCounts[itemName]) or 0
+            end
+
+            local exactMatchers = {}
+            local tagMatchers = {}
+            for matcher, qty in pairs(rec.ingredients or {}) do
+                local reqQty = tonumber(qty) or 0
+                if reqQty > 0 then
+                    if type(matcher) == "string" and matcher:sub(1, 1) == "#" then
+                        table.insert(tagMatchers, { matcher = matcher, qty = reqQty })
+                    else
+                        table.insert(exactMatchers, { matcher = matcher, qty = reqQty })
+                    end
                 end
             end
-            if hasAnySlot and okLayout then
+            table.sort(tagMatchers, function(a, b) return a.matcher < b.matcher end)
+
+            local okIngredients = true
+            -- Pass 1: Deduct exact item ID requirements first
+            for _, req in ipairs(exactMatchers) do
+                local avail = pool[req.matcher] or 0
+                if avail < req.qty then
+                    okIngredients = false
+                    break
+                end
+                pool[req.matcher] = avail - req.qty
+            end
+
+            -- Pass 2: Deduct #tag requirements from remaining pool
+            if okIngredients then
+                for _, req in ipairs(tagMatchers) do
+                    local needed = req.qty
+                    for _, itemName in ipairs(invItemNames) do
+                        local avail = pool[itemName] or 0
+                        if avail > 0 and self:itemMatchesMatcher(itemName, req.matcher) then
+                            local take = math.min(avail, needed)
+                            pool[itemName] = avail - take
+                            needed = needed - take
+                            if needed <= 0 then
+                                break
+                            end
+                        end
+                    end
+                    if needed > 0 then
+                        okIngredients = false
+                        break
+                    end
+                end
+            end
+
+            if okIngredients then
                 return rec
             end
         end
@@ -951,6 +1139,8 @@ function CrafterCore:dispatchRecipe(recipe)
         return false, self.lastError
     end
 
+    self:cacheInventoryTags(inputName, invSlots)
+
     local orderedInvSlots = sortedNumericKeys(invSlots)
     local pushedTargets = {}
 
@@ -960,14 +1150,30 @@ function CrafterCore:dispatchRecipe(recipe)
         end
     end
 
+    -- 2-pass dispatch: exact item IDs first, then #tag slots so shared items aren't stolen
+    local exactSlots = {}
+    local tagSlots = {}
     for _, gridSlot in ipairs(layoutSlots) do
-        local reqItem = recipe.layout[gridSlot]
+        local reqMatcher = recipe.layout[gridSlot]
+        if type(reqMatcher) == "string" and reqMatcher:sub(1, 1) == "#" then
+            table.insert(tagSlots, gridSlot)
+        else
+            table.insert(exactSlots, gridSlot)
+        end
+    end
+
+    local dispatchOrder = {}
+    for _, s in ipairs(exactSlots) do table.insert(dispatchOrder, s) end
+    for _, s in ipairs(tagSlots) do table.insert(dispatchOrder, s) end
+
+    for _, gridSlot in ipairs(dispatchOrder) do
+        local reqMatcher = recipe.layout[gridSlot]
         local targetCrafter = self.cfg.gridMap[gridSlot]
         local chosenSrcSlot = nil
 
         for _, srcSlot in ipairs(orderedInvSlots) do
             local info = invSlots[srcSlot]
-            if info and info.name == reqItem and info.count > 0 then
+            if info and info.count > 0 and self:itemMatchesMatcher(info.name, reqMatcher) then
                 chosenSrcSlot = srcSlot
                 break
             end
@@ -976,7 +1182,7 @@ function CrafterCore:dispatchRecipe(recipe)
         if not chosenSrcSlot then
             rollback()
             self.status = "ERROR"
-            self.lastError = "Malzeme yetersiz: " .. tostring(reqItem)
+            self.lastError = "Malzeme yetersiz: " .. tostring(reqMatcher)
             return false, self.lastError
         end
 
@@ -1036,8 +1242,8 @@ function CrafterCore:step()
         return { action = "BUSY", returned = returned }
     end
 
-    -- Priority 3: Count input barrel & match recipe (largest totalCount first)
-    local invCounts, _, totalItems, inputOk = self:getInventoryCounts(self.cfg.inputName)
+    -- Priority 3: Count input barrel & cache tags once, then match recipe (largest totalCount first)
+    local invCounts, invSlots, totalItems, inputOk = self:getInventoryCounts(self.cfg.inputName)
     if not inputOk then
         self.status = "ERROR"
         self.lastError = "Input fici bagli degil"
@@ -1050,6 +1256,7 @@ function CrafterCore:step()
         return { action = "IDLE", returned = returned }
     end
 
+    self:cacheInventoryTags(self.cfg.inputName, invSlots)
     local matched = self:matchRecipe(invCounts)
     if not matched then
         self.status = "IDLE"

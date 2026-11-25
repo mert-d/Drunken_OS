@@ -154,7 +154,9 @@ local function run(context)
     local selectedRecipeIdx = 1
     local recipeScroll = 0
     local confirmDeleteName = nil
-    local statusToast = "Drunken Crafter hazir."
+    local statusToast = (core.autoImportedDefaultCount and core.autoImportedDefaultCount > 0)
+        and (tostring(core.autoImportedDefaultCount) .. " varsayilan tarif otomatik yuklendi.")
+        or "Drunken Crafter hazir."
     local running = true
 
     -- Learn Recipe Prompt state
@@ -402,7 +404,10 @@ local function run(context)
             writeAt(surf, rightX, infoY + 1, tostring(core.lastAction or "-"):sub(1, rightW), colors.white, colors.black)
         end
         if infoY + 2 <= h - 2 then
-            writeAt(surf, 2, infoY + 2, string.format("AE2   : %s | Map:%d/%d", pStat.ae2Ok and "BAGLI" or "YOK", pStat.mappedCount, totalSlots), pStat.ae2Ok and colors.cyan or colors.orange, colors.black)
+            local ae2Text = pStat.ae2IsDirectSide and "AE2: YON! Modem tak"
+                or string.format("AE2   : %s | Map:%d/%d", pStat.ae2Ok and "BAGLI" or "YOK", pStat.mappedCount, totalSlots)
+            local ae2Color = pStat.ae2IsDirectSide and colors.red or (pStat.ae2Ok and colors.cyan or colors.orange)
+            writeAt(surf, 2, infoY + 2, ae2Text:sub(1, leftW - 1), ae2Color, colors.black)
             writeAt(surf, divX, infoY + 2, "|", colors.gray, colors.black)
             writeAt(surf, rightX, infoY + 2, string.format("Uretim: %d | Bus: %s", core.totalCrafted, pStat.baseBusOpen and "ACIK" or "YOK"), colors.lightGray, colors.black)
         end
@@ -417,8 +422,8 @@ local function run(context)
             writeAt(surf, 2, h - 2, (">> " .. toastStr):sub(1, w - 2), toastColor, colors.black)
         end
         if not isMonitor then
-            writeAt(surf, 2, h - 1, "[P]:Duraklat [L]:Tarif Ogren [C]:Kalibre [D]:Sil", colors.cyan, colors.black)
-            writeAt(surf, 2, h,     "[T]:Manuel Tetik [S]:Ayarlar [Up/Dn]:Sec [Q]:Cik", colors.lightGray, colors.black)
+            writeAt(surf, 2, h - 1, "[P]:Duraklat [L]:Ogren [C]:Kalibre [D]:Sil", colors.cyan, colors.black)
+            writeAt(surf, 2, h,     "[I]:Tarif Yukle [T]:Tetik [S]:Ayar [Q]:Cik", colors.lightGray, colors.black)
         else
             writeAt(surf, 2, h, string.format("Node:%s | Tetik:%s", tostring(core.cfg.nodeId), tostring(core.cfg.triggerSide)), colors.gray, colors.black)
         end
@@ -540,7 +545,11 @@ local function run(context)
         writeAt(surf, 2, h - 3, string.format("Ag: %d Crafter | %d Depo | %d AE2 | %d Relay | %d Modem",
             #discovered.crafters, #discovered.inventories, #discovered.ae2Providers,
             #discovered.redstoneRelays, #discovered.wirelessModems):sub(1, w - 2), colors.lightGray, colors.black)
-        writeAt(surf, 2, h - 2, statusToast:sub(1, w - 2), colors.yellow, colors.black)
+        if CrafterCore.isDirectSide(core.cfg.ae2Name) or discovered.ae2DirectSideOnly then
+            writeAt(surf, 2, h - 2, "UYARI: Pattern Provider'a Wired Modem takin!", colors.red, colors.black)
+        else
+            writeAt(surf, 2, h - 2, statusToast:sub(1, w - 2), colors.yellow, colors.black)
+        end
         writeAt(surf, 2, h - 1, "[Up/Dn]:Sec [Lt/Rt]:Degistir [Enter]:Elle Yaz", colors.cyan, colors.black)
         writeAt(surf, 2, h,     "[R]:Cihaz Tara | [Esc/Q]:Ana Ekrana Don", colors.lightGray, colors.black)
     end
@@ -555,7 +564,7 @@ local function run(context)
             tostring(core.cfg.triggerSide),
             tostring(pStat.inputOk), tostring(pStat.inputCount),
             tostring(pStat.outputOk), tostring(pStat.outputCount),
-            tostring(pStat.ae2Ok), tostring(pStat.mappedCount), tostring(pStat.totalSlots),
+            tostring(pStat.ae2Ok), tostring(pStat.ae2IsDirectSide), tostring(pStat.mappedCount), tostring(pStat.totalSlots),
             tostring(pStat.baseBusOpen),
             tostring(wall.occupiedCount), tostring(wall.mappedCount)
         }
@@ -890,6 +899,15 @@ local function run(context)
                     setToast("Duvardaki tarifi adlandirin.")
                 elseif key == keys.c then
                     startCalibration()
+                elseif keys.i and key == keys.i then
+                    local imported, errImp = core:importDefaultRecipes({ overwrite = false })
+                    if errImp then
+                        setToast("Ice aktarim hatasi: " .. tostring(errImp))
+                    elseif imported > 0 then
+                        setToast(tostring(imported) .. " tarif ice aktarildi.")
+                    else
+                        setToast("Tum varsayilan tarifler zaten yuklu.")
+                    end
                 elseif key == keys.s then
                     discovered = core:discoverPeripherals()
                     settingsEditing = false

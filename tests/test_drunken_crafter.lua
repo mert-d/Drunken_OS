@@ -140,7 +140,7 @@ local function createEnv(opts)
     _G.keys = {
         escape = 1, tab = 15, enter = 28, numPadEnter = 156, backspace = 14,
         up = 200, down = 208, left = 203, right = 205,
-        c = 46, d = 32, l = 38, p = 25, q = 16, r = 19, s = 31, t = 20
+        c = 46, d = 32, i = 23, l = 38, p = 25, q = 16, r = 19, s = 31, t = 20
     }
 
     _G.sleep = function(sec)
@@ -197,6 +197,7 @@ local function createEnv(opts)
 
         local inv = {}
         inv._slots = slots
+        inv._detailCalls = {}
         function inv.size()
             return maxSlots
         end
@@ -212,7 +213,9 @@ local function createEnv(opts)
         function inv.getItemDetail(slot)
             local item = slots[slot]
             if item and item.count > 0 then
-                return { name = item.name, count = item.count, maxCount = 64 }
+                inv._detailCalls[item.name] = (inv._detailCalls[item.name] or 0) + 1
+                local tags = state.itemTags and state.itemTags[item.name] or nil
+                return { name = item.name, count = item.count, maxCount = 64, tags = tags }
             end
             return nil
         end
@@ -729,6 +732,124 @@ local okAll, errAll = pcall(function()
             appsFile:close()
             assert_true(appsContent:find("Drunken_Crafter") == nil, "lib/drunken_os_apps.lua does not reference Drunken_Crafter")
         end
+    end
+
+    -- 9. test_peripheral_discovery_modded (wired AE2 prioritization & direct-side warning)
+    do
+        print("[9] test_peripheral_discovery_modded")
+        local env = createEnv()
+        env.makeInventory("sophisticatedstorage:barrel_1", { "sophisticatedstorage:barrel", "inventory" }, {})
+        env.makeInventory("extendedae:ex_pattern_provider_0", { "extendedae:ex_pattern_provider", "inventory" }, {})
+        env.makeInventory("right", { "extendedae:ex_pattern_provider", "inventory" }, {})
+
+        local _, core = loadCore(env)
+        local disc = core:discoverPeripherals()
+        assert_eq(disc.ae2Providers[1], "ae2:pattern_provider_0", "Wired ae2Providers prioritized ahead of direct side 'right'")
+        assert_eq(disc.ae2Providers[#disc.ae2Providers], "right", "Direct side 'right' placed last in ae2Providers")
+        assert_eq(disc.ae2DirectSideOnly, false, "ae2DirectSideOnly is false when wired providers exist")
+
+        core.cfg.ae2Name = "right"
+        local pStat = core:getPeripheralStatus()
+        assert_eq(pStat.ae2IsDirectSide, true, "getPeripheralStatus flags direct-side AE2 connection")
+    end
+
+    -- 10. test_tag_recipe_matching_and_dispatch (#tag + tagCache + anti-double-count)
+    do
+        print("[10] test_tag_recipe_matching_and_dispatch")
+        local env = createEnv()
+        env.itemTags = {
+            ["minecraft:spruce_planks"] = { ["minecraft:planks"] = true },
+            ["minecraft:oak_planks"]    = { ["minecraft:planks"] = true },
+            ["minecraft:andesite"]      = { ["c:stones"] = true },
+            ["create:andesite_alloy"]   = {}
+        }
+
+        local _, core = loadCore(env)
+        core.recipes["create:crushing_wheel"] = {
+            name = "Crushing Wheel",
+            result = "create:crushing_wheel",
+            resultCount = 2,
+            totalCount = 21,
+            ingredients = {
+                ["create:andesite_alloy"] = 12,
+                ["#minecraft:planks"]     = 8,
+                ["#c:stones"]             = 1
+            },
+            layout = {
+                [2]  = "create:andesite_alloy", [3]  = "create:andesite_alloy", [4]  = "create:andesite_alloy",
+                [6]  = "create:andesite_alloy", [7]  = "#minecraft:planks",     [8]  = "#minecraft:planks",     [9]  = "#minecraft:planks",     [10] = "create:andesite_alloy",
+                [11] = "create:andesite_alloy", [12] = "#minecraft:planks",     [13] = "#c:stones",             [14] = "#minecraft:planks",     [15] = "create:andesite_alloy",
+                [16] = "create:andesite_alloy", [17] = "#minecraft:planks",     [18] = "#minecraft:planks",     [19] = "#minecraft:planks",     [20] = "create:andesite_alloy",
+                [22] = "create:andesite_alloy", [23] = "create:andesite_alloy", [24] = "create:andesite_alloy"
+            }
+        }
+
+        local barrel = env.periphs["minecraft:barrel_0"]
+        barrel._slots[1] = { name = "create:andesite_alloy", count = 12 }
+        barrel._slots[2] = { name = "minecraft:spruce_planks", count = 8 }
+        barrel._slots[3] = { name = "minecraft:andesite", count = 1 }
+
+        local res = core:step()
+        assert_eq(res.action, "CRAFTED", "Tag-based Crushing Wheel recipe crafted")
+        assert_eq(env.periphs["create:mechanical_crafter_7"]._slots[1].name, "minecraft:spruce_planks", "Slot 7 received spruce_planks for #minecraft:planks")
+        assert_eq(env.periphs["create:mechanical_crafter_13"]._slots[1].name, "minecraft:andesite", "Slot 13 received andesite for #c:stones")
+        assert_eq(env.periphs["create:mechanical_crafter_2"]._slots[1].name, "create:andesite_alloy", "Slot 2 received andesite_alloy")
+        assert_eq(#env.redstoneLog, 2, "Redstone pulse fired after tag dispatch")
+
+        -- Verify tagCache avoids repeated getItemDetail calls on subsequent ticks
+        for i = 1, 25 do
+            env.periphs["create:mechanical_crafter_" .. i]._slots[1] = nil
+        end
+        barrel._slots[1] = { name = "create:andesite_alloy", count = 12 }
+        barrel._slots[2] = { name = "minecraft:spruce_planks", count = 8 }
+        barrel._slots[3] = { name = "minecraft:andesite", count = 1 }
+
+        local res2 = core:step()
+        assert_eq(res2.action, "CRAFTED", "Second tag-based craft succeeded")
+        assert_eq(barrel._detailCalls["minecraft:spruce_planks"], 1, "getItemDetail called only ONCE for cached spruce_planks")
+        assert_eq(barrel._detailCalls["minecraft:andesite"], 1, "getItemDetail called only ONCE for cached andesite")
+
+        -- Verify anti-double-counting: recipe needs 1 exact oak_planks + 1 #minecraft:planks
+        barrel._slots[1] = { name = "minecraft:oak_planks", count = 2 }
+        core:cacheInventoryTags("minecraft:barrel_0", { [1] = { name = "minecraft:oak_planks", count = 2 } })
+        core.recipes = {
+            mixed_planks = {
+                name = "Mixed Planks",
+                totalCount = 2,
+                ingredients = { ["minecraft:oak_planks"] = 1, ["#minecraft:planks"] = 1 },
+                layout = { [1] = "minecraft:oak_planks", [2] = "#minecraft:planks" }
+            }
+        }
+        assert_eq(core:matchRecipe({ ["minecraft:oak_planks"] = 1 }), nil, "1 oak_planks cannot satisfy both exact + #planks")
+        local okMixed = core:matchRecipe({ ["minecraft:oak_planks"] = 2 })
+        assert_true(okMixed ~= nil and okMixed.name == "Mixed Planks", "2 oak_planks satisfies both exact + #planks")
+    end
+
+    -- 11. test_default_recipe_db_import (real data/crafter_recipes_default.db)
+    do
+        print("[11] test_default_recipe_db_import")
+        local env = createEnv()
+        local fReal = assert(io.open("data/crafter_recipes_default.db", "r"), "data/crafter_recipes_default.db exists")
+        local dbRaw = fReal:read("*a")
+        fReal:close()
+        env.files["/data/crafter_recipes_default.db"] = dbRaw
+
+        package.loaded["lib.crafter_core"] = nil
+        local CrafterCore = require("lib.crafter_core")
+        local core = CrafterCore.new({
+            autoLoad = true,
+            config = {
+                inputName = "minecraft:barrel_0",
+                outputName = "minecraft:barrel_1",
+                ae2Name = "ae2:pattern_provider_0",
+                gridMap = env.defaultGridMap
+            }
+        })
+        assert_true(core.autoImportedDefaultCount >= 150, "Auto-imported FTB Skies 2 default recipe DB (" .. tostring(core.autoImportedDefaultCount) .. ")")
+        assert_true(core.recipes["create:crushing_wheel"] ~= nil, "Default DB includes create:crushing_wheel")
+        assert_eq(core.recipes["create:crushing_wheel"].totalCount, 21, "Default DB crushing_wheel totalCount == 21")
+        assert_true(core.recipes["ftbskies2aerocompanion:netherite_energiser"] ~= nil, "Default DB includes netherite_energiser")
+        assert_true(env.files["/etc/drunken_crafter_recipes.db"] ~= nil, "Auto-import persisted /etc/drunken_crafter_recipes.db")
     end
 end)
 
