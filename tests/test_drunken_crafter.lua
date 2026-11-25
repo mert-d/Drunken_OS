@@ -33,6 +33,7 @@ local orig_rednet = _G.rednet
 local orig_os = _G.os
 local orig_sleep = _G.sleep
 local orig_term = _G.term
+local orig_window = _G.window
 local orig_colors = _G.colors
 local orig_keys = _G.keys
 local orig_loaded_lib = package.loaded["lib.crafter_core"]
@@ -47,6 +48,7 @@ local function restoreGlobals()
     _G.os = orig_os
     _G.sleep = orig_sleep
     _G.term = orig_term
+    _G.window = orig_window
     _G.colors = orig_colors
     _G.keys = orig_keys
     package.loaded["lib.crafter_core"] = orig_loaded_lib
@@ -133,6 +135,7 @@ local function createEnv(opts)
         pink = 64, gray = 128, lightGray = 256, cyan = 512, purple = 1024,
         blue = 2048, brown = 4096, green = 8192, red = 16384, black = 32768
     }
+    _G.window = nil
 
     _G.keys = {
         escape = 1, tab = 15, enter = 28, numPadEnter = 156, backspace = 14,
@@ -629,6 +632,34 @@ local okAll, errAll = pcall(function()
         assert_true(foundExAe, "discoverPeripherals includes extendedae:ex_pattern_provider_0 in ae2Providers")
         assert_eq(leakedCrafter, false, "inventories excludes mechanical_crafter")
         assert_eq(leakedProvider, false, "inventories excludes pattern_provider")
+
+        -- CamelCase crafter discovery (e.g. Create_MechanicalCrafter_0)
+        env.makeInventory("Create_MechanicalCrafter_0", "Create_MechanicalCrafter", {}, { maxSlots = 1 })
+        local discCamel = core:discoverPeripherals()
+        local foundCamel = false
+        for _, n in ipairs(discCamel.crafters) do
+            if n == "Create_MechanicalCrafter_0" then foundCamel = true end
+        end
+        assert_true(foundCamel, "discoverPeripherals detects CamelCase Create_MechanicalCrafter_0")
+
+        -- getItemDetail(1) fallback when list() returns empty
+        local origList = env.periphs["create:mechanical_crafter_16"].list
+        env.periphs["create:mechanical_crafter_16"].list = function() return {} end
+        env.periphs["create:mechanical_crafter_16"]._slots[1] = { name = "minecraft:iron_ingot", count = 1 }
+        baseline = core:takeCrafterSnapshot(crafters)
+        env.periphs["create:mechanical_crafter_16"]._slots[1] = nil
+        core:calibrateNextSlot(3, { crafterNames = crafters, baseline = baseline, pollOnce = true })
+        env.periphs["create:mechanical_crafter_16"]._slots[1] = { name = "minecraft:iron_ingot", count = 1 }
+        local matchedFallback = core:calibrateNextSlot(3, { crafterNames = crafters, baseline = baseline, pollOnce = true })
+        assert_eq(matchedFallback, "create:mechanical_crafter_16", "Detects crafter via getItemDetail(1) fallback and self-healing baseline")
+        env.periphs["create:mechanical_crafter_16"].list = origList
+
+        -- bindOccupiedCrafter binds an already-occupied unmapped crafter manually
+        core.cfg.inputName = "minecraft:barrel_0"
+        env.periphs["create:mechanical_crafter_17"]._slots[1] = { name = "minecraft:dirt", count = 1 }
+        local boundName = core:bindOccupiedCrafter(4, crafters)
+        assert_eq(boundName, "create:mechanical_crafter_17", "bindOccupiedCrafter binds occupied unmapped crafter to slot 4")
+        assert_eq(core.cfg.gridMap[4], "create:mechanical_crafter_17", "gridMap[4] updated by bindOccupiedCrafter")
     end
 
     -- 8. test_client_and_manifest_integrity
@@ -639,18 +670,23 @@ local okAll, errAll = pcall(function()
 
         -- Mock term & scripted event queue to run Drunken_Crafter TUI end-to-end
         local writes = {}
+        local clearCount = 0
         local fakeTerm = {
             getSize = function() return 51, 19 end,
             isColor = function() return true end,
             setTextColor = function() end,
             setBackgroundColor = function() end,
             setCursorPos = function() end,
-            clear = function() end,
+            clear = function() clearCount = clearCount + 1 end,
             write = function(s) table.insert(writes, s) end
         }
         _G.term = { current = function() return fakeTerm end }
 
+        local writesAfterTick1 = nil
+        local clearsAfterTick1 = nil
         local events = {
+            { "timer", 1 },
+            { "timer", 1 },
             { "timer", 1 },
             { "key", _G.keys.p },
             { "key", _G.keys.q }
@@ -658,6 +694,13 @@ local okAll, errAll = pcall(function()
         local evIdx = 0
         _G.os.pullEvent = function()
             evIdx = evIdx + 1
+            if evIdx == 2 then
+                writesAfterTick1 = #writes
+                clearsAfterTick1 = clearCount
+            elseif evIdx == 4 then
+                assert_eq(#writes, writesAfterTick1, "No idle terminal writes on unchanged timer ticks 2 and 3")
+                assert_eq(clearCount, clearsAfterTick1, "No idle terminal clears on unchanged timer ticks 2 and 3")
+            end
             local e = events[evIdx]
             if not e then return "terminate" end
             return e[1], e[2], e[3], e[4]

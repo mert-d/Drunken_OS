@@ -166,12 +166,44 @@ local function run(context)
     local calCrafters = {}
     local calBaseline = {}
     local calLastOkMsg = ""
+    local calOccupiedCount = 0
+    local calOccupiedSample = ""
 
     -- Settings Screen state
     local settingsCursor = 1
     local settingsEditing = false
     local settingsBuffer = ""
     local discovered = core:discoverPeripherals()
+
+    -- Double-buffer & dirty-check state (prevents flicker and idle redraws)
+    local surfaceBuffers = setmetatable({}, { __mode = "k" })
+    local lastTermSig = nil
+    local lastMonSigs = setmetatable({}, { __mode = "k" })
+    local stepTimer = nil
+
+    local function withBuffer(surf, drawFn)
+        if not surf then return end
+        if window and window.create then
+            local w, h = surf.getSize()
+            local entry = surfaceBuffers[surf]
+            if not entry or entry.w ~= w or entry.h ~= h then
+                local okWin, win = pcall(window.create, surf, 1, 1, w, h, false)
+                if okWin and win then
+                    entry = { win = win, w = w, h = h }
+                    surfaceBuffers[surf] = entry
+                else
+                    entry = nil
+                end
+            end
+            if entry and entry.win then
+                if entry.win.setVisible then entry.win.setVisible(false) end
+                drawFn(entry.win)
+                if entry.win.setVisible then entry.win.setVisible(true) end
+                return
+            end
+        end
+        drawFn(surf)
+    end
 
     local function setToast(msg)
         statusToast = tostring(msg or "")
@@ -208,6 +240,21 @@ local function run(context)
         return options[nextIdx]
     end
 
+    local function scheduleStepTimer()
+        local interval = (mode == "CALIBRATE") and 0.15 or (tonumber(core.cfg.pollRate) or 0.5)
+        if interval < 0.05 then interval = 0.05 end
+        if os and os.startTimer then
+            return os.startTimer(interval)
+        end
+        return nil
+    end
+
+    local function refreshCalibrationOccupancy()
+        local occ = core:getOccupiedCrafters(calCrafters)
+        calOccupiedCount = #occ
+        calOccupiedSample = (occ[1] and occ[1].name) or ""
+    end
+
     local function startCalibration()
         calWasPaused = core.paused
         core.paused = true
@@ -216,14 +263,17 @@ local function run(context)
         discovered = core:discoverPeripherals()
         calCrafters = discovered.crafters
         calBaseline = core:takeCrafterSnapshot(calCrafters)
+        refreshCalibrationOccupancy()
         mode = "CALIBRATE"
         setToast("Kalibrasyon basladi: Siradaki goze 1 esya koyun ([S]:Atla)")
+        stepTimer = scheduleStepTimer()
     end
 
     local function finishCalibration(msg)
         mode = "MAIN"
         core.paused = calWasPaused
         setToast(msg or "Kalibrasyon tamamlandi.")
+        stepTimer = scheduleStepTimer()
     end
 
     local function drawDashboard(surf, isMonitor)
@@ -451,10 +501,11 @@ local function run(context)
         if calLastOkMsg ~= "" then
             writeAt(surf, 2, 13, calLastOkMsg:sub(1, w - 2), colors.lime, colors.black)
         end
-        writeAt(surf, 2, 14, string.format("Agdaki Crafter Sayisi: %d", #calCrafters), colors.lightGray, colors.black)
+        local occNote = (calOccupiedSample ~= "") and (" (" .. shortPeriphLabel(calOccupiedSample, 18) .. ")") or ""
+        writeAt(surf, 2, 14, string.format("Ag: %d Crafter | Dolu: %d%s", #calCrafters, calOccupiedCount, occNote):sub(1, w - 2), colors.lightGray, colors.black)
 
         writeAt(surf, 2, h - 1, statusToast:sub(1, w - 2), colors.yellow, colors.black)
-        writeAt(surf, 2, h, "[S]:Bu Gozu Atla | [R]:Basa Don | [Esc/Q]:Bitir", colors.lightGray, colors.black)
+        writeAt(surf, 2, h, "[Enter]:Dolu Al [S]:Atla [R]:Basa Don [Esc/Q]:Bitir", colors.lightGray, colors.black)
     end
 
     local function drawSettingsScreen(surf)
@@ -494,28 +545,111 @@ local function run(context)
         writeAt(surf, 2, h,     "[R]:Cihaz Tara | [Esc/Q]:Ana Ekrana Don", colors.lightGray, colors.black)
     end
 
-    local function renderAll()
-        if mode == "LEARN" then
-            drawLearnScreen(parentTerm)
-        elseif mode == "CALIBRATE" then
-            drawCalibrationScreen(parentTerm)
-        elseif mode == "SETTINGS" then
-            drawSettingsScreen(parentTerm)
-        else
-            drawDashboard(parentTerm, false)
+    local function computeDashboardSignature(wall, pStat, recipes, includeTermOnly)
+        local parts = {
+            tostring(core.cfg.nodeId),
+            tostring(core:getEffectiveStatus()),
+            tostring(core.totalCrafted),
+            tostring(core.lastRecipe),
+            tostring(core.lastAction),
+            tostring(core.cfg.triggerSide),
+            tostring(pStat.inputOk), tostring(pStat.inputCount),
+            tostring(pStat.outputOk), tostring(pStat.outputCount),
+            tostring(pStat.ae2Ok), tostring(pStat.mappedCount), tostring(pStat.totalSlots),
+            tostring(pStat.baseBusOpen),
+            tostring(wall.occupiedCount), tostring(wall.mappedCount)
+        }
+        for i = 1, wall.totalSlots do
+            local s = wall.slots[i]
+            parts[#parts + 1] = (s and s.item and s.item.name) or (s and s.peripheral and (s.online and "1" or "0")) or "."
         end
+        for _, r in ipairs(recipes) do
+            parts[#parts + 1] = tostring(r.name) .. ":" .. tostring(r.totalCount)
+        end
+        if includeTermOnly then
+            parts[#parts + 1] = tostring(selectedRecipeIdx)
+            parts[#parts + 1] = tostring(recipeScroll)
+            parts[#parts + 1] = tostring(confirmDeleteName)
+            parts[#parts + 1] = tostring(core.lastError)
+            parts[#parts + 1] = tostring(statusToast)
+        end
+        return table.concat(parts, "|")
+    end
+
+    local function computeTermSignature()
+        if mode == "MAIN" then
+            local wall = core:scanWallState()
+            local pStat = core:getPeripheralStatus()
+            local recipes = core:getSortedRecipes()
+            return "MAIN|" .. computeDashboardSignature(wall, pStat, recipes, true), wall, pStat, recipes
+        elseif mode == "CALIBRATE" then
+            local gw, gh, totalSlots = core:getGridSize()
+            local parts = {
+                "CAL", tostring(gw), tostring(gh), tostring(calSlot),
+                tostring(#calCrafters), tostring(calOccupiedCount), tostring(calOccupiedSample),
+                tostring(calLastOkMsg), tostring(statusToast)
+            }
+            for i = 1, totalSlots do
+                parts[#parts + 1] = tostring(core.cfg.gridMap and core.cfg.gridMap[i] or "")
+            end
+            return table.concat(parts, "|")
+        elseif mode == "LEARN" then
+            local wall = core:scanWallState()
+            local parts = { "LEARN", tostring(learnInput), tostring(statusToast), tostring(wall.occupiedCount) }
+            for i = 1, wall.totalSlots do
+                local s = wall.slots[i]
+                parts[#parts + 1] = (s and s.item and s.item.name) or ""
+            end
+            return table.concat(parts, "|")
+        elseif mode == "SETTINGS" then
+            local parts = {
+                "SET", tostring(settingsCursor), tostring(settingsEditing), tostring(settingsBuffer),
+                tostring(statusToast),
+                tostring(#discovered.crafters), tostring(#discovered.inventories),
+                tostring(#discovered.ae2Providers), tostring(#discovered.redstoneRelays),
+                tostring(#discovered.wirelessModems)
+            }
+            for _, f in ipairs(getSettingsFields()) do
+                parts[#parts + 1] = tostring(core.cfg[f.key])
+            end
+            return table.concat(parts, "|")
+        end
+        return tostring(mode)
+    end
+
+    local function renderMonitorsOnly(force, cachedWall, cachedStat, cachedRecipes)
+        if #monitors == 0 then return end
+        local wall = cachedWall or core:scanWallState()
+        local pStat = cachedStat or core:getPeripheralStatus()
+        local recipes = cachedRecipes or core:getSortedRecipes()
+        local monSig = computeDashboardSignature(wall, pStat, recipes, false)
         for _, mon in ipairs(monitors) do
-            pcall(drawDashboard, mon, true)
+            if force or lastMonSigs[mon] ~= monSig then
+                lastMonSigs[mon] = monSig
+                pcall(withBuffer, mon, function(buf)
+                    drawDashboard(buf, true)
+                end)
+            end
         end
     end
 
-    local function scheduleStepTimer()
-        local interval = (mode == "CALIBRATE") and 0.15 or (tonumber(core.cfg.pollRate) or 0.5)
-        if interval < 0.05 then interval = 0.05 end
-        if os and os.startTimer then
-            return os.startTimer(interval)
+    local function renderAll(force)
+        local termSig, wall, pStat, recipes = computeTermSignature()
+        if force or termSig ~= lastTermSig then
+            lastTermSig = termSig
+            withBuffer(parentTerm, function(buf)
+                if mode == "LEARN" then
+                    drawLearnScreen(buf)
+                elseif mode == "CALIBRATE" then
+                    drawCalibrationScreen(buf)
+                elseif mode == "SETTINGS" then
+                    drawSettingsScreen(buf)
+                else
+                    drawDashboard(buf, false)
+                end
+            end)
         end
-        return nil
+        renderMonitorsOnly(force, wall, pStat, recipes)
     end
 
     local function handleTick()
@@ -536,9 +670,18 @@ local function run(context)
                         finishCalibration("5x5 Kalibrasyon tamamlandi ve kaydedildi!")
                     end
                 end
+                refreshCalibrationOccupancy()
             else
                 finishCalibration("5x5 Kalibrasyon tamamlandi!")
             end
+            core:maybeBroadcastHeartbeat()
+            renderAll(false)
+        elseif mode == "SETTINGS" or mode == "LEARN" then
+            if not core.paused then
+                core:step()
+            end
+            core:maybeBroadcastHeartbeat()
+            renderMonitorsOnly(false)
         else
             local res = core:step()
             if res and res.action == "CRAFTED" then
@@ -546,13 +689,13 @@ local function run(context)
             elseif res and res.action == "ERROR" and res.error then
                 setToast("HATA: " .. tostring(res.error))
             end
+            core:maybeBroadcastHeartbeat()
+            renderAll(false)
         end
-        core:maybeBroadcastHeartbeat()
-        renderAll()
     end
 
-    renderAll()
-    local stepTimer = scheduleStepTimer()
+    renderAll(true)
+    stepTimer = scheduleStepTimer()
 
     while running do
         local ev, p1, p2, p3 = os.pullEvent()
@@ -562,20 +705,24 @@ local function run(context)
         elseif ev == "rednet_message" then
             local handled = core:handleBaseBusMessage(p1, p2, p3)
             if handled then
-                renderAll()
+                renderAll(false)
             end
         elseif ev == "peripheral" or ev == "peripheral_detach" then
             monitors = findExternalMonitors()
             discovered = core:discoverPeripherals()
+            if mode == "CALIBRATE" then
+                calCrafters = discovered.crafters
+                refreshCalibrationOccupancy()
+            end
             core:openBaseBus()
-            renderAll()
+            renderAll(true)
         elseif ev == "char" then
             if mode == "LEARN" then
                 learnInput = learnInput .. tostring(p1)
-                renderAll()
+                renderAll(false)
             elseif mode == "SETTINGS" and settingsEditing then
                 settingsBuffer = settingsBuffer .. tostring(p1)
-                renderAll()
+                renderAll(false)
             end
         elseif ev == "key" then
             local key = p1
@@ -595,11 +742,25 @@ local function run(context)
                     mode = "MAIN"
                     setToast("Tarif ogrenme iptal edildi.")
                 end
-                renderAll()
+                renderAll(false)
 
             elseif mode == "CALIBRATE" then
                 local _, _, totalSlots = core:getGridSize()
-                if key == keys.s then
+                if key == keys.enter or key == keys.numPadEnter then
+                    local bound, errB = core:bindOccupiedCrafter(calSlot, calCrafters)
+                    if bound then
+                        calLastOkMsg = string.format("[OK] Slot %d -> %s", calSlot, shortPeriphLabel(bound, 22))
+                        setToast(calLastOkMsg)
+                        calBaseline = core:takeCrafterSnapshot(calCrafters)
+                        calSlot = calSlot + 1
+                        if calSlot > totalSlots then
+                            finishCalibration("5x5 Kalibrasyon tamamlandi ve kaydedildi!")
+                        end
+                    else
+                        setToast(tostring(errB or "Dolu crafter bulunamadi!"))
+                    end
+                    refreshCalibrationOccupancy()
+                elseif key == keys.s then
                     core:clearSlotMapping(calSlot)
                     calLastOkMsg = string.format("[ATLANDI] Slot %d bos birakildi", calSlot)
                     calSlot = calSlot + 1
@@ -609,11 +770,13 @@ local function run(context)
                 elseif key == keys.r then
                     calSlot = 1
                     calLastOkMsg = "Slot 1'den yeniden baslatildi."
+                    calCrafters = core:discoverPeripherals().crafters
                     calBaseline = core:takeCrafterSnapshot(calCrafters)
+                    refreshCalibrationOccupancy()
                 elseif key == keys.escape or key == keys.q then
                     finishCalibration("Kalibrasyon kaydedilip cikildi.")
                 end
-                renderAll()
+                renderAll(false)
 
             elseif mode == "SETTINGS" then
                 local fields = getSettingsFields()
@@ -705,7 +868,7 @@ local function run(context)
                         end
                     end
                 end
-                renderAll()
+                renderAll(false)
 
             else
                 -- MAIN DASHBOARD KEYS
@@ -735,6 +898,7 @@ local function run(context)
                     local okP, errP = core:triggerPulse()
                     setToast(okP and ("Manuel Redstone darbesi gonderildi (" .. tostring(core.cfg.triggerSide) .. ").")
                         or ("Tetikleme hatasi: " .. tostring(errP)))
+                    stepTimer = scheduleStepTimer()
                 elseif key == keys.d then
                     local sel = recipes[selectedRecipeIdx]
                     if sel then
@@ -754,7 +918,7 @@ local function run(context)
                 elseif key == keys.down then
                     selectedRecipeIdx = math.min(math.max(1, #recipes), selectedRecipeIdx + 1)
                 end
-                renderAll()
+                renderAll(false)
             end
         elseif ev == "terminate" then
             running = false

@@ -223,12 +223,21 @@ local function hasPeriphType(name, targetType)
     return false
 end
 
+local function normalizeId(s)
+    return (tostring(s or ""):lower():gsub("[_%s%-]", ""))
+end
+
 local function nameOrTypeContains(name, needle)
-    if type(name) == "string" and name:lower():find(needle, 1, true) then
-        return true
+    local normNeedle = normalizeId(needle)
+    if type(name) == "string" then
+        local lname = name:lower()
+        if lname:find(needle, 1, true) or normalizeId(lname):find(normNeedle, 1, true) then
+            return true
+        end
     end
     for _, t in ipairs(getPeriphTypes(name)) do
-        if t:lower():find(needle, 1, true) then
+        local lt = t:lower()
+        if lt:find(needle, 1, true) or normalizeId(lt):find(normNeedle, 1, true) then
             return true
         end
     end
@@ -556,30 +565,44 @@ function CrafterCore:getPeripheralStatus()
 end
 
 local function crafterHasItem(periphName)
-    if not isPeriphPresent(periphName) then return false, nil end
+    if not isPeriphPresent(periphName) then return false, nil, "" end
     local okList, items = callPeriph(periphName, "list")
     if okList and type(items) == "table" then
         local firstKey, firstItem = next(items)
         if firstKey ~= nil then
-            return true, firstItem
+            local iName = (type(firstItem) == "table" and firstItem.name) or tostring(firstKey)
+            local iCnt = (type(firstItem) == "table" and (tonumber(firstItem.count) or 1)) or 1
+            return true, firstItem, tostring(iName) .. ":" .. tostring(iCnt)
         end
-        return false, nil
     end
     local okDet, detail = callPeriph(periphName, "getItemDetail", 1)
     if okDet and type(detail) == "table" and detail.name and (tonumber(detail.count) or 1) > 0 then
-        return true, detail
+        local dCnt = tonumber(detail.count) or 1
+        return true, detail, tostring(detail.name) .. ":" .. tostring(dCnt)
     end
-    return false, nil
+    return false, nil, ""
 end
 
 function CrafterCore:takeCrafterSnapshot(crafterNames)
     local names = crafterNames or self:discoverPeripherals().crafters
     local snapshot = {}
     for _, name in ipairs(names) do
-        local hasItem = crafterHasItem(name)
-        snapshot[name] = hasItem == true
+        local _, _, sig = crafterHasItem(name)
+        snapshot[name] = sig
     end
     return snapshot
+end
+
+function CrafterCore:getOccupiedCrafters(crafterNames)
+    local names = crafterNames or self:discoverPeripherals().crafters
+    local occupied = {}
+    for _, name in ipairs(names) do
+        local hasItem, item, sig = crafterHasItem(name)
+        if hasItem then
+            table.insert(occupied, { name = name, item = item, sig = sig })
+        end
+    end
+    return occupied
 end
 
 function CrafterCore:returnItemFromCrafter(crafterName, slot)
@@ -599,6 +622,49 @@ function CrafterCore:returnItemFromCrafter(crafterName, slot)
     return 0
 end
 
+local function assignGridSlotUnique(gridMap, slotIdx, crafterName)
+    for k, existing in pairs(gridMap) do
+        if existing == crafterName then
+            gridMap[k] = nil
+        end
+    end
+    gridMap[slotIdx] = crafterName
+end
+
+function CrafterCore:bindOccupiedCrafter(slotIdx, crafterNames, opts)
+    opts = opts or {}
+    local occupied = self:getOccupiedCrafters(crafterNames)
+    if #occupied == 0 then
+        return nil, "Dolu crafter bulunamadi"
+    end
+
+    -- Prefer an occupied crafter not already mapped to a different slot
+    local mappedSet = {}
+    for k, v in pairs(self.cfg.gridMap or {}) do
+        if k ~= slotIdx and type(v) == "string" and v ~= "" then
+            mappedSet[v] = true
+        end
+    end
+
+    local chosen = occupied[1].name
+    for _, entry in ipairs(occupied) do
+        if not mappedSet[entry.name] then
+            chosen = entry.name
+            break
+        end
+    end
+
+    assignGridSlotUnique(self.cfg.gridMap, slotIdx, chosen)
+    if opts.returnToInput ~= false
+        and type(self.cfg.inputName) == "string"
+        and self.cfg.inputName ~= ""
+        and isPeriphPresent(self.cfg.inputName) then
+        self:returnItemFromCrafter(chosen, 1)
+    end
+    self:saveConfig()
+    return chosen, nil
+end
+
 function CrafterCore:calibrateNextSlot(slotIdx, opts)
     opts = opts or {}
     local crafterNames = opts.crafterNames or self:discoverPeripherals().crafters
@@ -609,22 +675,23 @@ function CrafterCore:calibrateNextSlot(slotIdx, opts)
 
     local function checkOnce()
         for _, name in ipairs(crafterNames) do
-            if not baseline[name] then
-                local hasItem = crafterHasItem(name)
-                if hasItem then
-                    -- Keep 1-to-1 mapping across grid slots
-                    for k, existing in pairs(self.cfg.gridMap) do
-                        if existing == name then
-                            self.cfg.gridMap[k] = nil
-                        end
-                    end
-                    self.cfg.gridMap[slotIdx] = name
+            local hasItem, _, sig = crafterHasItem(name)
+            if not hasItem then
+                baseline[name] = ""
+            else
+                local baseVal = baseline[name]
+                local isNew = (baseVal == nil or baseVal == false or baseVal == "")
+                    or (type(baseVal) == "string" and baseVal ~= sig)
+                if isNew then
+                    assignGridSlotUnique(self.cfg.gridMap, slotIdx, name)
                     if opts.returnToInput ~= false
                         and type(self.cfg.inputName) == "string"
                         and self.cfg.inputName ~= ""
                         and isPeriphPresent(self.cfg.inputName) then
                         self:returnItemFromCrafter(name, 1)
                     end
+                    local _, _, postSig = crafterHasItem(name)
+                    baseline[name] = postSig
                     self:saveConfig()
                     return name
                 end
