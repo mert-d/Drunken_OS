@@ -110,9 +110,19 @@ local function shortPeriphLabel(name, maxLen)
     maxLen = maxLen or 18
     local s = tostring(name or "")
     if s == "" then return "(YOK)" end
-    s = s:gsub("^minecraft:", ""):gsub("^create:", ""):gsub("^ae2:", "")
+    s = s:gsub("^minecraft:", "")
+         :gsub("^create:", "")
+         :gsub("^ae2:", "")
+         :gsub("^sophisticatedstorage:", "soph:")
+         :gsub("^extendedae:", "extae:")
     if #s <= maxLen then return s end
-    return s:sub(1, maxLen - 2) .. ".."
+    if maxLen <= 5 then return s:sub(-maxLen) end
+    local numSuffix = s:match("(_%d+)$") or s:sub(-math.min(8, math.floor(maxLen / 2)))
+    if #numSuffix + 4 <= maxLen then
+        local headLen = maxLen - #numSuffix - 2
+        return s:sub(1, headLen) .. ".." .. numSuffix
+    end
+    return ".." .. s:sub(-(maxLen - 2))
 end
 
 local function buildItemStyleMap(wallSlots)
@@ -215,16 +225,16 @@ local function run(context)
 
     local function getSettingsFields()
         return {
-            { key = "nodeId",        label = "Dugum Adi (Node ID)",   kind = "string" },
-            { key = "inputName",     label = "Input Fici (Barrel)",   kind = "periph", listKey = "inventories" },
-            { key = "outputName",    label = "Output Fici (Barrel)",  kind = "periph", listKey = "inventories" },
-            { key = "ae2Name",       label = "AE2 Pattern Provider",  kind = "periph", listKey = "ae2Providers" },
-            { key = "triggerSide",   label = "Redstone Tetik Yonu",   kind = "trigger" },
-            { key = "pollRate",      label = "Kontrol Araligi (sn)",  kind = "number", step = 0.1, min = 0.1, max = 5.0 },
-            { key = "pulseSec",      label = "Darbe Suresi (sn)",     kind = "number", step = 0.05, min = 0.05, max = 1.0 },
-            { key = "rednetEnabled", label = "Drunken Base Bus",      kind = "bool" },
-            { key = "gridWidth",     label = "Izgara Genisligi",      kind = "int", min = 1, max = 5 },
-            { key = "gridHeight",    label = "Izgara Yuksekligi",     kind = "int", min = 1, max = 5 }
+            { key = "nodeId",        label = "Dugum Adi",        kind = "string" },
+            { key = "inputName",     label = "Input Fici",       kind = "periph", listKey = "inventories" },
+            { key = "outputName",    label = "Output Fici",      kind = "periph", listKey = "inventories" },
+            { key = "ae2Name",       label = "AE2 Provider",     kind = "periph", listKey = "ae2Providers" },
+            { key = "triggerSide",   label = "Redstone Tetik",   kind = "trigger" },
+            { key = "pollRate",      label = "Kontrol (sn)",     kind = "number", step = 0.1, min = 0.1, max = 5.0 },
+            { key = "pulseSec",      label = "Darbe (sn)",       kind = "number", step = 0.05, min = 0.05, max = 1.0 },
+            { key = "rednetEnabled", label = "Base Bus",         kind = "bool" },
+            { key = "gridWidth",     label = "Izgara Genislik",  kind = "int", min = 1, max = 5 },
+            { key = "gridHeight",    label = "Izgara Yukseklik", kind = "int", min = 1, max = 5 }
         }
     end
 
@@ -524,31 +534,42 @@ local function run(context)
         writeAt(surf, 2, 1, "DRUNKEN CRAFTER - DONANIM & DUGUM AYARLARI", colors.white, colors.blue)
 
         local fields = getSettingsFields()
-        local maxRows = math.max(4, h - 6)
+        local maxRows = math.max(4, h - 7)
         local startIdx = math.max(1, math.min(settingsCursor - 3, math.max(1, #fields - maxRows + 1)))
+        local maxValW = math.max(12, w - 22)
 
         for i = startIdx, math.min(#fields, startIdx + maxRows - 1) do
             local f = fields[i]
             local rowY = 3 + (i - startIdx)
             local isSel = (i == settingsCursor)
-            local valStr = tostring(core.cfg[f.key] == nil and "" or core.cfg[f.key])
+            local rawVal = core.cfg[f.key]
+            local valStr = tostring(rawVal == nil and "" or rawVal)
             if f.kind == "bool" then
-                valStr = core.cfg[f.key] and "ACIK" or "KAPALI"
+                valStr = rawVal and "ACIK" or "KAPALI"
             elseif f.kind == "periph" and valStr == "" then
                 valStr = "(Secilmedi)"
+            elseif (f.kind == "periph" or f.kind == "trigger") and not (isSel and settingsEditing) then
+                valStr = shortPeriphLabel(valStr, maxValW)
             end
             if isSel and settingsEditing then
                 valStr = settingsBuffer .. "_"
             end
-            local line = string.format("%s %-21s : %s", isSel and ">" or " ", f.label, valStr)
+            local line = string.format("%s %-16s: %s", isSel and ">" or " ", f.label, valStr)
             writeAt(surf, 2, rowY, line:sub(1, w - 2), isSel and colors.black or colors.white, isSel and colors.cyan or colors.black)
         end
+
+        local selField = fields[settingsCursor]
+        local fullSelVal = selField and tostring(core.cfg[selField.key] == nil and "" or core.cfg[selField.key]) or ""
+        if fullSelVal == "" then fullSelVal = "(Secilmedi)" end
+        writeAt(surf, 2, h - 4, ("SECILI: " .. fullSelVal):sub(1, w - 2), colors.cyan, colors.black)
 
         writeAt(surf, 2, h - 3, string.format("Ag: %d Crafter | %d Depo | %d AE2 | %d Relay | %d Modem",
             #discovered.crafters, #discovered.inventories, #discovered.ae2Providers,
             #discovered.redstoneRelays, #discovered.wirelessModems):sub(1, w - 2), colors.lightGray, colors.black)
         if CrafterCore.isDirectSide(core.cfg.ae2Name) or discovered.ae2DirectSideOnly then
             writeAt(surf, 2, h - 2, "UYARI: Pattern Provider'a Wired Modem takin!", colors.red, colors.black)
+        elseif core.cfg.inputName ~= "" and core.cfg.inputName == core.cfg.outputName then
+            writeAt(surf, 2, h - 2, "UYARI: Input ve Output ayni fici! Degistirin.", colors.red, colors.black)
         else
             writeAt(surf, 2, h - 2, statusToast:sub(1, w - 2), colors.yellow, colors.black)
         end
