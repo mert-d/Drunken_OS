@@ -43,6 +43,13 @@ local PACKAGE_METADATA = {
         desc = "100% Standalone AE2 (Quantum CPU) <-> RS Type Archive Bridge",
         prompt = "DISK: Insert blank floppy disk and press ENTER."
     },
+    drunken_crafter = {
+        category = "clients",
+        badge = "[CRAFTER]",
+        hardware = "Advanced Computer + 25x Mechanical Crafter + 2x Barrel + AE2 Pattern Provider",
+        desc = "Zero-code 5x5 AE2 + Create Mechanical Crafter node with calibration wizard",
+        prompt = "DISK: Insert blank floppy disk and press ENTER."
+    },
     avionics_fcs = {
         category = "avionics",
         badge = "[AVIONICS]",

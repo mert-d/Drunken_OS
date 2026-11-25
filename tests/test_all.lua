@@ -34,6 +34,7 @@ local tests = {
     { name = "Create Avionics Flight Control", file = "tests/test_avionics.lua" },
     { name = "Dashboard Logger & Mail @all", file = "tests/test_dashboard_and_auth.lua" },
     { name = "ME & RS Hybrid Storage Bridge", file = "tests/test_storage_bridge.lua" },
+    { name = "Drunken Crafter AE2+Create Node", file = "tests/test_drunken_crafter.lua" },
 }
 
 print("========================================================")

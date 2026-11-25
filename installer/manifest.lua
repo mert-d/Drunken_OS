@@ -410,6 +410,17 @@ return {
                 "apps/storage_bridge.lua"
             },
             include_shared = false
+        },
+
+        drunken_crafter = {
+            name = "Drunken Crafter (AE2 + Create Node)",
+            type = "client",
+            main = "clients/Drunken_Crafter.lua",
+            files = {
+                "clients/Drunken_Crafter.lua",
+                "lib/crafter_core.lua"
+            },
+            include_shared = false
         }
     },
 
