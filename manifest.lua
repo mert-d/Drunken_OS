@@ -155,7 +155,6 @@ return {
                 "lib/sound.lua",
                 "lib/netpkg.lua"
             },
-            -- GitHub-only extension modules: not written to floppy, downloaded at install/OTA
             remote_files = {
                 "lib/avx/wing_level.lua",
                 "lib/avx/sky_anchor.lua",
@@ -402,17 +401,8 @@ return {
              include_shared = false
         },
 
-        storage_bridge = {
-            name = "Standalone ME & RS Storage Bridge",
-            type = "client",
-            main = "apps/storage_bridge.lua",
-            files = {
-                "apps/storage_bridge.lua"
-            },
-            include_shared = false
-        },
-
-        drunken_crafter = { name = "Drunken Crafter", type = "client", main = "clients/Drunken_Crafter.lua", files = { "clients/Drunken_Crafter.lua", "lib/crafter_core.lua" }, remote_files = { "data/crafter_recipes_default.db" }, include_shared = false }
+        storage_bridge = { name = "Standalone ME & RS Storage Bridge", type = "client", main = "apps/storage_bridge.lua", files = { "apps/storage_bridge.lua" }, include_shared = false },
+        drunken_crafter = { name = "Drunken Crafter", type = "client", main = "clients/Drunken_Crafter.lua", files = { "clients/Drunken_Crafter.lua" }, remote_files = { "lib/crafter_core.lua", "lib/sequenced_core.lua", "data/crafter_recipes_default.db", "data/sequenced_recipes_default.db" }, include_shared = false }
     },
 
     all_apps = {
